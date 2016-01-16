@@ -107,7 +107,7 @@ let retrieve_fieldname fieldname =
 
 let get_field_name program static tenv cn fs context =
   match JTransType.get_class_type_no_pointer program tenv cn with
-  | Sil.Tstruct (fields, sfields, Sil.Class, _, _, _, _) ->
+  | Sil.Tstruct (fields, sfields, Csu.Class, _, _, _, _) ->
       let fieldname, _, _ =
         try
           IList.find
@@ -127,7 +127,7 @@ let formals_from_signature program tenv cn ms kind =
   let get_arg_name () =
     let arg = method_name^"_arg_"^(string_of_int !counter) in
     incr counter;
-    arg in
+    Mangled.from_string arg in
   let collect l vt =
     let arg_name = get_arg_name () in
     let arg_type = JTransType.value_type program tenv vt in
@@ -139,7 +139,7 @@ let formals_from_signature program tenv cn ms kind =
 
 let formals program tenv cn impl =
   let collect l (vt, var) =
-    let name = JBir.var_name_g var in
+    let name = Mangled.from_string (JBir.var_name_g var) in
     let typ = JTransType.param_type program tenv cn var vt in
     (name, typ):: l in
   IList.rev (IList.fold_left collect [] (JBir.params impl))
@@ -153,9 +153,8 @@ let locals_formals program tenv cn impl meth_kind =
       let string_type = (JTransType.get_class_type program tenv (JBasics.make_cn JConfig.string_cl)) in
       [(JConfig.field_st, string_type) ]
     else formals program tenv cn impl in
-  let is_formal v =
-    let v = Mangled.to_string v in
-    IList.exists (fun (v', _) -> Utils.string_equal v v') form_list in
+  let is_formal p =
+    IList.exists (fun (p', _) -> Mangled.equal p p') form_list in
   let collect l var =
     let vname = Mangled.from_string (JBir.var_name_g var) in
     let names = (fst (IList.split l)) in
@@ -440,7 +439,7 @@ let rec expression context pc expr =
       begin
         match c with (* We use the constant <field> internally to mean a variable. *)
         | `String s when (JBasics.jstr_pp s) = JConfig.field_cst ->
-            let varname = Mangled.from_string JConfig.field_st in
+            let varname = JConfig.field_st in
             let string_type = (JTransType.get_class_type program tenv (JBasics.make_cn JConfig.string_cl)) in
             let procname = (Cfg.Procdesc.get_proc_name (JContext.get_procdesc context)) in
             let pvar = Sil.mk_pvar varname procname in
@@ -508,10 +507,7 @@ let rec expression context pc expr =
   | JBir.Field (ex, cn, fs) ->
       let (idl, instrs, sil_expr) = expression context pc ex in
       let field_name = get_field_name program false tenv cn fs context in
-      let sil_type =
-        try
-          JTransType.get_class_type_no_pointer program tenv cn
-        with Frontend_error msg -> assert false in
+      let sil_type = JTransType.get_class_type_no_pointer program tenv cn in
       let sil_expr = Sil.Lfield (sil_expr, field_name, sil_type) in
       let tmp_id = Ident.create_fresh Ident.knormal in
       let lderef_instr = Sil.Letderef (tmp_id, sil_expr, sil_type, loc) in
@@ -523,13 +519,7 @@ let rec expression context pc expr =
         Sil.Lvar var_name in
       let (idl, instrs, sil_expr) = [], [], class_exp in
       let field_name = get_field_name program true tenv cn fs context in
-      let sil_type =
-        try
-          match JTransType.get_class_type_no_pointer program tenv cn with
-          | Sil.Tstruct (ftal, sftal, csu, nameo, supers, def_mthds, iann) ->
-              Sil.Tstruct (sftal, sftal, csu, nameo, supers, def_mthds, iann)
-          | t -> t
-        with Frontend_error msg -> assert false in
+      let sil_type = JTransType.get_class_type_no_pointer program tenv cn in
       if JTransStaticField.is_static_final_field context cn fs && use_static_final_fields context
       then
         (* when accessing a static final field, we call the initialiser method. *)
@@ -558,11 +548,12 @@ let method_invocation context loc pc var_opt cn ms sil_obj_opt expr_list invoke_
   let program = JContext.get_program context in
   if JConfig.create_callee_procdesc then
     ignore (get_method_procdesc program cfg tenv cn ms method_kind);
-  let cf_virtual = match invoke_code with
-    | I_Virtual -> true
-    | _ -> false in
+  let cf_virtual, cf_interface = match invoke_code with
+    | I_Virtual -> (true, false)
+    | I_Interface -> (true, true)
+    | _ -> (false, false) in
   let call_flags =
-    { Sil.cf_virtual = cf_virtual; Sil.cf_noreturn = false; Sil.cf_is_objc_block = false; } in
+    { Sil.cf_default with Sil.cf_virtual = cf_virtual; Sil.cf_interface = cf_interface; } in
   let init =
     match sil_obj_opt with
     | None -> ([], [], [])
@@ -780,7 +771,12 @@ let instruction_thread_start context cn ms obj args var_opt =
 
 let is_this expr =
   match expr with
-  | JBir.Var (_, var) -> JBir.var_name_debug var = Some JConfig.this
+  | JBir.Var (_, var) ->
+      begin
+        match JBir.var_name_debug var with
+        | None -> false
+        | Some name_opt -> Mangled.to_string JConfig.this = name_opt
+      end
   | _ -> false
 
 
@@ -788,7 +784,7 @@ let assume_not_null loc sil_expr =
   let builtin_infer_assume = Sil.Const (Sil.Cfun SymExec.ModelBuiltins.__infer_assume) in
   let not_null_expr =
     Sil.BinOp (Sil.Ne, sil_expr, Sil.exp_null) in
-  let assume_call_flag = { Sil.cf_virtual = false; Sil.cf_noreturn = true; Sil.cf_is_objc_block = false; } in
+  let assume_call_flag = { Sil.cf_default with Sil.cf_noreturn = true; } in
   let call_args = [(not_null_expr, Sil.Tint Sil.IBool)] in
   Sil.Call ([], builtin_infer_assume, call_args, loc, assume_call_flag)
 
@@ -869,11 +865,7 @@ let rec instruction context pc instr : translation =
         let (idl1, stml1, sil_expr_lhs) = [], [], class_exp in
         let (idl2, stml2, sil_expr_rhs) = expression context pc e_rhs in
         let field_name = get_field_name program true tenv cn fs context in
-        let type_of_the_surrounding_class =
-          match JTransType.get_class_type_no_pointer program tenv cn with
-          | Sil.Tstruct (ftal, sftal, csu, nameo, supers, def_mthds, iann) ->
-              Sil.Tstruct (sftal, sftal, csu, nameo, supers, def_mthds, iann)
-          | t -> t in
+        let type_of_the_surrounding_class = JTransType.get_class_type_no_pointer program tenv cn in
         let type_of_the_root_of_e_lhs = type_of_the_surrounding_class in
         let expr_off = Sil.Lfield(sil_expr_lhs, field_name, type_of_the_surrounding_class) in
         let sil_instr = Sil.Set (expr_off, type_of_the_root_of_e_lhs, sil_expr_rhs, loc) in
@@ -996,7 +988,8 @@ let rec instruction context pc instr : translation =
                     let instr = instruction_array_call ms obj_type obj args var_opt vt in
                     instruction context pc instr
               end
-          | JBir.InterfaceCall cn -> trans_virtual_call cn
+          | JBir.InterfaceCall cn ->
+              trans_virtual_call cn
         end
     | JBir.InvokeNonVirtual (var_opt, obj, cn, ms, args) ->
         let cn = (resolve_method context cn ms) in

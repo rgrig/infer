@@ -112,36 +112,38 @@ let spec_find_rename trace_call (proc_name : Procname.t) : (int * Prop.exposed S
         raise (Exceptions.Precondition_not_found (Localise.verbatim_desc (Procname.to_string proc_name), try assert false with Assert_failure x -> x))
       end;
     let formal_parameters =
-      IList.map (fun (x, _) -> Sil.mk_pvar_callee (Mangled.from_string x) proc_name) formals in
+      IList.map (fun (x, _) -> Sil.mk_pvar_callee x proc_name) formals in
     IList.map f specs, formal_parameters
   with Not_found -> begin
       L.d_strln ("ERROR: found no entry for procedure " ^ Procname.to_string proc_name ^ ". Give up...");
       raise (Exceptions.Precondition_not_found (Localise.verbatim_desc (Procname.to_string proc_name), try assert false with Assert_failure x -> x))
     end
 
-(** Process a splitting coming straight from a call to the prover:
-    change the instantiating substitution so that it returns primed vars,
-    except for vars occurring in the missing part, where it returns
-    footprint vars. *)
-let process_splitting actual_pre sub1 sub2 frame missing_pi missing_sigma frame_fld missing_fld frame_typ missing_typ =
-  (*
-  let check_precondition () =
+let check_splitting_precondition sub1 sub2 =
   let dom1 = Sil.sub_domain sub1 in
   let rng1 = Sil.sub_range sub1 in
   let dom2 = Sil.sub_domain sub2 in
   let rng2 = Sil.sub_range sub2 in
   let overlap = IList.exists (fun id -> IList.exists (Ident.equal id) dom1) dom2 in
   if overlap then begin
-  L.d_str "Dom(Sub1): "; Sil.d_exp_list (IList.map (fun id -> Sil.Var id) dom1); L.d_ln ();
-  L.d_str "Ran(Sub1): "; Sil.d_exp_list rng1; L.d_ln ();
-  L.d_str "Dom(Sub2): "; Sil.d_exp_list (IList.map (fun id -> Sil.Var id) dom2); L.d_ln ();
-  L.d_str "Ran(Sub2): "; Sil.d_exp_list rng2; L.d_ln ();
-  assert false
-  end in
-  check_precondition ();
-  *)
-  let sub = Sil.sub_join sub1 sub2 in
+    L.d_str "Dom(Sub1): "; Sil.d_exp_list (IList.map (fun id -> Sil.Var id) dom1); L.d_ln ();
+    L.d_str "Ran(Sub1): "; Sil.d_exp_list rng1; L.d_ln ();
+    L.d_str "Dom(Sub2): "; Sil.d_exp_list (IList.map (fun id -> Sil.Var id) dom2); L.d_ln ();
+    L.d_str "Ran(Sub2): "; Sil.d_exp_list rng2; L.d_ln ();
+    assert false
+  end
 
+(** Process a splitting coming straight from a call to the prover:
+    change the instantiating substitution so that it returns primed vars,
+    except for vars occurring in the missing part, where it returns
+    footprint vars. *)
+let process_splitting actual_pre sub1 sub2 frame missing_pi missing_sigma frame_fld missing_fld frame_typ missing_typ =
+
+  let hpred_has_only_footprint_vars hpred =
+    let fav = Sil.fav_new () in
+    Sil.hpred_fav_add fav hpred;
+    Sil.fav_for_all fav Ident.is_footprint in
+  let sub = Sil.sub_join sub1 sub2 in
   let sub1_inverse =
     let sub1_list = Sil.sub_to_list sub1 in
     let sub1_list' = IList.filter (function (_, Sil.Var _) -> true | _ -> false) sub1_list in
@@ -205,7 +207,38 @@ let process_splitting actual_pre sub1 sub2 frame missing_pi missing_sigma frame_
   let sub_list' =
     IList.map (fun (id, e) -> (id, Sil.exp_sub sub1 e)) sub_list in
   let sub' = Sil.sub_of_list (sub2_list @ sub_list') in
-  { sub = sub'; frame = frame; missing_pi = missing_pi; missing_sigma = missing_sigma; frame_fld = frame_fld; missing_fld = missing_fld; frame_typ = frame_typ; missing_typ = missing_typ }
+  (* normalize everything w.r.t sub' *)
+  let norm_missing_pi = Prop.pi_sub sub' missing_pi in
+  let norm_missing_sigma = Prop.sigma_sub sub' missing_sigma in
+  let norm_frame_fld = Prop.sigma_sub sub' frame_fld in
+  let norm_frame_typ =
+    IList.map (fun (e, te) -> Sil.exp_sub sub' e, Sil.exp_sub sub' te) frame_typ in
+  let norm_missing_typ =
+    IList.map (fun (e, te) -> Sil.exp_sub sub' e, Sil.exp_sub sub' te) missing_typ in
+  let norm_missing_fld =
+    let sigma = Prop.sigma_sub sub' missing_fld in
+    let filter hpred =
+      if not (hpred_has_only_footprint_vars hpred) then
+        begin
+          L.d_warning "Missing fields hpred has non-footprint vars: "; Sil.d_hpred hpred; L.d_ln ();
+          false
+        end
+      else match hpred with
+        | Sil.Hpointsto(Sil.Var id, _, _) -> true
+        | Sil.Hpointsto(Sil.Lvar pvar, _, _) -> Sil.pvar_is_global pvar
+        | _ ->
+            L.d_warning "Missing fields in complex pred: "; Sil.d_hpred hpred; L.d_ln ();
+            false in
+    IList.filter filter sigma in
+  let norm_frame = Prop.sigma_sub sub' frame in
+  { sub =           sub';
+    frame =         norm_frame;
+    missing_pi =    norm_missing_pi;
+    missing_sigma = norm_missing_sigma;
+    frame_fld =     norm_frame_fld;
+    missing_fld =   norm_missing_fld;
+    frame_typ =     norm_frame_typ;
+    missing_typ =   norm_missing_typ; }
 
 (** Check whether an inst represents a dereference without null check, and return the line number and path position *)
 let find_dereference_without_null_check_in_inst = function
@@ -344,11 +377,6 @@ let post_process_post
   check_path_errors_in_post caller_pname post' post_path;
   post', post_path
 
-let hpred_has_only_footprint_vars hpred =
-  let fav = Sil.fav_new () in
-  Sil.hpred_fav_add fav hpred;
-  Sil.fav_for_all fav Ident.is_footprint
-
 let hpred_lhs_compare hpred1 hpred2 = match hpred1, hpred2 with
   | Sil.Hpointsto(e1, _, _), Sil.Hpointsto(e2, _, _) -> Sil.exp_compare e1 e2
   | Sil.Hpointsto _, _ -> - 1
@@ -375,7 +403,7 @@ let rec fsel_star_fld fsel1 fsel2 = match fsel1, fsel2 with
 
 and array_content_star se1 se2 =
   try sexp_star_fld se1 se2 with
-  | exn when exn_not_timeout exn -> se1 (* let postcondition override *)
+  | exn when exn_not_failure exn -> se1 (* let postcondition override *)
 
 and esel_star_fld esel1 esel2 = match esel1, esel2 with
   | [], esel2 -> (* don't know whether element is read or written in fun call with array *)
@@ -415,7 +443,8 @@ let texp_star texp1 texp2 =
           | 0 -> ftal_sub ftal1' ftal2'
           | _ -> ftal_sub ftal1 ftal2' end in
   let typ_star t1 t2 = match t1, t2 with
-    | Sil.Tstruct (ftal1, sftal1, csu1, _, _, _, _), Sil.Tstruct (ftal2, sftal2, csu2, _, _, _, _) when csu1 = csu2 ->
+    | Sil.Tstruct (ftal1, sftal1, csu1, _, _, _, _),
+      Sil.Tstruct (ftal2, sftal2, csu2, _, _, _, _) when csu1 = csu2 ->
         if ftal_sub ftal1 ftal2 then t2 else t1
     | _ -> t1 in
   match texp1, texp2 with
@@ -448,7 +477,7 @@ let sigma_star_fld (sigma1 : Sil.hpred list) (sigma2 : Sil.hpred list) : Sil.hpr
         end
   in
   try star sigma1 sigma2
-  with exn when exn_not_timeout exn ->
+  with exn when exn_not_failure exn ->
     L.d_str "cannot star ";
     Prop.d_sigma sigma1; L.d_str " and "; Prop.d_sigma sigma2;
     L.d_ln ();
@@ -482,7 +511,7 @@ let sigma_star_typ (sigma1 : Sil.hpred list) (typings2 : (Sil.exp * Sil.exp) lis
               | _ -> star sg1 typings2'
             end in
       try star sigma1 typings2
-      with exn when exn_not_timeout exn ->
+      with exn when exn_not_failure exn ->
         L.d_str "cannot star ";
         Prop.d_sigma sigma1; L.d_str " and "; Prover.d_typings typings2;
         L.d_ln ();
@@ -541,7 +570,11 @@ let prop_copy_footprint_pure p1 p2 =
   let pi2_attr, pi2_noattr = IList.partition Prop.atom_is_attribute pi2 in
   let res_noattr = Prop.replace_pi (Prop.get_pure p1 @ pi2_noattr) p2' in
   let replace_attr prop atom = (* call replace_atom_attribute which deals with existing attibutes *)
-    Prop.replace_atom_attribute check_attr_dealloc_mismatch prop atom in
+    (** if [atom] represents an attribute [att], add the attribure to [prop] *)
+    match Prop.atom_get_exp_attribute atom with
+    | None -> prop
+    | Some (exp, att) ->
+        Prop.add_or_replace_exp_attribute_check_changed check_attr_dealloc_mismatch prop exp att in
   IList.fold_left replace_attr (Prop.normalize res_noattr) pi2_attr
 
 (** check if an expression is an exception *)
@@ -561,11 +594,12 @@ let prop_is_exn pname prop =
 (** when prop is an exception, return the exception name *)
 let prop_get_exn_name pname prop =
   let ret_pvar = Sil.Lvar (Sil.get_ret_pvar pname) in
-  let exn_name = ref (Mangled.from_string "") in
+  let exn_name = ref (Typename.Java.from_string "") in
   let find_exn_name e =
     let do_hpred = function
       | Sil.Hpointsto (e1, _, Sil.Sizeof(Sil.Tstruct (_, _, _, Some name, _, _, _), _)) when Sil.exp_equal e1 e ->
-          exn_name := name
+          let found_exn_name = Typename.TN_csu (Csu.Class, name) in
+          exn_name := found_exn_name
       | _ -> () in
     IList.iter do_hpred (Prop.get_sigma prop) in
   let find_ret () =
@@ -578,11 +612,11 @@ let prop_get_exn_name pname prop =
   !exn_name
 
 (** search in prop for some assignment of global errors *)
-let lookup_global_errors prop =
+let lookup_custom_errors prop =
   let rec search_error = function
     | [] -> None
-    | Sil.Hpointsto (Sil.Lvar var, Sil.Eexp (Sil.Const (Sil.Cstr str), _), _) :: tl
-      when Sil.pvar_equal var Sil.global_error -> Some (Mangled.from_string str)
+    | Sil.Hpointsto (Sil.Lvar var, Sil.Eexp (Sil.Const (Sil.Cstr error_str), _), _) :: _
+      when Sil.pvar_equal var Sil.custom_error -> Some error_str
     | _ :: tl -> search_error tl in
   search_error (Prop.get_sigma prop)
 
@@ -606,27 +640,6 @@ let combine
     actual_pre path_pre split
     caller_pdesc callee_pname loc =
   let caller_pname = Cfg.Procdesc.get_proc_name caller_pdesc in
-  let new_footprint_pi = Prop.pi_sub split.sub split.missing_pi in
-  let new_footprint_sigma = Prop.sigma_sub split.sub split.missing_sigma in
-  let new_frame_fld = Prop.sigma_sub split.sub split.frame_fld in
-  let new_frame_typ = IList.map (fun (e, te) -> Sil.exp_sub split.sub e, Sil.exp_sub split.sub te) split.frame_typ in
-  let new_missing_typ = IList.map (fun (e, te) -> Sil.exp_sub split.sub e, Sil.exp_sub split.sub te) split.missing_typ in
-  let new_missing_fld =
-    let sigma = Prop.sigma_sub split.sub split.missing_fld in
-    let filter hpred =
-      if not (hpred_has_only_footprint_vars hpred) then
-        begin
-          L.d_warning "Missing fields hpred has non-footprint vars: "; Sil.d_hpred hpred; L.d_ln ();
-          false
-        end
-      else match hpred with
-        | Sil.Hpointsto(Sil.Var id, _, _) -> true
-        | Sil.Hpointsto(Sil.Lvar pvar, _, _) -> Sil.pvar_is_global pvar
-        | _ ->
-            L.d_warning "Missing fields in complex pred: "; Sil.d_hpred hpred; L.d_ln ();
-            false in
-    IList.filter filter sigma in
-  let instantiated_frame = Prop.sigma_sub split.sub split.frame in
   let instantiated_post =
     let posts' =
       if !Config.footprint && posts = []
@@ -649,20 +662,20 @@ let combine
             caller_pname callee_pname loc actual_pre (Prop.prop_sub split.sub p, path)))
       posts' in
   L.d_increase_indent 1;
-  L.d_strln "New footprint:"; Prop.d_pi_sigma new_footprint_pi new_footprint_sigma; L.d_ln ();
-  L.d_strln "Frame fld:"; Prop.d_sigma new_frame_fld; L.d_ln ();
-  if new_frame_typ <> [] then L.d_strln "Frame typ:"; Prover.d_typings new_frame_typ; L.d_ln ();
-  L.d_strln "Missing fld:"; Prop.d_sigma new_missing_fld; L.d_ln ();
-  if new_frame_typ <> [] then L.d_strln "Missing typ:"; Prover.d_typings new_missing_typ; L.d_ln ();
-  L.d_strln "Instantiated frame:"; Prop.d_sigma instantiated_frame; L.d_ln ();
+  L.d_strln "New footprint:"; Prop.d_pi_sigma split.missing_pi split.missing_sigma; L.d_ln ();
+  L.d_strln "Frame fld:"; Prop.d_sigma split.frame_fld; L.d_ln ();
+  if split.frame_typ <> [] then begin L.d_strln "Frame typ:"; Prover.d_typings split.frame_typ; L.d_ln () end;
+  L.d_strln "Missing fld:"; Prop.d_sigma split.missing_fld; L.d_ln ();
+  if split.missing_typ <> [] then begin L.d_strln "Missing typ:"; Prover.d_typings split.missing_typ; L.d_ln (); end;
+  L.d_strln "Instantiated frame:"; Prop.d_sigma split.frame; L.d_ln ();
   L.d_strln "Instantiated post:"; Propgraph.d_proplist Prop.prop_emp (IList.map fst instantiated_post);
   L.d_decrease_indent 1; L.d_ln ();
   let compute_result post_p =
     let post_p' =
-      let post_sigma = sigma_star_fld (Prop.get_sigma post_p) new_frame_fld in
-      let post_sigma' = sigma_star_typ post_sigma new_frame_typ in
+      let post_sigma = sigma_star_fld (Prop.get_sigma post_p) split.frame_fld in
+      let post_sigma' = sigma_star_typ post_sigma split.frame_typ in
       Prop.replace_sigma post_sigma' post_p in
-    let post_p1 = Prop.prop_sigma_star (prop_copy_footprint_pure actual_pre post_p') instantiated_frame in
+    let post_p1 = Prop.prop_sigma_star (prop_copy_footprint_pure actual_pre post_p') split.frame in
 
     let handle_null_case_analysis sigma =
       let id_assigned_to_null id =
@@ -670,7 +683,7 @@ let combine
           | Sil.Aeq (Sil.Var id', Sil.Const (Sil.Cint i)) ->
               Ident.equal id id' && Sil.Int.isnull i
           | _ -> false in
-        IList.exists filter new_footprint_pi in
+        IList.exists filter split.missing_pi in
       let f (e, inst_opt) = match e, inst_opt with
         | Sil.Var id, Some inst when id_assigned_to_null id ->
             let inst' = Sil.inst_set_null_case_flag inst in
@@ -682,7 +695,7 @@ let combine
       let post_p1_sigma = Prop.get_sigma post_p1 in
       let post_p1_sigma' = handle_null_case_analysis post_p1_sigma in
       let post_p1' = Prop.replace_sigma post_p1_sigma' post_p1 in
-      Prop.normalize (Prop.replace_pi (Prop.get_pi post_p1 @ new_footprint_pi) post_p1') in
+      Prop.normalize (Prop.replace_pi (Prop.get_pi post_p1 @ split.missing_pi) post_p1') in
 
     let post_p3 = (** replace [result|callee] with an aux variable dedicated to this proc *)
       let callee_ret_pvar =
@@ -719,7 +732,12 @@ let combine
     let post_p4 =
       if !Config.footprint
       then
-        prop_footprint_add_pi_sigma_starfld_sigma post_p3 new_footprint_pi new_footprint_sigma new_missing_fld new_missing_typ
+        prop_footprint_add_pi_sigma_starfld_sigma
+          post_p3
+          split.missing_pi
+          split.missing_sigma
+          split.missing_fld
+          split.missing_typ
       else Some post_p3 in
     post_p4 in
   let _results = IList.map (fun (p, path) -> (compute_result p, path)) instantiated_post in
@@ -729,6 +747,45 @@ let combine
     let results = IList.map (function (Some x, path) -> (x, path) | (None, _) -> assert false) _results in
     print_results actual_pre (IList.map fst results);
     Some results
+
+(* add tainting attribute to a pvar in a prop *)
+let add_tainting_attribute att pvar_param prop =
+  IList.fold_left
+    (fun prop_acc hpred ->
+       match hpred with
+       | Sil.Hpointsto (Sil.Lvar pvar, (Sil.Eexp (rhs, _)), _)
+         when Sil.pvar_equal pvar pvar_param ->
+           L.d_strln ("TAINT ANALYSIS: setting taint/untaint attribute of parameter " ^
+                      (Sil.pvar_to_string pvar));
+           Prop.add_or_replace_exp_attribute prop_acc rhs att
+       | _ -> prop_acc)
+    prop (Prop.get_sigma prop)
+
+(* add tainting attributes to a list of paramenters *)
+let add_tainting_att_param_list prop param_nums formal_params att =
+  try
+    IList.map (fun n -> IList.nth formal_params n) param_nums
+    |> IList.fold_left (fun prop param -> add_tainting_attribute att param prop) prop
+  with Failure _ | Invalid_argument _  ->
+    L.d_strln ("TAINT ANALYSIS: WARNING, tainting framework " ^
+               "specifies incorrect parameter number " ^
+               " to be set as tainted/untainted ");
+    prop
+
+(* Set Ataint attribute to list of parameteres in a prop *)
+let add_param_taint proc_name formal_params prop param_nums =
+  let formal_params' = IList.map
+      (fun (p, _) -> Sil.mk_pvar p proc_name) formal_params in
+  add_tainting_att_param_list prop param_nums formal_params' (Sil.Ataint proc_name)
+
+(* add Auntaint attribute to a callee_pname precondition *)
+let mk_pre pre formal_params callee_pname =
+  if !Config.taint_analysis then
+    let pre' = add_tainting_att_param_list (Prop.normalize pre)
+        (Taint.accepts_sensitive_params callee_pname) formal_params (Sil.Auntaint) in
+    (Prop.expose pre')
+  else pre
+
 
 (** Construct the actual precondition: add to the current state a copy
     of the (callee's) formal parameters instantiated with the actual
@@ -750,70 +807,113 @@ let mk_actual_precondition prop actual_params formal_params =
   let actual_pre = Prop.prop_sigma_star prop instantiated_formals in
   Prop.normalize actual_pre
 
+let mk_posts ret_ids prop callee_pname posts =
+  match ret_ids with
+  | [ret_id] ->
+      let mk_getter_idempotent posts =
+        (* if we have seen a previous call to the same function, only use specs whose return value
+           is consistent with constraints on the return value of the previous call w.r.t to
+           nullness. meant to eliminate false NPE warnings from the common
+           "if (get() != null) get().something()" pattern *)
+        let last_call_ret_non_null =
+          IList.exists
+            (fun (exp, attr) ->
+               match attr with
+               | Sil.Aretval pname when Procname.equal callee_pname pname ->
+                   Prover.check_disequal prop exp Sil.exp_zero
+               | _ -> false)
+            (Prop.get_all_attributes prop) in
+        if last_call_ret_non_null then
+          let returns_null prop =
+            IList.exists
+              (function
+                | Sil.Hpointsto (Sil.Lvar pvar, Sil.Eexp (e, _), _) when Sil.pvar_is_return pvar ->
+                    Prover.check_equal (Prop.normalize prop) e Sil.exp_zero
+                | _ -> false)
+              (Prop.get_sigma prop) in
+          IList.filter (fun (prop, _) -> not (returns_null prop)) posts
+        else posts in
+      let mk_retval_tainted posts =
+        if Taint.returns_secret callee_pname then
+          let taint_retval (prop, path) =
+            let prop_normal = Prop.normalize prop in
+            let prop' =
+              Prop.add_or_replace_exp_attribute prop_normal
+                (Sil.Var ret_id)
+                (Sil.Ataint callee_pname)
+              |> Prop.expose in
+            (prop', path) in
+          IList.map taint_retval posts
+        else posts in
+      let posts' =
+        if !Config.idempotent_getters && !Config.curr_language = Config.Java
+        then mk_getter_idempotent posts
+        else posts in
+      if !Config.taint_analysis then mk_retval_tainted posts' else posts'
+  | _ -> posts
+
+
 (** Check if actual_pre * missing_footprint |- false *)
 let inconsistent_actualpre_missing actual_pre split_opt =
   match split_opt with
   | Some split ->
-      let norm_missing_pi = Prop.pi_sub split.sub split.missing_pi in
-      let norm_missing_sigma = Prop.sigma_sub split.sub split.missing_sigma in
-      let prop'= Prop.normalize (Prop.prop_sigma_star actual_pre norm_missing_sigma) in
-      let prop''= IList.fold_left Prop.prop_atom_and prop' norm_missing_pi in
+      let prop'= Prop.normalize (Prop.prop_sigma_star actual_pre split.missing_sigma) in
+      let prop''= IList.fold_left Prop.prop_atom_and prop' split.missing_pi in
       Prover.check_inconsistency prop''
   | None -> false
 
-(* Collect the taint/untain info on the pi part *)
-let rec get_taint_untaint pi =
-  let get_att_exp p e (t,u) =
-    match Prop.get_taint_attribute p e with
-    | Some(Sil.Ataint _) ->
-        L.d_str "   ---->Found TAINTED exp: "; Sil.d_exp e; L.d_ln ();
-        (e::t, u)
-    | Some(Sil.Auntaint) ->
-        L.d_str "   ---->Found UNTAINTED exp: "; Sil.d_exp e; L.d_ln ();
-        (t, e::u)
-    | _ -> (t,u) in
-  match pi with
-  | [] -> ([],[])
-  | Sil.Aneq (e1, e2):: pi' ->
-      let (t, u) = get_taint_untaint pi' in
-      let p = Prop.replace_pi [Sil.Aneq (e1, e2)] Prop.prop_emp in
-      let (t',u') = get_att_exp p e1 (t,u) in
-      get_att_exp p e2 (t',u')
-  | _ :: pi' -> get_taint_untaint pi'
-
-(* perform the taint analysis check by comparing in a function call the
-   actual calling state and the missing pi computed by abduction *)
-let do_taint_check caller_pname callee_pname calling_prop missing_pi sub prop =
-  (* Note: returns only the first element in the intersection*)
-  let rec intersection_taint_untaint taint untaint =
-    match taint with
-    | [] -> None
-    | e:: taint' -> if (IList.exists (fun e' -> Sil.exp_equal e e') untaint) then (Some e)
-        else intersection_taint_untaint taint' untaint in
-  let combined_calling_prop =
-    Prop.replace_pi ((Prop.get_pi calling_prop) @ missing_pi) calling_prop in
-  let sub_combined_calling_prop = Prop.prop_sub sub combined_calling_prop in
-  let taint_set, untaint_set = get_taint_untaint (Prop.get_pi sub_combined_calling_prop) in
-  L.d_str "Actual pre combined with missing pi: "; Prop.d_prop sub_combined_calling_prop; L.d_ln();
-  L.d_str "Taint set: "; Sil.d_exp_list taint_set; L.d_ln ();
-  L.d_str "Untaint set: "; Sil.d_exp_list untaint_set; L.d_ln ();
-  match intersection_taint_untaint taint_set untaint_set with
-  | None -> L.d_str "NO taint error detected"; L.d_ln();
-  | Some e -> begin
-      L.d_str "Taint error detected!"; L.d_ln();
-      let e' = match Errdesc.find_pvar_with_exp prop e with
-        | Some (pv, _) -> Sil.Lvar pv
-        | None -> e in
-      let tainting_fun = match Prop.get_taint_attribute prop e with
-        | Some (Sil.Ataint tf) -> tf
-        | _ -> Procname.empty  (* by definition of e, we should not get to this case *) in
-      let err_desc = Errdesc.explain_tainted_value_reaching_sensitive_function e' tainting_fun
+(* perform the taint analysis check by comparing the taint atoms in [calling_pi] with the untaint
+   atoms required by the [missing_pi] computed during abduction *)
+let do_taint_check caller_pname callee_pname calling_pi missing_pi sub prop =
+  (* get a version of [missing_pi] whose var names match the names in calling pi *)
+  let missing_pi_sub = Prop.pi_sub sub missing_pi in
+  let combined_pi = calling_pi @ missing_pi_sub in
+  (* build a map from exp -> [taint attrs, untaint attrs], keeping only exprs with both kinds of
+     attrs (we will flag errors on those exprs) *)
+  let collect_taint_untaint_exprs acc_map atom = match Prop.atom_get_exp_attribute atom with
+    | Some (e, Sil.Ataint _) ->
+        let taint_atoms, untaint_atoms = try Sil.ExpMap.find e acc_map with Not_found -> ([], []) in
+        Sil.ExpMap.add e (atom :: taint_atoms, untaint_atoms) acc_map
+    | Some (e, Sil.Auntaint) ->
+        let taint_atoms, untaint_atoms = try Sil.ExpMap.find e acc_map with Not_found -> ([], []) in
+        Sil.ExpMap.add e (taint_atoms, atom :: untaint_atoms) acc_map
+    | _ -> acc_map in
+  let taint_untaint_exp_map =
+    IList.fold_left
+      collect_taint_untaint_exprs
+      Sil.ExpMap.empty
+      combined_pi
+    |> Sil.ExpMap.filter (fun _ (taint, untaint) -> taint <> []  && untaint <> []) in
+  (* TODO: in the future, we will have a richer taint domain that will require making sure that the
+     "kind" (e.g. security, privacy) of the taint and untaint match, but for now we don't look at
+     the untaint atoms *)
+  let report_taint_errors e (taint_atoms, _untaint_atoms) =
+    let report_one_error taint_atom =
+      let tainting_fun = match Prop.atom_get_exp_attribute taint_atom with
+        | Some (_, Sil.Ataint pname) -> pname
+        | _ -> failwith "Expected to get taint attr on atom" in
+      let err_desc = Errdesc.explain_tainted_value_reaching_sensitive_function e tainting_fun
           callee_pname (State.get_loc ()) in
       let exn =
         Exceptions.Tainted_value_reaching_sensitive_function
           (err_desc, try assert false with Assert_failure x -> x) in
-      Reporting.log_warning caller_pname exn
-    end
+      Reporting.log_warning caller_pname exn in
+    IList.iter report_one_error taint_atoms in
+  Sil.ExpMap.iter report_taint_errors taint_untaint_exp_map;
+  (* filter out UNTAINT(e) atoms from [missing_pi] such that we have already reported a taint
+     error on e. without doing this, we will get PRECONDITION_NOT_MET (and failed spec
+     inference), which is bad. instead, what this does is effectively assume that the UNTAINT(e)
+     precondition was met, and continue with the analysis under this assumption. this makes sense
+     because we are reporting the taint error, but propagating a *safe* postcondition w.r.t to
+     tainting. *)
+  let not_untaint_atom atom = not
+      (Sil.ExpMap.exists
+         (fun _ (_, untaint_atoms) ->
+            IList.exists
+              (fun a -> Sil.atom_equal atom a)
+              untaint_atoms)
+         taint_untaint_exp_map) in
+  IList.filter not_untaint_atom missing_pi_sub
 
 let class_cast_exn pname_opt texp1 texp2 exp ml_location =
   let desc = Errdesc.explain_class_cast_exception pname_opt texp1 texp2 exp (State.get_node ()) (State.get_loc ()) in
@@ -842,34 +942,9 @@ let exe_spec
     tenv cfg ret_ids (n, nspecs) caller_pdesc callee_pname loc prop path_pre
     (spec : Prop.exposed Specs.spec) actual_params formal_params : abduction_res =
   let caller_pname = Cfg.Procdesc.get_proc_name caller_pdesc in
-  let posts =
-    match ret_ids with
-    | [ret_id] when !Config.idempotent_getters && !Config.curr_language = Config.Java ->
-        (* if we have seen a previous call to the same function, only use specs whose return value
-           is consistent with constraints on the return value of the previous call w.r.t to nullness.
-           meant to eliminate false NPE warnings from the common "if (get() != null) get().something()"
-           pattern *)
-        let last_call_ret_non_null =
-          IList.exists
-            (fun (exp, attr) ->
-               match attr with
-               | Sil.Aretval pname when Procname.equal callee_pname pname ->
-                   Prover.check_disequal prop exp Sil.exp_zero
-               | _ -> false)
-            (Prop.get_all_attributes prop) in
-        if last_call_ret_non_null then
-          let returns_null prop =
-            IList.exists
-              (function
-                | Sil.Hpointsto (Sil.Lvar pvar, Sil.Eexp (e, _), _) when Sil.pvar_is_return pvar ->
-                    Prover.check_equal (Prop.normalize prop) e Sil.exp_zero
-                | _ -> false)
-              (Prop.get_sigma prop) in
-          IList.filter (fun (prop, _) -> not (returns_null prop)) spec.Specs.posts
-        else spec.Specs.posts
-    | _ -> spec.Specs.posts in
+  let posts = mk_posts ret_ids prop callee_pname spec.Specs.posts in
   let actual_pre = mk_actual_precondition prop actual_params formal_params in
-  let spec_pre = Specs.Jprop.to_prop spec.Specs.pre in
+  let spec_pre = mk_pre (Specs.Jprop.to_prop spec.Specs.pre) formal_params callee_pname in
   L.d_strln ("EXECUTING SPEC " ^ string_of_int n ^ "/" ^ string_of_int nspecs);
   L.d_strln "ACTUAL PRECONDITION =";
   L.d_increase_indent 1; Prop.d_prop actual_pre; L.d_decrease_indent 1; L.d_ln ();
@@ -883,12 +958,12 @@ let exe_spec
         let exn = get_check_exn check callee_pname loc (try assert false with Assert_failure x -> x) in
         Reporting.log_warning caller_pname exn in
       let do_split () =
-        let split = process_splitting actual_pre sub1 sub2 frame missing_pi missing_sigma frame_fld missing_fld frame_typ missing_typ in
-        d_splitting split; L.d_ln ();
-        let norm_missing_pi = Prop.pi_sub split.sub split.missing_pi in
-        let norm_missing_sigma = Prop.sigma_sub split.sub split.missing_sigma in
-        (split, norm_missing_pi, norm_missing_sigma) in
-      let report_valid_res split norm_missing_pi norm_missing_sigma =
+        let missing_pi' =
+          if !Config.taint_analysis then
+            do_taint_check caller_pname callee_pname (Prop.get_pi actual_pre) missing_pi sub2 prop
+          else missing_pi in
+        process_splitting actual_pre sub1 sub2 frame missing_pi' missing_sigma frame_fld missing_fld frame_typ missing_typ in
+      let report_valid_res split =
         match combine
                 cfg ret_ids posts
                 actual_pre path_pre split
@@ -901,19 +976,17 @@ let exe_spec
               IList.partition (fun (p, _) -> Prover.check_inconsistency p) results in
             let incons_pre_missing = inconsistent_actualpre_missing actual_pre (Some split) in
             Valid_res { incons_pre_missing = incons_pre_missing;
-                        vr_pi = norm_missing_pi;
-                        vr_sigma = norm_missing_sigma;
+                        vr_pi = split.missing_pi;
+                        vr_sigma = split.missing_sigma;
                         vr_cons_res = consistent_results;
                         vr_incons_res = inconsistent_results } in
       begin
         IList.iter log_check_exn checks;
-        if !Config.taint_analysis then
-          do_taint_check caller_pname callee_pname actual_pre missing_pi sub2 prop;
         let subbed_pre = (Prop.prop_sub sub1 actual_pre) in
         match check_dereferences callee_pname subbed_pre sub2 spec_pre formal_params with
         | Some (Deref_undef _, _) when !Config.angelic_execution ->
-            let (split, norm_missing_pi, norm_missing_sigma) = do_split () in
-            report_valid_res split norm_missing_pi norm_missing_sigma
+            let split = do_split () in
+            report_valid_res split
         | Some (deref_error, desc) ->
             let rec join_paths = function
               | [] -> None
@@ -924,7 +997,7 @@ let exe_spec
             let pjoin = join_paths posts in (* join the paths from the posts *)
             Invalid_res (Dereference_error (deref_error, desc, pjoin))
         | None ->
-            let (split, norm_missing_pi, norm_missing_sigma) = do_split () in
+            let split = do_split () in
             (* check if a missing_fld hpred is about a hidden field *)
             let hpred_missing_hidden = function
               | Sil.Hpointsto (_, Sil.Estruct ([(fld, _)], _), _) -> Ident.fieldname_is_hidden fld
@@ -932,7 +1005,7 @@ let exe_spec
             (* missing fields minus hidden fields *)
             let missing_fld_nohidden =
               IList.filter (fun hp -> not (hpred_missing_hidden hp)) missing_fld in
-            if !Config.footprint = false && norm_missing_sigma != [] then
+            if !Config.footprint = false && split.missing_sigma != [] then
               begin
                 L.d_strln "Implication error: missing_sigma not empty in re-execution";
                 Invalid_res Missing_sigma_not_empty
@@ -942,7 +1015,7 @@ let exe_spec
                 L.d_strln "Implication error: missing_fld not empty in re-execution";
                 Invalid_res Missing_fld_not_empty
               end
-            else report_valid_res split norm_missing_pi norm_missing_sigma
+            else report_valid_res split
       end
 
 let remove_constant_string_class prop =

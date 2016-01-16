@@ -33,14 +33,6 @@ let rec translate_one_declaration tenv cg cfg parent_dec dec =
      | FunctionDecl(di, name_info, tp, fdecl_info) ->
          CMethod_declImpl.function_decl tenv cfg cg dec None
 
-     (* Currently C/C++ record decl treated in the same way *)
-     | CXXRecordDecl (_, _, _, _, decl_list, _, _, _) | RecordDecl (_, _, _, _, decl_list, _, _) ->
-         ignore (CTypes_decl.add_types_from_decl_to_tenv tenv dec);
-         let method_decls = CTypes_decl.get_method_decls dec decl_list in
-         let tranlate_method (parent, decl) =
-           translate_one_declaration tenv cg cfg parent decl in
-         IList.iter tranlate_method method_decls
-
      | ObjCInterfaceDecl(decl_info, name_info, decl_list, decl_context_info, oi_decl_info) ->
          let name = Ast_utils.get_qualified_name name_info in
          let curr_class = ObjcInterface_decl.get_curr_class name oi_decl_info in
@@ -64,24 +56,37 @@ let rec translate_one_declaration tenv cg cfg parent_dec dec =
          let name = Ast_utils.get_qualified_name name_info in
          let curr_class = ObjcCategory_decl.get_curr_class_from_category_impl name ocidi in
          ignore (ObjcCategory_decl.category_impl_decl CTypes_decl.type_ptr_to_sil_type tenv dec);
-         CMethod_declImpl.process_methods tenv cg cfg curr_class decl_list
+         CMethod_declImpl.process_methods tenv cg cfg curr_class decl_list;
+         (match Ast_utils.get_decl_opt_with_decl_ref ocidi.Clang_ast_t.ocidi_category_decl with
+          | Some ObjCCategoryDecl(_, _, cat_decl_list, _, _) ->
+              let name = CContext.get_curr_class_name curr_class in
+              let decls = cat_decl_list @ decl_list in
+              CFrontend_errors.check_for_property_errors cfg cg tenv name decls
+          | _ -> ())
 
      | ObjCImplementationDecl(decl_info, name_info, decl_list, decl_context_info, idi) ->
          let curr_class = ObjcInterface_decl.get_curr_class_impl idi in
          let type_ptr_to_sil_type = CTypes_decl.type_ptr_to_sil_type in
          ignore (ObjcInterface_decl.interface_impl_declaration type_ptr_to_sil_type tenv dec);
          CMethod_declImpl.process_methods tenv cg cfg curr_class decl_list;
-         CFrontend_errors.check_for_property_errors cfg curr_class
+         (match Ast_utils.get_decl_opt_with_decl_ref idi.Clang_ast_t.oidi_class_interface with
+          | Some ObjCInterfaceDecl(_, _, cl_decl_list, _, _) ->
+              let name = CContext.get_curr_class_name curr_class in
+              let decls = cl_decl_list @ decl_list in
+              CFrontend_errors.check_for_property_errors cfg cg tenv name decls
+          | _ -> ())
 
      | CXXMethodDecl (decl_info, name_info, type_ptr, function_decl_info, _)
-     | CXXConstructorDecl (decl_info, name_info, type_ptr, function_decl_info, _) ->
+     | CXXConstructorDecl (decl_info, name_info, type_ptr, function_decl_info, _)
+     | CXXDestructorDecl (decl_info, name_info, type_ptr, function_decl_info, _) ->
          (* di_parent_pointer has pointer to lexical context such as class.*)
          (* If it's not defined, then it's the same as parent in AST *)
          let class_decl = match decl_info.Clang_ast_t.di_parent_pointer with
            | Some ptr -> Ast_utils.get_decl ptr
            | None -> Some parent_dec in
          (match class_decl with
-          | Some (CXXRecordDecl _ as d) ->
+          | Some (CXXRecordDecl _ as d)
+          | Some (ClassTemplateSpecializationDecl _ as d) ->
               let class_name = CTypes_decl.get_record_name d in
               let curr_class = CContext.ContextCls(class_name, None, []) in
               if !CFrontend_config.testing_mode then
@@ -90,11 +95,27 @@ let rec translate_one_declaration tenv cg cfg parent_dec dec =
           | None -> ())
      | dec -> ());
   match dec with
+  (* Currently C/C++ record decl treated in the same way *)
+  | ClassTemplateSpecializationDecl (decl_info, _, _, _, decl_list, _, _, _)
+  | CXXRecordDecl (decl_info, _, _, _, decl_list, _, _, _)
+  | RecordDecl (decl_info, _, _, _, decl_list, _, _) when not decl_info.di_is_implicit ->
+      let is_method_decl decl = match decl with
+        | CXXMethodDecl _ | CXXConstructorDecl _ | CXXDestructorDecl _ | FunctionTemplateDecl _ ->
+            true
+        | _ -> false in
+      let method_decls, no_method_decls = IList.partition is_method_decl decl_list in
+      IList.iter (translate_one_declaration tenv cg cfg dec) no_method_decls;
+      ignore (CTypes_decl.add_types_from_decl_to_tenv tenv dec);
+      IList.iter (translate_one_declaration tenv cg cfg dec) method_decls
   | EnumDecl _ -> ignore (CEnum_decl.enum_decl dec)
   | LinkageSpecDecl (decl_info, decl_list, decl_context_info) ->
       Printing.log_out "ADDING: LinkageSpecDecl decl list\n";
       IList.iter (translate_one_declaration tenv cg cfg dec) decl_list
   | NamespaceDecl (decl_info, name_info, decl_list, decl_context_info, _) ->
+      IList.iter (translate_one_declaration tenv cg cfg dec) decl_list
+  | ClassTemplateDecl (decl_info, named_decl_info, template_decl_info)
+  | FunctionTemplateDecl (decl_info, named_decl_info, template_decl_info) ->
+      let decl_list = template_decl_info.Clang_ast_t.tdi_specializations in
       IList.iter (translate_one_declaration tenv cg cfg dec) decl_list
   | dec -> ()
 
@@ -117,14 +138,12 @@ let init_global_state source_file =
   DB.Results_dir.init ();
   Ident.NameGenerator.reset ();
   CFrontend_config.global_translation_unit_decls := [];
-  ObjcProperty_decl.reset_property_table ();
   CFrontend_utils.General_utils.reset_block_counter ()
 
 let do_source_file source_file ast =
   let tenv = Sil.create_tenv () in
   CTypes_decl.add_predefined_types tenv;
   init_global_state source_file;
-  CLocation.init_curr_source_file source_file;
   Config.nLOC := FileLOC.file_get_loc (DB.source_file_to_string source_file);
   Printing.log_out "\n Start building call/cfg graph for '%s'....\n"
     (DB.source_file_to_string source_file);

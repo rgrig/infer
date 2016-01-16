@@ -11,8 +11,8 @@ open CFrontend_utils
 
 let get_builtin_objc_typename builtin_type =
   match builtin_type with
-  | `ObjCId -> Sil.TN_csu (Sil.Struct, (Mangled.from_string CFrontend_config.objc_object))
-  | `ObjCClass -> Sil.TN_csu (Sil.Struct, (Mangled.from_string CFrontend_config.objc_class))
+  | `ObjCId -> Typename.TN_csu (Csu.Struct, (Mangled.from_string CFrontend_config.objc_object))
+  | `ObjCClass -> Typename.TN_csu (Csu.Struct, (Mangled.from_string CFrontend_config.objc_class))
 
 let get_builtin_objc_type builtin_type =
   let typ = Sil.Tvar (get_builtin_objc_typename builtin_type) in
@@ -132,6 +132,7 @@ and decl_ptr_to_sil_type translate_decl tenv decl_ptr =
     match Ast_utils.get_decl decl_ptr with
     | Some (CXXRecordDecl _ as d)
     | Some (RecordDecl _ as d)
+    | Some (ClassTemplateSpecializationDecl _ as d)
     | Some (ObjCInterfaceDecl _ as d)
     | Some (ObjCImplementationDecl _ as d)
     | Some (ObjCProtocolDecl _ as d)

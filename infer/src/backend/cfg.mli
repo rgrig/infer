@@ -60,7 +60,7 @@ module Procdesc : sig
   val get_flags : t -> proc_flags
 
   (** Return name and type of formal parameters *)
-  val get_formals : t -> (string * Sil.typ) list
+  val get_formals : t -> (Mangled.t * Sil.typ) list
 
   (** Return loc information for the procedure *)
   val get_loc : t -> Location.t
@@ -289,9 +289,6 @@ val get_all_procs : cfg -> Procdesc.t list
 
 (** Get the procedures whose body is defined in this cfg *)
 val get_defined_procs : cfg -> Procdesc.t list
-
-(** Get the objc procedures whose body is generated *)
-val get_objc_generated_procs : cfg -> Procdesc.t list
 
 (** get the function names which should be analyzed before the other ones *)
 val get_priority_procnames : cfg -> Procname.Set.t

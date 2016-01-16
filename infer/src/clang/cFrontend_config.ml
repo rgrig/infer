@@ -107,7 +107,7 @@ let init = "init"
 
 let temp_var = "infer"
 
-let pointer_prefix = "internal"
+let invalid_pointer = 0
 
 let void = "void"
 
@@ -149,8 +149,6 @@ let objects = "objects"
 
 let enumerateObjectsUsingBlock = "enumerateObjectsUsingBlock:"
 
-let generated_suffix = "*generated"
-
 let pointer_type_index = ref Clang_ast_main.PointerMap.empty
 
 (* Map from type pointers or declaration pointers to sil types *)
@@ -159,10 +157,10 @@ let sil_types_map = ref Clang_ast_types.TypePointerMap.empty
 (* Map from enum constants pointers to their predecesor and their sil value *)
 let enum_map = ref Clang_ast_main.PointerMap.empty
 
-let type_pointer_prefix = "internal_type"
-
 let nsarray_cl = "NSArray"
 
 let infer = "infer"
 
 let block = "block"
+
+let atomic_att = "<\"Atomic\">"

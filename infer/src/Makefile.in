@@ -1,0 +1,312 @@
+# Copyright (c) 2013 - present Facebook, Inc.
+# All rights reserved.
+#
+# This source code is licensed under the BSD style license found in the
+# LICENSE file in the root directory of this source tree. An additional grant
+# of patent rights can be found in the PATENTS file in the same directory.
+
+ROOT_DIR = ../..
+include $(ROOT_DIR)/Makefile.config
+
+INFER_MAJOR = @INFER_MAJOR@
+INFER_MINOR = @INFER_MINOR@
+INFER_PATCH = @INFER_PATCH@
+INFER_IS_RELEASE = @INFER_IS_RELEASE@
+
+REMOVE = @rm -vf
+REMOVE_DIR = @rm -rvf
+COPY = cp -f -p
+COPY_DIR = cp -rf
+MKDIR = mkdir -p
+LINK = ln -sf
+ATDGEN = @ATDGEN@
+
+OCAML_INCLUDE_DIR = $(shell ocamlc -where)
+
+#### Global declarations ####
+
+BUILD_DIR = $(INFER_DIR)/_build-infer
+JAVA_BUILD_DIR = $(BUILD_DIR)/java
+CLANG_BUILD_DIR = $(BUILD_DIR)/clang
+LLVM_BUILD_DIR = $(BUILD_DIR)/llvm
+SCRIPTS_BUILD_DIR = $(BUILD_DIR)/scripts
+ANNOT_DIR = $(SRC_DIR)/_build
+ETC_DIR = $(INFER_DIR)/etc
+
+#### Infer includes declarations ####
+
+ATDGEN_INCLUDE_DIR = @OCAML_PKG_PATH_atdgen@
+BINIOU_INCLUDE_DIR = @OCAML_PKG_PATH_biniou@
+EASYFORMAT_INCLUDE_DIR = @OCAML_PKG_PATH_easy_format@
+EXTLIB_INCLUDE_DIR = @OCAML_PKG_PATH_extlib@
+YOJSON_INCLUDE_DIR = @OCAML_PKG_PATH_yojson@
+ZIP_INCLUDE_DIR = @OCAML_PKG_PATH_camlzip@
+
+OCAML_INCLUDES = -I,$(EASYFORMAT_INCLUDE_DIR),-I,$(BINIOU_INCLUDE_DIR),-I,$(YOJSON_INCLUDE_DIR),-I,$(ATDGEN_INCLUDE_DIR),-I,$(EXTLIB_INCLUDE_DIR),-I,$(ZIP_INCLUDE_DIR)
+OCAML_LIBS = unix str atdgen extLib zip
+OCAML_MODS = easy_format bi_util bi_share bi_outbuf bi_inbuf bi_vint bi_io yojson ag_oj_run ag_ob_run ag_util
+
+# backwards compatibility with OCaml version < 4.02.0
+ifeq (@OCAML_HAS_NATIVE_BYTES@,no)
+OCAML_INCLUDES := $(OCAML_INCLUDES),-I,@OCAML_PKG_PATH_bytes@
+OCAML_LIBS += bytes
+endif
+
+OCAMLBUILD_ANNOT_OPTIONS =
+ifeq (@ENABLE_OCAML_ANNOT@,yes)
+OCAMLBUILD_ANNOT_OPTIONS = -cflags -annot
+endif
+
+OCAMLBUILD_BINANNOT_OPTIONS =
+ifeq (@ENABLE_OCAML_BINANNOT@,yes)
+OCAMLBUILD_BINANNOT_OPTIONS = -cflags -bin-annot
+endif
+
+OCAMLBUILD_OPTIONS = \
+                     $(OCAMLBUILD_ANNOT_OPTIONS) \
+                     $(OCAMLBUILD_BINANNOT_OPTIONS) \
+                     -classic-display \
+                     -cflags -warn-error,@5@8@10..12@20@26@39 \
+                     -lflags $(OCAML_INCLUDES) \
+                     -cflags $(OCAML_INCLUDES) \
+                     $(addprefix -lib ,$(OCAML_LIBS)) \
+                     $(addprefix -mod ,$(OCAML_MODS))
+
+ifeq (@OCAMLC_HAS_SAFE_STRING@,yes)
+OCAMLBUILD_OPTIONS += -cflags -safe-string
+endif
+
+#### Backend declarations ####
+
+BACKEND_SOURCES = backend
+
+INFERANALYZE_MAIN = $(BACKEND_SOURCES)/inferanalyze
+
+#### Typeprop declarations ####
+
+TYPEPROP_MAIN = $(BACKEND_SOURCES)/type_prop
+TYPEPROP_BIN = $(BIN_DIR)/Typeprop
+
+#### InferPrint declarations ####
+
+INFERPRINT_ATDGEN_STUB_BASE = $(BACKEND_SOURCES)/jsonbug
+INFERPRINT_ATDGEN_STUB_ATD = $(INFERPRINT_ATDGEN_STUB_BASE).atd
+INFERPRINT_ATDGEN_SUFFIXES = _t.ml _t.mli _j.ml _j.mli
+INFERPRINT_ATDGEN_STUBS = $(addprefix $(INFERPRINT_ATDGEN_STUB_BASE), $(INFERPRINT_ATDGEN_SUFFIXES))
+
+INFERPRINT_MAIN = $(BACKEND_SOURCES)/inferprint
+
+#### Java declarations ####
+
+PTREES_INCLUDE_DIR = @OCAML_PKG_PATH_ptrees@
+JAVALIB_INCLUDE_DIR = @OCAML_PKG_PATH_javalib@
+SAWJA_INCLUDE_DIR = @OCAML_PKG_PATH_sawja@
+
+JAVA_INCLUDES = -I,$(PTREES_INCLUDE_DIR),-I,$(JAVALIB_INCLUDE_DIR),-I,$(SAWJA_INCLUDE_DIR)
+JAVA_LIBS = ptrees javalib sawja
+JAVA_OCAMLBUID_OPTIONS = -lflags $(JAVA_INCLUDES) -cflags $(JAVA_INCLUDES) $(addprefix -lib ,$(JAVA_LIBS))
+
+JAVA_SOURCES = java
+
+INFERJAVA_MAIN = $(JAVA_SOURCES)/jMain
+
+#### Clang declarations ####
+
+CLANG_SOURCES = clang
+INFERCLANG_MAIN = $(CLANG_SOURCES)/cMain
+
+FCP_CLANG_OCAML_BUILD_DIR = $(FCP_CLANG_OCAML_DIR)/build
+
+CLANG_PLUGIN_BINARIES = $(addprefix $(FCP_CLANG_OCAML_BUILD_DIR), \
+                          clang_ast_converter clang_ast_named_decl_printer)
+
+CLANG_AST_BASE_NAME = clang_ast
+CLANG_ATDGEN_STUB_BASE = $(CLANG_SOURCES)/$(CLANG_AST_BASE_NAME)
+CLANG_ATDGEN_STUB_ATD = $(FCP_CLANG_OCAML_BUILD_DIR)/$(CLANG_AST_BASE_NAME).atd
+CLANG_ATDGEN_SUFFIXES = _t.ml _t.mli _b.ml _b.mli _j.ml _j.mli _v.ml _v.mli
+CLANG_ATDGEN_STUBS = $(addprefix $(CLANG_ATDGEN_STUB_BASE), $(CLANG_ATDGEN_SUFFIXES))
+
+FCP_CLANG_AST_PROJ = $(addprefix $(FCP_CLANG_OCAML_BUILD_DIR)/, \
+                       clang_ast_proj.ml clang_ast_proj.mli)
+FCP_CLANG_AST_MAIN = $(addprefix $(FCP_CLANG_OCAML_DIR)/, \
+                       clang_ast_visit.ml clang_ast_main.ml)
+FCP_FILES_TO_MIRROR = $(FCP_CLANG_AST_PROJ) $(FCP_CLANG_AST_MAIN)
+INFER_CLANG_FCP_MIRRORED_FILES = $(addprefix $(CLANG_SOURCES)/, $(notdir $(FCP_FILES_TO_MIRROR)))
+
+CLANG_BINIOU_DICT = $(ETC_DIR)/clang_ast.dict
+
+#### LLVM declarations ####
+
+LLVM_SOURCES = llvm
+INFERLLVM_MAIN = $(LLVM_SOURCES)/lMain
+INFERLLVM_BIN = $(BIN_DIR)/InferLLVM
+
+#### scripts declarations ####
+
+SCRIPT_SOURCES = scripts
+
+CHECKCOPYRIGHT_BIN = $(SCRIPT_DIR)/checkCopyright
+CHECKCOPYRIGHT_MAIN = $(SCRIPT_SOURCES)/checkCopyright
+
+#### End of declarations ####
+
+# Check whether .facebook file exists in a root directory.
+# Based on that determine which code should be loaded
+ifeq ($(wildcard $(ROOT_DIR)/.facebook),)
+	EXTRA_DEPS = opensource
+else
+	EXTRA_DEPS = facebook
+endif
+
+DEPENDENCIES = $(BACKEND_SOURCES) checkers eradicate facebook/checkers facebook/checkers/graphql facebook/scripts harness $(EXTRA_DEPS)
+
+OCAMLBUILD = ocamlbuild $(OCAMLBUILD_OPTIONS) -j 0 $(addprefix -I , $(DEPENDENCIES))
+
+.PHONY: all java clang llvm checkCopyright build_java build_clang build_llvm build_checkCopyright \
+        java_annotations clang_annotations llvm_annotations scripts_annotations \
+        init version sanitize clean
+
+all: java clang llvm checkCopyright
+
+java: $(INFERJAVA_BIN)
+
+clang: $(INFERCLANG_BIN) $(CLANG_BINIOU_DICT)
+
+llvm: $(INFERLLVM_BIN)
+
+checkCopyright: $(CHECKCOPYRIGHT_BIN)
+
+build_java: init $(INFERPRINT_ATDGEN_STUBS)
+	$(OCAMLBUILD) -build-dir $(JAVA_BUILD_DIR) $(JAVA_OCAMLBUID_OPTIONS) \
+	  $(TYPEPROP_MAIN).native \
+	  $(INFERANALYZE_MAIN).native \
+	  $(INFERPRINT_MAIN).native \
+	  $(INFERJAVA_MAIN).native
+
+build_clang: init $(INFERPRINT_ATDGEN_STUBS) $(CLANG_ATDGEN_STUBS) $(INFER_CLANG_FCP_MIRRORED_FILES)
+	$(OCAMLBUILD) -build-dir $(CLANG_BUILD_DIR) \
+	  $(INFERANALYZE_MAIN).native \
+	  $(INFERPRINT_MAIN).native \
+	  $(INFERCLANG_MAIN).native
+
+build_llvm:
+	$(OCAMLBUILD) -build-dir $(LLVM_BUILD_DIR) -use-menhir $(INFERLLVM_MAIN).native
+
+build_checkCopyright:
+	$(OCAMLBUILD) -build-dir $(SCRIPTS_BUILD_DIR) -I $(SCRIPT_SOURCES) \
+	  $(CHECKCOPYRIGHT_MAIN).native
+
+ifeq (@ENABLE_OCAML_ANNOT@,yes)
+java_annotations: build_java
+	rsync -a --include '*/' --include '*.annot' --exclude '*' $(JAVA_BUILD_DIR)/ $(ANNOT_DIR)/
+
+clang_annotations: build_clang
+	rsync -a --include '*/' --include '*.annot' --exclude '*' $(CLANG_BUILD_DIR)/ $(ANNOT_DIR)/
+
+llvm_annotations: build_llvm
+	rsync -a --include '*/' --include '*.annot' --exclude '*' $(LLVM_BUILD_DIR)/ $(ANNOT_DIR)/
+
+scripts_annotations: build_checkCopyright
+	rsync -a --include '*/' --include '*.annot' --exclude '*' $(SCRIPTS_BUILD_DIR)/ $(ANNOT_DIR)/
+
+java: java_annotations
+clang: clang_annotations
+llvm: llvm_annotations
+checkCopyright: scripts_annotations
+endif
+
+define gen_atdgen_rules
+# generate files using atdgen
+# parameters:
+#   1. the .atd file to generate .ml{,i} files from
+#   2. the base name of .ml{,i} files
+#   3. the type of files to generate: b, j, t, or v
+
+$(2)_$(3).ml $(2)_$(3).mli: $(1)
+	$(ATDGEN) -$(3) $$< -o $(2)
+
+# the .ml depends on the corresponding .mli to avoid running atdgen
+# twice during parallel builds
+$(2)_$(3).ml: $(2)_$(3).mli
+endef
+
+$(foreach atd_type,j t,\
+    $(eval \
+        $(call gen_atdgen_rules,$(INFERPRINT_ATDGEN_STUB_ATD),$(INFERPRINT_ATDGEN_STUB_BASE),$(atd_type))))
+
+# rebuild the artifacts of the AST files whenever they're upated in FCP
+$(foreach atd_type,b j t v,\
+    $(eval \
+        $(call gen_atdgen_rules,$(CLANG_ATDGEN_STUB_ATD),$(CLANG_ATDGEN_STUB_BASE),$(atd_type))))
+
+
+define mirror_fcp_file
+$(CLANG_SOURCES)/$(notdir $(1)): $(1)
+	@INSTALL@ -m 644 -C $$< $$@
+endef
+
+$(foreach file, $(FCP_FILES_TO_MIRROR), $(eval $(call mirror_fcp_file,$(file))))
+
+
+$(CLANG_BINIOU_DICT): $(CLANG_ATDGEN_STUB_ATD)
+# overapproximation of the words we need in the biniou dictionary
+# the long litany of symbols is [:punct:] minus "_-'"
+	tr -s '[*!"#\$%&\(\)\+,\\\.\/:;<=>\?@\[\\\\]^`\{|\}~[:space:]]' '\n' \
+	  < $< \
+	  | sort | uniq  \
+	  > $@
+
+init: sanitize version $(BUILD_DIR)
+
+sanitize:
+ifneq ($(wildcard $(BUILD_DIR)/sanitize.sh),)
+	$(BUILD_DIR)/sanitize.sh
+endif
+
+version: $(BACKEND_SOURCES)/version.ml.in Makefile
+	TMPFILE=$$(mktemp $(BACKEND_SOURCES)/version.ml.tmp.XXXX); \
+	INFER_GIT_COMMIT=$$(git --work-tree=$(ROOT_DIR) --git-dir=$(ROOT_DIR)/.git rev-parse --short HEAD || printf "unknown"); \
+	INFER_GIT_BRANCH=$$(git --work-tree=$(ROOT_DIR) --git-dir=$(ROOT_DIR)/.git rev-parse --abbrev-ref HEAD || printf "unknown"); \
+	sed \
+	  -e 's|@INFER_MAJOR[@]|$(INFER_MAJOR)|g' \
+	  -e 's|@INFER_MINOR[@]|$(INFER_MINOR)|g' \
+	  -e 's|@INFER_PATCH[@]|$(INFER_PATCH)|g' \
+	  -e 's|@INFER_IS_RELEASE[@]|$(INFER_IS_RELEASE)|g' \
+	  -e "s|@INFER_GIT_COMMIT[@]|$$INFER_GIT_COMMIT|g" \
+	  -e "s|@INFER_GIT_BRANCH[@]|$$INFER_GIT_BRANCH|g" \
+	  $< > "$$TMPFILE"; \
+	@INSTALL@ -m 644 -C "$$TMPFILE" $(BACKEND_SOURCES)/version.ml; \
+	rm -f "$$TMPFILE"
+
+$(BUILD_DIR):
+	$(MKDIR) $(BUILD_DIR)
+
+$(INFERJAVA_BIN): build_java
+	$(COPY) $(JAVA_BUILD_DIR)/$(TYPEPROP_MAIN).native $(TYPEPROP_BIN)
+	$(COPY) $(JAVA_BUILD_DIR)/$(INFERANALYZE_MAIN).native $(INFERANALYZE_BIN)
+	$(COPY) $(JAVA_BUILD_DIR)/$(INFERPRINT_MAIN).native $(INFERPRINT_BIN)
+	$(COPY) $(JAVA_BUILD_DIR)/$(INFERJAVA_MAIN).native $(INFERJAVA_BIN)
+
+$(INFERCLANG_BIN): build_clang
+	$(COPY) $(CLANG_BUILD_DIR)/$(INFERANALYZE_MAIN).native $(INFERANALYZE_BIN)
+	$(COPY) $(CLANG_BUILD_DIR)/$(INFERPRINT_MAIN).native $(INFERPRINT_BIN)
+	$(COPY) $(CLANG_BUILD_DIR)/$(INFERCLANG_MAIN).native $(INFERCLANG_BIN)
+
+$(INFERLLVM_BIN): build_llvm
+	$(COPY) $(LLVM_BUILD_DIR)/$(INFERLLVM_MAIN).native $(INFERLLVM_BIN)
+
+$(CHECKCOPYRIGHT_BIN): build_checkCopyright
+	$(COPY) $(SCRIPTS_BUILD_DIR)/$(CHECKCOPYRIGHT_MAIN).native $(CHECKCOPYRIGHT_BIN)
+
+clean:
+	$(REMOVE_DIR) $(BUILD_DIR)
+ifeq (@ENABLE_OCAML_ANNOT@,yes)
+	$(REMOVE_DIR) $(ANNOT_DIR)
+endif
+	$(REMOVE) $(BACKEND_SOURCES)/version.ml
+	$(REMOVE) $(BACKEND_SOURCES)/version.ml.tmp.*
+	$(REMOVE) $(TYPEPROP_BIN) $(INFERANALYZE_BIN) $(INFERPRINT_BIN)
+	$(REMOVE) $(INFERJAVA_BIN) $(INFERCLANG_BIN) $(INFERLLVM_BIN)
+	$(REMOVE) $(CHECKCOPYRIGHT_BIN)
+	$(REMOVE) $(CLANG_ATDGEN_STUBS)
+	$(REMOVE) $(INFER_CLANG_FCP_MIRRORED_FILES)

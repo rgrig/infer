@@ -1,11 +1,11 @@
 /*
-* Copyright (c) 2013 - present Facebook, Inc.
-* All rights reserved.
-*
-* This source code is licensed under the BSD style license found in the
-* LICENSE file in the root directory of this source tree. An additional grant
-* of patent rights can be found in the PATENTS file in the same directory.
-*/
+ * Copyright (c) 2013 - present Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ */
 
 package codetoanalyze.java.infer;
 
@@ -21,257 +21,15 @@ import javax.net.ssl.SSLSession;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
+import android.content.ContentValues;
+import android.content.SharedPreferences;
+
+import com.facebook.infer.models.InferTaint;
+
 public class TaintExample {
-
-  String test_equals(String s) {
-
-    String my_string ="a string";
-    String res;
-
-    if (my_string.equals(s)) {
-      res = "OK";
-    }  else {
-      res = "NOT OK";
-    }
-    return res;
-  }
-
-  String test_compareTo(String s) {
-
-        String my_string ="a string";
-        String res;
-
-        if (my_string.compareTo(s) == 1) {
-            res = "OK";
-        }  else {
-            res = "NOT OK";
-        }
-        return res;
-    }
-
-    String test_endsWith(String s) {
-
-        String my_string ="a string";
-        String res;
-
-        if (my_string.endsWith(s)) {
-            res = "OK";
-        }  else {
-            res = "NOT OK";
-        }
-        return res;
-    }
-
-    String test_startsWith(String s) {
-
-        String my_string ="a string";
-        String res;
-
-        if (my_string.startsWith(s)) {
-            res = "OK";
-        }  else {
-            res = "NOT OK";
-        }
-        return res;
-    }
-
-
-  public String taintGetHostEquals (String s) throws MalformedURLException {
-
-    String res;
-    URL u = new URL(s);
-    String s1 = u.getHost();
-    res = test_equals(s1);
-    return res;
-  }
-
-    public String taintGetHostCompareTo (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.getHost();
-        res = test_compareTo(s1);
-        return res;
-
-    }
-
-    public String taintGetHostEndsWith (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.getHost();
-        res = test_endsWith(s1);
-        return res;
-    }
-
-    public String taintGetHostStartsWith (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.getHost();
-        res = test_startsWith(s1);
-        return res;
-    }
-
-    public String taintGetAuthoriyEquals (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.getAuthority();
-        res = test_equals(s1);
-        return res;
-    }
-
-    public String taintGetAuthorityCompareTo (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.getAuthority();
-        res = test_compareTo(s1);
-        return res;
-
-    }
-
-    public String taintGetAuthorityEndsWith (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.getAuthority();
-        res = test_endsWith(s1);
-        return res;
-    }
-
-    public String taintGetAuthorityStartsWith (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.getAuthority();
-        res = test_startsWith(s1);
-        return res;
-    }
-
-    public String taintGetProtocolEquals (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.getProtocol();
-        res = test_equals(s1);
-        return res;
-    }
-
-    public String taintGetProtocolCompareTo (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.getProtocol();
-        res = test_compareTo(s1);
-        return res;
-
-    }
-
-    public String taintGetProtocolEndsWith (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.getProtocol();
-        res = test_endsWith(s1);
-        return res;
-    }
-
-    public String taintGetProtocolStartsWith (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.getProtocol();
-        res = test_startsWith(s1);
-        return res;
-    }
-
-    public String taintToExternalFormEquals (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.toExternalForm();
-        res = test_equals(s1);
-        return res;
-    }
-
-    public String taintToExternalFormCompareTo (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.toExternalForm();
-        res = test_compareTo(s1);
-        return res;
-
-    }
-
-    public String taintToExternalFormEndsWith (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.toExternalForm();
-        res = test_endsWith(s1);
-        return res;
-    }
-
-    public String taintToExternalFormStartsWith (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.toExternalForm();
-        res = test_startsWith(s1);
-        return res;
-    }
-
-    public String taintToStringEquals (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.toString();
-        res = test_equals(s1);
-        return res;
-    }
-
-    public String taintToStringCompareTo (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.toString();
-        res = test_compareTo(s1);
-        return res;
-
-    }
-
-    public String taintToStringEndsWith (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.toString();
-        res = test_endsWith(s1);
-        return res;
-    }
-
-    public String taintToStringStartsWith (String s) throws MalformedURLException {
-
-        String res;
-        URL u = new URL(s);
-        String s1 = u.toString();
-        res = test_startsWith(s1);
-        return res;
-    }
 
   public InputStream socketNotVerifiedSimple(SSLSocketFactory f)
     throws IOException {
-    Socket socket = f.createSocket();
-    return socket.getInputStream();
-  }
-
-  public InputStream taintingShouldNotPreventInference(SSLSocketFactory f)
-    throws IOException {
-
-    socketNotVerifiedSimple(f).toString();
-    // failing to infer a post for socketNotVerifiedSimple will hide this error
     Socket socket = f.createSocket();
     return socket.getInputStream();
   }
@@ -298,7 +56,6 @@ public class TaintExample {
       return null;
     }
   }
-
 
   HostnameVerifier mHostnameVerifier;
 
@@ -328,5 +85,89 @@ public class TaintExample {
     return s.getInputStream();
   }
 
+  public InputStream taintingShouldNotPreventInference1(SSLSocketFactory f) throws IOException {
+    socketNotVerifiedSimple(f).toString();
+    // failing to infer a post for socketNotVerifiedSimple will hide this error
+    Socket s = f.createSocket();
+    return s.getInputStream();
+  }
+
+  public InputStream readInputStream(Socket socket) throws IOException {
+    return socket.getInputStream();
+  }
+
+  // if we're not careful, postcondition inference will fail for this function
+  Socket callReadInputStreamCauseTaintError(SSLSocketFactory f)
+    throws IOException {
+    Socket socket = f.createSocket();
+    InputStream s = readInputStream(socket);
+    s.toString(); // to avoid RETURN_VALUE_IGNORED warning
+    return f.createSocket();
+  }
+
+  InputStream taintingShouldNotPreventInference2(SSLSocketFactory f) throws IOException {
+    // if inference fails for this callee, we won't report an error here
+    Socket s = callReadInputStreamCauseTaintError(f);
+    return s.getInputStream();
+  }
+
+  public void simpleTaintErrorWithModelMethods() {
+    Object o = InferTaint.inferSecretSource();
+    InferTaint.inferSensitiveSink(o);
+  }
+
+  public Object returnTaintedSourceModelMethods() {
+    return InferTaint.inferSecretSource();
+  }
+
+  public void callSinkMethodModelMethods(Object o) {
+    InferTaint.inferSensitiveSink(o);
+  }
+
+  public void interprocTaintErrorWithModelMethods1() {
+    InferTaint.inferSensitiveSink(returnTaintedSourceModelMethods());
+  }
+
+  public void interprocTaintErrorWithModelMethods2() {
+    callSinkMethodModelMethods(InferTaint.inferSecretSource());
+  }
+
+  public void interprocTaintErrorWithModelMethods3() {
+    callSinkMethodModelMethods(returnTaintedSourceModelMethods());
+  }
+
+  public void simpleTaintErrorWithModelMethodsUndefined() {
+    Object o = InferTaint.inferSecretSourceUndefined();
+    InferTaint.inferSensitiveSinkUndefined(o);
+  }
+
+  public Object returnTaintedSourceModelMethodsUndefined() {
+    return InferTaint.inferSecretSourceUndefined();
+  }
+
+  public void callSinkMethodModelMethodsUndefined(Object o) {
+    InferTaint.inferSensitiveSinkUndefined(o);
+  }
+
+  public void interprocTaintErrorWithModelMethodsUndefined1() {
+    InferTaint.inferSensitiveSinkUndefined(returnTaintedSourceModelMethodsUndefined());
+  }
+
+  public void interprocTaintErrorWithModelMethodsUndefined2() {
+    callSinkMethodModelMethodsUndefined(InferTaint.inferSecretSourceUndefined());
+  }
+
+  public void interprocTaintErrorWithModelMethodsUndefined3() {
+    callSinkMethodModelMethodsUndefined(returnTaintedSourceModelMethodsUndefined());
+  }
+
+  public void contentValuesPutWithTaintedString(ContentValues values, SharedPreferences prefs,
+                                                String key, String value) {
+    values.put(key, prefs.getString(key, value));
+  }
+
+  public void contentValuesPutOk(ContentValues values, String key, String value) {
+    values.put(key, value);
+  }
 
 }

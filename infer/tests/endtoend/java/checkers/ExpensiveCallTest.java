@@ -1,11 +1,11 @@
 /*
-* Copyright (c) 2015 - present Facebook, Inc.
-* All rights reserved.
-*
-* This source code is licensed under the BSD style license found in the
-* LICENSE file in the root directory of this source tree. An additional grant
-* of patent rights can be found in the PATENTS file in the same directory.
-*/
+ * Copyright (c) 2015 - present Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ */
 
 package endtoend.java.checkers;
 
@@ -33,7 +33,7 @@ public class ExpensiveCallTest {
   @BeforeClass
   public static void loadResults() throws InterruptedException, IOException {
     inferResults =
-      InferResults.loadCheckersResults(ImmutableCastTest.class, SOURCE_FILE);
+      InferResults.loadCheckersResults(ExpensiveCallTest.class, SOURCE_FILE);
   }
 
   @Test
@@ -43,6 +43,9 @@ public class ExpensiveCallTest {
         "directlyCallingExpensiveMethod",
         "indirectlyCallingExpensiveMethod",
         "callingExpensiveMethodFromInterface",
+        "longerCallStackToExpensive",
+        "callsFindViewByIdFromView",
+        "callsFindViewByIdFromActivity",
     };
     assertThat(
         "Results should contain " + CALLS_EXPENSIVE_METHOD,

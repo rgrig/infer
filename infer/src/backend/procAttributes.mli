@@ -11,19 +11,24 @@
 
 open Utils
 
+type objc_accessor_type =
+  | Objc_getter of Ident.fieldname
+  | Objc_setter of Ident.fieldname
+
 type t =
   {
     access : Sil.access; (** visibility access *)
     captured : (Mangled.t * Sil.typ) list; (** name and type of variables captured in blocks *)
     err_log: Errlog.t; (** Error log for the procedure *)
     exceptions : string list; (** exceptions thrown by the procedure *)
-    formals : (string * Sil.typ) list; (** name and type of formal parameters *)
+    formals : (Mangled.t * Sil.typ) list; (** name and type of formal parameters *)
     func_attributes : Sil.func_attribute list;
     is_abstract : bool; (** the procedure is abstract *)
     mutable is_bridge_method : bool; (** the procedure is a bridge method *)
     is_defined : bool; (** true if the procedure is defined, and not just declared *)
-    is_generated : bool; (** the procedure has been generated *)
     is_objc_instance_method : bool; (** the procedure is an objective-C instance method *)
+    is_cpp_instance_method : bool; (** the procedure is an C++ instance method *)
+    objc_accessor : objc_accessor_type option; (** the proc is ObjC accessor *)
     mutable is_synthetic_method : bool; (** the procedure is a synthetic method *)
     language : Config.language; (** language of the procedure *)
     loc : Location.t; (** location of this procedure in the source code *)

@@ -13,19 +13,25 @@ module L = Logging
 module F = Format
 open Utils
 
+(** Type for ObjC accessors *)
+type objc_accessor_type =
+  | Objc_getter of Ident.fieldname
+  | Objc_setter of Ident.fieldname
+
 type t =
   {
     access : Sil.access; (** visibility access *)
     captured : (Mangled.t * Sil.typ) list; (** name and type of variables captured in blocks *)
     err_log: Errlog.t; (** Error log for the procedure *)
     exceptions : string list; (** exceptions thrown by the procedure *)
-    formals : (string * Sil.typ) list; (** name and type of formal parameters *)
+    formals : (Mangled.t * Sil.typ) list; (** name and type of formal parameters *)
     func_attributes : Sil.func_attribute list;
     is_abstract : bool; (** the procedure is abstract *)
     mutable is_bridge_method : bool; (** the procedure is a bridge method *)
     is_defined : bool; (** true if the procedure is defined, and not just declared *)
-    is_generated : bool; (** the procedure has been generated *)
     is_objc_instance_method : bool; (** the procedure is an objective-C instance method *)
+    is_cpp_instance_method : bool; (** the procedure is an C++ instance method *)
+    objc_accessor : objc_accessor_type option; (** the proc is ObjC accessor *)
     mutable is_synthetic_method : bool; (** the procedure is a synthetic method *)
     language : Config.language; (** language of the procedure *)
     loc : Location.t; (** location of this procedure in the source code *)
@@ -47,8 +53,9 @@ let copy pa =
     is_abstract = pa.is_abstract;
     is_bridge_method = pa.is_bridge_method;
     is_defined = pa.is_defined;
-    is_generated = pa.is_generated;
     is_objc_instance_method = pa.is_objc_instance_method;
+    is_cpp_instance_method = pa.is_cpp_instance_method;
+    objc_accessor = pa.objc_accessor;
     is_synthetic_method = pa.is_synthetic_method;
     language = pa.language;
     loc = pa.loc;
@@ -69,8 +76,9 @@ let default proc_name language = {
   is_abstract = false;
   is_defined = false;
   is_bridge_method = false;
-  is_generated = false;
   is_objc_instance_method = false;
+  is_cpp_instance_method = false;
+  objc_accessor = None;
   is_synthetic_method = false;
   language;
   loc = Location.dummy;

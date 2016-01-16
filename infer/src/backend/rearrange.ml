@@ -104,10 +104,13 @@ let rec create_struct_values pname tenv orig_prop footprint_part kind max_stamp 
     match t, off with
     | Sil.Tstruct (ftal, sftal, _, _, _, _, _),[] ->
         ([], Sil.Estruct ([], inst), t)
-    | Sil.Tstruct (ftal, sftal, csu, nameo, supers, def_mthds, iann), (Sil.Off_fld (f, _)):: off' ->
+    | Sil.Tstruct (ftal, sftal, csu, nameo, supers, def_mthds, iann),
+      (Sil.Off_fld (f, _)):: off' ->
         let _, t', _ =
-          try IList.find (fun (f', _, _) -> Ident.fieldname_equal f f') ftal
-          with Not_found -> raise (Exceptions.Bad_footprint (try assert false with Assert_failure x -> x)) in
+          try
+            IList.find (fun (f', _, _) -> Ident.fieldname_equal f f') (ftal @ sftal)
+          with Not_found ->
+            raise (Exceptions.Bad_footprint (try assert false with Assert_failure x -> x)) in
         let atoms', se', res_t' =
           create_struct_values
             pname tenv orig_prop footprint_part kind max_stamp t' off' inst in
@@ -196,11 +199,14 @@ let rec _strexp_extend_values
       let off_new = Sil.Off_index(Sil.exp_zero):: off in
       _strexp_extend_values
         pname tenv orig_prop footprint_part kind max_stamp se typ off_new inst
-  | (Sil.Off_fld (f, _)):: off', Sil.Estruct (fsel, inst'), Sil.Tstruct (ftal, sftal, csu, nameo, supers, def_mthds, iann) ->
+  | (Sil.Off_fld (f, _)):: off', Sil.Estruct (fsel, inst'),
+    Sil.Tstruct (ftal, sftal, csu, nameo, supers, def_mthds, iann) ->
       let replace_fv new_v fv = if Ident.fieldname_equal (fst fv) f then (f, new_v) else fv in
-      let typ' =
-        try (fun (x, y, z) -> y) (IList.find (fun (f', t', a') -> Ident.fieldname_equal f f') ftal)
-        with Not_found -> raise (Exceptions.Missing_fld (f, try assert false with Assert_failure x -> x)) in
+      let _, typ', _ =
+        try
+          IList.find (fun (f', t', a') -> Ident.fieldname_equal f f') (ftal @ sftal)
+        with Not_found ->
+          raise (Exceptions.Missing_fld (f, try assert false with Assert_failure x -> x)) in
       begin
         try
           let _, se' = IList.find (fun (f', _) -> Ident.fieldname_equal f f') fsel in
@@ -212,7 +218,9 @@ let rec _strexp_extend_values
             let res_fsel' = IList.sort Sil.fld_strexp_compare (IList.map replace_fse fsel) in
             let replace_fta (f, t, a) = let f', t' = replace_fv res_typ' (f, t) in (f', t', a) in
             let res_ftl' = IList.sort Sil.fld_typ_ann_compare (IList.map replace_fta ftal) in
-            (res_atoms', Sil.Estruct (res_fsel', inst'), Sil.Tstruct (res_ftl', sftal, csu, nameo, supers, def_mthds, iann)) :: acc in
+            let struct_typ =
+              Sil.Tstruct (res_ftl', sftal, csu, nameo, supers, def_mthds, iann) in
+            (res_atoms', Sil.Estruct (res_fsel', inst'), struct_typ) :: acc in
           IList.fold_left replace [] atoms_se_typ_list'
         with Not_found ->
           let atoms', se', res_typ' =
@@ -221,7 +229,8 @@ let rec _strexp_extend_values
           let res_fsel' = IList.sort Sil.fld_strexp_compare ((f, se'):: fsel) in
           let replace_fta (f', t', a') = if Ident.fieldname_equal f' f then (f, res_typ', a') else (f', t', a') in
           let res_ftl' = IList.sort Sil.fld_typ_ann_compare (IList.map replace_fta ftal) in
-          [(atoms', Sil.Estruct (res_fsel', inst'), Sil.Tstruct (res_ftl', sftal, csu, nameo, supers, def_mthds, iann))]
+          let struct_typ = Sil.Tstruct (res_ftl', sftal, csu, nameo, supers, def_mthds, iann) in
+          [(atoms', Sil.Estruct (res_fsel', inst'), struct_typ)]
       end
   | (Sil.Off_fld (f, _)):: off', _, _ ->
       raise (Exceptions.Bad_footprint (try assert false with Assert_failure x -> x))
@@ -967,8 +976,8 @@ let check_dereference_error pdesc (prop : Prop.normal Prop.t) lexp loc =
   let is_deref_of_nullable =
     let is_definitely_non_null exp prop =
       Prover.check_disequal prop exp Sil.exp_zero in
-    !Config.report_nullable_inconsistency && !Config.curr_language = Config.Java &&
-    not (is_definitely_non_null root prop) && is_only_pt_by_nullable_fld_or_param root in
+    !Config.report_nullable_inconsistency && not (is_definitely_non_null root prop)
+    && is_only_pt_by_nullable_fld_or_param root in
   let relevant_attributes_getters = [
     Prop.get_resource_attribute;
     Prop.get_undef_attribute;
@@ -1091,7 +1100,9 @@ let check_call_to_objc_block_error pdesc prop fun_exp loc =
 (** [rearrange lexp prop] rearranges [prop] into the form [prop' * lexp|->strexp:typ].
     It returns an iterator with [lexp |-> strexp: typ] as current predicate
     and the path (an [offsetlist]) which leads to [lexp] as the iterator state. *)
-let rearrange pdesc tenv lexp typ prop loc : (Sil.offset list) Prop.prop_iter list =
+let rearrange ?(report_deref_errors=true) pdesc tenv lexp typ prop loc
+  : (Sil.offset list) Prop.prop_iter list =
+
   let nlexp = match Prop.exp_normalize_prop prop lexp with
     | Sil.BinOp(Sil.PlusPI, ep, e) -> (* array access with pointer arithmetic *)
         Sil.Lindex(ep, e)
@@ -1102,7 +1113,7 @@ let rearrange pdesc tenv lexp typ prop loc : (Sil.offset list) Prop.prop_iter li
   L.d_strln ".... Rearrangement Start ....";
   L.d_str "Exp: "; Sil.d_exp nlexp; L.d_ln ();
   L.d_str "Prop: "; L.d_ln(); Prop.d_prop prop; L.d_ln (); L.d_ln ();
-  check_dereference_error pdesc prop nlexp (State.get_loc ());
+  if report_deref_errors then check_dereference_error pdesc prop nlexp (State.get_loc ());
   let pname = Cfg.Procdesc.get_proc_name pdesc in
   match Prop.prop_iter_create prop with
   | None ->

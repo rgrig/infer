@@ -28,7 +28,7 @@ let java_proc_name_with_class_method pn class_with_path method_name =
 let is_direct_subtype_of this_type super_type_name =
   match this_type with
   | Sil.Tptr (Sil.Tstruct (_, _, _, _, supertypes, _, _), _) ->
-      IList.exists (fun (x, y) -> super_type_name = Mangled.to_string y) supertypes
+      IList.exists (fun cn -> Typename.equal cn super_type_name) supertypes
   | _ -> false
 
 (** The type the method is invoked on *)
@@ -38,14 +38,13 @@ let get_this_type proc_attributes = match proc_attributes.ProcAttributes.formals
 
 let type_get_direct_supertypes = function
   | Sil.Tptr (Sil.Tstruct (_, _, _, _, supertypes, _, _), _)
-  | Sil.Tstruct (_, _, _, _, supertypes, _, _) ->
-      IList.map (fun (_, m) -> m) supertypes
+  | Sil.Tstruct (_, _, _, _, supertypes, _, _) -> supertypes
   | _ -> []
 
 let type_get_class_name t = match t with
   | Sil.Tptr (Sil.Tstruct (_, _, _, Some cn, _, _, _), _) ->
       Some cn
-  | Sil.Tptr (Sil.Tvar (Sil.TN_csu (Sil.Class, cn)), _) ->
+  | Sil.Tptr (Sil.Tvar (Typename.TN_csu (Csu.Class, cn)), _) ->
       Some cn
   | _ -> None
 
@@ -59,14 +58,13 @@ let type_get_annotation
 let type_has_class_name t name =
   type_get_class_name t = Some name
 
-let type_has_direct_supertype (t : Sil.typ) (s : Mangled.t) =
-  IList.exists (fun c -> c = s) (type_get_direct_supertypes t)
+let type_has_direct_supertype (typ : Sil.typ) (class_name : Typename.t) =
+  IList.exists (fun cn -> Typename.equal cn class_name) (type_get_direct_supertypes typ)
 
-let type_find_supertype
+let type_has_supertype
     (tenv: Sil.tenv)
     (typ: Sil.typ)
-    (csu_option: Sil.csu option)
-    (filter: Mangled.t -> bool): bool =
+    (class_name: Typename.t): bool =
   let rec has_supertype typ visited =
     if Sil.TypSet.mem typ visited then
       false
@@ -75,40 +73,18 @@ let type_find_supertype
         match Sil.expand_type tenv typ with
         | Sil.Tptr (Sil.Tstruct (_, _, _, _, supertypes, _, _), _)
         | Sil.Tstruct (_, _, _, _, supertypes, _, _) ->
-            let match_supertype (csu, m) =
-              let match_name () = filter m in
-              let match_csu () = match csu_option with
-                | Some c -> c = csu
-                | None -> true in
+            let match_supertype cn =
+              let match_name () = Typename.equal cn class_name in
               let has_indirect_supertype () =
-                match Sil.get_typ m csu_option tenv with
+                match Sil.tenv_lookup tenv cn with
                 | Some supertype -> has_supertype supertype (Sil.TypSet.add typ visited)
                 | None -> false in
-              (match_csu () && match_name () (* only and always visit name with expected csu *))
-              || has_indirect_supertype () in
+              (match_name () || has_indirect_supertype ()) in
             IList.exists match_supertype supertypes
         | _ -> false
       end in
   has_supertype typ Sil.TypSet.empty
 
-let type_has_supertype
-    (tenv: Sil.tenv)
-    (typ: Sil.typ)
-    (csu_option: Sil.csu option)
-    (name: Mangled.t): bool =
-  let filter m = Mangled.equal m name in
-  type_find_supertype tenv typ csu_option filter
-
-let type_get_supertypes
-    (tenv: Sil.tenv)
-    (typ: Sil.typ)
-    (csu_option: Sil.csu option) : Mangled.t list =
-  let res = ref [] in
-  let filter m =
-    res := m :: !res;
-    false in
-  let _ = type_find_supertype tenv typ csu_option filter in
-  IList.rev !res
 
 let type_is_nested_in_type t n = match t with
   | Sil.Tptr (Sil.Tstruct (_, _, _, Some m, _, _, _), _) ->
@@ -116,17 +92,13 @@ let type_is_nested_in_type t n = match t with
   | _ -> false
 
 let type_is_nested_in_direct_supertype t n =
-  let is_nested_in m2 m1 = string_is_prefix (Mangled.to_string m2 ^ "$") (Mangled.to_string m1) in
+  let is_nested_in cn1 cn2 = string_is_prefix (Typename.name cn1 ^ "$") (Typename.name cn2) in
   IList.exists (is_nested_in n) (type_get_direct_supertypes t)
-
-let type_is_nested_in_supertype tenv t csu_option n =
-  let is_nested_in m2 m1 = string_is_prefix (Mangled.to_string m2 ^ "$") (Mangled.to_string m1) in
-  IList.exists (is_nested_in n) (type_get_supertypes tenv t csu_option)
 
 let rec get_type_name = function
   | Sil.Tstruct (_, _, _, Some mangled, _, _, _) -> Mangled.to_string mangled
   | Sil.Tptr (t, _) -> get_type_name t
-  | Sil.Tvar tn -> Sil.typename_name tn
+  | Sil.Tvar tn -> Typename.name tn
   | _ -> "_"
 
 let get_field_type_name
@@ -251,12 +223,15 @@ let type_is_class = function
   | Sil.Tstruct _ -> true
   | _ -> false
 
-let initializer_classes = IList.map Mangled.from_string [
-    "android.app.Activity";
-    "android.app.Application";
-    "android.app.Fragment";
-    "android.support.v4.app.Fragment";
-  ]
+let initializer_classes =
+  IList.map
+    (fun name -> Typename.TN_csu (Csu.Class, Mangled.from_string name))
+    [
+      "android.app.Activity";
+      "android.app.Application";
+      "android.app.Fragment";
+      "android.support.v4.app.Fragment";
+    ]
 
 let initializer_methods = [
   "onActivityCreated";
@@ -269,7 +244,7 @@ let initializer_methods = [
 let type_has_initializer
     (tenv: Sil.tenv)
     (t: Sil.typ): bool =
-  let check_candidate cname = type_has_supertype tenv t (Some Sil.Class) cname in
+  let check_candidate class_name = type_has_supertype tenv t class_name in
   IList.exists check_candidate initializer_classes
 
 (** Check if the method is one of the known initializer methods. *)
@@ -327,9 +302,8 @@ let proc_calls resolve_attributes pname pdesc filter : (Procname.t * ProcAttribu
 let proc_iter_overridden_methods f tenv proc_name =
   let do_super_type tenv super_class_name =
     let super_proc_name =
-      Procname.java_replace_class proc_name (Mangled.to_string super_class_name) in
-    let type_name = Sil.TN_csu (Sil.Class, super_class_name) in
-    match Sil.tenv_lookup tenv type_name with
+      Procname.java_replace_class proc_name (Typename.name super_class_name) in
+    match Sil.tenv_lookup tenv super_class_name with
     | Some (Sil.Tstruct (_, _, _, _, _, methods, _)) ->
         let is_override pname =
           Procname.equal pname super_proc_name &&
@@ -344,7 +318,7 @@ let proc_iter_overridden_methods f tenv proc_name =
   if Procname.is_java proc_name then
     let type_name =
       let class_name = Procname.java_get_class proc_name in
-      Sil.TN_csu (Sil.Class, Mangled.from_string class_name) in
+      Typename.TN_csu (Csu.Class, Mangled.from_string class_name) in
     match Sil.tenv_lookup tenv type_name with
     | Some curr_type ->
         IList.iter (do_super_type tenv) (type_get_direct_supertypes curr_type)

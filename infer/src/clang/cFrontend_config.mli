@@ -99,7 +99,7 @@ val init : string
 
 val temp_var : string
 
-val pointer_prefix : string
+val invalid_pointer : int
 
 val void : string
 
@@ -141,8 +141,6 @@ val objects : string
 
 val enumerateObjectsUsingBlock : string
 
-val generated_suffix : string
-
 (** Map from clang pointers to types produced by ast exporter.
     Populated once on InferClang startup *)
 val pointer_type_index : Clang_ast_t.c_type Clang_ast_main.PointerMap.t ref
@@ -154,10 +152,10 @@ val sil_types_map : (Sil.typ Clang_ast_types.TypePointerMap.t) ref
 (** Map from enum constants pointers to their predecesor and their sil value *)
 val enum_map : (Clang_ast_t.pointer option * Sil.exp option) Clang_ast_main.PointerMap.t ref
 
-val type_pointer_prefix : string
-
 val nsarray_cl : string
 
 val infer : string
 
 val block : string
+
+val atomic_att : string

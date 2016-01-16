@@ -13,7 +13,7 @@ import subprocess
 import traceback
 import util
 
-from inferlib import config, utils
+from inferlib import config, issues, utils
 
 MODULE_NAME = __name__
 MODULE_DESCRIPTION = '''Run analysis of code built with a command like:
@@ -55,6 +55,9 @@ def create_argparser(group_name=MODULE_NAME):
     group.add_argument('--xcode-developer-dir',
                        help='Specify the path to Xcode developer directory '
                             '(requires --use-flavors to work)')
+    group.add_argument('--blacklist-regex',
+                       help='Specify the regex for files to skip during '
+                            'the analysis (requires --use-flavors to work)')
     return parser
 
 
@@ -105,6 +108,10 @@ class BuckAnalyzer:
             args.append('--config')
             args.append('apple.xcode_developer_dir={devdir}'.format(
                 devdir=self.args.xcode_developer_dir))
+        if self.args.blacklist_regex:
+            args.append('--config')
+            args.append('infer.blacklist_regex={regex}'.format(
+                regex=self.args.blacklist_regex))
         return args
 
     def _get_analysis_result_files(self):
@@ -136,11 +143,10 @@ class BuckAnalyzer:
         if not ret == os.EX_OK:
             return ret
         result_files = self._get_analysis_result_files()
-        all_results = utils.merge_json_arrays_from_files(result_files)
+        all_results = issues.merge_reports_from_paths(result_files)
         merged_results_path = os.path.join(self.args.infer_out,
                                            config.JSON_REPORT_FILENAME)
-        with open(merged_results_path, 'w') as file_out:
-            json.dump(all_results, file_out, indent=2)
+        utils.dump_json_to_path(all_results, merged_results_path)
         print('Results saved in {results_path}'.format(
             results_path=merged_results_path))
         return os.EX_OK
@@ -152,6 +158,8 @@ class BuckAnalyzer:
             capture_cmd += ['--out', self.args.infer_out]
         if self.args.debug:
             capture_cmd.append('-g')
+        if self.args.debug_exceptions:
+            capture_cmd.append('--debug-exceptions')
         if self.args.no_filtering:
             capture_cmd.append('--no-filtering')
         if self.args.verbose:

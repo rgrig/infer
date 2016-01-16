@@ -253,29 +253,40 @@ let android_callbacks =
 (* TODO (t4644852): factor out subtyping functions into some sort of JavaUtil module *)
 let get_all_supertypes typ tenv =
   let get_direct_supers = function
-    | Sil.Tstruct (_, _, Sil.Class, _, supers, _, _) -> supers
+    | Sil.Tstruct (_, _, Csu.Class, _, supers, _, _) -> supers
     | _ -> [] in
-  let rec add_typ name typs = match Sil.get_typ name None tenv with
+  let rec add_typ class_name typs =
+    match Sil.tenv_lookup tenv class_name with
     | Some typ -> get_supers_rec typ tenv (TypSet.add typ typs)
     | None -> typs
   and get_supers_rec typ tenv all_supers =
     let direct_supers = get_direct_supers typ in
-    IList.fold_left (fun typs (_, name) -> add_typ name typs) all_supers direct_supers in
-  get_supers_rec typ tenv TypSet.empty
+    IList.fold_left
+      (fun typs class_name -> add_typ class_name typs)
+      all_supers direct_supers in
+  get_supers_rec typ tenv (TypSet.add typ TypSet.empty)
 
 (** return true if [typ0] <: [typ1] *)
 let is_subtype (typ0 : Sil.typ) (typ1 : Sil.typ) tenv =
   TypSet.mem typ1 (get_all_supertypes typ0 tenv)
 
-(** return true if [typ] <: android.content.Context *)
+let is_subtype_package_class typ package classname tenv =
+  let classname = Mangled.from_package_class package classname in
+  match Sil.tenv_lookup tenv (Typename.TN_csu (Csu.Class, classname)) with
+  | Some found_typ -> is_subtype typ found_typ tenv
+  | _ -> false
+
 let is_context typ tenv =
-  let context_classname = Mangled.from_package_class "android.content" "Context"
-  and application_classname = Mangled.from_package_class "android.app" "Application" in
-  let subclass_of classname =
-    match Sil.get_typ classname (Some Sil.Class) tenv with
-    | Some class_typ -> is_subtype typ class_typ tenv
-    | None -> false in
-  subclass_of context_classname && not (subclass_of application_classname)
+  is_subtype_package_class typ "android.content" "Context" tenv
+
+let is_application typ tenv =
+  is_subtype_package_class typ "android.app" "Application" tenv
+
+let is_activity typ tenv =
+  is_subtype_package_class typ "android.app" "Activity" tenv
+
+let is_view typ tenv =
+  is_subtype_package_class typ "android.view" "View" tenv
 
 (** return true if [class_name] is a known callback class name *)
 let is_callback_class_name class_name = Mangled.MangledSet.mem class_name android_callbacks
@@ -284,7 +295,7 @@ let is_callback_class_name class_name = Mangled.MangledSet.mem class_name androi
 let is_callback_class typ tenv =
   let supertyps = get_all_supertypes typ tenv in
   TypSet.exists (fun typ -> match typ with
-      | Sil.Tstruct (_, _, Sil.Class, Some classname, _, _, _) ->
+      | Sil.Tstruct (_, _, Csu.Class, Some classname, _, _, _) ->
           is_callback_class_name classname
       | _ -> false) supertyps
 
@@ -295,7 +306,7 @@ let typ_is_lifecycle_typ typ lifecycle_typ tenv =
 
 (** return true if [class_name] is the name of a class that belong to the Android framework *)
 let is_android_lib_class class_name =
-  let class_str = Mangled.to_string class_name in
+  let class_str = Typename.name class_name in
   string_is_prefix "android" class_str || string_is_prefix "com.android" class_str
 
 (** returns an option containing the var name and type of a callback registered by [procname], None
@@ -344,8 +355,8 @@ let is_callback_register_method procname args tenv =
 (** given an Android framework type mangled string [lifecycle_typ] (e.g., android.app.Activity) and
     a list of method names [lifecycle_procs_strs], get the appropriate typ and procnames *)
 let get_lifecycle_for_framework_typ_opt lifecycle_typ lifecycle_proc_strs tenv =
-  match Sil.get_typ lifecycle_typ None tenv with
-  | Some (Sil.Tstruct(_, _, Sil.Class, Some class_name, _, decl_procs, _) as lifecycle_typ) ->
+  match Sil.tenv_lookup tenv (Typename.TN_csu (Csu.Class, lifecycle_typ)) with
+  | Some (Sil.Tstruct(_, _, Csu.Class, Some class_name, _, decl_procs, _) as lifecycle_typ) ->
       (* TODO (t4645631): collect the procedures for which is_java is returning false *)
       let lookup_proc lifecycle_proc =
         IList.find (fun decl_proc ->
@@ -366,19 +377,13 @@ let get_lifecycles = android_lifecycles
 
 (** Checks if the exception is an uncheched exception *)
 let is_runtime_exception tenv exn =
-  let runtime_exception_opt =
-    let name = Mangled.from_package_class "java.lang" "RuntimeException" in
-    let typename = Sil.TN_csu (Sil.Class, name) in
-    Sil.tenv_lookup tenv typename in
-  match Sil.tenv_lookup tenv (Sil.TN_csu (Sil.Class, exn)) with
-  | None -> assert false
-  | Some exn_type ->
-      begin
-        match runtime_exception_opt with
-        | None -> false
-        | Some runtime_exception_type ->
-            is_subtype exn_type runtime_exception_type tenv
-      end
+  let lookup = Sil.tenv_lookup tenv in
+  let runtime_exception_typename =
+    Typename.Java.from_string "java.lang.RuntimeException" in
+  match lookup runtime_exception_typename, lookup exn with
+  | Some runtime_exception_type, Some exn_type ->
+      is_subtype exn_type runtime_exception_type tenv
+  | _ -> false
 
 
 let non_stub_android_jar () =

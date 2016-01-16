@@ -296,8 +296,11 @@ val has_dangling_uninit_attribute : 'a t -> exp -> bool
 
 val set_exp_attribute : normal t -> exp -> attribute -> normal t
 
+val add_or_replace_exp_attribute_check_changed : (Sil.attribute -> Sil.attribute -> unit) ->
+  normal t -> exp -> attribute -> normal t
+
 (** Replace an attribute associated to the expression *)
-val add_or_replace_exp_attribute : (Sil.attribute -> Sil.attribute -> unit) -> normal t -> exp -> attribute -> normal t
+val add_or_replace_exp_attribute : normal t -> exp -> attribute -> normal t
 
 (** mark Sil.Var's or Sil.Lvar's as undefined *)
 val mark_vars_as_undefined : normal t -> Sil.exp list -> Procname.t -> Location.t ->
@@ -309,14 +312,13 @@ val remove_attribute : Sil.attribute -> 'a t -> normal t
 (** [replace_objc_null lhs rhs]. If rhs has the objc_null attribute, replace the attribute and set the lhs = 0 *)
 val replace_objc_null : normal t -> exp -> exp -> normal t
 
+val nullify_exp_with_objc_null : normal t -> exp -> normal t
+
 (** Remove an attribute from an exp in the heap *)
 val remove_attribute_from_exp : Sil.attribute -> 'a t -> exp -> normal t
 
 (** Retireve all the atoms in the heap that contain a specific attribute *)
 val get_atoms_with_attribute : Sil.attribute -> 'a t -> Sil.exp list
-
-(** if [atom] represents an attribute [att], add the attribure to [prop] *)
-val replace_atom_attribute : (Sil.attribute -> Sil.attribute -> unit) -> normal t -> atom -> normal t
 
 (** Return the sub part of [prop]. *)
 val get_sub : 'a t -> subst
@@ -387,9 +389,6 @@ val from_pi : Sil.atom list -> exposed t
 
 (** Build an exposed prop from sigma *)
 val from_sigma : Sil.hpred list -> exposed t
-
-(** Build an exposed prop from pi and sigma *)
-val from_pi_sigma : atom list -> hpred list -> exposed t
 
 (** Replace the substitution part of a prop *)
 val replace_sub : Sil.subst -> 'a t -> exposed t
@@ -483,9 +482,11 @@ val hpred_get_targets : Sil.hpred -> Sil.ExpSet.t
     [exps] *)
 val compute_reachable_hpreds : hpred list -> Sil.ExpSet.t -> Sil.HpredSet.t * Sil.ExpSet.t
 
-(** produce a (fieldname, typ) from one of the [src_exps] to [snk_exp] using [reachable_hpreds] *)
-val get_fld_typ_path : Sil.ExpSet.t -> Sil.exp -> Sil.HpredSet.t ->
-  (Ident.fieldname option * Sil.typ) list
+
+(** if possible, produce a (fieldname, typ) path from one of the [src_exps] to [snk_exp] using
+    [reachable_hpreds]. *)
+val get_fld_typ_path_opt : Sil.ExpSet.t -> Sil.exp -> Sil.HpredSet.t ->
+  (Ident.fieldname option * Sil.typ) list option
 
 (** filter [pi] by removing the pure atoms that do not contain an expression in [exps] *)
 val compute_reachable_atoms : Sil.atom list -> Sil.ExpSet.t -> Sil.atom list

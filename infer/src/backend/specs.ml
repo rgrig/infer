@@ -288,7 +288,7 @@ type call_stats = CallStats.t
 (** Execution statistics *)
 type stats =
   { stats_time: float; (** Analysis time for the procedure *)
-    stats_timeout: bool; (** Flag to indicate whether a timeout occurred *)
+    stats_failure: failure_kind option; (** what type of failure stopped the analysis (if any) *)
     stats_calls: Cg.in_out_calls; (** num of procs calling, and called *)
     symops: int; (** Number of SymOp's throughout the whole analysis of the function *)
     mutable nodes_visited_fp : IntSet.t; (** Nodes visited during the footprint phase *)
@@ -307,8 +307,11 @@ type is_library = Source | Library
 
 (** Payload: results of some analysis *)
 type payload =
-  | PrePosts of NormSpec.t list (** list of specs *)
-  | TypeState of unit TypeState.t option (** final typestate *)
+  {
+    preposts : NormSpec.t list option; (** list of specs *)
+    typestate : unit TypeState.t option; (** final typestate *)
+    calls:  CallTree.t list option;
+  }
 
 type summary =
   { dependency_map: dependency_map_t;  (** maps children procs to timestamp as last seen at the start of an analysys phase for this proc *)
@@ -339,13 +342,16 @@ let pp_time whole_seconds fmt t =
   if whole_seconds then F.fprintf fmt "%3.0f s" t
   else F.fprintf fmt "%f s" t
 
-let pp_timeout fmt = function
-  | true -> F.fprintf fmt "Y"
-  | false -> F.fprintf fmt "N"
+let pp_failure_kind_opt fmt failure_kind_opt = match failure_kind_opt with
+  | Some failure_kind -> pp_failure_kind fmt failure_kind
+  | None -> F.fprintf fmt "NONE"
 
 let pp_stats err_log whole_seconds fmt stats =
-  F.fprintf fmt "TIME:%a TIMEOUT:%a SYMOPS:%d CALLS:%d,%d@\n" (pp_time whole_seconds) stats.stats_time pp_timeout stats.stats_timeout stats.symops stats.stats_calls.Cg.in_calls stats.stats_calls.Cg.out_calls;
-  F.fprintf fmt "ERRORS: @[<h>%a@]" Errlog.pp err_log
+  F.fprintf fmt "TIME:%a FAILURE:%a SYMOPS:%d CALLS:%d,%d@\n" (pp_time whole_seconds)
+    stats.stats_time pp_failure_kind_opt stats.stats_failure stats.symops
+    stats.stats_calls.Cg.in_calls stats.stats_calls.Cg.out_calls;
+  F.fprintf fmt "ERRORS: @[<h>%a@]@." Errlog.pp_errors err_log;
+  F.fprintf fmt "WARNINGS: @[<h>%a@]" Errlog.pp_warnings err_log
 
 (** Print the spec *)
 let pp_spec pe num_opt fmt spec =
@@ -401,11 +407,13 @@ let describe_phase summary =
 (** Return the signature of a procedure declaration as a string *)
 let get_signature summary =
   let s = ref "" in
-  IList.iter (fun (p, typ) ->
-      let pp_name f () = F.fprintf f "%s" p in
-      let pp f () = Sil.pp_type_decl pe_text pp_name Sil.pp_exp f typ in
-      let decl = pp_to_string pp () in
-      s := if !s = "" then decl else !s ^ ", " ^ decl) summary.attributes.ProcAttributes.formals;
+  IList.iter
+    (fun (p, typ) ->
+       let pp_name f () = F.fprintf f "%a" Mangled.pp p in
+       let pp f () = Sil.pp_type_decl pe_text pp_name Sil.pp_exp f typ in
+       let decl = pp_to_string pp () in
+       s := if !s = "" then decl else !s ^ ", " ^ decl)
+    summary.attributes.ProcAttributes.formals;
   let pp_procname f () = F.fprintf f "%a"
       Procname.pp summary.attributes.ProcAttributes.proc_name in
   let pp f () =
@@ -424,9 +432,10 @@ let pp_summary_no_stats_specs fmt summary =
 let pp_stats_html err_log fmt stats =
   Errlog.pp_html [] fmt err_log
 
-let get_specs_from_payload summary = match summary.payload with
-  | PrePosts specs -> NormSpec.tospecs specs
-  | TypeState _ -> []
+let get_specs_from_payload summary =
+  match summary.payload.preposts with
+  | Some specs -> NormSpec.tospecs specs
+  | None -> []
 
 (** Print the summary *)
 let pp_summary pe whole_seconds fmt summary =
@@ -458,7 +467,7 @@ let pp_spec_table pe whole_seconds fmt () =
 
 let empty_stats calls cyclomatic in_out_calls_opt =
   { stats_time = 0.0;
-    stats_timeout = false;
+    stats_failure = None;
     stats_calls =
       (match in_out_calls_opt with
        | Some in_out_calls -> in_out_calls
@@ -478,9 +487,14 @@ let rec post_equal pl1 pl2 = match pl1, pl2 with
       if Prop.prop_equal p1 p2 then post_equal pl1' pl2'
       else false
 
-let payload_compact sh payload = match payload with
-  | PrePosts specs -> PrePosts (IList.map (NormSpec.compact sh) specs)
-  | TypeState _ -> payload
+let payload_compact sh payload =
+  match payload.preposts with
+  | Some specs ->
+      { payload with
+        preposts = Some (IList.map (NormSpec.compact sh) specs);
+      }
+  | None ->
+      payload
 
 (** Return a compact representation of the summary *)
 let summary_compact sh summary =
@@ -526,9 +540,12 @@ let summary_serializer : summary Serialization.serializer =
 
 (** Save summary for the procedure into the spec database *)
 let store_summary pname (summ: summary) =
-  let process_payload = function
-    | PrePosts specs -> PrePosts (IList.map NormSpec.erase_join_info_pre specs)
-    | TypeState typestate_opt -> TypeState typestate_opt in
+  let process_payload payload = match payload.preposts with
+    | Some specs ->
+        { payload with
+          preposts = Some (IList.map NormSpec.erase_join_info_pre specs);
+        }
+    | None -> payload in
   let summ1 = { summ with payload = process_payload summ.payload } in
   let summ2 = if !Config.save_compact_summaries
     then summary_compact (Sil.create_sharing_env ()) summ1
@@ -724,7 +741,7 @@ let get_iterations proc_name =
       try
         let time_str = Hashtbl.find proc_flags proc_flag_iterations in
         Pervasives.int_of_string time_str
-      with exn when exn_not_timeout exn -> !iterations_cmdline
+      with exn when exn_not_failure exn -> !iterations_cmdline
 
 (** Return the specs and parameters for the proc in the spec table *)
 let get_specs_formals proc_name =
@@ -774,6 +791,13 @@ let update_dependency_map proc_name =
           summary.dependency_map in
       set_summary_origin proc_name { summary with dependency_map = current_dependency_map } origin
 
+let empty_payload =
+  {
+    preposts = None;
+    typestate = None;
+    calls = None;
+  }
+
 (** [init_summary (depend_list, nodes,
     proc_flags, calls, cyclomatic, in_out_calls_opt, proc_attributes)]
     initializes the summary for [proc_name] given dependent procs in list [depend_list]. *)
@@ -788,7 +812,7 @@ let init_summary
       nodes = nodes;
       phase = FOOTPRINT;
       sessions = ref 0;
-      payload = PrePosts [];
+      payload = empty_payload;
       stats = empty_stats calls cyclomatic in_out_calls_opt;
       status = INACTIVE;
       timestamp = 0;

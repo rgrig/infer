@@ -31,28 +31,8 @@ let fresh_stmt_info stmt_info =
 let fresh_decl_info decl_info =
   { decl_info with Clang_ast_t.di_pointer = Ast_utils.get_fresh_pointer () }
 
-let dummy_decl_info decl_info = {
-  decl_info with
-  Clang_ast_t.di_pointer = Ast_utils.get_fresh_pointer ();
-  di_source_range = dummy_source_range ();
-}
-
-let dummy_decl_info_in_curr_file decl_info =
-  let source_loc = {
-    Clang_ast_t.sl_file = Some (DB.source_file_to_abs_path !CLocation.current_source_file);
-    sl_line = None;
-    sl_column = None;
-  } in {
-    decl_info with
-    Clang_ast_t.di_pointer = Ast_utils.get_fresh_pointer ();
-    di_source_range =
-      if !CFrontend_config.testing_mode then
-        decl_info.Clang_ast_t.di_source_range
-      else (source_loc, source_loc);
-  }
-
 let empty_decl_info = {
-  Clang_ast_t.di_pointer = "";
+  Clang_ast_t.di_pointer = Ast_utils.get_invalid_pointer ();
   di_parent_pointer = None;
   di_previous_decl = `None;
   di_source_range = dummy_source_range ();
@@ -81,41 +61,41 @@ let stmt_info_with_fresh_pointer stmt_info = {
   si_source_range = stmt_info.Clang_ast_t.si_source_range;
 }
 
-let get_constant_type_ptr s =
-  let pointer = CFrontend_config.type_pointer_prefix ^ s in
+let new_constant_type_ptr () =
+  let pointer = Ast_utils.get_fresh_pointer () in
   `Prebuilt pointer
 
 (* Whenever new type are added manually to the translation here, *)
 (* they should be added to the map in cTypes_decl too!! *)
 let create_int_type =
-  get_constant_type_ptr "int"
+  new_constant_type_ptr ()
 
 let create_void_type =
-  get_constant_type_ptr "void"
+  new_constant_type_ptr ()
 
 let create_void_star_type =
-  get_constant_type_ptr "void *"
+  new_constant_type_ptr ()
 
 let create_id_type =
-  get_constant_type_ptr CFrontend_config.id_cl
+  new_constant_type_ptr ()
 
 let create_nsarray_star_type =
-  get_constant_type_ptr (CFrontend_config.nsarray_cl ^ " *")
+  new_constant_type_ptr ()
 
 let create_char_star_type =
-  get_constant_type_ptr "char *"
+  new_constant_type_ptr ()
 
 let create_BOOL_type =
-  get_constant_type_ptr "signed char"
+  new_constant_type_ptr ()
 
 let create_unsigned_long_type =
-  get_constant_type_ptr "unsigned long"
+  new_constant_type_ptr ()
 
 let create_void_unsigned_long_type =
-  get_constant_type_ptr "void *(unsigned long)"
+  new_constant_type_ptr ()
 
 let create_void_void_type =
-  get_constant_type_ptr "void (void *)"
+  new_constant_type_ptr ()
 
 let create_class_type class_name = `ClassType class_name
 
@@ -194,12 +174,6 @@ let make_expr_info tp vk objc_kind = {
 let make_expr_info_with_objc_kind tp objc_kind =
   make_expr_info tp `LValue objc_kind
 
-let make_lvalue_obc_prop_expr_info tp =
-  make_expr_info tp `LValue `ObjCProperty
-
-let make_method_decl_info mdi body =
-  { mdi with Clang_ast_t.omdi_body = Some body; }
-
 let make_decl_ref_exp stmt_info expr_info drei =
   let stmt_info = {
     Clang_ast_t.si_pointer = Ast_utils.get_fresh_pointer ();
@@ -214,11 +188,11 @@ let make_obj_c_message_expr_info_instance sel = {
   omei_decl_pointer = None; (* TODO look into it *)
 }
 
-let make_obj_c_message_expr_info_class selector tp = {
+let make_obj_c_message_expr_info_class selector tp pointer = {
   Clang_ast_t.omei_selector = selector;
   omei_receiver_kind = `Class (create_class_type tp);
   omei_is_definition_found = false;
-  omei_decl_pointer = None (* TODO look into it *)
+  omei_decl_pointer = pointer
 }
 
 let make_decl_ref k decl_ptr name is_hidden tp_opt = {
@@ -238,61 +212,10 @@ let make_decl_ref_no_tp k decl_ptr name is_hidden =
 let make_decl_ref_invalid k name is_hidden tp =
   make_decl_ref k (Ast_utils.get_invalid_pointer ()) name is_hidden (Some tp)
 
-let make_decl_ref_self ptr tp = {
-  Clang_ast_t.dr_kind = `ImplicitParam;
-  dr_decl_pointer = ptr;
-  dr_name = Some (Ast_utils.make_name_decl "self");
-  dr_is_hidden = false ;
-  dr_type_ptr = Some tp
-}
-
 let make_decl_ref_expr_info decl_ref = {
   Clang_ast_t.drti_decl_ref = Some decl_ref;
   drti_found_decl_ref = None;
 }
-
-let make_obj_c_ivar_ref_expr_info k ptr n tp = {
-  Clang_ast_t.ovrei_decl_ref = make_decl_ref_tp k ptr n false tp;
-  ovrei_pointer = Ast_utils.get_fresh_pointer ();
-  ovrei_is_free_ivar = true;
-}
-
-(* Build an AST cast expression of a decl_ref_expr *)
-let make_cast_expr tp di decl_ref_expr_info objc_kind =
-  let expr_info = make_expr_info tp `RValue objc_kind in
-  let stmt_info = make_stmt_info di in
-  let decl_ref_exp = make_decl_ref_exp stmt_info expr_info decl_ref_expr_info in
-  let cast_expr = {
-    Clang_ast_t.cei_cast_kind = `LValueToRValue;
-    cei_base_path = [];
-  } in
-  let cast_exp_rhs =
-    Clang_ast_t.ImplicitCastExpr(stmt_info, [decl_ref_exp], expr_info, cast_expr) in
-  cast_exp_rhs
-
-(* Build AST expression self.field_name as `LValue *)
-let make_self_field class_type di tp field_name =
-  let tp_class = create_pointer_type (create_class_type class_type) in
-  let expr_info = make_expr_info_with_objc_kind tp `ObjCProperty in
-  let stmt_info = make_stmt_info di in
-  let cast_exp = make_cast_expr tp_class di (make_decl_ref_expr_info (make_decl_ref_self di.Clang_ast_t.di_pointer tp_class)) `ObjCProperty in
-  let obj_c_ivar_ref_expr_info = make_obj_c_ivar_ref_expr_info (`ObjCIvar) di.Clang_ast_t.di_pointer field_name tp in
-  let ivar_ref_exp =
-    Clang_ast_t.ObjCIvarRefExpr(stmt_info, [cast_exp], expr_info, obj_c_ivar_ref_expr_info) in
-  ivar_ref_exp
-
-(* Build AST expression for self.field_name casted as `RValue. *)
-let make_deref_self_field class_decl_opt di tp field_name =
-  let stmt_info = make_stmt_info di in
-  let ivar_ref_exp = make_self_field class_decl_opt di tp field_name in
-  let expr_info' = make_expr_info tp `RValue `ObjCProperty in
-  let cast_exp_info = {
-    Clang_ast_t.cei_cast_kind = `LValueToRValue;
-    cei_base_path = [];
-  } in
-  let cast_exp' =
-    Clang_ast_t.ImplicitCastExpr(stmt_info, [ivar_ref_exp], expr_info', cast_exp_info) in
-  cast_exp'
 
 let make_objc_ivar_decl decl_info tp property_impl_decl_info ivar_name =
   let field_decl_info = {
@@ -323,12 +246,6 @@ let make_ObjCBoolLiteralExpr stmt_info value =
   let ei = make_expr_info create_BOOL_type in
   Clang_ast_t.ObjCBoolLiteralExpr((fresh_stmt_info stmt_info),[], ei, value)
 
-let make_decl_ref_exp_var (var_name, var_tp, var_ptr) var_kind stmt_info =
-  let stmt_info = stmt_info_with_fresh_pointer stmt_info in
-  let decl_ref = make_decl_ref_tp var_kind var_ptr var_name false var_tp in
-  let expr_info = make_expr_info var_tp in
-  make_decl_ref_exp stmt_info expr_info (make_decl_ref_expr_info decl_ref)
-
 let make_message_expr param_tp selector decl_ref_exp stmt_info add_cast =
   let stmt_info = stmt_info_with_fresh_pointer stmt_info in
   let parameters =
@@ -339,10 +256,6 @@ let make_message_expr param_tp selector decl_ref_exp stmt_info add_cast =
   let obj_c_message_expr_info = make_obj_c_message_expr_info_instance selector in
   let expr_info = make_expr_info_with_objc_kind param_tp `ObjCProperty in
   Clang_ast_t.ObjCMessageExpr (stmt_info, parameters, expr_info, obj_c_message_expr_info)
-
-let make_compound_stmt stmts stmt_info =
-  let stmt_info = stmt_info_with_fresh_pointer stmt_info in
-  Clang_ast_t.CompoundStmt (stmt_info, stmts)
 
 let make_binary_stmt stmt1 stmt2 stmt_info expr_info boi =
   let stmt_info = stmt_info_with_fresh_pointer stmt_info in
@@ -382,7 +295,7 @@ let translate_dispatch_function block_name stmt_info stmt_list ei n =
     with Not_found -> assert false in
   let block_name_info = {
     Clang_ast_t.ni_name = block_name;
-    Clang_ast_t.ni_qual_name = [block_name; CFrontend_config.block]
+    Clang_ast_t.ni_qual_name = [block_name]
   } in
   let open Clang_ast_t in
   match block_expr with
@@ -461,28 +374,29 @@ let create_call stmt_info decl_pointer function_name tp parameters =
   let cast = create_implicit_cast_expr (fresh_stmt_info stmt_info) [decl_ref_exp] tp `FunctionToPointerDecay in
   Clang_ast_t.CallExpr (stmt_info, cast:: parameters, expr_info_call)
 
-(* For a of type NSArray* Translate                                                                                              *)
-(* [a enumerateObjectsUsingBlock:^(id object, NSUInteger idx, BOOL * stop) {                                 *)
-(*      body_block                                                                                           *)
-(*     };                                                                                                    *)
-(*  ];                                                                                                       *)
+(* For a of type NSArray* Translate
+   [a enumerateObjectsUsingBlock:^(id object, NSUInteger idx, BOOL * stop) {
+      body_block
+     };
+   ];
 
-(* as follows:                                                                                               *)
+   as follows:
 
-(*     NSArray *objects = a;                                                                                 *)
-(*    void (^enumerateObjectsUsingBlock)(id, NSUInteger, BOOL* )= ^(id object, NSUInteger idx, BOOL* stop) { *)
-(*         body_block                                                                                        *)
-(*     };                                                                                                    *)
-(*     BOOL *stop = malloc(sizeof(BOOL));                                                                    *)
-(*     *stop = NO;                                                                                           *)
+    NSArray *objects = a;
+    void (^enumerateObjectsUsingBlock)(id, NSUInteger, BOOL* ) =
+      ^(id object, NSUInteger idx, BOOL* stop) {
+         body_block
+     };
+     BOOL *stop = malloc(sizeof(BOOL));
+     *stop = NO;
 
-(*     for (NSUInteger idx=0; idx<objects.count; idx++) {                                                    *)
-(*     id object= objects[idx];                                                                              *)
-(*         enumerateObjectsUsingBlock(object, idx, stop);                                                    *)
-(*         if ( *stop ==YES) break;                                                                           *)
-(*     }                                                                                                     *)
-(*     free(stop);                                                                                           *)
-(*                                                                                                         *)
+     for (NSUInteger idx=0; idx<objects.count; idx++) {
+         id object= objects[idx];
+         enumerateObjectsUsingBlock(object, idx, stop);
+         if ( *stop ==YES) break;
+     }
+     free(stop);
+*)
 let translate_block_enumerate block_name stmt_info stmt_list ei =
 
   let rec get_name_pointers lp =
@@ -577,7 +491,7 @@ let translate_block_enumerate block_name stmt_info stmt_list ei =
     | Clang_ast_t.ImplicitCastExpr (_, _, ei, _) -> ei
     | _ -> assert false in
 
-  (* id object= objects[idx]; *)
+  (* id object = objects[idx]; *)
   let build_object_DeclStmt pobj decl_ref_expr_array decl_ref_expr_idx tp_idx =
     let open Clang_ast_t in
     match pobj with

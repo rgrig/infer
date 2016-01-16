@@ -38,11 +38,13 @@ type exposed = Exposed (** kind for exposed props *)
     and normalized, and does not contain x = e. [sigma] is sorted and
     normalized. *)
 type 'a t =
-  { sigma: Sil.hpred list;
-    sub: Sil.subst;
-    pi: Sil.atom list;
-    foot_sigma : Sil.hpred list;
-    foot_pi: Sil.atom list }
+  {
+    sigma: Sil.hpred list;  (** spatial part *)
+    sub: Sil.subst;  (** substitution *)
+    pi: Sil.atom list;  (** pure part *)
+    foot_sigma : Sil.hpred list;  (** abduced spatial part *)
+    foot_pi: Sil.atom list;  (** abduced pure part *)
+  }
 
 exception Cannot_star of ml_location
 
@@ -85,18 +87,15 @@ let sigma_equal sigma1 sigma2 =
 
 (** Comparison between propositions. Lexicographical order. *)
 let prop_compare p1 p2 =
-  let n = sigma_compare p1.sigma p2.sigma in
-  if n <> 0 then n else
-    let n = Sil.sub_compare p1.sub p2.sub in
-    if n <> 0 then n else
-      let n = pi_compare p1.pi p2.pi in
-      if n <> 0 then n else
-        let n = sigma_compare p1.foot_sigma p2.foot_sigma in
-        if n <> 0 then n else pi_compare p1.foot_pi p2.foot_pi
+  sigma_compare p1.sigma p2.sigma
+  |> next Sil.sub_compare p1.sub p2.sub
+  |> next pi_compare p1.pi p2.pi
+  |> next sigma_compare p1.foot_sigma p2.foot_sigma
+  |> next pi_compare p1.foot_pi p2.foot_pi
 
 (** Check the equality of two propositions *)
 let prop_equal p1 p2 =
-  (prop_compare p1 p2 = 0)
+  prop_compare p1 p2 = 0
 
 (** {1 Functions for Pretty Printing} *)
 
@@ -208,9 +207,12 @@ let get_sub (p: 'a t) : Sil.subst = p.sub
 (** Return the pi part of [prop]. *)
 let get_pi (p: 'a t) : Sil.atom list = p.pi
 
+let pi_of_subst sub =
+  IList.map (fun (id1, e2) -> Sil.Aeq (Sil.Var id1, e2)) (Sil.sub_to_list sub)
+
 (** Return the pure part of [prop]. *)
 let get_pure (p: 'a t) : Sil.atom list =
-  IList.map (fun (id1, e2) -> Sil.Aeq (Sil.Var id1, e2)) (Sil.sub_to_list p.sub) @ p.pi
+  pi_of_subst p.sub @ p.pi
 
 (** Print existential quantification *)
 let pp_evars pe f evars =
@@ -594,16 +596,23 @@ let sym_eval abs e =
         (* progress: convert inner +I to +A *)
         let e2' = Sil.BinOp (Sil.PlusA, e12, e2) in
         eval (Sil.BinOp (Sil.PlusPI, e11, e2'))
-    | Sil.BinOp (Sil.PlusA, (Sil.Sizeof (Sil.Tstruct (ftal, sftal, csu, name_opt, supers, def_mthds, iann), st) as e1), e2) -> (* pattern for extensible structs
-                                                                                                                                  given a struct declatead as struct s { ... t arr[n] ... }, allocation pattern malloc(sizeof(struct s) + k * siezof(t))
-                                                                                                                                  turn it into struct s { ... t arr[n + k] ... } *)
+    | Sil.BinOp
+        (Sil.PlusA,
+         (Sil.Sizeof
+            (Sil.Tstruct (ftal, sftal, csu, name_opt, supers, def_mthds, iann), st) as e1),
+         e2) ->
+        (* pattern for extensible structs given a struct declatead as struct s { ... t arr[n] ... },
+           allocation pattern malloc(sizeof(struct s) + k * siezof(t)) turn it into
+           struct s { ... t arr[n + k] ... } *)
         let e1' = eval e1 in
         let e2' = eval e2 in
         (match IList.rev ftal, e2' with
            (fname, Sil.Tarray(typ, size), _):: ltfa, Sil.BinOp(Sil.Mult, num_elem, Sil.Sizeof (texp, st)) when ftal != [] && Sil.typ_equal typ texp ->
              let size' = Sil.BinOp(Sil.PlusA, size, num_elem) in
              let ltfa' = (fname, Sil.Tarray(typ, size'), Sil.item_annotation_empty) :: ltfa in
-             Sil.Sizeof(Sil.Tstruct (IList.rev ltfa', sftal, csu, name_opt, supers, def_mthds, iann), st)
+             Sil.Sizeof
+               (Sil.Tstruct
+                  (IList.rev ltfa', sftal, csu, name_opt, supers, def_mthds, iann), st)
          | _ -> Sil.BinOp(Sil.PlusA, e1', e2'))
     | Sil.BinOp (Sil.PlusA as oplus, e1, e2)
     | Sil.BinOp (Sil.PlusPI as oplus, e1, e2) ->
@@ -1507,7 +1516,14 @@ let mk_dll_hpara iF oB oF svars evars body =
   hpara_dll_normalize Sil.sub_empty para
 
 (** Proposition [true /\ emp]. *)
-let prop_emp : normal t = { sub = Sil.sub_empty; pi =[]; sigma =[]; foot_pi =[]; foot_sigma =[] }
+let prop_emp : normal t =
+  {
+    sub = Sil.sub_empty;
+    pi = [];
+    sigma = [];
+    foot_pi = [];
+    foot_sigma = [];
+  }
 
 (** Conjoin a heap predicate by separating conjunction. *)
 let prop_hpred_star (p : 'a t) (h : Sil.hpred) : exposed t =
@@ -1553,34 +1569,38 @@ let compute_reachable_hpreds sigma exps =
     else compute_reachable_hpreds_rec sigma (reach', exps') in
   compute_reachable_hpreds_rec sigma (Sil.HpredSet.empty, exps)
 
-(** produce a (fieldname, typ) from one of the [src_exps] to [snk_exp] using [reachable_hpreds] *)
-let rec get_fld_typ_path src_exps snk_exp reachable_hpreds =
+(** if possible, produce a (fieldname, typ) path from one of the [src_exps] to [snk_exp] using
+    [reachable_hpreds]. *)
+let get_fld_typ_path_opt src_exps snk_exp_ reachable_hpreds_ =
   let strexp_matches target_exp = function
     | (_, Sil.Eexp (e, _)) -> Sil.exp_equal target_exp e
     | _ -> false in
-  let (snk_exp, path) =
-    Sil.HpredSet.fold
-      (fun hpred (snk_exp, path) -> match hpred with
-         | Sil.Hpointsto (lhs, Sil.Estruct (flds, inst), Sil.Sizeof (typ, _)) ->
-             (match
-                IList.fold_left
-                  (fun acc fld -> if strexp_matches snk_exp fld then Some fld else acc)
-                  None
-                  flds with
-             | Some (fld, _) -> (lhs, (Some fld, typ) :: path)
-             | None -> (snk_exp, path))
-         | Sil.Hpointsto (lhs, Sil.Earray (_, elems, _), Sil.Sizeof (typ, _)) ->
-             if IList.exists (fun pair -> strexp_matches snk_exp pair) elems
-             then
-               (* None means "no field name" ~=~ nameless array index *)
-               (lhs, (None, typ) :: path)
-             else (snk_exp, path)
-         | _ -> (snk_exp, path))
-      reachable_hpreds
-      (snk_exp, []) in
-  if Sil.ExpSet.mem snk_exp src_exps then path
-  else get_fld_typ_path src_exps snk_exp reachable_hpreds
-
+  let extend_path hpred (snk_exp, path, reachable_hpreds) = match hpred with
+    | Sil.Hpointsto (lhs, Sil.Estruct (flds, inst), Sil.Sizeof (typ, _)) ->
+        (try
+           let fld, _ = IList.find (fun fld -> strexp_matches snk_exp fld) flds in
+           let reachable_hpreds' = Sil.HpredSet.remove hpred reachable_hpreds in
+           (lhs, (Some fld, typ) :: path, reachable_hpreds')
+         with Not_found -> (snk_exp, path, reachable_hpreds))
+    | Sil.Hpointsto (lhs, Sil.Earray (_, elems, _), Sil.Sizeof (typ, _)) ->
+        if IList.exists (fun pair -> strexp_matches snk_exp pair) elems
+        then
+          let reachable_hpreds' = Sil.HpredSet.remove hpred reachable_hpreds in
+          (* None means "no field name" ~=~ nameless array index *)
+          (lhs, (None, typ) :: path, reachable_hpreds')
+        else (snk_exp, path, reachable_hpreds)
+    | _ -> (snk_exp, path, reachable_hpreds) in
+  (* terminates because [reachable_hpreds] is shrinking on each recursive call *)
+  let rec get_fld_typ_path snk_exp path reachable_hpreds =
+    let (snk_exp', path', reachable_hpreds') =
+      Sil.HpredSet.fold extend_path reachable_hpreds (snk_exp, path, reachable_hpreds) in
+    if Sil.ExpSet.mem snk_exp' src_exps
+    then Some path'
+    else
+    if Sil.HpredSet.cardinal reachable_hpreds' >= Sil.HpredSet.cardinal reachable_hpreds
+    then None (* can't find a path from [src_exps] to [snk_exp] *)
+    else get_fld_typ_path snk_exp' path' reachable_hpreds' in
+  get_fld_typ_path snk_exp_ [] reachable_hpreds_
 
 (** filter [pi] by removing the pure atoms that do not contain an expression in [exps] *)
 let compute_reachable_atoms pi exps =
@@ -1674,7 +1694,7 @@ let normalize_and_strengthen_atom (p : normal t) (a : Sil.atom) : Sil.atom =
   | _ -> a'
 
 (** Conjoin a pure atomic predicate by normal conjunction. *)
-let rec prop_atom_and ?(footprint = false) (p : normal t) (a : Sil.atom) : normal t =
+let rec prop_atom_and ?(footprint=false) (p : normal t) a : normal t =
   let a' = normalize_and_strengthen_atom p a in
   if IList.mem Sil.atom_equal a' p.pi then p
   else begin
@@ -1742,12 +1762,6 @@ let get_pi_footprint p =
 (** Return the spatial part of the footprint *)
 let get_sigma_footprint p =
   p.foot_sigma
-
-(** Create a [prop] without any normalization *)
-let from_pi_sigma pi sigma =
-  { prop_emp with
-    pi = pi;
-    sigma = sigma }
 
 (** Reset every inst in the prop using the given map *)
 let prop_reset_inst inst_map prop =
@@ -1828,7 +1842,7 @@ let set_exp_attribute prop exp att =
   conjoin_neq exp exp_att prop
 
 (** Replace an attribute associated to the expression *)
-let add_or_replace_exp_attribute check_attribute_change prop exp att =
+let add_or_replace_exp_attribute_check_changed check_attribute_change prop exp att =
   let nexp = exp_normalize_prop prop exp in
   let found = ref false in
   let atom_map a = match a with
@@ -1838,7 +1852,6 @@ let add_or_replace_exp_attribute check_attribute_change prop exp att =
           begin
             found := true;
             check_attribute_change att_old att;
-
             let e1, e2 = exp_reorder e (Sil.Const (Sil.Cattribute att)) in
             Sil.Aneq (e1, e2)
           end
@@ -1848,13 +1861,17 @@ let add_or_replace_exp_attribute check_attribute_change prop exp att =
   if !found then replace_pi pi' prop
   else set_exp_attribute prop nexp att
 
+let add_or_replace_exp_attribute prop exp att =
+  (* wrapper for the most common case: do nothing *)
+  let check_attr_changed = (fun _ _ -> ()) in
+  add_or_replace_exp_attribute_check_changed check_attr_changed prop exp att
+
 (** mark Sil.Var's or Sil.Lvar's as undefined *)
 let mark_vars_as_undefined prop vars_to_mark callee_pname loc path_pos =
   let att_undef = Sil.Aundef (callee_pname, loc, path_pos) in
   let mark_var_as_undefined exp prop =
-    let do_nothing _ _ = () in
     match exp with
-    | Sil.Var _ | Sil.Lvar _ -> add_or_replace_exp_attribute do_nothing prop exp att_undef
+    | Sil.Var _ | Sil.Lvar _ -> add_or_replace_exp_attribute prop exp att_undef
     | _ -> prop in
   IList.fold_left (fun prop id -> mark_var_as_undefined id prop) prop vars_to_mark
 
@@ -1888,7 +1905,22 @@ let replace_objc_null prop lhs_exp rhs_exp =
   | Some att, Sil.Var var ->
       let prop = remove_attribute_from_exp att prop rhs_exp in
       let prop = conjoin_eq rhs_exp Sil.exp_zero prop in
-      add_or_replace_exp_attribute (fun a1 a2 -> ()) prop lhs_exp att
+      add_or_replace_exp_attribute prop lhs_exp att
+  | _ -> prop
+
+let rec nullify_exp_with_objc_null prop exp =
+  match exp with
+  | Sil.BinOp (op, exp1, exp2) ->
+      let prop' = nullify_exp_with_objc_null prop exp1 in
+      nullify_exp_with_objc_null prop' exp2
+  | Sil.UnOp (op, exp, _) ->
+      nullify_exp_with_objc_null prop exp
+  | Sil.Var name ->
+      (match get_objc_null_attribute prop exp with
+       | Some att ->
+           let prop' = remove_attribute_from_exp att prop exp in
+           conjoin_eq exp Sil.exp_zero prop'
+       | _ -> prop)
   | _ -> prop
 
 (** Get all the attributes of the prop *)
@@ -1919,12 +1951,6 @@ let attribute_map_resource prop f =
   let pi' = IList.map atom_map pi in
   replace_pi pi' prop
 
-(** if [atom] represents an attribute [att], add the attribure to [prop] *)
-let replace_atom_attribute check_attribute_change prop atom =
-  match atom_get_exp_attribute atom with
-  | None -> prop
-  | Some (exp, att) -> add_or_replace_exp_attribute check_attribute_change prop exp att
-
 (** type for arithmetic problems *)
 type arith_problem =
   | Div0 of Sil.exp (* division by zero *)
@@ -1939,8 +1965,7 @@ let find_arithmetic_problem proc_node_session prop exp =
     match exp_normalize_prop prop e with
     | Sil.Const c when iszero_int_float c -> true
     | _ ->
-        let check_attr_change att_old att_new = () in
-        res := add_or_replace_exp_attribute check_attr_change !res e (Sil.Adiv0 proc_node_session);
+        res := add_or_replace_exp_attribute !res e (Sil.Adiv0 proc_node_session);
         false in
   let rec walk = function
     | Sil.Var _ -> ()
@@ -1989,8 +2014,8 @@ let deallocate_stack_vars p pvars =
       if Sil.fav_mem p'_fav freshv then (* the address of a de-allocated stack var in in the post *)
         begin
           stack_vars_address_in_post := v :: !stack_vars_address_in_post;
-          let check_attribute_change att_old att_new = () in
-          res := add_or_replace_exp_attribute check_attribute_change !res (Sil.Var freshv) (Sil.Adangling Sil.DAaddr_stack_var)
+          res :=
+            add_or_replace_exp_attribute !res (Sil.Var freshv) (Sil.Adangling Sil.DAaddr_stack_var)
         end in
     IList.iter do_var !fresh_address_vars;
     !res in
@@ -2360,18 +2385,16 @@ let prop_rename_primed_footprint_vars p =
   let nsub' = sub_normalize sub' in
   let nsigma' = sigma_normalize sub_for_normalize sigma' in
   let npi' = pi_normalize sub_for_normalize nsigma' pi' in
-  let p' = footprint_normalize { sub = nsub'; pi = npi'; sigma = nsigma'; foot_pi = foot_pi'; foot_sigma = foot_sigma'} in
-  (*
-  L.out "@[<2>BEFORE RENAMING:@\n";
-  L.out "%a@\n@." pp_prop p;
-  L.out "@[<2>AFTER RENAMING:@\n";
-  L.out "%a@\n@." pp_prop p';
-  L.out "@[<2>RENAMING:@\n";
-  L.out "%a@\n@." pp_ren ren;
-  *)
+  let p' = footprint_normalize {
+      sub = nsub';
+      pi = npi';
+      sigma = nsigma';
+      foot_pi = foot_pi';
+      foot_sigma = foot_sigma';
+    } in
   p'
 
-(** {2 Functionss for changing and generating propositions} *)
+(** {2 Functions for changing and generating propositions} *)
 
 let mem_idlist i l =
   IList.exists (fun id -> Ident.equal i id) l
@@ -2391,18 +2414,18 @@ let normalize (eprop : 'a t) : normal t =
 
 (** Apply subsitution to prop. *)
 let prop_sub subst (prop: 'a t) : exposed t =
-  let pi = pi_sub subst (prop.pi @ IList.map (fun (x, e) -> Sil.Aeq (Sil.Var x, e)) (Sil.sub_to_list prop.sub)) in
+  let pi = pi_sub subst (prop.pi @ pi_of_subst prop.sub) in
   let sigma = sigma_sub subst prop.sigma in
-  let fp_pi = pi_sub subst prop.foot_pi in
-  let fp_sigma = sigma_sub subst prop.foot_sigma in
-  { prop_emp with pi = pi; sigma = sigma; foot_pi = fp_pi; foot_sigma = fp_sigma }
+  let foot_pi = pi_sub subst prop.foot_pi in
+  let foot_sigma = sigma_sub subst prop.foot_sigma in
+  { prop_emp with pi; sigma; foot_pi; foot_sigma; }
 
 (** Apply renaming substitution to a proposition. *)
 let prop_ren_sub (ren_sub: Sil.subst) (prop: normal t) : normal t =
   normalize (prop_sub ren_sub prop)
 
-(** Existentially quantify the [ids] in [prop].
-    [ids] should not contain any primed variables. *)
+(** Existentially quantify the [fav] in [prop].
+    [fav] should not contain any primed variables. *)
 let exist_quantify fav prop =
   let ids = Sil.fav_to_list fav in
   if IList.exists Ident.is_primed ids then assert false; (* sanity check *)
@@ -2410,7 +2433,8 @@ let exist_quantify fav prop =
     let gen_fresh_id_sub id = (id, Sil.Var (Ident.create_fresh Ident.kprimed)) in
     let ren_sub = Sil.sub_of_list (IList.map gen_fresh_id_sub ids) in
     let prop' =
-      let sub = Sil.sub_filter (fun i -> not (mem_idlist i ids)) prop.sub in (** throw away x=E if x becomes _x *)
+      (* throw away x=E if x becomes _x *)
+      let sub = Sil.sub_filter (fun i -> not (mem_idlist i ids)) prop.sub in
       if Sil.sub_equal sub prop.sub then prop
       else { prop with sub = sub } in
     (*
@@ -2428,7 +2452,7 @@ let prop_expmap (fe: Sil.exp -> Sil.exp) prop =
   let sigma = IList.map (Sil.hpred_expmap f) prop.sigma in
   let foot_pi = IList.map (Sil.atom_expmap fe) prop.foot_pi in
   let foot_sigma = IList.map (Sil.hpred_expmap f) prop.foot_sigma in
-  { prop with pi = pi; sigma = sigma; foot_pi = foot_pi; foot_sigma = foot_sigma }
+  { prop with pi; sigma; foot_pi; foot_sigma; }
 
 (** convert identifiers in fav to kind [k] *)
 let vars_make_unprimed fav prop =

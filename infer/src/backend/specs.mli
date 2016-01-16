@@ -102,7 +102,7 @@ end
 (** Execution statistics *)
 type stats =
   { stats_time: float; (** Analysis time for the procedure *)
-    stats_timeout: bool; (** Flag to indicate whether a timeout occurred *)
+    stats_failure: failure_kind option; (** what type of failure stopped the analysis (if any) *)
     stats_calls: Cg.in_out_calls; (** num of procs calling, and called *)
     symops: int; (** Number of SymOp's throughout the whole analysis of the function *)
     mutable nodes_visited_fp : IntSet.t; (** Nodes visited during the footprint phase *)
@@ -119,8 +119,11 @@ type dependency_map_t = int Procname.Map.t
 
 (** Payload: results of some analysis *)
 type payload =
-  | PrePosts of NormSpec.t list (** list of specs *)
-  | TypeState of unit TypeState.t option (** final typestate *)
+  {
+    preposts : NormSpec.t list option; (** list of specs *)
+    typestate : unit TypeState.t option; (** final typestate *)
+    calls:  CallTree.t list option; (** list of call tree *)
+  }
 
 (** Procedure summary *)
 type summary =
@@ -166,7 +169,7 @@ val get_attributes : summary -> ProcAttributes.t
 val get_ret_type : summary -> Sil.typ
 
 (** Get the formal paramters of the procedure *)
-val get_formals : summary -> (string * Sil.typ) list
+val get_formals : summary -> (Mangled.t * Sil.typ) list
 
 (** Get the flag with the given key for the procedure, if any *)
 val get_flag : Procname.t -> string -> string option
@@ -187,7 +190,7 @@ val get_signature : summary -> string
 val get_specs : Procname.t -> Prop.normal spec list
 
 (** Return the specs and formal parameters for the proc in the spec table *)
-val get_specs_formals : Procname.t -> Prop.normal spec list * (string * Sil.typ) list
+val get_specs_formals : Procname.t -> Prop.normal spec list * (Mangled.t * Sil.typ) list
 
 (** Get the specs from the payload of the summary. *)
 val get_specs_from_payload : summary -> Prop.normal spec list

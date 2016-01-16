@@ -279,7 +279,7 @@ let propagate_nodes_divergence
     | None -> _succ_nodes in
   if !Config.footprint && not (Paths.PathSet.is_empty (State.get_diverging_states_node ())) then
     begin
-      if !Config.developer_mode then Errdesc.warning_err (State.get_loc ()) "Propagating Divergence@.";
+      Errdesc.warning_err (State.get_loc ()) "Propagating Divergence@.";
       let exit_node = Cfg.Procdesc.get_exit_node pdesc in
       let diverging_states = State.get_diverging_states_node () in
       let prop_incons =
@@ -536,6 +536,7 @@ let forward_tabulate cfg tenv =
     let sid_curr_node = Cfg.Node.get_id curr_node in
     let proc_desc = Cfg.Node.get_proc_desc curr_node in
     let proc_name = Cfg.Procdesc.get_proc_name proc_desc in
+    let formal_params = Cfg.Procdesc.get_formals proc_desc in
     let summary = Specs.get_summary_unsafe "forward_tabulate" proc_name in
     mark_visited summary curr_node; (* mark nodes visited in fp and re phases *)
     let session =
@@ -582,6 +583,10 @@ let forward_tabulate cfg tenv =
           exe_iter
             (fun prop path cnt num_paths ->
                try
+                 let prop = if !Config.taint_analysis then
+                     let tainted_params = Taint.tainted_params proc_name in
+                     Tabulation.add_param_taint proc_name formal_params prop tainted_params
+                   else prop in
                  L.d_strln ("Processing prop " ^ string_of_int cnt ^ "/" ^ string_of_int num_paths);
                  L.d_increase_indent 1;
                  State.reset_diverging_states_goto_node ();
@@ -620,7 +625,10 @@ let report_context_leaks pname sigma tenv =
     IList.iter
       (fun (context_exp, typ) ->
          if Sil.ExpSet.mem context_exp reachable_exps then
-           let leak_path = Prop.get_fld_typ_path fld_exps context_exp reachable_hpreds in
+           let leak_path =
+             match Prop.get_fld_typ_path_opt fld_exps context_exp reachable_hpreds with
+             | Some path -> path
+             | None -> assert false in (* a path must exist in order for a leak to be reported *)
            let err_desc = Errdesc.explain_context_leak pname typ fld_name leak_path in
            let exn = Exceptions.Context_leak
                (err_desc, try assert false with Assert_failure x -> x) in
@@ -631,7 +639,8 @@ let report_context_leaks pname sigma tenv =
     IList.fold_left
       (fun exps hpred -> match hpred with
          | Sil.Hpointsto (_, Sil.Eexp (exp, _), Sil.Sizeof (Sil.Tptr (typ, _), _))
-           when AndroidFramework.is_context typ tenv ->
+           when AndroidFramework.is_context typ tenv
+                && not (AndroidFramework.is_application typ tenv) ->
              (exp, typ) :: exps
          | _ -> exps)
       []
@@ -797,7 +806,7 @@ let prop_init_formals_seed tenv new_formals (prop : 'a Prop.t) : Prop.exposed Pr
     as well as seed variables *)
 let initial_prop tenv (curr_f: Cfg.Procdesc.t) (prop : 'a Prop.t) add_formals : Prop.normal Prop.t =
   let construct_decl (x, typ) =
-    (Sil.mk_pvar (Mangled.from_string x) (Cfg.Procdesc.get_proc_name curr_f), typ) in
+    (Sil.mk_pvar x (Cfg.Procdesc.get_proc_name curr_f), typ) in
   let new_formals =
     if add_formals
     then IList.map construct_decl (Cfg.Procdesc.get_formals curr_f)
@@ -894,7 +903,7 @@ let perform_analysis_phase cfg tenv (pname : Procname.t) (pdesc : Cfg.Procdesc.t
     if recursion_level > !Config.max_recursion then
       begin
         L.err "Reached maximum level of recursion, raising a Timeout@.";
-        raise (Timeout_exe (TOrecursion recursion_level))
+        raise (Analysis_failure_exe (FKrecursion_timeout recursion_level))
       end in
 
   let compute_footprint : (unit -> unit) * (unit -> Prop.normal Specs.spec list) =
@@ -1003,32 +1012,35 @@ let reset_global_counters cfg proc_name proc_desc =
   Abs.abs_rules_reset ();
   set_current_language cfg proc_desc
 
-(* Collect all pairs of the kind (precondition, exception) from a summary *)
+(* Collect all pairs of the kind (precondition, runtime exception) from a summary *)
 let exception_preconditions tenv pname summary =
-  let collect_exceptions pre exns (prop, path) =
+  let collect_exceptions pre exns (prop, _) =
     if Tabulation.prop_is_exn pname prop then
       let exn_name = Tabulation.prop_get_exn_name pname prop in
       if AndroidFramework.is_runtime_exception tenv exn_name then
         (pre, exn_name):: exns
       else exns
-    else exns
-  and collect_errors pre errors (prop, path) =
-    match Tabulation.lookup_global_errors prop with
+    else exns in
+  let collect_spec errors spec =
+    IList.fold_left (collect_exceptions spec.Specs.pre) errors spec.Specs.posts in
+  IList.fold_left collect_spec [] (Specs.get_specs_from_payload summary)
+
+(* Collect all pairs of the kind (precondition, custom error) from a summary *)
+let custom_error_preconditions tenv pname summary =
+  let collect_errors pre errors (prop, _) =
+    match Tabulation.lookup_custom_errors prop with
     | None -> errors
     | Some e -> (pre, e) :: errors in
   let collect_spec errors spec =
-    match !Config.curr_language with
-    | Config.Java ->
-        IList.fold_left (collect_exceptions spec.Specs.pre) errors spec.Specs.posts
-    | Config.C_CPP ->
-        IList.fold_left (collect_errors spec.Specs.pre) errors spec.Specs.posts in
+    IList.fold_left (collect_errors spec.Specs.pre) errors spec.Specs.posts in
   IList.fold_left collect_spec [] (Specs.get_specs_from_payload summary)
 
 
 (* Remove the constrain of the form this != null which is true for all Java virtual calls *)
 let remove_this_not_null prop =
   let collect_hpred (var_option, hpreds) = function
-    | Sil.Hpointsto (Sil.Lvar pvar, Sil.Eexp (Sil.Var var, _), _) when Sil.pvar_is_this pvar ->
+    | Sil.Hpointsto (Sil.Lvar pvar, Sil.Eexp (Sil.Var var, _), _)
+      when !Config.curr_language = Config.Java && Sil.pvar_is_this pvar ->
         (Some var, hpreds)
     | hpred -> (var_option, hpred:: hpreds) in
   let collect_atom var atoms = function
@@ -1043,6 +1055,17 @@ let remove_this_not_null prop =
       let prop' = Prop.replace_pi filtered_atoms Prop.prop_emp in
       let prop'' = Prop.replace_sigma filtered_hpreds prop' in
       Prop.normalize prop''
+
+
+(** Is true when the precondition does not contain constrains that can be false at call site.
+    This means that the post-conditions associated with this precondition cannot be prevented
+    by the calling context. *)
+let is_unavoidable pre =
+  let prop = remove_this_not_null (Specs.Jprop.to_prop pre) in
+  match Prop.CategorizePreconditions.categorize [prop] with
+  | Prop.CategorizePreconditions.NoPres
+  | Prop.CategorizePreconditions.Empty -> true
+  | _ -> false
 
 
 (** Detects if there are specs of the form {precondition} proc {runtime exception} and report
@@ -1062,12 +1085,6 @@ let report_runtime_exceptions tenv cfg pdesc summary =
     let annotated_signature = Annotations.get_annotated_signature proc_attributes in
     let ret_annotation, _ = annotated_signature.Annotations.ret in
     Annotations.ia_is_verify ret_annotation in
-  let is_unavoidable pre =
-    let prop = remove_this_not_null (Specs.Jprop.to_prop pre) in
-    match Prop.CategorizePreconditions.categorize [prop] with
-    | Prop.CategorizePreconditions.NoPres
-    | Prop.CategorizePreconditions.Empty -> true
-    | _ -> false in
   let should_report pre =
     is_main || is_annotated || is_unavoidable pre in
   let report (pre, runtime_exception) =
@@ -1080,6 +1097,17 @@ let report_runtime_exceptions tenv cfg pdesc summary =
   IList.iter report (exception_preconditions tenv pname summary)
 
 
+let report_custom_errors tenv cfg pdesc summary =
+  let pname = Specs.get_proc_name summary in
+  let report (pre, custom_error) =
+    if is_unavoidable pre then
+      let loc = summary.Specs.attributes.ProcAttributes.loc in
+      let err_desc = Localise.desc_custom_error loc in
+      let exn = Exceptions.Custom_error (custom_error, err_desc) in
+      Reporting.log_error pname ~pre: (Some (Specs.Jprop.to_prop pre)) exn in
+  IList.iter report (custom_error_preconditions tenv pname summary)
+
+
 (** update a summary after analysing a procedure *)
 let update_summary prev_summary specs proc_name elapsed res =
   let normal_specs = IList.map Specs.spec_normalize specs in
@@ -1087,16 +1115,22 @@ let update_summary prev_summary specs proc_name elapsed res =
   let timestamp = max 1 (prev_summary.Specs.timestamp + if changed then 1 else 0) in
   let stats_time = prev_summary.Specs.stats.Specs.stats_time +. elapsed in
   let symops = prev_summary.Specs.stats.Specs.symops + SymOp.get_total () in
-  let timeout = res == None || prev_summary.Specs.stats.Specs.stats_timeout in
+  let failure = match res with
+    | None -> prev_summary.Specs.stats.Specs.stats_failure
+    | Some failure_kind -> res in
   let stats =
     { prev_summary.Specs.stats with
       Specs.stats_time = stats_time;
       Specs.symops = symops;
-      Specs.stats_timeout = timeout } in
+      Specs.stats_failure = failure; } in
+  let payload =
+    { prev_summary.Specs.payload with
+      Specs.preposts = Some new_specs; } in
   { prev_summary with
-    Specs.stats = stats;
-    Specs.payload = Specs.PrePosts new_specs;
-    Specs.timestamp = timestamp }
+    Specs.stats;
+    payload;
+    timestamp;
+  }
 
 
 (** Analyze [proc_name] and return the updated summary. Use module
@@ -1118,8 +1152,9 @@ let analyze_proc exe_env (proc_name: Procname.t) : Specs.summary =
   let prev_summary = Specs.get_summary_unsafe "analyze_proc" proc_name in
   let updated_summary =
     update_summary prev_summary specs proc_name elapsed res in
-  if (!Config.curr_language <> Config.Java && Config.report_assertion_failure)
-     || !Config.report_runtime_exceptions then
+  if !Config.curr_language == Config.C_CPP && Config.report_custom_error then
+    report_custom_errors tenv cfg proc_desc updated_summary;
+  if !Config.curr_language == Config.Java && !Config.report_runtime_exceptions then
     report_runtime_exceptions tenv cfg proc_desc updated_summary;
   updated_summary
 
@@ -1138,7 +1173,7 @@ let perform_transition exe_env cg proc_name =
               let start_node = Cfg.Procdesc.get_start_node pdesc in
               f start_node
           | None -> ()
-        with exn when exn_not_timeout exn -> () in
+        with exn when exn_not_failure exn -> () in
       apply_start_node (do_before_node 0);
       try
         Config.allowleak := true;
@@ -1146,7 +1181,7 @@ let perform_transition exe_env cg proc_name =
         Config.allowleak := allowleak;
         apply_start_node do_after_node;
         res
-      with exn when exn_not_timeout exn ->
+      with exn when exn_not_failure exn ->
         apply_start_node do_after_node;
         Config.allowleak := allowleak;
         L.err "Error in collect_preconditions for %a@." Procname.pp proc_name;
@@ -1344,7 +1379,7 @@ let print_stats_cfg proc_shadowed proc_is_active cfg =
         | [], _ -> incr num_nospec_error_proc
         | _, _ -> incr num_spec_error_proc in
       tot_symops := !tot_symops + stats.Specs.symops;
-      if stats.Specs.stats_timeout then incr num_timeout;
+      if Option.is_some stats.Specs.stats_failure then incr num_timeout;
       Errlog.extend_table err_table err_log in
   let print_file_stats fmt () =
     let num_errors = Errlog.err_table_size_footprint Exceptions.Kerror err_table in

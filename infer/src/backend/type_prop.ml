@@ -77,8 +77,8 @@ let get_formals cfg procname =
   let pdesc = match Cfg.Procdesc.find_from_name cfg procname with
     | Some pdesc -> pdesc
     | None -> assert false in
-  let formals = Cfg.Procdesc.get_formals pdesc in
-  formals
+  Cfg.Procdesc.get_formals pdesc
+  |> IList.map (fun (p, t) -> (Mangled.to_string p, t))
 
 (* Module for defining the map to be updated: in this case it is a map     *)
 (* from procedure names to a set of types for each of the procedure's      *)
@@ -99,12 +99,12 @@ struct
   let rec type_to_string typ =
     match typ with
     | Sil.Tptr (typ , _) -> type_to_string typ
-    | Sil.Tstruct (_, _, Sil.Class, Some mangled, _, _, _)
-    | Sil.Tvar ( Sil.TN_csu (Sil.Class, (mangled))) -> Mangled.to_string mangled
+    | Sil.Tstruct (_, _, Csu.Class, Some mangled, _, _, _)
+    | Sil.Tvar (Typename.TN_csu (Csu.Class, (mangled))) -> Mangled.to_string mangled
     | _ -> Sil.typ_to_string typ
 
   let string_typ_to_string (s, typ) =
-    if (s = "this") then None
+    if s = "this" then None
     else Some (s^" -> "^(type_to_string typ))
 
   let rec type_signature_to_string list =
@@ -311,8 +311,8 @@ let initial_node = ref (Cfg.Node.dummy ())
 
 let rec super tenv t =
   match t with
-  | Sil.Tstruct (_, _, Sil.Class, Some c2, (Sil.Class, super):: rest, _, _) ->
-      Sil.tenv_lookup tenv (Sil.TN_csu (Sil.Class, super))
+  | Sil.Tstruct (_, _, Csu.Class, Some c2, class_name :: rest, _, _) ->
+      Sil.tenv_lookup tenv class_name
   | Sil.Tarray (dom_type, _) -> None
   | Sil.Tptr (dom_type, p) ->
       let super_dom_type = super tenv dom_type in
@@ -412,7 +412,7 @@ struct
     | Sil.Cfun fn -> assert false
     | Sil.Cstr str ->
         Sil.Tptr (
-          Sil.Tvar ( Sil.TN_csu (Sil.Class, (Mangled.from_string ( "java.lang.String")))),
+          Sil.Tvar ( Typename.TN_csu (Csu.Class, (Mangled.from_string ( "java.lang.String")))),
           Sil.Pk_pointer)
     | Sil.Cattribute atr -> assert false
     | Sil.Cexn e -> assert false
@@ -561,7 +561,7 @@ struct
           if (Procname.Set.mem callee_pname !defined_methods) then
             let formals = Cfg.Procdesc.get_formals pdesc in
             let create_typ_bundle (exp, typ) (name, typ2) =
-              (name, (get_type tenv exp id_context context field_context)) in
+              (Mangled.to_string name, (get_type tenv exp id_context context field_context)) in
             let typ_bundle = IList.map2 create_typ_bundle actual_params formals in
             let set = Type_map.find_dyn_types callee_pname map in
             if Type_map.TypeSet.mem typ_bundle set
@@ -714,14 +714,14 @@ let arg_desc =
           IList.mem string_equal option_name options_to_keep)
         arg_desc in
     let desc = (filter Utils.base_arg_desc) in
-    Utils.Arg2.create_options_desc false "Parsing Options" desc in
+    Utils.Arg.create_options_desc false "Parsing Options" desc in
   base_arg
 
 let usage =
   "Usage: Typeprop -results_dir out \n"
 
 let () =
-  Utils.Arg2.parse arg_desc (fun arg -> ()) usage
+  Utils.Arg.parse arg_desc (fun arg -> ()) usage
 
 (* Initialises the map of types of the methods that are never called with  *)
 (* the static types.                                                       *)

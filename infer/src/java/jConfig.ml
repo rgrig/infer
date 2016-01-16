@@ -63,13 +63,13 @@ let run_method = "run"
 
 (** {2 Names of special variables, constants and method names} *)
 
-let this = "this"
+let this = Mangled.from_string "this"
 
 let constructor_name = "<init>"
 
 let clone_name = "clone"
 
-let field_st = "field"
+let field_st = Mangled.from_string "field"
 
 let field_cst = "<field>"
 
@@ -116,6 +116,10 @@ let class_code cl = "L"^cl
 let errors_db_file = "errors.db"
 let main_errors_file = "Java_frontend.errors"
 
+let classpath : string option ref = ref None
+
+let class_source_map : string option ref = ref None
+
 (** {2 Flags } *)
 
 (* the Sawja representation of the Java Bytecode will be printed *)
@@ -144,4 +148,5 @@ let translate_checks = ref false
 let create_harness = ref false
 
 (* Create a procedure description of callees *)
-let create_callee_procdesc = true
+let create_callee_procdesc =
+  Config.from_env_variable "INFER_CREATE_CALLEE_PDESC"

@@ -115,7 +115,7 @@ let arg_desc =
         "-local_config", Arg.String (fun s -> Inferconfig.local_config := Some s), Some "Path",
         "Path to local config file";
       ] in
-    Arg2.create_options_desc false "Options" desc in
+    Arg.create_options_desc false "Options" desc in
   let reserved_arg =
     let desc =
       [
@@ -127,7 +127,7 @@ let arg_desc =
         "-svg", Arg.Set svg, None, "generate .dot and .svg";
         "-whole_seconds", Arg.Set whole_seconds, None, "print whole seconds only";
       ] in
-    Arg2.create_options_desc false "Reserved Options" desc in
+    Arg.create_options_desc false "Reserved Options" desc in
   base_arg @ reserved_arg
 
 let usage =
@@ -139,7 +139,7 @@ let usage =
 
 let print_usage_exit err_s =
   L.err "Load Error: %s@.@." err_s;
-  Arg2.usage arg_desc usage;
+  Arg.usage arg_desc usage;
   exit(1)
 
 (** return the list of the .specs files in the results dir and libs, if they're defined *)
@@ -181,6 +181,10 @@ let error_advice_to_csv_string error_desc =
 let error_desc_to_plain_string error_desc =
   let pp fmt () = F.fprintf fmt "%a" Localise.pp_error_desc error_desc in
   pp_to_string pp ()
+
+let error_desc_to_dotty_string error_desc =
+  let dotty_opt = Localise.error_desc_get_dotty error_desc in
+  match dotty_opt with Some s -> s | None -> ""
 
 let error_desc_to_xml_string error_desc =
   let pp fmt () = F.fprintf fmt "%a" Localise.pp_error_desc error_desc in
@@ -276,12 +280,17 @@ let summary_values top_proc_set summary =
   let call_rank =
     let c1 = 1 and c2 = 1 in
     logscale (c1 * in_calls + c2 * out_calls) in
+
+  let pp_failure failure =
+    pp_to_string pp_failure_kind failure in
+
+
   let cyclomatic = stats.Specs.cyclomatic in
   { vname = Procname.to_string proc_name;
     vname_id = Procname.to_filename proc_name;
     vspecs = IList.length specs;
     vtime = Printf.sprintf "%.0f" stats.Specs.stats_time;
-    vto = if stats.Specs.stats_timeout then "TO" else "  ";
+    vto = Option.map_default pp_failure "NONE" stats.Specs.stats_failure;
     vsymop = stats.Specs.symops;
     verr = Errlog.size
         (fun ekind in_footprint -> ekind = Exceptions.Kerror && in_footprint)
@@ -475,6 +484,7 @@ module BugsJson = struct
           key = node_key;
           qualifier_tags = error_desc_to_qualifier_tags_records error_desc;
           hash = get_bug_hash kind bug_type procedure_id file node_key error_desc;
+          dotty = error_desc_to_dotty_string error_desc;
         } in
         if not !is_first_item then pp "," else is_first_item := false;
         pp "%s@?" (string_of_jsonbug bug) in
@@ -666,6 +676,7 @@ module Stats = struct
     mutable nLOC : int;
     mutable nprocs : int;
     mutable nspecs : int;
+    mutable ntimeouts : int;
     mutable nverified : int;
     mutable nwarnings : int;
     mutable saved_errors : string list;
@@ -680,6 +691,7 @@ module Stats = struct
     nLOC = 0;
     nprocs = 0;
     nspecs = 0;
+    ntimeouts = 0;
     nverified = 0;
     nwarnings = 0;
     saved_errors = [];
@@ -744,10 +756,14 @@ module Stats = struct
     let is_defective = found_errors in
     let is_verified = specs <> [] && not is_defective in
     let is_checked = not (is_defective || is_verified) in
+    let is_timeout = match Specs.(summary.stats.stats_failure) with
+      | None | Some (FKcrash _) -> false
+      | _ -> true in
     stats.nprocs <- stats.nprocs + 1;
     stats.nspecs <- stats.nspecs + (IList.length specs);
     if is_verified then stats.nverified <- stats.nverified + 1;
     if is_checked then stats.nchecked <- stats.nchecked + 1;
+    if is_timeout then stats.ntimeouts <- stats.ntimeouts + 1;
     if is_defective then stats.ndefective <- stats.ndefective + 1;
     process_loc summary.Specs.attributes.ProcAttributes.loc stats
 
@@ -758,6 +774,7 @@ module Stats = struct
     F.fprintf fmt "Files: %d@\n" (num_files stats);
     F.fprintf fmt "LOC: %d@\n" stats.nLOC;
     F.fprintf fmt "Specs: %d@\n" stats.nspecs;
+    F.fprintf fmt "Timeouts: %d@\n" stats.ntimeouts;
     F.fprintf fmt "Procedures: %d@\n" stats.nprocs;
     F.fprintf fmt "  Verified: %d@\n" stats.nverified;
     F.fprintf fmt "  Checked: %d@\n" stats.nchecked;
@@ -876,7 +893,7 @@ module AnalysisResults = struct
       if not (Filename.check_suffix arg ".specs") && arg <> "."
       then print_usage_exit "arguments must be .specs files"
       else args := arg::!args in
-    Arg2.parse arg_desc f usage;
+    Arg.parse arg_desc f usage;
     if !test_filtering then
       begin
         Inferconfig.test ();
@@ -975,6 +992,7 @@ end
 let compute_top_procedures = ref false (* warning: computing top procedures iterates over summaries twice *)
 
 let () =
+  Config.developer_mode := true;
   Config.print_using_diff := true;
   handle_source_file_copy_option ();
   let iterate_summaries = AnalysisResults.get_summary_iterator () in

@@ -17,13 +17,12 @@ type continuation = {
 
 type priority_node =
   | Free
-  | Busy of string
+  | Busy of Clang_ast_t.pointer
 
 type trans_state = {
   context: CContext.t;
   succ_nodes: Cfg.Node.t list;
   continuation: continuation option;
-  parent_line_number: int;
   priority: priority_node;
 }
 
@@ -36,9 +35,6 @@ type trans_result = {
 }
 
 val empty_res_trans: trans_result
-
-(** Collect the results of translating a list of instructions, and link up the nodes created. *)
-val collect_res_trans: trans_result list -> trans_result
 
 val is_return_temp: continuation option -> bool
 
@@ -64,11 +60,6 @@ val extract_stmt_from_singleton : Clang_ast_t.stmt list -> string -> Clang_ast_t
 
 val is_null_stmt : Clang_ast_t.stmt -> bool
 
-val compute_instr_ids_exp_to_parent :
-  Clang_ast_t.stmt_info -> Sil.instr list -> Ident.t list -> (Sil.exp * Sil.typ) list ->
-  Sil.exp -> Sil.typ -> Location.t -> priority_node ->
-  Sil.instr list * Ident.t list * (Sil.exp * Sil.typ) list
-
 val is_enumeration_constant : Clang_ast_t.stmt -> bool
 
 val is_member_exp : Clang_ast_t.stmt -> bool
@@ -81,7 +72,7 @@ val dereference_value_from_result : Location.t -> trans_result -> strip_pointer:
 
 val cast_operation :
   CContext.t -> Clang_ast_t.cast_kind -> (Sil.exp * Sil.typ) list -> Sil.typ -> Location.t ->
-  bool -> Ident.t list * Sil.instr list * Sil.exp
+  bool -> Ident.t list * Sil.instr list * (Sil.exp * Sil.typ)
 
 val trans_assertion_failure : Location.t -> CContext.t -> trans_result
 
@@ -98,7 +89,7 @@ val contains_opaque_value_expr : Clang_ast_t.stmt -> bool
 val get_info_from_decl_ref : Clang_ast_t.decl_ref ->
   Clang_ast_t.named_decl_info * Clang_ast_t.pointer * Clang_ast_t.type_ptr
 
-val get_decl_ref_info : Clang_ast_t.stmt -> int -> Clang_ast_t.decl_ref * int
+val get_decl_ref_info : Clang_ast_t.stmt -> Clang_ast_t.decl_ref
 
 val builtin_trans : trans_state -> Location.t -> Clang_ast_t.stmt_info ->
   Sil.typ -> Procname.t option -> trans_result option
@@ -106,8 +97,8 @@ val builtin_trans : trans_state -> Location.t -> Clang_ast_t.stmt_info ->
 val alloc_trans :
   trans_state -> Location.t -> Clang_ast_t.stmt_info -> Sil.typ -> bool -> trans_result
 
-val new_or_alloc_trans :
-  trans_state -> Location.t -> Clang_ast_t.stmt_info -> string -> string -> trans_result
+val new_or_alloc_trans : trans_state -> Location.t -> Clang_ast_t.stmt_info ->
+  Clang_ast_t.type_ptr -> string option -> string -> trans_result
 
 val cpp_new_trans : trans_state -> Location.t -> Clang_ast_t.stmt_info -> Sil.typ -> trans_result
 
@@ -160,13 +151,16 @@ sig
 
   val try_claim_priority_node : trans_state -> Clang_ast_t.stmt_info -> trans_state
 
+  val force_claim_priority_node : trans_state -> Clang_ast_t.stmt_info -> trans_state
+
   val own_priority_node : t -> Clang_ast_t.stmt_info -> bool
 
-  (* Used for function call and method call. It deals with creating or not   *)
-  (* a cfg node depending of owning the priority_node and the nodes returned *)
-  (* by the parameters of the call                                           *)
-  val compute_results_to_parent :
-    trans_state -> Location.t -> string -> Clang_ast_t.stmt_info -> trans_result -> trans_result
+  (* Used by translation functions to handle potenatial cfg nodes. *)
+  (* It connects nodes returned by translation of stmt children and *)
+  (* deals with creating or not a cfg node depending of owning the *)
+  (* priority_node. It returns nodes, ids, instrs that should be passed to parent *)
+  val compute_results_to_parent : trans_state -> Location.t -> string -> Clang_ast_t.stmt_info ->
+    trans_result list -> trans_result
 
 end
 
@@ -206,7 +200,7 @@ sig
 
   val add_self_parameter_for_super_instance :
     CContext.t -> Procname.t -> Location.t -> Clang_ast_t.obj_c_message_expr_info ->
-    trans_result -> trans_result
+    trans_result
 
   val is_var_self : Sil.pvar -> bool -> bool
 end

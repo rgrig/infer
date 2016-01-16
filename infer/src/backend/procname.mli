@@ -45,9 +45,6 @@ val from_string_c_fun : string -> t
 (** Create a C++ procedure name from plain and mangled name *)
 val mangled_c_fun : string -> string -> t
 
-(** Create a static procedure name from a plain name and source file *)
-val mangled_static : string -> DB.source_file -> t
-
 (** Create a Java procedure name from its class_name method_name args_type_name return_type_name method_kind *)
 val mangled_java : java_type -> java_type option -> string -> java_type list -> method_kind -> t
 
@@ -69,6 +66,9 @@ val java_replace_class : t -> string -> t
 (** Replace the method of a java procname. *)
 val java_replace_method : t -> string -> t
 
+(** Replace the parameters of a java procname. *)
+val java_replace_parameters : t -> java_type list -> t
+
 (** Replace the method of a java procname. *)
 val java_replace_return_type : t -> java_type -> t
 
@@ -84,6 +84,9 @@ val java_get_class : t -> string
 (** Return the simple class name of a java procedure name. *)
 val java_get_simple_class : t -> string
 
+(** Return the package name of a java procedure name. *)
+val java_get_package : t -> string option
+
 (** Return the method name of a java procedure name. *)
 val java_get_method : t -> string
 
@@ -97,7 +100,10 @@ val java_replace_method : t -> string -> t
 val java_get_return_type : t -> string
 
 (** Return the parameters of a java procedure name. *)
-val java_get_parameters : t -> string list
+val java_get_parameters : t -> java_type list
+
+(** Return the parameters of a java procname as strings. *)
+val java_get_parameters_as_strings : t -> string list
 
 (** Return true if the java procedure is static *)
 val java_is_static : t -> bool
@@ -113,6 +119,9 @@ val is_anonymous_inner_class_name : string -> bool
 (** [is_constructor pname] returns true if [pname] is a constructor *)
 val is_constructor : t -> bool
 
+(** [is_objc_dealloc pname] returns true if [pname] is the dealloc method in Objective-C *)
+val is_objc_dealloc : t -> bool
+
 (** [java_is_close pname] returns true if the method name is "close" *)
 val java_is_close : t -> bool
 
@@ -121,6 +130,8 @@ val is_class_initializer : t -> bool
 
 (** [is_infer_undefined pn] returns true if [pn] is a special Infer undefined proc *)
 val is_infer_undefined : t -> bool
+
+val split_classname : string -> string option * string
 
 (** Check if the procedure belongs to an anonymous inner class. *)
 val java_is_anonymous_inner_class : t -> bool

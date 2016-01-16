@@ -70,9 +70,6 @@ let current_out_formatter = ref F.std_formatter
 (** Current formatter for the err stream *)
 let current_err_formatter = ref F.err_formatter
 
-(** Get the current out formatter *)
-let get_out_formatter () = !current_out_formatter
-
 (** Get the current err formatter *)
 let get_err_formatter fmt = !current_err_formatter
 
@@ -86,8 +83,11 @@ let set_err_formatter fmt =
 
 (** Flush the current streams *)
 let flush_streams () =
-  F.fprintf !current_out_formatter "@?";
-  F.fprintf !current_err_formatter "@?"
+  if !Config.developer_mode then
+    begin
+      F.fprintf !current_out_formatter "@?";
+      F.fprintf !current_err_formatter "@?"
+    end
 
 (** extend the current print log *)
 let add_print_action pact =
@@ -105,13 +105,19 @@ let get_delayed_prints () =
 let do_print fmt fmt_string =
   F.fprintf fmt fmt_string
 
-(** print on the out stream *)
-let out fmt_string =
-  do_print !current_out_formatter fmt_string
+let do_print_in_developer_mode fmt fmt_string =
+  if !Config.developer_mode then
+    F.fprintf fmt fmt_string
+  else
+    F.ifprintf fmt fmt_string
 
-(** print on the err stream *)
+(** print to the current out stream (note: only prints in developer mode) *)
+let out fmt_string =
+  do_print_in_developer_mode !current_out_formatter fmt_string
+
+(** print to the current err stream (note: only prints in developer mode) *)
 let err fmt_string =
-  do_print !current_err_formatter fmt_string
+  do_print_in_developer_mode !current_err_formatter fmt_string
 
 (** print immediately to standard error *)
 let stderr fmt_string =

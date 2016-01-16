@@ -149,7 +149,7 @@ let arg_desc =
         "-ml_buckets", Arg.Set_string ml_buckets_arg, Some "ml_buckets",
         "memory leak buckets to be checked, separated by commas. The possible buckets are cf (Core Foundation), arc, narc (No arc), cpp, unknown_origin";
       ] in
-    Arg2.create_options_desc false "Analysis Options" desc in
+    Arg.create_options_desc false "Analysis Options" desc in
   let reserved_arg =
     let desc =
       reserved_arg_desc @
@@ -180,7 +180,8 @@ let arg_desc =
         "-print_buckets", Arg.Unit (fun() -> Config.show_buckets := true; Config.show_ml_buckets := true), None,
         "Add buckets to issue descriptions, useful when developing infer"
       ] in
-    Arg2.create_options_desc false "Reserved Options: Experimental features, use with caution!" desc in
+    Arg.create_options_desc false
+      "Reserved Options: Experimental features, use with caution!" desc in
   base_arg @ reserved_arg
 
 let usage =
@@ -189,13 +190,13 @@ let usage =
   " Analyze the files captured in the project results directory, which can be specified with the -results_dir option."
 
 let print_usage_exit () =
-  Arg2.usage arg_desc usage;
+  Arg.usage arg_desc usage;
   exit(1)
 
 let () = (* parse command-line arguments *)
   let f arg =
     () (* ignore anonymous arguments *) in
-  Arg2.parse arg_desc f usage;
+  Arg.parse arg_desc f usage;
   if not (Sys.file_exists !Config.results_dir) then
     begin
       L.err "ERROR: results directory %s does not exist@.@." !Config.results_dir;
@@ -667,9 +668,31 @@ let close_output_file = function
   | None -> ()
   | Some (fmt, cout) -> close_out cout
 
-let log_dir_name = "log"
-let analyzer_out_name = "analyzer_out"
-let analyzer_err_name = "analyzer_err"
+let setup_logging () =
+  if !Config.developer_mode then
+    let log_dir_name = "log" in
+    let analyzer_out_name = "analyzer_out" in
+    let analyzer_err_name = "analyzer_err" in
+    let log_dir = DB.filename_to_string (DB.Results_dir.path_to_filename DB.Results_dir.Abs_root [log_dir_name]) in
+    DB.create_dir log_dir;
+    let analyzer_out_file =
+      if !out_file_cmdline = "" then Filename.concat log_dir analyzer_out_name
+      else !out_file_cmdline in
+    let analyzer_err_file =
+      if !err_file_cmdline = "" then Filename.concat log_dir analyzer_err_name
+      else !err_file_cmdline in
+    let analyzer_out_of = open_output_file Logging.set_out_formatter analyzer_out_file in
+    let analyzer_err_of = open_output_file Logging.set_err_formatter analyzer_err_file in
+    analyzer_out_of, analyzer_err_of
+  else None, None
+
+let teardown_logging analyzer_out_of analyzer_err_of =
+  if !Config.developer_mode then
+    begin
+      L.flush_streams ();
+      close_output_file analyzer_out_of;
+      close_output_file analyzer_err_of;
+    end
 
 (** Compute clusters when on-demand is active.
     Each cluster will contain only the name of the directory for a file. *)
@@ -695,9 +718,6 @@ let () =
   let () =
     match !cluster_cmdline with
     | None ->
-        if !Config.curr_language = Config.C_CPP &&
-           not !Config.ondemand_enabled then
-          Objc_preanal.do_objc_preanalysis ();
         L.stdout "Starting analysis (Infer version %s)@." Version.versionString;
     | Some clname -> L.stdout "Cluster %s@." clname in
   RegisterCheckers.register ();
@@ -706,16 +726,7 @@ let () =
   if !allow_specs_cleanup = true && !incremental_mode = ANALYZE_ALL && !cluster_cmdline = None then
     DB.Results_dir.clean_specs_dir ();
 
-  let log_dir = DB.filename_to_string (DB.Results_dir.path_to_filename DB.Results_dir.Abs_root [log_dir_name]) in
-  DB.create_dir log_dir;
-  let analyzer_out_file =
-    if !out_file_cmdline = "" then Filename.concat log_dir analyzer_out_name
-    else !out_file_cmdline in
-  let analyzer_err_file =
-    if !err_file_cmdline = "" then Filename.concat log_dir analyzer_err_name
-    else !err_file_cmdline in
-  let analyzer_out_of = open_output_file Logging.set_out_formatter analyzer_out_file in
-  let analyzer_err_of = open_output_file Logging.set_err_formatter analyzer_err_file in
+  let analyzer_out_of, analyzer_err_of = setup_logging () in
   if (!Config.curr_language = Config.C_CPP) then Mleak_buckets.init_buckets !ml_buckets_arg;
 
   process_cluster_cmdline_exit ();
@@ -747,7 +758,5 @@ let () =
   let tot_clusters = IList.length clusters in
   Fork.tot_files := IList.fold_left (fun n cluster -> n + IList.length cluster) 0 clusters;
   IList.iter (analyze_cluster (ref 0) tot_clusters) clusters;
-  L.flush_streams ();
-  close_output_file analyzer_out_of;
-  close_output_file analyzer_err_of;
+  teardown_logging analyzer_out_of analyzer_err_of;
   if !cluster_cmdline = None then L.stdout "Analysis finished in %as@." pp_elapsed_time ()

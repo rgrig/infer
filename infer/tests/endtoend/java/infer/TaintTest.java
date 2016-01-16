@@ -1,11 +1,11 @@
 /*
-* Copyright (c) 2013 - present Facebook, Inc.
-* All rights reserved.
-*
-* This source code is licensed under the BSD style license found in the
-* LICENSE file in the root directory of this source tree. An additional grant
-* of patent rights can be found in the PATENTS file in the same directory.
-*/
+ * Copyright (c) 2013 - present Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ */
 
 package endtoend.java.infer;
 
@@ -27,6 +27,8 @@ public class TaintTest {
 
   public static final String TAINTED_VALUE = "TAINTED_VALUE_REACHING_SENSITIVE_FUNCTION";
 
+  public static final String NULL_DEREFERENCE = "NULL_DEREFERENCE";
+
   private static InferResults inferResults;
 
   @BeforeClass
@@ -38,30 +40,21 @@ public class TaintTest {
   public void whenInferRunsOnTaintFileErrorFound()
       throws InterruptedException, IOException, InferException {
     String[] methods = {
-        "taintGetHostEquals",
-        "taintGetHostCompareTo",
-        "taintGetHostEndsWith",
-        "taintGetHostStartsWith",
-        "taintGetAuthoriyEquals",
-        "taintGetAuthorityCompareTo",
-        "taintGetAuthorityEndsWith",
-        "taintGetAuthorityStartsWith",
-        "taintGetProtocolEquals",
-        "taintGetProtocolCompareTo",
-        "taintGetProtocolEndsWith",
-        "taintGetProtocolStartsWith",
-        "taintToExternalFormEquals",
-        "taintToExternalFormCompareTo",
-        "taintToExternalFormEndsWith",
-        "taintToExternalFormStartsWith",
-        "taintToStringEquals",
-        "taintToStringCompareTo",
-        "taintToStringEndsWith",
-        "taintToStringStartsWith",
         "socketNotVerifiedSimple",
         "socketVerifiedForgotToCheckRetval",
         "socketIgnoreExceptionNoVerify",
-        "taintingShouldNotPreventInference"
+        "callReadInputStreamCauseTaintError",
+        "taintingShouldNotPreventInference1",
+        "taintingShouldNotPreventInference2",
+        "simpleTaintErrorWithModelMethods",
+        "interprocTaintErrorWithModelMethods1",
+        "interprocTaintErrorWithModelMethods2",
+        "interprocTaintErrorWithModelMethods3",
+        "simpleTaintErrorWithModelMethodsUndefined",
+        "interprocTaintErrorWithModelMethodsUndefined1",
+        "interprocTaintErrorWithModelMethodsUndefined2",
+        "interprocTaintErrorWithModelMethodsUndefined3",
+        "contentValuesPutWithTaintedString"
     };
 
     assertThat(
@@ -73,8 +66,6 @@ public class TaintTest {
             methods
         )
     );
-
-
   }
 
 }

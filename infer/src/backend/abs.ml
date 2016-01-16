@@ -411,7 +411,7 @@ let typ_get_recursive_flds tenv te =
     | Sil.Tptr (Sil.Tvar tname', _) ->
         let typ' = match Sil.tenv_lookup tenv tname' with
           | None ->
-              L.err "@.typ_get_recursive: Undefined type %s@." (Sil.typename_to_string tname');
+              L.err "@.typ_get_recursive: Undefined type %s@." (Typename.to_string tname');
               t
           | Some typ' -> typ' in
         Sil.exp_equal te (Sil.Sizeof (typ', Sil.Subtype.exact))
@@ -761,7 +761,7 @@ let is_simply_recursive tenv tname =
     | Sil.Tvar _ | Sil.Tint _ | Sil.Tfloat _ | Sil.Tvoid | Sil.Tfun _ | Sil.Tenum _ ->
         false
     | Sil.Tptr (Sil.Tvar tname', _) ->
-        Sil.typename_equal tname tname'
+        Typename.equal tname tname'
     | Sil.Tptr _ | Sil.Tstruct _ | Sil.Tarray _ ->
         false in
   match typ with
@@ -900,29 +900,29 @@ let create_hpara_dll_from_tname_twoflds_hpara tenv tname fld_flink fld_blink fld
   let body = [ptsto; lseg] in
   Prop.mk_dll_hpara id_cell id_blink id_flink [] [id_down] body
 
-let tname_list = Sil.TN_typedef (Mangled.from_string "list")
+let tname_list = Typename.TN_typedef (Mangled.from_string "list")
 let name_down = Ident.create_fieldname (Mangled.from_string "down") 0
-let tname_HSlist2 = Sil.TN_typedef (Mangled.from_string "HSlist2")
+let tname_HSlist2 = Typename.TN_typedef (Mangled.from_string "HSlist2")
 let name_next = Ident.create_fieldname (Mangled.from_string "next") 0
 
-let tname_dllist = Sil.TN_typedef (Mangled.from_string "dllist")
+let tname_dllist = Typename.TN_typedef (Mangled.from_string "dllist")
 let name_Flink = Ident.create_fieldname (Mangled.from_string "Flink") 0
 let name_Blink = Ident.create_fieldname (Mangled.from_string "Blink") 0
-let tname_HOdllist = Sil.TN_typedef (Mangled.from_string "HOdllist")
+let tname_HOdllist = Typename.TN_typedef (Mangled.from_string "HOdllist")
 
 let create_absrules_from_tdecl tenv tname =
-  if (not (!Config.on_the_fly)) && Sil.typename_equal tname tname_HSlist2 then
+  if (not (!Config.on_the_fly)) && Typename.equal tname tname_HSlist2 then
     (* L.out "@[.... Adding Abstraction Rules for Nested Lists ....@\n@."; *)
     let para1 = create_hpara_from_tname_flds tenv tname_list name_down [] [] Sil.inst_abstraction in
     let para2 = create_hpara_from_tname_flds tenv tname_HSlist2 name_next [name_down] [] Sil.inst_abstraction in
     let para_nested = create_hpara_from_tname_twoflds_hpara tenv tname_HSlist2 name_next name_down para1 Sil.inst_abstraction in
     let para_nested_base = create_hpara_two_ptsto tname_HSlist2 tenv name_next name_down tname_list name_down Sil.inst_abstraction in
     IList.iter abs_rules_add_sll [para_nested_base; para2; para_nested]
-  else if (not (!Config.on_the_fly)) && Sil.typename_equal tname tname_dllist then
+  else if (not (!Config.on_the_fly)) && Typename.equal tname tname_dllist then
     (* L.out "@[.... Adding Abstraction Rules for Doubly-linked Lists ....@\n@."; *)
     let para = create_dll_hpara_from_tname_flds tenv tname_dllist name_Flink name_Blink [] [] Sil.inst_abstraction in
     abs_rules_add_dll para
-  else if (not (!Config.on_the_fly)) && Sil.typename_equal tname tname_HOdllist then
+  else if (not (!Config.on_the_fly)) && Typename.equal tname tname_HOdllist then
     (* L.out "@[.... Adding Abstraction Rules for High-Order Doubly-linked Lists ....@\n@."; *)
     let para1 = create_hpara_from_tname_flds tenv tname_list name_down [] [] Sil.inst_abstraction in
     let para2 = create_dll_hpara_from_tname_flds tenv tname_HOdllist name_Flink name_Blink [name_down] [] Sil.inst_abstraction in
@@ -1132,20 +1132,12 @@ let should_raise_objc_leak prop hpred =
       Mleak_buckets.should_raise_objc_leak typ
   | _ -> None
 
-let print_retain_cycle _prop =
+let get_retain_cycle_dotty _prop cycle =
   match _prop with
-  | None -> ()
+  | None -> None
   | Some (Some _prop) ->
-      let loc = State.get_loc () in
-      let source_file = DB.source_file_to_string loc.Location.file in
-      let source_file'= Str.global_replace (Str.regexp_string "/") "_" source_file in
-      let dest_file_str =
-        (DB.filename_to_string (DB.Results_dir.specs_dir ())) ^ "/" ^
-        source_file' ^ "_RETAIN_CYCLE_" ^ (Location.to_string loc) ^ ".dot" in
-      L.d_strln ("Printing dotty proposition for retain cycle in :"^dest_file_str);
-      Prop.d_prop _prop; L.d_strln "";
-      Dotty.dotty_prop_to_dotty_file dest_file_str _prop
-  | _ -> ()
+      Dotty.dotty_prop_to_str _prop cycle
+  | _ -> None
 
 let get_var_retain_cycle _prop =
   let sigma = Prop.get_sigma _prop in
@@ -1300,9 +1292,9 @@ let check_junk ?original_prop pname tenv prop =
                     Mleak_buckets.should_raise_cpp_leak ()
                 | _ -> None in
               let exn_retain_cycle cycle =
-                print_retain_cycle original_prop;
+                let cycle_dotty = get_retain_cycle_dotty original_prop cycle in
                 let desc = Errdesc.explain_retain_cycle
-                    (remove_opt original_prop) cycle (State.get_loc ()) in
+                    (remove_opt original_prop) cycle (State.get_loc ()) cycle_dotty in
                 Exceptions.Retain_cycle
                   (remove_opt original_prop, hpred, desc,
                    try assert false with Assert_failure x -> x) in

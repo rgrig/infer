@@ -206,7 +206,7 @@ let create_dir dir =
 let read_whole_file fd =
   let stats = Unix.fstat fd in
   let size = stats.Unix.st_size in
-  let buf = String.create size in
+  let buf = Bytes.create size in
   let nread = Unix.read fd buf 0 size in
   if nread != size then
     begin
@@ -234,8 +234,8 @@ let update_file_with_lock dir fname update =
   let buf = read_whole_file fd in
   reset_file fd;
   let str = update buf in
-  let i = Unix.write fd str 0 (String.length str) in
-  if (i = (String.length str))
+  let i = Unix.write fd str 0 (Bytes.length str) in
+  if (i = (Bytes.length str))
   then (Unix.lockf fd Unix.F_ULOCK 0; Unix.close fd)
   else (L.err "@.save_with_lock: fail on path: %s@." path;
         assert false)

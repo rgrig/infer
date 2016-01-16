@@ -30,6 +30,8 @@ sig
   val print_nodes : Cfg.Node.t list -> unit
 
   val instrs_to_string : Sil.instr list -> string
+
+  val field_to_string : Ident.fieldname * Sil.typ * Sil.item_annotation -> string
 end
 
 module Ast_utils :
@@ -52,30 +54,28 @@ sig
 
   val property_attribute_eq : Clang_ast_t.property_attribute -> Clang_ast_t.property_attribute -> bool
 
-  val getter_attribute_opt : Clang_ast_t.property_attribute list ->
-    Clang_ast_t.named_decl_info option
-
-  val setter_attribute_opt : Clang_ast_t.property_attribute list ->
-    Clang_ast_t.named_decl_info option
-
   val get_memory_management_attributes : unit -> Clang_ast_t.property_attribute list
 
   val is_retain : Clang_ast_t.property_attribute option -> bool
 
   val is_copy : Clang_ast_t.property_attribute option -> bool
 
-  val is_type_nonnull : Clang_ast_t.type_ptr -> Clang_ast_t.attribute list -> bool
+  val is_type_nonnull : Clang_ast_t.type_ptr -> bool
 
-  val get_fresh_pointer : unit -> string
+  val is_type_nullable : Clang_ast_t.type_ptr -> bool
 
-  val get_invalid_pointer : unit -> string
+  val get_fresh_pointer : unit -> Clang_ast_t.pointer
+
+  val get_invalid_pointer : unit -> Clang_ast_t.pointer
 
   val type_from_unary_expr_or_type_trait_expr_info :
     Clang_ast_t.unary_expr_or_type_trait_expr_info -> Clang_ast_t.type_ptr option
 
-  val is_generated : Clang_ast_t.named_decl_info -> bool
-
   val get_decl : Clang_ast_t.pointer -> Clang_ast_t.decl option
+
+  val get_decl_opt : Clang_ast_t.pointer option -> Clang_ast_t.decl option
+
+  val get_decl_opt_with_decl_ref : Clang_ast_t.decl_ref option -> Clang_ast_t.decl option
 
   val update_sil_types_map : Clang_ast_t.type_ptr -> Sil.typ -> unit
 
@@ -85,8 +85,11 @@ sig
 
   val get_enum_constant_exp : Clang_ast_t.pointer -> Clang_ast_t.pointer option * Sil.exp option
 
-  (** returns fully qualified name given name info *)
+  (** returns sanitized, fully qualified name given name info *)
   val get_qualified_name : Clang_ast_t.named_decl_info -> string
+
+  (** returns sanitized unqualified name given name info *)
+  val get_unqualified_name : Clang_ast_t.named_decl_info -> string
 
   (** returns qualified class name given member name info *)
   val get_class_name_from_member : Clang_ast_t.named_decl_info -> string
@@ -100,7 +103,7 @@ sig
 
   (** returns declaration of the type for certain types and crashes for others
       NOTE: this function needs extending to handle objC types *)
-  val get_decl_from_typ_ptr : Clang_ast_t.type_ptr -> Clang_ast_t.decl
+  val get_decl_from_typ_ptr : Clang_ast_t.type_ptr -> Clang_ast_t.decl option
 
   val string_of_type_ptr : Clang_ast_t.type_ptr -> string
 
@@ -125,7 +128,7 @@ sig
     name : string;
     description : string;
     suggestion : string; (* an optional suggestion or correction *)
-    loc : string;
+    loc : Location.t;
   }
 
   type var_info = Clang_ast_t.decl_info * Clang_ast_t.type_ptr * Clang_ast_t.var_decl_info * bool
@@ -135,7 +138,8 @@ sig
   val append_no_duplicates_fields : (Ident.fieldname * Sil.typ * Sil.item_annotation) list ->
     (Ident.fieldname * Sil.typ * Sil.item_annotation) list -> (Ident.fieldname * Sil.typ * Sil.item_annotation) list
 
-  val append_no_duplicates_csu : (Sil.csu * Mangled.t) list -> (Sil.csu * Mangled.t) list -> (Sil.csu * Mangled.t) list
+  val append_no_duplicates_csu :
+    Typename.t list -> Typename.t list -> Typename.t list
 
   val append_no_duplicates_methods : Procname.t list -> Procname.t list -> Procname.t list
 

@@ -18,6 +18,8 @@ let arg_desc =
   let desc =
     (arg_desc_filter options_to_keep base_arg_desc) @
     [
+      "-classpath", Arg.String (fun classpath -> JConfig.classpath := Some classpath), None, "set the classpath";
+      "-class_source_map", Arg.String (fun filename -> JConfig.class_source_map := Some filename), None, "path to class -> source map in JSON format";
       "-models", Arg.String (fun filename -> JClasspath.add_models filename), Some "paths", "set the path to the jar containing the models";
       "-debug", Arg.Unit (fun () -> JConfig.debug_mode := true), None, "write extra translation information";
       "-dependencies", Arg.Unit (fun _ -> JConfig.dependency_mode := true), None, "translate all the dependencies during the capture";
@@ -29,17 +31,17 @@ let arg_desc =
       "-verbose_out", Arg.String (fun path -> JClasspath.set_verbose_out path), None,
       "Set the path to the javac verbose output"
     ] in
-  Arg2.create_options_desc false "Parsing Options" desc
+  Arg.create_options_desc false "Parsing Options" desc
 
 let usage =
   "Usage: InferJava -d compilation_dir -sources filename\n"
 
 let print_usage_exit () =
-  Arg2.usage arg_desc usage;
+  Arg.usage arg_desc usage;
   exit(1)
 
 let () =
-  Arg2.parse arg_desc (fun arg -> ()) usage;
+  Arg.parse arg_desc (fun arg -> ()) usage;
   if Config.analyze_models && !JClasspath.models_jar <> "" then
     failwith "Not expecting model file when analyzing the models";
   if not Config.analyze_models && !JClasspath.models_jar = "" then
@@ -80,12 +82,14 @@ let store_icfg tenv cg cfg source_file =
 (* Given a source file, its code is translated, and the call-graph, control-flow-graph and type *)
 (* environment are obtained and saved. *)
 let do_source_file
-    never_null_matcher linereader classes program tenv source_basename source_file proc_file_map =
+    never_null_matcher linereader classes program tenv
+    source_basename (package_opt, source_file) proc_file_map =
   JUtils.log "\nfilename: %s (%s)@."
     (DB.source_file_to_string source_file) source_basename;
   let call_graph, cfg =
     JFrontend.compute_source_icfg
-      never_null_matcher linereader classes program tenv source_basename source_file in
+      never_null_matcher linereader classes program tenv
+      source_basename package_opt in
   store_icfg tenv call_graph cfg source_file;
   if !JConfig.create_harness then
     IList.fold_left
@@ -121,6 +125,12 @@ let load_tenv program =
       begin
         match Sil.load_tenv_from_file tenv_filename with
         | None -> Sil.create_tenv ()
+        | Some _ when Config.analyze_models ->
+            let error_msg =
+              "Unexpected tenv file "
+              ^ (DB.filename_to_string tenv_filename)
+              ^ " found while generating the models" in
+            failwith error_msg
         | Some tenv -> tenv
       end
     else
@@ -143,7 +153,7 @@ let do_all_files classpath sources classes =
   JUtils.log "Translating %d source files (%d classes)@."
     (StringMap.cardinal sources)
     (JBasics.ClassSet.cardinal classes);
-  let program = JClasspath.load_program classpath classes sources in
+  let program = JClasspath.load_program classpath classes in
   let tenv = load_tenv program in
   let linereader = Printer.LineReader.create () in
   let skip_translation_matcher =
@@ -151,20 +161,31 @@ let do_all_files classpath sources classes =
   let never_null_matcher =
     Inferconfig.NeverReturnNull.load_matcher (Inferconfig.inferconfig ()) in
   let proc_file_map =
-    let skip filename =
-      skip_translation_matcher filename Procname.empty in
+    let skip source_file =
+      skip_translation_matcher source_file Procname.empty in
+    let translate_source_file basename (package_opt, source_file) source_file map =
+      init_global_state source_file;
+      if skip source_file then map
+      else do_source_file
+          never_null_matcher linereader classes program tenv
+          basename (package_opt, source_file) map in
     StringMap.fold
-      (fun basename source_file map ->
-         init_global_state source_file;
-         if skip source_file then map
-         else do_source_file
-             never_null_matcher linereader classes program tenv basename source_file map)
+      (fun basename file_entry map ->
+         match file_entry with
+         | JClasspath.Singleton source_file ->
+             translate_source_file basename (None, source_file) source_file map
+         | JClasspath.Duplicate source_files ->
+             IList.fold_left
+               (fun accu (package, source_file) ->
+                  translate_source_file basename (Some package, source_file) source_file accu)
+               map source_files)
       sources
       Procname.Map.empty in
   if !JConfig.dependency_mode then
     capture_libs never_null_matcher linereader program tenv;
   if !JConfig.create_harness then Harness.create_harness proc_file_map tenv;
   save_tenv classpath tenv;
+  JClasspath.cleanup program;
   JUtils.log "done @."
 
 

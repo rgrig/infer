@@ -65,7 +65,12 @@ val skip_pointer_dereference : t
 val tainted_value_reaching_sensitive_function : t
 
 (** description field of error messages *)
-type error_desc
+type error_desc = {
+  descriptions : string list;
+  advice : string option;
+  tags : (string * string) list;
+  dotty : string option;
+}
 
 (** empty error description *)
 val no_desc: error_desc
@@ -119,6 +124,8 @@ val pp_error_advice : Format.formatter -> error_desc -> unit
 
 (** get tags of error description *)
 val error_desc_get_tags : error_desc -> (string * string) list
+
+val error_desc_get_dotty : error_desc -> string option
 
 (** Description functions for error messages *)
 
@@ -190,21 +197,20 @@ val desc_divide_by_zero : string -> Location.t -> error_desc
 val desc_frontend_warning : string -> string -> Location.t -> error_desc
 
 val desc_leak :
-  string option -> Sil.resource option -> Sil.res_action option ->
+  Sil.exp option -> string option -> Sil.resource option -> Sil.res_action option ->
   Location.t -> string option -> error_desc
 
 val desc_null_test_after_dereference : string -> int -> Location.t -> error_desc
 
-val java_unchecked_exn_desc : Procname.t -> Mangled.t -> string -> error_desc
+val java_unchecked_exn_desc : Procname.t -> Typename.t -> string -> error_desc
 
 val desc_context_leak :
   Procname.t -> Sil.typ -> Ident.fieldname -> (Ident.fieldname option * Sil.typ) list -> error_desc
 
 (* Create human-readable error description for assertion failures *)
-val desc_assertion_failure : Location.t -> error_desc
+val desc_custom_error : Location.t -> error_desc
 
 val desc_bad_pointer_comparison : Sil.dexp option -> Location.t -> error_desc
-
 (** kind of precondition not met *)
 type pnm_kind =
   | Pnm_bounds
@@ -216,7 +222,7 @@ val desc_return_expression_required : string -> Location.t -> error_desc
 
 val desc_retain_cycle :
   Prop.normal Prop.t -> ((Sil.strexp * Sil.typ) * Ident.fieldname * Sil.strexp) list ->
-  Location.t -> error_desc
+  Location.t -> string option -> error_desc
 
 val desc_return_statement_missing : Location.t -> error_desc
 

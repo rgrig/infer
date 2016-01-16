@@ -25,6 +25,15 @@ struct
     let pp = if !CFrontend_config.debug_mode then Format.fprintf else Format.ifprintf in
     pp Format.err_formatter fmt
 
+
+  let annotation_to_string (annotation, _) =
+    "< " ^ annotation.Sil.class_name ^ " : " ^
+    (IList.to_string (fun x -> x) annotation.Sil.parameters) ^ " >"
+
+  let field_to_string (fieldname, typ, annotation) =
+    (Ident.fieldname_to_string fieldname) ^ " " ^
+    (Sil.typ_to_string typ) ^  (IList.to_string annotation_to_string annotation)
+
   let log_stats fmt =
     let pp =
       if !CFrontend_config.stats_mode || !CFrontend_config.debug_mode
@@ -34,38 +43,32 @@ struct
   let print_tenv tenv =
     Sil.tenv_iter (fun typname typ ->
         match typname with
-        | Sil.TN_csu (Sil.Class, _) | Sil.TN_csu (Sil.Protocol, _) ->
-            (match typ with (Sil.Tstruct (fields, static_fields, _, cls, super_classes, methods, iann)) ->
-              (print_endline (
-                  (Sil.typename_to_string typname)^"\n"^
-                  "---> superclass and protocols "^(IList.to_string (fun (csu, x) ->
-                      let nsu = Sil.TN_csu (csu, x) in
-                      "\t"^(Sil.typename_to_string nsu)^"\n") super_classes)^
-                  "---> methods "^(IList.to_string (fun x ->"\t"^(Procname.to_string x)^"\n") methods)^"  "^
-                  "\t---> static fields "^(IList.to_string (fun (fieldname, typ, _) ->
-                      "\t "^(Ident.fieldname_to_string fieldname)^" "^
-                      (Sil.typ_to_string typ)^"\n") static_fields)^
-                  "\t---> fields "^(IList.to_string (fun (fieldname, typ, _) ->
-                      "\t "^(Ident.fieldname_to_string fieldname)^" "^
-                      (Sil.typ_to_string typ)^"\n") fields
-                    )
-                )
-              )
-                          | _ -> ())
+        | Typename.TN_csu (Csu.Class, _) | Typename.TN_csu (Csu.Protocol, _) ->
+            (match typ with
+             | Sil.Tstruct (fields, _, _, cls, super_classes, methods, iann) ->
+                 print_endline (
+                   (Typename.to_string typname) ^ "\n"^
+                   "---> superclass and protocols " ^ (IList.to_string (fun tn ->
+                       "\t" ^ (Typename.to_string tn) ^ "\n") super_classes) ^
+                   "---> methods " ^
+                   (IList.to_string (fun x ->"\t" ^ (Procname.to_string x) ^ "\n") methods)
+                   ^ "  " ^
+                   "\t---> fields " ^ (IList.to_string field_to_string fields) ^ "\n")
+             | _ -> ())
         | _ -> ()
       ) tenv
 
   let print_tenv_struct_unions tenv =
     Sil.tenv_iter (fun typname typ ->
         match typname with
-        | Sil.TN_csu (Sil.Struct, _) | Sil.TN_csu (Sil.Union, _) ->
+        | Typename.TN_csu (Csu.Struct, _) | Typename.TN_csu (Csu.Union, _) ->
             (match typ with
              | (Sil.Tstruct (fields, static_fields, _, cls, super_classes, methods, iann)) ->
                  (print_endline (
-                     (Sil.typename_to_string typname)^"\n"^
+                     (Typename.to_string typname)^"\n"^
                      "\t---> fields "^(IList.to_string (fun (fieldname, typ, _) ->
                          match typ with
-                         | Sil.Tvar tname -> "tvar"^(Sil.typename_to_string tname)
+                         | Sil.Tvar tname -> "tvar"^(Typename.to_string tname)
                          | Sil.Tstruct (_, _, _, _, _, _, _) | _ ->
                              "\t struct "^(Ident.fieldname_to_string fieldname)^" "^
                              (Sil.typ_to_string typ)^"\n") fields
@@ -73,7 +76,7 @@ struct
                    )
                  )
              | _ -> ())
-        | Sil.TN_typedef typname ->
+        | Typename.TN_typedef typname ->
             print_endline ((Mangled.to_string typname)^"-->"^(Sil.typ_to_string typ))
         | _ -> ()
       ) tenv
@@ -107,7 +110,7 @@ struct
   let string_of_decl decl =
     let name = Clang_ast_proj.get_decl_kind_string decl in
     let info = Clang_ast_proj.get_decl_tuple decl in
-    "<\"" ^ name ^ "\"> '" ^ info.Clang_ast_t.di_pointer ^ "'"
+    Printf.sprintf "<\"%s\"> '%d'" name info.Clang_ast_t.di_pointer
 
   let string_of_unary_operator_kind = function
     | `PostInc -> "PostInc"
@@ -123,11 +126,12 @@ struct
     | `Real -> "Real"
     | `Imag -> "Imag"
     | `Extension -> "Extension"
+    | `Coawait -> "Coawait"
 
   let string_of_stmt stmt =
     let name = Clang_ast_proj.get_stmt_kind_string stmt in
     let info, _ = Clang_ast_proj.get_stmt_tuple stmt in
-    "<\"" ^ name ^ "\"> '" ^ info.Clang_ast_t.si_pointer ^ "'"
+    Printf.sprintf "<\"%s\"> '%d'" name info.Clang_ast_t.si_pointer
 
   let get_stmts_from_stmt stmt =
     let open Clang_ast_t in
@@ -152,6 +156,12 @@ struct
 
   let get_qualified_name name_info =
     fold_qual_name name_info.Clang_ast_t.ni_qual_name
+
+  let get_unqualified_name name_info =
+    let name = match name_info.Clang_ast_t.ni_qual_name with
+      | name :: quals -> name
+      | [] -> name_info.Clang_ast_t.ni_name in
+    fold_qual_name [name]
 
   let get_class_name_from_member member_name_info =
     match member_name_info.Clang_ast_t.ni_qual_name with
@@ -218,10 +228,10 @@ struct
     | `Unsafe_unretained, `Unsafe_unretained -> 0
     | `Unsafe_unretained, _ -> -1
     | _, `Unsafe_unretained -> 1
-    | `Getter _, `Getter _ -> 0
-    | `Getter _, _ -> -1
-    | _, `Getter _ -> 1
-    | `Setter _, `Setter _ -> 0
+    | `ExplicitGetter, `ExplicitGetter -> 0
+    | `ExplicitGetter, _ -> -1
+    | _, `ExplicitGetter -> 1
+    | `ExplicitSetter, `ExplicitSetter -> 0
 
   let property_attribute_eq att1 att2 =
     property_attribute_compare att1 att2 = 0
@@ -266,30 +276,31 @@ struct
 
   let get_fresh_pointer () =
     pointer_counter := !pointer_counter + 1;
-    CFrontend_config.pointer_prefix^(string_of_int (!pointer_counter))
+    let internal_pointer = -(!pointer_counter) in
+    internal_pointer
 
   let get_invalid_pointer () =
-    CFrontend_config.pointer_prefix^("INVALID")
+    CFrontend_config.invalid_pointer
 
   let type_from_unary_expr_or_type_trait_expr_info info =
     match info.Clang_ast_t.uttei_type_ptr with
     | Some tp -> Some tp
     | None -> None
 
-  let is_generated name_info =
-    match name_info.Clang_ast_t.ni_qual_name with
-    | name :: quals ->
-        (try
-           let rexp = Str.regexp CFrontend_config.generated_suffix in
-           let _ = Str.search_forward rexp name 0 in
-           true
-         with Not_found -> false)
-    | _ -> false
-
   let get_decl decl_ptr =
     try
       Some (Clang_ast_main.PointerMap.find decl_ptr !CFrontend_config.pointer_decl_index)
-    with Not_found -> Printing.log_stats "decl with pointer %s not found\n" decl_ptr; None
+    with Not_found -> Printing.log_stats "decl with pointer %d not found\n" decl_ptr; None
+
+  let get_decl_opt decl_ptr_opt =
+    match decl_ptr_opt with
+    | Some decl_ptr -> get_decl decl_ptr
+    | None -> None
+
+  let get_decl_opt_with_decl_ref decl_ref_opt =
+    match decl_ref_opt with
+    | Some decl_ref -> get_decl decl_ref.Clang_ast_t.dr_decl_pointer
+    | None -> None
 
   let update_sil_types_map type_ptr sil_type =
     CFrontend_config.sil_types_map :=
@@ -318,7 +329,7 @@ struct
       (let raw_ptr = Clang_ast_types.type_ptr_to_clang_pointer type_ptr in
        try
          Some (Clang_ast_main.PointerMap.find raw_ptr !CFrontend_config.pointer_type_index)
-       with Not_found -> Printing.log_stats "type with pointer %s not found\n" raw_ptr; None)
+       with Not_found -> Printing.log_stats "type with pointer %d not found\n" raw_ptr; None)
     with Clang_ast_types.Not_Clang_Pointer ->
       (* otherwise, function fails *)
       let type_str = Clang_ast_types.type_ptr_to_string type_ptr in
@@ -338,19 +349,22 @@ struct
   let get_decl_from_typ_ptr typ_ptr =
     let typ_opt = get_desugared_type typ_ptr in
     let typ = match typ_opt with Some t -> t | _ -> assert false in
-    let get_decl_or_fail decl_ptr = match get_decl decl_ptr with
-      | Some d -> d
-      | None -> assert false in
     (* it needs extending to handle objC types *)
     match typ with
-    | Clang_ast_t.RecordType (ti, decl_ptr) -> get_decl_or_fail decl_ptr
-    | _ -> assert false
+    | Clang_ast_t.RecordType (ti, decl_ptr) -> get_decl decl_ptr
+    | _ -> None
 
   (*TODO take the attributes into account too. To be done after we get the attribute's arguments. *)
-  let is_type_nonnull type_ptr attributes =
+  let is_type_nonnull type_ptr =
     let open Clang_ast_t in
     match get_type type_ptr with
     | Some AttributedType (_, attr_info) -> attr_info.ati_attr_kind = `Nonnull
+    | _ -> false
+
+  let is_type_nullable type_ptr =
+    let open Clang_ast_t in
+    match get_type type_ptr with
+    | Some AttributedType (_, attr_info) -> attr_info.ati_attr_kind = `Nullable
     | _ -> false
 
   let string_of_type_ptr type_ptr =
@@ -386,7 +400,7 @@ struct
     name : string;
     description : string;
     suggestion : string; (* an optional suggestion or correction *)
-    loc : string;
+    loc : Location.t;
   }
 
   type var_info = Clang_ast_t.decl_info * Clang_ast_t.type_ptr * Clang_ast_t.var_decl_info * bool
@@ -415,7 +429,7 @@ struct
     | [] -> list1
 
   let append_no_duplicates_csu list1 list2 =
-    append_no_duplicates Sil.csu_name_equal list1 list2
+    append_no_duplicates Typename.equal list1 list2
 
   let append_no_duplicates_methods list1 list2 =
     append_no_duplicates Procname.equal list1 list2
@@ -428,12 +442,31 @@ struct
     let eq (e1, t1) (e2, t2) = (Sil.exp_equal e1 e2) && (Sil.typ_equal t1 t2) in
     append_no_duplicates eq list1 list2
 
-  let append_no_duplicates_fields list1 list2 =
-    let field_eq (n1, t1, a1) (n2, t2, a2) =
-      match Ident.fieldname_equal n1 n2, Sil.typ_equal t1 t2, Sil.item_annotation_compare a1 a2 with
-      | true, true, _ -> true
-      | _, _, _ -> false in
-    append_no_duplicates field_eq list1 list2
+
+  let append_no_duplicates_annotations list1 list2 =
+    let eq (annot1, _) (annot2, _) = annot1.Sil.class_name = annot2.Sil.class_name in
+    append_no_duplicates eq list1 list2
+
+  let add_no_duplicates_fields field_tuple l =
+    let rec replace_field field_tuple l found =
+      match field_tuple, l with
+      | (field, typ, annot), ((old_field, old_typ, old_annot) as old_field_tuple :: rest) ->
+          let ret_list, ret_found = replace_field field_tuple rest found in
+          if Ident.fieldname_equal field old_field && Sil.typ_equal typ old_typ then
+            let annotations = append_no_duplicates_annotations annot old_annot in
+            (field, typ, annotations) :: ret_list, true
+          else old_field_tuple :: ret_list, ret_found
+      | _, [] -> [], found in
+    let new_list, found = replace_field field_tuple l false in
+    if found then new_list
+    else field_tuple :: l
+
+  let rec append_no_duplicates_fields list1 list2 =
+    match list1 with
+    | field_tuple :: rest ->
+        let updated_list2 = append_no_duplicates_fields rest list2 in
+        add_no_duplicates_fields field_tuple updated_list2
+    | [] -> list2
 
   let sort_fields fields =
     let compare (name1, _, _) (name2, _, _) =
@@ -540,7 +573,7 @@ struct
     Procname.mangled_c_method class_name method_name type_name_crc
 
   let mk_sil_var name decl_info_type_ptr_opt procname outer_procname =
-    let name_string = name.Clang_ast_t.ni_name in
+    let name_string = Ast_utils.get_qualified_name name in
     let simple_name = Mangled.from_string name_string  in
     match decl_info_type_ptr_opt with
     | Some (decl_info, type_ptr, var_decl_info, should_be_mangled) ->
@@ -557,7 +590,7 @@ struct
           let line_opt = start_location.Clang_ast_t.sl_line in
           let line_str = match line_opt with | Some line -> string_of_int line | None -> "" in
           let mangled = CRC.crc16 (type_name ^ line_str) in
-          let mangled_name = Mangled.mangled name.Clang_ast_t.ni_name mangled in
+          let mangled_name = Mangled.mangled name_string mangled in
           Sil.mk_pvar mangled_name procname
     | None -> Sil.mk_pvar simple_name procname
 

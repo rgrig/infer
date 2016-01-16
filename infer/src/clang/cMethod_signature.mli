@@ -14,6 +14,8 @@ type method_signature
 
 val ms_get_name : method_signature -> Procname.t
 
+val ms_set_name : method_signature -> Procname.t -> unit
+
 val ms_get_args : method_signature ->
   (string * Clang_ast_t.type_ptr) list
 
@@ -27,12 +29,18 @@ val ms_is_instance : method_signature -> bool
 
 val ms_get_lang : method_signature -> CFrontend_config.lang
 
-val make_ms : Procname.t -> (string * Clang_ast_t.type_ptr) list ->
-  Clang_ast_t.type_ptr -> Clang_ast_t.attribute list -> Clang_ast_t.source_range -> bool ->
-  bool -> CFrontend_config.lang -> method_signature
+val ms_get_pointer_to_parent : method_signature -> Clang_ast_t.pointer option
+
+val ms_get_pointer_to_property_opt : method_signature -> Clang_ast_t.pointer option
+
+val ms_is_getter : method_signature -> bool
+
+val ms_is_setter : method_signature -> bool
+
+val make_ms : Procname.t -> (string * Clang_ast_t.type_ptr) list -> Clang_ast_t.type_ptr
+  -> Clang_ast_t.attribute list -> Clang_ast_t.source_range -> bool -> CFrontend_config.lang
+  -> Clang_ast_t.pointer option -> Clang_ast_t.pointer option -> method_signature
 
 val replace_name_ms : method_signature -> Procname.t -> method_signature
 
 val ms_to_string : method_signature -> string
-
-val ms_is_generated : method_signature -> bool

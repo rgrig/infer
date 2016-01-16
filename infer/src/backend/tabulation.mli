@@ -30,10 +30,10 @@ val raise_cast_exception :
 val prop_is_exn : Procname.t -> 'a Prop.t -> bool
 
 (** when prop is an exception, return the exception name *)
-val prop_get_exn_name : Procname.t -> 'a Prop.t -> Mangled.t
+val prop_get_exn_name : Procname.t -> 'a Prop.t -> Typename.t
 
 (** search in prop contains an error state *)
-val lookup_global_errors : 'a Prop.t -> Mangled.t option
+val lookup_custom_errors : 'a Prop.t -> string option
 
 (** Dump a splitting *)
 val d_splitting : splitting -> unit
@@ -43,3 +43,8 @@ val exe_function_call:
   Sil.tenv -> Cfg.cfg -> Ident.t list -> Cfg.Procdesc.t -> Procname.t -> Location.t ->
   (Sil.exp * Sil.typ) list -> Prop.normal Prop.t -> Paths.Path.t ->
   (Prop.normal Prop.t * Paths.Path.t) list
+
+(* Set Ataint attribute to list of parameteres in a prop *)
+val add_param_taint :
+  Procname.t -> (Mangled.t * Sil.typ) list -> Prop.normal Prop.t ->
+  int list -> Prop.normal Prop.t

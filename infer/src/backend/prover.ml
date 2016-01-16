@@ -16,7 +16,7 @@ open Utils
 
 let decrease_indent_when_exception thunk =
   try (thunk ())
-  with exn when exn_not_timeout exn -> (L.d_decrease_indent 1; raise exn)
+  with exn when exn_not_failure exn -> (L.d_decrease_indent 1; raise exn)
 
 let compute_max_from_nonempty_int_list l =
   IList.hd (IList.rev (IList.sort Sil.Int.compare_value l))
@@ -815,25 +815,20 @@ let check_inconsistency_base prop =
   let sigma = Prop.get_sigma prop in
   let inconsistent_ptsto _ =
     check_allocatedness prop Sil.exp_zero in
-  let inconsistent_this () = (* "this" cannot be null in Java *)
-    let do_hpred = function
-      | Sil.Hpointsto (Sil.Lvar pv, Sil.Eexp (e, _), _) ->
-          !Config.curr_language = Config.Java &&
-          Sil.pvar_is_this pv &&
-          Sil.exp_equal e Sil.exp_zero &&
-          Sil.pvar_is_seed pv
-      | _ -> false in
-    IList.exists do_hpred sigma in
-  let inconsistent_self () = (* "self" cannot be null in ObjC *)
+  let inconsistent_this_self_var () =
     let procdesc = Cfg.Node.get_proc_desc (State.get_node ()) in
     let procedure_attr = Cfg.Procdesc.get_attributes procdesc in
+    let is_java_this pvar = !Config.curr_language = Config.Java && Sil.pvar_is_this pvar in
+    let is_objc_instance_self pvar = !Config.curr_language = Config.C_CPP &&
+                                     Sil.pvar_get_name pvar = Mangled.from_string "self" &&
+                                     procedure_attr.ProcAttributes.is_objc_instance_method in
+    let is_cpp_this pvar = !Config.curr_language = Config.C_CPP && Sil.pvar_is_this pvar &&
+                           procedure_attr.ProcAttributes.is_cpp_instance_method in
     let do_hpred = function
       | Sil.Hpointsto (Sil.Lvar pv, Sil.Eexp (e, _), _) ->
-          !Config.curr_language = Config.C_CPP &&
           Sil.exp_equal e Sil.exp_zero &&
           Sil.pvar_is_seed pv &&
-          Sil.pvar_get_name pv = Mangled.from_string "self" &&
-          procedure_attr.ProcAttributes.is_objc_instance_method
+          (is_java_this pv || is_cpp_this pv || is_objc_instance_self pv)
       | _ -> false in
     IList.exists do_hpred sigma in
   let inconsistent_atom = function
@@ -859,8 +854,7 @@ let check_inconsistency_base prop =
   || check_inconsistency_two_hpreds prop
   || IList.exists inconsistent_atom pi
   || inconsistent_inequalities ()
-  || inconsistent_this ()
-  || inconsistent_self ()
+  || inconsistent_this_self_var ()
 
 (** Inconsistency checking. *)
 let check_inconsistency prop =
@@ -1421,7 +1415,11 @@ let expand_hpred_pointer calc_index_frame hpred : bool * bool * Sil.hpred =
           | _, Sil.Tstruct _ -> (* the struct type of fld is known *)
               Sil.Sizeof (typ_fld, Sil.Subtype.exact)
           | Sil.Sizeof (_t, st), _ -> (* the struct type of fld is not known -- typically Tvoid *)
-              Sil.Sizeof (Sil.Tstruct ([(fld, _t, Sil.item_annotation_empty)], [], Sil.Struct, None, [], [], Sil.item_annotation_empty), st) (* None as we don't know the stuct name *)
+              Sil.Sizeof
+                (Sil.Tstruct
+                   ([(fld, _t, Sil.item_annotation_empty)],
+                    [], Csu.Struct, None, [], [], Sil.item_annotation_empty), st)
+          (* None as we don't know the stuct name *)
           | _ -> raise (Failure "expand_hpred_pointer: Unexpected non-sizeof type in Lfield") in
         let hpred' = Sil.Hpointsto (e, Sil.Estruct ([(fld, se)], Sil.inst_none), t') in
         expand true true hpred'
@@ -1442,27 +1440,27 @@ let expand_hpred_pointer calc_index_frame hpred : bool * bool * Sil.hpred =
     | _ -> changed, calc_index_frame, hpred in
   expand false calc_index_frame hpred
 
-let object_type = Mangled.from_string "java.lang.Object"
+let object_type = Typename.Java.from_string "java.lang.Object"
 
-let serializable_type = Mangled.from_string "java.io.Serializable"
+let serializable_type = Typename.Java.from_string "java.io.Serializable"
 
-let cloneable_type = Mangled.from_string "java.lang.Cloneable"
+let cloneable_type = Typename.Java.from_string "java.lang.Cloneable"
 
-let is_interface tenv c =
-  match Sil.tenv_lookup tenv (Sil.TN_csu (Sil.Class, c)) with
-  | Some (Sil.Tstruct (fields, sfields, Sil.Class, Some c1', supers1, methods, iann)) ->
+let is_interface tenv class_name =
+  match Sil.tenv_lookup tenv class_name with
+  | Some (Sil.Tstruct (fields, sfields, Csu.Class, Some c1', supers1, methods, iann)) ->
       (IList.length fields = 0) && (IList.length methods = 0)
   | _ -> false
 
 (** check if c1 is a subclass of c2 *)
 let check_subclass_tenv tenv c1 c2 =
-  let rec check (_, c) =
-    Mangled.equal c c2 || (Mangled.equal c2 object_type) ||
-    match Sil.tenv_lookup tenv (Sil.TN_csu (Sil.Class, c)) with
-    | Some (Sil.Tstruct (_, _, Sil.Class, Some c1', supers1, _, _)) ->
+  let rec check cn =
+    Typename.equal cn c2 || Typename.equal c2 object_type ||
+    match Sil.tenv_lookup tenv cn with
+    | Some (Sil.Tstruct (_, _, Csu.Class, Some c1', supers1, _, _)) ->
         IList.exists check supers1
     | _ -> false in
-  (check (Sil.Class, c1))
+  check c1
 
 let check_subclass tenv c1 c2 =
   let f = check_subclass_tenv tenv in
@@ -1480,8 +1478,11 @@ let check_subtype_basic_type t1 t2 =
 (** check if t1 is a subtype of t2 *)
 let rec check_subtype tenv t1 t2 =
   match t1, t2 with
-  | Sil.Tstruct (_, _, Sil.Class, Some c1, _, _, _), Sil.Tstruct (_, _, Sil.Class, Some c2, _, _, _) ->
-      (check_subclass tenv c1 c2)
+  | Sil.Tstruct (_, _, Csu.Class, Some c1, _, _, _),
+    Sil.Tstruct (_, _, Csu.Class, Some c2, _, _, _) ->
+      let cn1 = Typename.TN_csu (Csu.Class, c1)
+      and cn2 = Typename.TN_csu (Csu.Class, c2) in
+      (check_subclass tenv cn1 cn2)
 
   | Sil.Tarray (dom_type1, _), Sil.Tarray (dom_type2, _) ->
       check_subtype tenv dom_type1 dom_type2
@@ -1489,15 +1490,21 @@ let rec check_subtype tenv t1 t2 =
   | Sil.Tptr (dom_type1, _), Sil.Tptr (dom_type2, _) ->
       check_subtype tenv dom_type1 dom_type2
 
-  | Sil.Tarray _, Sil.Tstruct (_, _, Sil.Class, Some c2, _, _, _) ->
-      (Mangled.equal c2 serializable_type) || (Mangled.equal c2 cloneable_type) || (Mangled.equal c2 object_type)
+  | Sil.Tarray _, Sil.Tstruct (_, _, Csu.Class, Some c2, _, _, _) ->
+      let cn2 = Typename.TN_csu (Csu.Class, c2) in
+      Typename.equal cn2 serializable_type
+      || Typename.equal cn2 cloneable_type
+      || Typename.equal cn2 object_type
 
   | _ -> (check_subtype_basic_type t1 t2)
 
 let rec case_analysis_type tenv (t1, st1) (t2, st2) =
   match t1, t2 with
-  | Sil.Tstruct (_, _, Sil.Class, Some c1, _, _, _), Sil.Tstruct (_, _, Sil.Class, Some c2, _, _, _) ->
-      (Sil.Subtype.case_analysis (c1, st1) (c2, st2) (check_subclass tenv) (is_interface tenv))
+  | Sil.Tstruct (_, _, Csu.Class, Some c1, _, _, _),
+    Sil.Tstruct (_, _, Csu.Class, Some c2, _, _, _) ->
+      let cn1 = Typename.TN_csu (Csu.Class, c1)
+      and cn2 = Typename.TN_csu (Csu.Class, c2) in
+      (Sil.Subtype.case_analysis (cn1, st1) (cn2, st2) (check_subclass tenv) (is_interface tenv))
 
   | Sil.Tarray (dom_type1, _), Sil.Tarray (dom_type2, _) ->
       (case_analysis_type tenv (dom_type1, st1) (dom_type2, st2))
@@ -1505,8 +1512,11 @@ let rec case_analysis_type tenv (t1, st1) (t2, st2) =
   | Sil.Tptr (dom_type1, _), Sil.Tptr (dom_type2, _) ->
       (case_analysis_type tenv (dom_type1, st1) (dom_type2, st2))
 
-  | Sil.Tstruct (_, _, Sil.Class, Some c1, _, _, _), Sil.Tarray _ ->
-      if ((Mangled.equal c1 serializable_type) || (Mangled.equal c1 cloneable_type) || (Mangled.equal c1 object_type)) &&
+  | Sil.Tstruct (_, _, Csu.Class, Some c1, _, _, _), Sil.Tarray _ ->
+      let cn1 = Typename.TN_csu (Csu.Class, c1) in
+      if (Typename.equal cn1 serializable_type
+          || Typename.equal cn1 cloneable_type
+          || Typename.equal cn1 object_type) &&
          (st1 <> Sil.Subtype.exact) then (Some st1, None)
       else (None, Some st1)
 
@@ -1763,7 +1773,7 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
                         decrease_indent_when_exception
                           (fun () ->
                              try sigma_imply tenv calc_index_frame calc_missing subs prop1 hpred_list2
-                             with exn when exn_not_timeout exn ->
+                             with exn when exn_not_failure exn ->
                                begin
                                  (L.d_strln_color Red) "backtracking lseg: trying rhs of length exactly 1";
                                  let (_, para_inst3) = Sil.hpara_instantiate para2 _e2 _f2 elist2 in
@@ -1851,7 +1861,8 @@ and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : (subst2 *
       match !Config.curr_language with
       | Config.C_CPP -> Sil.Sizeof (Sil.Tarray (Sil.Tint Sil.IChar, size), Sil.Subtype.exact)
       | Config.Java ->
-          let object_type = Sil.TN_csu (Sil.Class, Mangled.from_string "java.lang.String") in
+          let object_type =
+            Typename.TN_csu (Csu.Class, Mangled.from_string "java.lang.String") in
           let typ = match Sil.tenv_lookup tenv object_type with
             | Some typ -> typ
             | None -> assert false in
@@ -1862,7 +1873,7 @@ and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : (subst2 *
     let sexp = (* TODO: add appropriate fields *)
       Sil.Estruct ([(Ident.create_fieldname (Mangled.from_string "java.lang.Class.name") 0, Sil.Eexp ((Sil.Const (Sil.Cstr s), Sil.Inone)))], Sil.inst_none) in
     let class_texp =
-      let class_type = Sil.TN_csu (Sil.Class, Mangled.from_string "java.lang.Class") in
+      let class_type = Typename.TN_csu (Csu.Class, Mangled.from_string "java.lang.Class") in
       let typ = match Sil.tenv_lookup tenv class_type with
         | Some typ -> typ
         | None -> assert false in

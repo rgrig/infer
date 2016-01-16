@@ -116,10 +116,10 @@ let curr_class_hash curr_class =
   | ContextNoCls -> Hashtbl.hash "no class"
 
 let create_curr_class tenv class_name =
-  let class_tn_name = Sil.TN_csu (Sil.Class, (Mangled.from_string class_name)) in
+  let class_tn_name = Typename.TN_csu (Csu.Class, (Mangled.from_string class_name)) in
   match Sil.tenv_lookup tenv class_tn_name with
   | Some Sil.Tstruct(intf_fields, _, _, _, superclasses, methods, annotation) ->
-      (let superclasses_names = IList.map (fun (_, name) -> Mangled.to_string name) superclasses in
+      (let superclasses_names = IList.map Typename.name superclasses in
        match superclasses_names with
        | superclass:: protocols ->
            ContextCls (class_name, Some superclass, protocols)
@@ -149,8 +149,21 @@ let static_vars_for_block context block_name =
   try Procname.Map.find block_name context.blocks_static_vars
   with Not_found -> []
 
-
 let rec get_outer_procname context =
   match context.outer_context with
   | Some outer_context -> get_outer_procname outer_context
   | None -> Cfg.Procdesc.get_proc_name context.procdesc
+
+let is_curr_proc_objc_getter context field_name =
+  let attrs = Cfg.Procdesc.get_attributes context.procdesc in
+  match attrs.ProcAttributes.objc_accessor with
+  | Some ProcAttributes.Objc_getter field ->
+      Ident.fieldname_equal field field_name
+  | _ -> false
+
+let is_curr_proc_objc_setter context field_name =
+  let attrs = Cfg.Procdesc.get_attributes context.procdesc in
+  match attrs.ProcAttributes.objc_accessor with
+  | Some ProcAttributes.Objc_setter field ->
+      Ident.fieldname_equal field field_name
+  | _ -> false

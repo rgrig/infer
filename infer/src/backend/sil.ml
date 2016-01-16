@@ -88,19 +88,6 @@ let get_sentinel_func_attribute_value attr_list =
     | FA_sentinel (sentinel, null_pos) -> Some (sentinel, null_pos)
   with Not_found -> None
 
-(** Class, struct, union, (Obj C) protocol *)
-type csu =
-  | Class
-  | Struct
-  | Union
-  | Protocol
-
-(** Named types. *)
-type typename =
-  | TN_typedef of Mangled.t
-  | TN_enum of Mangled.t
-  | TN_csu of csu * Mangled.t
-
 (** Kind of global variables *)
 type pvar_kind =
   | Local_var of Procname.t (** local variable belonging to a function *)
@@ -145,7 +132,8 @@ type binop =
 
   | LAnd    (** logical and. Does not always evaluate both operands. *)
   | LOr     (** logical or. Does not always evaluate both operands. *)
-  | PtrFld  (** field offset via pointer to field: takes the address of a csu and a Cptr_to_fld constant to form an Lfield expression (see prop.ml) *)
+  | PtrFld  (** field offset via pointer to field: takes the address of a
+                Csu.t and a Cptr_to_fld constant to form an Lfield expression (see prop.ml) *)
 
 (** Kinds of integers *)
 type ikind =
@@ -214,14 +202,15 @@ module Subtype = struct
       | [] -> ""
       | el:: rest ->
           let s = (aux rest) in
-          if (s = "") then (Mangled.to_string el)
-          else (Mangled.to_string el)^", "^s in
+          if (s = "") then (Typename.name el)
+          else (Typename.name el)^", "^s in
     if (IList.length list = 0) then "( sub )"
     else ("- {"^(aux list)^"}")
 
   type t' =
     | Exact (** denotes the current type only *)
-    | Subtypes of Mangled.t list(** denotes the current type and a list of types that are not their subtypes  *)
+    | Subtypes of Typename.t list
+    (** denotes the current type and a list of types that are not their subtypes  *)
 
   type kind =
     | CAST
@@ -231,10 +220,10 @@ module Subtype = struct
   type t = t' * kind
 
   module SubtypesPair = struct
-    type t = (Mangled.t * Mangled.t)
+    type t = (Typename.t * Typename.t)
 
     let compare (e1 : t)(e2 : t) : int =
-      pair_compare Mangled.compare Mangled.compare e1 e2
+      pair_compare Typename.compare Typename.compare e1 e2
   end
 
   module SubtypesMap = Map.Make (SubtypesPair)
@@ -258,9 +247,12 @@ module Subtype = struct
     | NORMAL -> ""
 
   let pp f (t, flag) =
-    match t with
-    | Exact -> if !Config.print_types then F.fprintf f "%s" (flag_to_string flag)
-    | Subtypes list -> if !Config.print_types then F.fprintf f "%s" ((list_to_string list)^(flag_to_string flag))
+    if !Config.print_types then
+      match t with
+      | Exact ->
+          F.fprintf f "%s" (flag_to_string flag)
+      | Subtypes list ->
+          F.fprintf f "%s" ((list_to_string list)^(flag_to_string flag))
 
   let exact = Exact, NORMAL
   let all_subtypes = Subtypes []
@@ -287,12 +279,12 @@ module Subtype = struct
       match s1, s2 with
       | Exact, _ -> s2
       | _, Exact -> s1
-      | Subtypes l1, Subtypes l2 -> Subtypes (list_intersect Mangled.equal l1 l2) in
+      | Subtypes l1, Subtypes l2 -> Subtypes (list_intersect Typename.equal l1 l2) in
     let flag = join_flag flag1 flag2 in
     s, flag
 
   let subtypes_compare l1 l2 =
-    IList.compare Mangled.compare l1 l2
+    IList.compare Typename.compare l1 l2
 
   let compare_flag flag1 flag2 =
     match flag1, flag2 with
@@ -321,7 +313,7 @@ module Subtype = struct
   let update_flag c1 c2 flag flag' =
     match flag with
     | INSTOF ->
-        if (Mangled.equal c1 c2) then flag else flag'
+        if (Typename.equal c1 c2) then flag else flag'
     | _ -> flag'
 
   let change_flag st_opt c1 c2 flag' =
@@ -343,7 +335,7 @@ module Subtype = struct
         (match t with
          | Exact -> Some (t, new_flag)
          | Subtypes l ->
-             Some (Subtypes (IList.sort Mangled.compare l), new_flag))
+             Some (Subtypes (IList.sort Typename.compare l), new_flag))
     | None -> None
 
   let subtypes_to_string t =
@@ -357,7 +349,7 @@ module Subtype = struct
     with Not_found -> true
 
   let is_strict_subtype f c1 c2 =
-    f c1 c2 && not (Mangled.equal c1 c2)
+    f c1 c2 && not (Typename.equal c1 c2)
 
   (* checks for redundancies when adding c to l
      Xi in A - { X1,..., Xn } is redundant in two cases:
@@ -393,8 +385,6 @@ module Subtype = struct
 
   let get_subtypes (c1, (st1, flag1)) (c2, (st2, flag2)) f is_interface =
     let is_sub = f c1 c2 in
-    (* L.d_strln_color Orange ((Mangled.to_string c1)^(subtypes_to_string (st1, flag1))^" <: "^ *)
-    (* (Mangled.to_string c2)^(subtypes_to_string (st2, flag2))^" ?"^(string_of_bool is_sub)); *)
     let pos_st, neg_st = match st1, st2 with
       | Exact, Exact ->
           if (is_sub) then (Some st1, None)
@@ -426,11 +416,11 @@ module Subtype = struct
       else if f c2 c1 then
         match st with
         | Exact, flag ->
-            if Mangled.equal c1 c2
+            if Typename.equal c1 c2
             then (Some st, None)
             else (None, Some st)
         | Subtypes _ , flag ->
-            if Mangled.equal c1 c2
+            if Typename.equal c1 c2
             then (Some st, None)
             else (Some st, Some st)
       else (None, Some st) in
@@ -571,11 +561,17 @@ end
 (** Flags for a procedure call *)
 type call_flags = {
   cf_virtual : bool;
+  cf_interface : bool;
   cf_noreturn : bool;
   cf_is_objc_block : bool;
 }
 
-let cf_default = { cf_virtual = false; cf_noreturn = false; cf_is_objc_block = false; }
+let cf_default =
+  { cf_virtual = false;
+    cf_interface = false;
+    cf_noreturn = false;
+    cf_is_objc_block = false;
+  }
 
 (** expression representing the result of decompilation *)
 type dexp =
@@ -642,22 +638,24 @@ and const =
   | Cattribute of attribute (** attribute used in disequalities to annotate a value *)
   | Cexn of exp (** exception *)
   | Cclass of Ident.name (** class constant *)
-  | Cptr_to_fld of Ident.fieldname * typ (** pointer to field constant, and type of the surrounding csu type *)
+  | Cptr_to_fld of Ident.fieldname * typ (** pointer to field constant,
+                                             and type of the surrounding Csu.t type *)
   | Ctuple of exp list (** tuple of values *)
 
 and struct_fields = (Ident.fieldname * typ * item_annotation) list
 
 (** types for sil (structured) expressions *)
 and typ =
-  | Tvar of typename  (** named type *)
+  | Tvar of Typename.t  (** named type *)
   | Tint of ikind (** integer type *)
   | Tfloat of fkind (** float type *)
   | Tvoid (** void type *)
   | Tfun of bool (** function type with noreturn attribute *)
   | Tptr of typ * ptr_kind (** pointer type *)
-  | Tstruct of struct_fields * struct_fields * csu * Mangled.t option * (csu * Mangled.t) list * Procname.t list * item_annotation (** structure type with class/struct/union flag and name and list of superclasses *)
-  (** Structure type with nonstatic and static fields, class/struct/union flag, name, list of superclasses,
-      methods defined, and annotations.
+  | Tstruct of struct_fields * struct_fields * Csu.t * Mangled.t option *
+               Typename.t list * Procname.t list * item_annotation
+  (** Structure type with nonstatic and static fields, class/struct/union flag, name,
+      list of superclasses, methods defined, and annotations.
       The fld - typ pairs are always sorted. This means that we don't support programs that exploit specific layouts
       of C structs. *)
   | Tarray of typ * exp (** array type with fixed size *)
@@ -1200,40 +1198,6 @@ let fkind_compare k1 k2 = match k1, k2 with
   | _, FDouble -> 1
   | FLongDouble, FLongDouble -> 0
 
-let csu_compare csu1 csu2 = match csu1, csu2 with
-  | Class, Class -> 0
-  | Class, _ -> -1
-  | _, Class -> 1
-  | Struct, Struct -> 0
-  | Struct, _ -> -1
-  | _, Struct -> 1
-  | Union, Union -> 0
-  | Union, _ -> -1
-  | _, Union -> 1
-  | Protocol, Protocol -> 0
-
-let typename_compare tn1 tn2 = match tn1, tn2 with
-  | TN_typedef n1, TN_typedef n2 -> Mangled.compare n1 n2
-  | TN_typedef _, _ -> - 1
-  | _, TN_typedef _ -> 1
-  | TN_enum n1, TN_enum n2 -> Mangled.compare n1 n2
-  | TN_enum _, _ -> -1
-  | _, TN_enum _ -> 1
-  | TN_csu (csu1, n1), TN_csu (csu2, n2) ->
-      let n = csu_compare csu1 csu2 in
-      if n <> 0 then n else Mangled.compare n1 n2
-
-let csu_name_compare tn1 tn2 = match tn1, tn2 with
-  | (csu1, n1), (csu2, n2) ->
-      let n = csu_compare csu1 csu2 in
-      if n <> 0 then n else Mangled.compare n1 n2
-
-let csu_name_equal tn1 tn2 =
-  csu_name_compare tn1 tn2 = 0
-
-let typename_equal tn1 tn2 =
-  typename_compare tn1 tn2 = 0
-
 let ptr_kind_compare pk1 pk2 = match pk1, pk2 with
   | Pk_pointer, Pk_pointer -> 0
   | Pk_pointer, _ -> -1
@@ -1295,7 +1259,7 @@ let rec const_compare (c1 : const) (c2 : const) : int =
 (** Comparision for types. *)
 and typ_compare t1 t2 =
   if t1 == t2 then 0 else match t1, t2 with
-    | Tvar tn1, Tvar tn2 -> typename_compare tn1 tn2
+    | Tvar tn1, Tvar tn2 -> Typename.compare tn1 tn2
     | Tvar _, _ -> - 1
     | _, Tvar _ -> 1
     | Tint ik1, Tint ik2 -> ikind_compare ik1 ik2
@@ -1315,10 +1279,11 @@ and typ_compare t1 t2 =
         if n <> 0 then n else ptr_kind_compare pk1 pk2
     | Tptr _, _ -> - 1
     | _, Tptr _ -> 1
-    | Tstruct (ntal1, sntal1, csu1, nameo1, _, _, _), Tstruct (ntal2, sntal2, csu2, nameo2, _, _, _) ->
+    | Tstruct (ntal1, sntal1, csu1, nameo1, _, _, _),
+      Tstruct (ntal2, sntal2, csu2, nameo2, _, _, _) ->
         let n = fld_typ_ann_list_compare ntal1 ntal2 in
         if n <> 0 then n else let n = fld_typ_ann_list_compare sntal1 sntal2 in
-          if n <> 0 then n else let n = csu_compare csu1 csu2 in
+          if n <> 0 then n else let n = Csu.compare csu1 csu2 in
             if n <> 0 then n else cname_opt_compare nameo1 nameo2
     | Tstruct _, _ -> - 1
     | _, Tstruct _ -> 1
@@ -1811,22 +1776,6 @@ let fkind_to_string = function
   | FDouble -> "double"
   | FLongDouble -> "long double"
 
-let csu_name = function
-  | Class -> "class"
-  | Struct -> "struct"
-  | Union -> "union"
-  | Protocol -> "protocol"
-
-let typename_to_string = function
-  | TN_enum name
-  | TN_typedef name -> Mangled.to_string name
-  | TN_csu (csu, name) -> csu_name csu ^ " " ^ Mangled.to_string name
-
-let typename_name = function
-  | TN_enum name
-  | TN_typedef name
-  | TN_csu (_, name) -> Mangled.to_string name
-
 let ptr_kind_string = function
   | Pk_reference -> "&"
   | Pk_pointer -> "*"
@@ -1976,7 +1925,7 @@ and pp_typ pe f te =
     pp_base prints the variable for a declaration, or can be skip to print only the type
     pp_size prints the expression for the array size *)
 and pp_type_decl pe pp_base pp_size f = function
-  | Tvar tname -> F.fprintf f "%s %a" (typename_to_string tname) pp_base ()
+  | Tvar tname -> F.fprintf f "%s %a" (Typename.to_string tname) pp_base ()
   | Tint ik -> F.fprintf f "%s %a" (ikind_to_string ik) pp_base ()
   | Tfloat fk -> F.fprintf f "%s %a" (fkind_to_string fk) pp_base ()
   | Tvoid -> F.fprintf f "void %a" pp_base ()
@@ -1988,15 +1937,16 @@ and pp_type_decl pe pp_base pp_size f = function
   | Tptr (typ, pk) ->
       let pp_base' fmt () = F.fprintf fmt "%s%a" (ptr_kind_string pk) pp_base () in
       pp_type_decl pe pp_base' pp_size f typ
-  | Tstruct (ftal, sftal, csu, Some name, _, _, _) when false -> (* remove "when false" to print the details of struct *)
-      F.fprintf f "%s %a {%a} %a" (csu_name csu) Mangled.pp name
+  | Tstruct (ftal, sftal, csu, Some name, _, _, _) when false ->
+      (* remove "when false" to print the details of struct *)
+      F.fprintf f "%s %a {%a} %a" (Csu.name csu) Mangled.pp name
         (pp_seq (fun f (fld, t, ann) ->
              F.fprintf f "%a %a" (pp_typ_full pe) t Ident.pp_fieldname fld))
         ftal pp_base ()
   | Tstruct (ftal, sftal, csu, Some name, _, _, _) ->
-      F.fprintf f "%s %a %a" (csu_name csu) Mangled.pp name pp_base ()
+      F.fprintf f "%s %a %a" (Csu.name csu) Mangled.pp name pp_base ()
   | Tstruct (ftal, sftal, csu, None, _, _, _) ->
-      F.fprintf f "%s {%a} %a" (csu_name csu)
+      F.fprintf f "%s {%a} %a" (Csu.name csu)
         (pp_seq (fun f (fld, t, ann) -> F.fprintf f "%a %a" (pp_typ_full pe) t Ident.pp_fieldname fld)) ftal pp_base ()
   | Tarray (typ, size) ->
       let pp_base' fmt () = F.fprintf fmt "%a[%a]" pp_base () (pp_size pe) size in
@@ -3449,8 +3399,10 @@ let instr_sub (subst: subst) instr =
       Goto_node (exp_s e, loc)
 
 let call_flags_compare cflag1 cflag2 =
-  let n = bool_compare cflag1.cf_virtual cflag2.cf_virtual in
-  if n <> 0 then n else bool_compare cflag1.cf_noreturn cflag2.cf_noreturn
+  bool_compare cflag1.cf_virtual cflag2.cf_virtual
+  |> next bool_compare cflag1.cf_interface cflag2.cf_interface
+  |> next bool_compare cflag1.cf_noreturn cflag2.cf_noreturn
+  |> next bool_compare cflag1.cf_is_objc_block cflag2.cf_is_objc_block
 
 let exp_typ_compare (exp1, typ1) (exp2, typ2) =
   let n = exp_compare exp1 exp2 in
@@ -3772,8 +3724,8 @@ let hpred_compact sh hpred =
 
 module TypenameHash =
   Hashtbl.Make(struct
-    type t = typename
-    let equal tn1 tn2 = typename_equal tn1 tn2
+    type t = Typename.t
+    let equal tn1 tn2 = Typename.equal tn1 tn2
     let hash = Hashtbl.hash
   end)
 
@@ -3795,13 +3747,6 @@ let tenv_lookup tenv name =
 (** Add a (name,type) pair to the global type environment. *)
 let tenv_add tenv name typ =
   TypenameHash.replace tenv name typ
-
-(** look up the type for a mangled name in the current type environment *)
-let get_typ name csu_option tenv =
-  let csu = match csu_option with
-    | Some t -> t
-    | None -> Class in
-  tenv_lookup tenv (TN_csu (csu, name))
 
 (** expand a type if it is a typename by looking it up in the type environment *)
 let rec expand_type tenv typ =
@@ -3843,7 +3788,7 @@ let tenv_fold f tenv =
 let pp_tenv f (tenv : tenv) =
   TypenameHash.iter
     (fun name typ ->
-       Format.fprintf f "@[<6>NAME: %s@." (typename_to_string name);
+       Format.fprintf f "@[<6>NAME: %s@." (Typename.to_string name);
        Format.fprintf f "@[<6>TYPE: %a@." (pp_typ_full pe_text) typ)
     tenv
 
@@ -3963,8 +3908,8 @@ let rec strexp_get_target_exps = function
       (* We ignore size and indices since they are not quite outgoing arrows. *)
       IList.flatten (IList.map (fun (_, se) -> strexp_get_target_exps se) esel)
 
-let global_error =
-  mk_pvar_global (Mangled.from_string "INFER_ERROR")
+let custom_error =
+  mk_pvar_global (Mangled.from_string "INFER_CUSTOM_ERROR")
 
 (* A block pvar used to explain retain cycles *)
 let block_pvar =

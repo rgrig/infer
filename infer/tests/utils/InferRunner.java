@@ -1,11 +1,11 @@
 /*
-* Copyright (c) 2013 - present Facebook, Inc.
-* All rights reserved.
-*
-* This source code is licensed under the BSD style license found in the
-* LICENSE file in the root directory of this source tree. An additional grant
-* of patent rights can be found in the PATENTS file in the same directory.
-*/
+ * Copyright (c) 2013 - present Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ */
 
 package utils;
 
@@ -525,7 +525,7 @@ public class InferRunner {
     ProcessBuilder pb = new ProcessBuilder(inferCmd);
 
     Map<String, String> env = pb.environment();
-    env.put("INFER_REPORT_ASSERTION_FAILURE", "1");
+    env.put("INFER_REPORT_CUSTOM_ERROR", "1");
 
     Process process = pb.start();
     StringBuilder stderr = new StringBuilder();

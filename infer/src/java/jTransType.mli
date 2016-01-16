@@ -15,7 +15,7 @@ open Sawja_pack
 val get_named_type : JBasics.value_type -> Sil.typ
 
 (** transforms a Java class name into a Sil class name *)
-val typename_of_classname : JBasics.class_name -> Sil.typename
+val typename_of_classname : JBasics.class_name -> Typename.t
 
 (** returns a name for a field based on a class name and a field name  *)
 val create_fieldname : JBasics.class_name -> JBasics.field_signature -> Ident.fieldname
@@ -61,6 +61,8 @@ val expr_type : JContext.t -> JBir.expr -> Sil.typ
 
 (** translates a conversion type from Java to Sil. *)
 val cast_type : JBir.conv -> Sil.typ
+
+val package_to_string : string list -> string option
 
 (** [create_array_type typ dim] creates an array type with dimension dim and content typ *)
 val create_array_type : Sil.typ -> int -> Sil.typ

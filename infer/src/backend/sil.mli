@@ -12,19 +12,6 @@
 
 open Utils
 
-(** Class, struct, union, (Obj C) protocol *)
-type csu =
-  | Class
-  | Struct
-  | Union
-  | Protocol
-
-(** Named types. *)
-type typename =
-  | TN_typedef of Mangled.t
-  | TN_enum of Mangled.t
-  | TN_csu of csu * Mangled.t
-
 (** {2 Programs and Types} *)
 
 (** Type to represent one @Annotation. *)
@@ -84,7 +71,8 @@ type binop =
 
   | LAnd    (** logical and. Does not always evaluate both operands. *)
   | LOr     (** logical or. Does not always evaluate both operands. *)
-  | PtrFld  (** field offset via pointer to field: takes the address of a csu and a Cptr_to_fld constant to form an Lfield expression (see prop.ml) *)
+  | PtrFld  (** field offset via pointer to field: takes the address of a
+                Csu.t and a Cptr_to_fld constant to form an Lfield expression (see prop.ml) *)
 
 (** Kinds of integers *)
 type ikind =
@@ -152,13 +140,15 @@ module Subtype : sig
   val subtypes_cast : t
   val subtypes_instof : t
   val join : t -> t -> t
-  (** [case_analysis (c1, st1) (c2,st2) f] performs case analysis on [c1 <: c2] according to [st1] and [st2]
-      where f c1 c2 is true if c1 is a subtype of c2.
+  (** [case_analysis (c1, st1) (c2,st2) f] performs case analysis on [c1 <: c2] according
+      to [st1] and [st2] where f c1 c2 is true if c1 is a subtype of c2.
       get_subtypes returning a pair:
       - whether [st1] and [st2] admit [c1 <: c2], and in case return the updated subtype [st1]
-      - whether [st1] and [st2] admit [not(c1 <: c2)], and in case return the updated subtype [st1] *)
-  val case_analysis : (Mangled.t * t) -> (Mangled.t * t) -> (Mangled.t -> Mangled.t -> bool) -> (Mangled.t -> bool) -> t option * t option
-  val check_subtype : (Mangled.t -> Mangled.t -> bool) -> Mangled.t -> Mangled.t -> bool
+      - whether [st1] and [st2] admit [not(c1 <: c2)], and in case return
+      the updated subtype [st1] *)
+  val case_analysis : (Typename.t * t) -> (Typename.t * t) ->
+    (Typename.t -> Typename.t -> bool) -> (Typename.t -> bool) -> t option * t option
+  val check_subtype : (Typename.t -> Typename.t -> bool) -> Typename.t -> Typename.t -> bool
   val subtypes_to_string : t -> string
   val is_cast : t -> bool
   val is_instof : t -> bool
@@ -209,7 +199,8 @@ end
 
 (** Flags for a procedure call *)
 type call_flags = {
-  cf_virtual: bool;
+  cf_virtual : bool;
+  cf_interface : bool;
   cf_noreturn : bool;
   cf_is_objc_block : bool;
 }
@@ -282,20 +273,22 @@ and const =
   | Cattribute of attribute (** attribute used in disequalities to annotate a value *)
   | Cexn of exp (** exception *)
   | Cclass of Ident.name (** class constant *)
-  | Cptr_to_fld of Ident.fieldname * typ (** pointer to field constant, and type of the surrounding csu type *)
+  | Cptr_to_fld of Ident.fieldname * typ (** pointer to field constant,
+                                             and type of the surrounding Csu.t type *)
   | Ctuple of exp list (** tuple of values *)
 
 and struct_fields = (Ident.fieldname * typ * item_annotation) list
 
 (** Types for sil (structured) expressions. *)
 and typ =
-  | Tvar of typename (** named type *)
+  | Tvar of Typename.t (** named type *)
   | Tint of ikind (** integer type *)
   | Tfloat of fkind (** float type *)
   | Tvoid (** void type *)
   | Tfun of bool (** function type with noreturn attribute *)
   | Tptr of typ * ptr_kind (** pointer type *)
-  | Tstruct of struct_fields * struct_fields * csu * Mangled.t option * (csu * Mangled.t) list * Procname.t list * item_annotation
+  | Tstruct of struct_fields * struct_fields * Csu.t * Mangled.t option *
+               Typename.t list * Procname.t list * item_annotation
   (** Structure type with nonstatic and static fields, class/struct/union flag, name, list of superclasses,
       methods defined, and annotations.
       The fld - typ pairs are always sorted. This means that we don't support programs that exploit specific layouts
@@ -514,16 +507,13 @@ type tenv (** Type for type environment. *)
 val create_tenv : unit -> tenv
 
 (** Check if typename is found in tenv *)
-val tenv_mem : tenv -> typename -> bool
+val tenv_mem : tenv -> Typename.t -> bool
 
 (** Look up a name in the global type environment. *)
-val tenv_lookup : tenv -> typename -> typ option
+val tenv_lookup : tenv -> Typename.t -> typ option
 
 (** Add a (name,typ) pair to the global type environment. *)
-val tenv_add : tenv -> typename -> typ -> unit
-
-(** look up the type for a mangled name in the current type environment *)
-val get_typ : Mangled.t -> csu option -> tenv -> typ option
+val tenv_add : tenv -> Typename.t -> typ -> unit
 
 (** expand a type if it is a typename by looking it up in the type environment *)
 val expand_type : tenv -> typ -> typ
@@ -537,16 +527,10 @@ val load_tenv_from_file : DB.filename -> tenv option
 (** Save a type environment into a file *)
 val store_tenv_to_file : DB.filename -> tenv -> unit
 
-(** convert the typename to a string *)
-val typename_to_string : typename -> string
-
-(** name of the typename without qualifier *)
-val typename_name : typename -> string
-
 (** iterate over a type environment *)
-val tenv_iter : (typename -> typ -> unit) -> tenv -> unit
+val tenv_iter : (Typename.t -> typ -> unit) -> tenv -> unit
 
-val tenv_fold : (typename -> typ -> 'a -> 'a) -> tenv -> 'a -> 'a
+val tenv_fold : (Typename.t -> typ -> 'a -> 'a) -> tenv -> 'a -> 'a
 
 (** print a type environment *)
 val pp_tenv : Format.formatter -> tenv -> unit
@@ -638,15 +622,6 @@ val ikind_is_unsigned : ikind -> bool
 
 (** Convert an int64 into an Int.t given the kind: the int64 is interpreted as unsigned according to the kind *)
 val int_of_int64_kind : int64 -> ikind -> Int.t
-
-(** Comparison for typenames *)
-val typename_compare : typename -> typename -> int
-
-(** Equality for typenames *)
-val typename_equal : typename -> typename -> bool
-
-(** Equality for typenames *)
-val csu_name_equal : (csu * Mangled.t) -> (csu * Mangled.t) -> bool
 
 (** Comparision for ptr_kind *)
 val ptr_kind_compare : ptr_kind -> ptr_kind -> int
@@ -1339,4 +1314,4 @@ val exp_iter_types : (typ -> unit) -> exp -> unit
 (** Iterate over all the types (and subtypes) in the instruction *)
 val instr_iter_types : (typ -> unit) -> instr -> unit
 
-val global_error : pvar
+val custom_error : pvar

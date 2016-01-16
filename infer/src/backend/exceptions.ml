@@ -35,7 +35,6 @@ exception Array_out_of_bounds_l1 of Localise.error_desc * ml_location
 exception Array_out_of_bounds_l2 of Localise.error_desc * ml_location
 exception Array_out_of_bounds_l3 of Localise.error_desc * ml_location
 exception Array_of_pointsto of ml_location
-exception Assertion_failure of string * Localise.error_desc
 exception Bad_footprint of ml_location
 exception Bad_pointer_comparison of Localise.error_desc * ml_location
 exception Class_cast_exception of Localise.error_desc * ml_location
@@ -44,6 +43,7 @@ exception Comparing_floats_for_equality of Localise.error_desc * ml_location
 exception Condition_is_assignment of Localise.error_desc * ml_location
 exception Condition_always_true_false of Localise.error_desc * bool * ml_location
 exception Context_leak of Localise.error_desc * ml_location
+exception Custom_error of string * Localise.error_desc
 exception Dangling_pointer_dereference of Sil.dangling_kind option * Localise.error_desc * ml_location
 exception Deallocate_stack_variable of Localise.error_desc
 exception Deallocate_static_memory of Localise.error_desc
@@ -55,7 +55,7 @@ exception Frontend_warning of string * Localise.error_desc * ml_location
 exception Checkers of string * Localise.error_desc
 exception Inherently_dangerous_function of Localise.error_desc
 exception Internal_error of Localise.error_desc
-exception Java_runtime_exception of Mangled.t * string * Localise.error_desc
+exception Java_runtime_exception of Typename.t * string * Localise.error_desc
 exception Leak of bool * Prop.normal Prop.t * Sil.hpred * (exception_visibility * Localise.error_desc) * bool * Sil.resource * ml_location
 exception Missing_fld of Ident.fieldname * ml_location
 exception Premature_nil_termination of Localise.error_desc * ml_location
@@ -105,8 +105,6 @@ let recognize_exception exn =
         (Localise.array_out_of_bounds_l3, desc, Some mloc, Exn_developer, Medium, None, Nocat)
     | Assert_failure mloc ->
         (Localise.from_string "Assert_failure", Localise.no_desc, Some mloc, Exn_developer, High, None, Nocat)
-    | Assertion_failure (error_msg, desc) ->
-        (Localise.from_string error_msg, desc, None, Exn_user, High, None, Checker)
     | Bad_pointer_comparison (desc, mloc) ->
         (Localise.bad_pointer_comparison, desc, Some mloc, Exn_user, High, Some Kerror, Prover)
     | Bad_footprint mloc ->
@@ -122,6 +120,8 @@ let recognize_exception exn =
     | Condition_always_true_false (desc, b, mloc) ->
         let name = if b then Localise.condition_always_true else Localise.condition_always_false in
         (name, desc, Some mloc, Exn_user, Medium, None, Nocat)
+    | Custom_error (error_msg, desc) ->
+        (Localise.from_string error_msg, desc, None, Exn_user, High, None, Checker)
     | Condition_is_assignment(desc, mloc) ->
         (Localise.condition_is_assignment, desc, Some mloc, Exn_user, Medium, None, Nocat)
     | Dangling_pointer_dereference (dko, desc, mloc) ->
@@ -159,7 +159,7 @@ let recognize_exception exn =
         let desc = Localise.verbatim_desc s in
         (Localise.from_string "Invalid_argument", desc, None, Exn_system, Low, None, Nocat)
     | Java_runtime_exception (exn_name, pre_str, desc) ->
-        let exn_str = Mangled.to_string exn_name in
+        let exn_str = Typename.name exn_name in
         (Localise.from_string exn_str, desc, None, Exn_user, High, None, Prover)
     | Leak (fp_part, _, _, (exn_vis, error_desc), done_array_abstraction, resource, mloc) ->
         if done_array_abstraction
@@ -198,8 +198,8 @@ let recognize_exception exn =
         (Localise.return_statement_missing, desc, Some mloc, Exn_user, Medium, None, Nocat)
     | Return_value_ignored (desc, mloc) ->
         (Localise.return_value_ignored, desc, Some mloc, Exn_user, Medium, None, Nocat)
-    | Timeout_exe _ ->
-        (Localise.from_string "Timeout_exe", Localise.no_desc, None, Exn_system, Low, None, Nocat)
+    | Analysis_failure_exe _ ->
+        (Localise.from_string "Failure_exe", Localise.no_desc, None, Exn_system, Low, None, Nocat)
     | Skip_function desc ->
         (Localise.skip_function, desc, None, Exn_developer, Low, None, Nocat)
     | Skip_pointer_dereference (desc, mloc) ->

@@ -128,13 +128,24 @@ def run_command(cmd, debug_mode, infer_out, message, env=os.environ):
         raise e
 
 
-def merge_json_arrays_from_files(report_paths):
-    # TODO: use streams instead of loading the entire json in memory
-    json_data = []
-    for json_path in report_paths:
-        with codecs.open(json_path, 'r', encoding=config.LOCALE) as fd:
-            json_data = json_data + json.loads(fd.read())
-    return json_data
+def load_json_from_path(path):
+    with codecs.open(path, 'r', encoding=config.LOCALE) as file_in:
+        return json.load(file_in, encoding=config.LOCALE)
+
+
+def dump_json_to_path(
+        data, path,
+        skipkeys=False, ensure_ascii=True, check_circular=True, allow_nan=True,
+        cls=None,
+        indent=2,  # customized
+        separators=None,
+        encoding=config.LOCALE,  # customized
+        default=None, sort_keys=False, **kw):
+    with codecs.open(path, 'w', encoding=config.LOCALE) as file_out:
+        json.dump(data, file_out, skipkeys=skipkeys, ensure_ascii=ensure_ascii,
+                  check_circular=check_circular, allow_nan=allow_nan, cls=cls,
+                  indent=indent, separators=separators, encoding=encoding,
+                  default=default, sort_keys=sort_keys, **kw)
 
 
 def infer_version():

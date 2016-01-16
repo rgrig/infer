@@ -14,8 +14,6 @@ val suppressLint : string
 val expensive : string
 val performance_critical : string
 
-val calls_expensive_annotation : Sil.annotation
-
 type annotation =
   | Nullable
   | Present
@@ -23,7 +21,7 @@ type annotation =
 (** Method signature with annotations. *)
 type annotated_signature =
   { ret : Sil.item_annotation * Sil.typ; (** Annotated return type. *)
-    params: (string * Sil.item_annotation * Sil.typ) list } (** Annotated parameters. *)
+    params: (Mangled.t * Sil.item_annotation * Sil.typ) list } (** Annotated parameters. *)
 
 (** Check if the annotated signature is for a wrapper of an anonymous inner class method.
     These wrappers have the same name as the original method, every type is Object, and the parameters
@@ -54,6 +52,8 @@ val get_annotated_signature : ProcAttributes.t -> annotated_signature
 val get_field_type_and_annotation :
   Ident.fieldname -> Sil.typ -> (Sil.typ * Sil.item_annotation) option
 
+val nullable : string
+
 val ia_contains : Sil.item_annotation -> string -> bool
 
 val ia_has_annotation_with : Sil.item_annotation -> (Sil.annotation -> bool) -> bool
@@ -71,7 +71,6 @@ val ia_is_present : Sil.item_annotation -> bool
 val ia_is_true_on_null : Sil.item_annotation -> bool
 val ia_is_verify : Sil.item_annotation -> bool
 val ia_is_expensive : Sil.item_annotation -> bool
-val ia_calls_expensive : Sil.item_annotation -> bool
 val ia_is_performance_critical : Sil.item_annotation -> bool
 
 val ia_iter : (Sil.annotation -> unit) -> Sil.item_annotation -> unit

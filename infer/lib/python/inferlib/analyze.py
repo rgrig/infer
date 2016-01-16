@@ -75,8 +75,11 @@ base_group.add_argument('-ic', '--changed-only',
                         action=ConfirmIncrementalAction,
                         help='''Same as -i, but does not analyze
                         dependencies of changed procedures.''')
+base_group.add_argument('--debug-exceptions', action='store_true',
+                        help='''Generate lightweight debugging information:
+                        just print the internal exceptions during analysis''')
 base_group.add_argument('-g', '--debug', action='store_true',
-                        help='Generate extra debugging information')
+                        help='Generate all debugging information')
 base_group.add_argument('-a', '--analyzer',
                         help='Select the analyzer within: {0}'.format(
                             ', '.join(config.ANALYZERS)),
@@ -142,10 +145,6 @@ infer_group.add_argument('--ml_buckets',
                               'buckets are cf (Core Foundation), '
                               'arc, narc (No arc), cpp, unknown_origin')
 
-infer_group.add_argument('-nt', '--notest', action='store_true',
-                           dest='notest',
-                           help='Prints output of symbolic execution')
-
 infer_group.add_argument('-npb', '--no-progress-bar', action='store_true',
                          help='Do not show a progress bar in the analysis')
 
@@ -156,6 +155,11 @@ infer_group.add_argument('--specs-dir',
                           help='add dir to the list of directories to be '
                                'searched for spec files. Repeat the argument '
                                'in case multiple folders are needed')
+infer_group.add_argument('--specs-dir-list-file',
+                         metavar='<file>',
+                         help='add the newline-separated directories listed '
+                              'in <file> to the list of directories to be '
+                              'searched for spec files')
 
 def detect_javac(args):
     for index, arg in enumerate(args):
@@ -279,6 +283,14 @@ class Infer:
                                     (['-lib', os.path.abspath(path)] for path in
                                      self.args.specs_dirs)
                                     for item in argument]
+        if self.args.specs_dir_list_file:
+            # Convert the path to the file list to an absolute path, because
+            # the analyzer will run from different paths and may not find the
+            # file otherwise.
+            self.args.specs_dir_list_file = \
+                ['-specs-dir-list-file',
+                 os.path.abspath(self.args.specs_dir_list_file)]
+
 
     def clean_exit(self):
         if os.path.isdir(self.args.infer_out):
@@ -286,9 +298,35 @@ class Infer:
             shutil.rmtree(self.args.infer_out)
         exit(os.EX_OK)
 
+    # create a classpath to pass to the frontend
+    def create_frontend_classpath(self):
+        classes_out = '.'
+        if self.javac.args.classes_out is not None:
+            classes_out = self.javac.args.classes_out
+        classes_out = os.path.abspath(classes_out)
+        original_classpath = []
+        if self.javac.args.bootclasspath is not None:
+            original_classpath = self.javac.args.bootclasspath.split(':')
+        if self.javac.args.classpath is not None:
+            original_classpath += self.javac.args.classpath.split(':')
+        if len(original_classpath) > 0:
+            # add classes_out, unless it's already in the classpath
+            classpath = [os.path.abspath(p) for p in original_classpath]
+            if not classes_out in classpath:
+                classpath = [classes_out] + classpath
+                # remove models.jar; it's added by the frontend
+                models_jar = os.path.abspath(config.MODELS_JAR)
+                if models_jar in classpath:
+                    classpath.remove(models_jar)
+            return ':'.join(classpath)
+        return classes_out
+
+
     def run_infer_frontend(self):
 
         infer_cmd = [utils.get_cmd_in_bin_dir('InferJava')]
+        infer_cmd += ['-classpath', self.create_frontend_classpath()]
+        infer_cmd += ['-class_source_map', self.javac.class_source_map]
 
         if not self.args.absolute_paths:
             infer_cmd += ['-project_root', self.args.project_root]
@@ -309,6 +347,11 @@ class Infer:
             infer_cmd.append('-tracing')
         if self.args.android_harness:
             infer_cmd.append('-harness')
+
+        if (self.args.android_harness
+            or self.args.analyzer in [config.ANALYZER_CHECKERS,
+                                      config.ANALYZER_ERADICATE]):
+                os.environ['INFER_CREATE_CALLEE_PDESC'] = 'Y'
 
         return run_command(
             infer_cmd,
@@ -350,9 +393,6 @@ class Infer:
         if self.args.ml_buckets:
             infer_options += ['-ml_buckets', self.args.ml_buckets]
 
-        if self.args.notest:
-            infer_options += ['-notest']
-
         if self.args.no_progress_bar:
             infer_options += ['-no_progress_bar']
 
@@ -364,8 +404,13 @@ class Infer:
                 '-print_types',
                 '-trace_error',
                 '-print_buckets',
-                # '-notest',
+                '-notest'
             ]
+            self.args.no_filtering = True
+
+        elif self.args.debug_exceptions:
+            infer_options.append('-developer_mode')
+            self.args.no_filtering = True
 
         if self.args.incremental:
             if self.args.changed_only:
@@ -375,6 +420,9 @@ class Infer:
 
         if self.args.specs_dirs:
             infer_options += self.args.specs_dirs
+
+        if self.args.specs_dir_list_file:
+            infer_options += self.args.specs_dir_list_file
 
         exit_status = os.EX_OK
 
@@ -402,9 +450,10 @@ class Infer:
             self.timing['makefile_generation'] = 0
 
         else:
-            if self.args.analyzer in [config.ANALYZER_ERADICATE,
-                                      config.ANALYZER_CHECKERS]:
+            if self.args.analyzer == config.ANALYZER_ERADICATE:
                 infer_analyze.append('-intraprocedural')
+            if self.args.analyzer == config.ANALYZER_CHECKERS:
+                os.environ['INFER_ONDEMAND'] = 'Y'
 
             os.environ['INFER_OPTIONS'] = ' '.join(infer_options)
 
@@ -499,10 +548,8 @@ class Infer:
 
         # capture and compile mode do not create proc_stats.json
         if os.path.isfile(proc_stats_path):
-            with codecs.open(proc_stats_path, 'r',
-                             encoding=config.LOCALE) as proc_stats_file:
-                proc_stats = json.load(proc_stats_file)
-                self.stats['int'].update(proc_stats)
+            proc_stats = utils.load_json_from_path(proc_stats_path)
+            self.stats['int'].update(proc_stats)
 
     def save_stats(self):
         """Print timing information to infer_out/stats.json"""
@@ -519,9 +566,7 @@ class Infer:
         }
 
         stats_path = os.path.join(self.args.infer_out, config.STATS_FILENAME)
-        with codecs.open(stats_path, 'w',
-                         encoding=config.LOCALE) as stats_file:
-            json.dump(self.stats, stats_file, indent=2)
+        utils.dump_json_to_path(self.stats, stats_path)
 
 
     def close(self):

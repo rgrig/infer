@@ -17,21 +17,21 @@ exception Typename_not_found
 
 let add_predefined_objc_types tenv =
   let objc_class_mangled = Mangled.from_string CFrontend_config.objc_class in
-  let objc_class_name = Sil.TN_csu (Sil.Class, objc_class_mangled) in
+  let objc_class_name = Typename.TN_csu (Csu.Class, objc_class_mangled) in
   let objc_class_type_info =
-    Sil.Tstruct ([], [], Sil.Struct,
+    Sil.Tstruct ([], [], Csu.Struct,
                  Some (Mangled.from_string CFrontend_config.objc_class), [], [], []) in
   Sil.tenv_add tenv objc_class_name objc_class_type_info;
   let class_typename = CType_to_sil_type.get_builtin_objc_typename `ObjCClass in
-  let class_typ = Sil.Tvar (Sil.TN_csu (Sil.Struct, objc_class_mangled)) in
+  let class_typ = Sil.Tvar (Typename.TN_csu (Csu.Struct, objc_class_mangled)) in
   Sil.tenv_add tenv class_typename class_typ;
   let typename_objc_object =
-    Sil.TN_csu (Sil.Struct, Mangled.from_string CFrontend_config.objc_object) in
+    Typename.TN_csu (Csu.Struct, Mangled.from_string CFrontend_config.objc_object) in
   let id_typedef = Sil.Tvar (typename_objc_object) in
   let id_typename = CType_to_sil_type.get_builtin_objc_typename `ObjCId in
   Sil.tenv_add tenv id_typename id_typedef;
   let objc_object_type_info =
-    Sil.Tstruct ([], [], Sil.Struct,
+    Sil.Tstruct ([], [], Csu.Struct,
                  Some (Mangled.from_string CFrontend_config.objc_object), [], [], []) in
   Sil.tenv_add tenv typename_objc_object objc_object_type_info
 
@@ -75,10 +75,10 @@ let create_csu opt_type =
   | `Type s ->
       (let buf = Str.split (Str.regexp "[ \t]+") s in
        match buf with
-       | "struct":: l ->Sil.Struct
-       | "class":: l -> Sil.Class
-       | "union":: l -> Sil.Union
-       | _ -> Sil.Struct)
+       | "struct":: l ->Csu.Struct
+       | "class":: l -> Csu.Class
+       | "union":: l -> Csu.Union
+       | _ -> Csu.Struct)
   | _ -> assert false
 
 (* We need to take the name out of the type as the struct can be anonymous*)
@@ -86,32 +86,24 @@ let get_record_name_csu decl =
   let open Clang_ast_t in
   let name_info, opt_type, should_be_class = match decl with
     | RecordDecl (_, name_info, opt_type, _, _, _, _) -> name_info, opt_type, false
-    | CXXRecordDecl (_, name_info, opt_type, _, _, _, _, cxx_record_info) ->
-        (* we use Sil.Class for C++ because we expect Sil.Class csu from *)
+    | CXXRecordDecl (_, name_info, opt_type, _, _, _, _, cxx_record_info)
+    | ClassTemplateSpecializationDecl (_, name_info, opt_type, _, _, _, _, cxx_record_info) ->
+        (* we use Csu.Class for C++ because we expect Csu.Class csu from *)
         (* types that have methods. And in C++ struct/class/union can have methods *)
         name_info, opt_type, not cxx_record_info.xrdi_is_c_like
     | _-> assert false in
   let csu  = create_csu opt_type in
-  let csu' = if should_be_class then Sil.Class else csu in
+  let csu' = if should_be_class then Csu.Class else csu in
   let name = Ast_utils.get_qualified_name name_info in
   csu', name
 
 let get_record_name decl = snd (get_record_name_csu decl)
 
-let get_method_decls parent decl_list =
-  let open Clang_ast_t in
-  let rec traverse_decl parent decl = match decl with
-    | CXXMethodDecl _ | CXXConstructorDecl _ -> [(parent, decl)]
-    | CXXRecordDecl (_, _, _, _, decl_list', _, _, _)
-    | RecordDecl (_, _, _, _, decl_list', _, _) -> traverse_decl_list decl decl_list'
-    | _ -> []
-  and traverse_decl_list parent decl_list = IList.flatten (IList.map (traverse_decl parent) decl_list)  in
-  traverse_decl_list parent decl_list
-
 let get_class_methods tenv class_name decl_list =
   let process_method_decl = function
     | Clang_ast_t.CXXMethodDecl (decl_info, name_info, tp, function_decl_info, _)
-    | Clang_ast_t.CXXConstructorDecl (decl_info, name_info, tp, function_decl_info, _) ->
+    | Clang_ast_t.CXXConstructorDecl (decl_info, name_info, tp, function_decl_info, _)
+    | Clang_ast_t.CXXDestructorDecl (decl_info, name_info, tp, function_decl_info, _) ->
         let method_name = name_info.Clang_ast_t.ni_name in
         Printing.log_out "  ...Declaring method '%s'.\n" method_name;
         let method_proc = General_utils.mk_procname_from_cpp_method class_name method_name tp in
@@ -121,18 +113,23 @@ let get_class_methods tenv class_name decl_list =
   IList.flatten_options (IList.map process_method_decl decl_list)
 
 let get_superclass_decls decl =
+  let open Clang_ast_t in
   match decl with
-  | Clang_ast_t.CXXRecordDecl (_, _, _, _, _, _, _, cxx_rec_info) ->
+  | CXXRecordDecl (_, _, _, _, _, _, _, cxx_rec_info)
+  | ClassTemplateSpecializationDecl (_, _, _, _, _, _, _, cxx_rec_info) ->
       (* there is no concept of virtual inheritance in the backend right now *)
       let base_ptr = cxx_rec_info.Clang_ast_t.xrdi_bases @ cxx_rec_info.Clang_ast_t.xrdi_vbases in
-      IList.map Ast_utils.get_decl_from_typ_ptr base_ptr
+      let get_decl_or_fail typ_ptr = match Ast_utils.get_decl_from_typ_ptr typ_ptr with
+        | Some decl -> decl
+        | None -> assert false in
+      IList.map get_decl_or_fail base_ptr
   | _ -> []
 
 (** fetches list of superclasses for C++ classes *)
 let get_superclass_list decl =
   let base_decls = get_superclass_decls decl in
   let decl_to_mangled_name decl = Mangled.from_string (get_record_name decl) in
-  let get_super_field super_decl = (Sil.Class, decl_to_mangled_name super_decl) in
+  let get_super_field super_decl = Typename.TN_csu (Csu.Class, decl_to_mangled_name super_decl) in
   IList.map get_super_field base_decls
 
 let add_struct_to_tenv tenv typ =
@@ -140,12 +137,13 @@ let add_struct_to_tenv tenv typ =
     | Sil.Tstruct(_, _, csu, _, _, _, _) -> csu
     | _ -> assert false in
   let mangled = CTypes.get_name_from_struct typ in
-  let typename = Sil.TN_csu(csu, mangled) in
+  let typename = Typename.TN_csu(csu, mangled) in
   Sil.tenv_add tenv typename typ
 
 let rec get_struct_fields tenv decl =
   let open Clang_ast_t in
   let decl_list = match decl with
+    | ClassTemplateSpecializationDecl (_, _, _, _, decl_list, _, _, _)
     | CXXRecordDecl (_, _, _, _, decl_list, _, _, _)
     | RecordDecl (_, _, _, _, decl_list, _, _) -> decl_list
     | _ -> [] in
@@ -155,25 +153,21 @@ let rec get_struct_fields tenv decl =
         let typ = type_ptr_to_sil_type tenv type_ptr in
         let annotation_items = [] in (* For the moment we don't use them*)
         [(id, typ, annotation_items)]
-    | CXXRecordDecl (decl_info, _, _, _, _, _, _, _)
-    | RecordDecl (decl_info, _, _, _, _, _, _) ->
-        (* C++/C Records treated in the same way*)
-        if not decl_info.Clang_ast_t.di_is_implicit then
-          ignore (add_types_from_decl_to_tenv tenv decl); []
     | _ -> [] in
   let base_decls = get_superclass_decls decl in
   let base_class_fields = IList.map (get_struct_fields tenv) base_decls in
   IList.flatten (base_class_fields @ (IList.map do_one_decl decl_list))
 
 (* For a record declaration it returns/constructs the type *)
-and get_strct_cpp_class_declaration_type tenv decl =
+and get_struct_cpp_class_declaration_type tenv decl =
   let open Clang_ast_t in
   match decl with
-  | CXXRecordDecl (decl_info, name_info, opt_type, type_ptr, decl_list, _, record_decl_info, _)
-  | RecordDecl (decl_info, name_info, opt_type, type_ptr, decl_list, _, record_decl_info) ->
+  | ClassTemplateSpecializationDecl (_, _, _, type_ptr, decl_list, _, record_decl_info, _)
+  | CXXRecordDecl (_, _, _, type_ptr, decl_list, _, record_decl_info, _)
+  | RecordDecl (_, _, _, type_ptr, decl_list, _, record_decl_info) ->
       let csu, name = get_record_name_csu decl in
       let mangled_name = Mangled.from_string name in
-      let sil_typename = Sil.Tvar (Sil.TN_csu (csu, mangled_name)) in
+      let sil_typename = Sil.Tvar (Typename.TN_csu (csu, mangled_name)) in
       (* temporarily saves the type name to avoid infinite loops in recursive types *)
       Ast_utils.update_sil_types_map type_ptr sil_typename;
       if not record_decl_info.Clang_ast_t.rdi_is_complete_definition then
@@ -188,8 +182,8 @@ and get_strct_cpp_class_declaration_type tenv decl =
       let methods = get_class_methods tenv name decl_list in (* C++ methods only *)
       let superclasses = get_superclass_list decl in
       let item_annotation = Sil.item_annotation_empty in  (* No annotations for struts *)
-      let sil_type = Sil.Tstruct (sorted_non_static_fields, static_fields, csu, Some mangled_name,
-                                  superclasses, methods, item_annotation) in
+      let sil_type = Sil.Tstruct (sorted_non_static_fields, static_fields, csu,
+                                  Some mangled_name, superclasses, methods, item_annotation) in
       Ast_utils.update_sil_types_map type_ptr sil_type;
       add_struct_to_tenv tenv sil_type;
       sil_type
@@ -198,9 +192,8 @@ and get_strct_cpp_class_declaration_type tenv decl =
 and add_types_from_decl_to_tenv tenv decl =
   let open Clang_ast_t in
   match decl with
-  | CXXRecordDecl (decl_info, name_info, opt_type, type_ptr, decl_list, _, record_decl_info, _)
-  | RecordDecl (decl_info, name_info, opt_type, type_ptr, decl_list, _, record_decl_info) ->
-      get_strct_cpp_class_declaration_type tenv decl
+  | ClassTemplateSpecializationDecl _ | CXXRecordDecl _ | RecordDecl _ ->
+      get_struct_cpp_class_declaration_type tenv decl
   | ObjCInterfaceDecl _ -> ObjcInterface_decl.interface_declaration type_ptr_to_sil_type tenv decl
   | ObjCImplementationDecl _ ->
       ObjcInterface_decl.interface_impl_declaration type_ptr_to_sil_type tenv decl
@@ -223,8 +216,8 @@ let get_type_from_expr_info ei tenv =
 
 let class_from_pointer_type tenv type_ptr =
   match type_ptr_to_sil_type tenv type_ptr with
-  | Sil.Tptr( Sil.Tvar (Sil.TN_typedef name), _) -> Mangled.to_string name
-  | Sil.Tptr( Sil.Tvar (Sil.TN_csu (_, name)), _) -> Mangled.to_string name
+  | Sil.Tptr( Sil.Tvar (Typename.TN_typedef name), _) -> Mangled.to_string name
+  | Sil.Tptr( Sil.Tvar (Typename.TN_csu (_, name)), _) -> Mangled.to_string name
   | _ -> assert false
 
 let get_class_type_np tenv expr_info obj_c_message_expr_info =
@@ -236,5 +229,5 @@ let get_class_type_np tenv expr_info obj_c_message_expr_info =
 
 let get_type_curr_class tenv curr_class_opt =
   let name = CContext.get_curr_class_name curr_class_opt in
-  let typ = Sil.Tvar (Sil.TN_csu (Sil.Class, (Mangled.from_string name))) in
+  let typ = Sil.Tvar (Typename.TN_csu (Csu.Class, (Mangled.from_string name))) in
   CTypes.expand_structured_type tenv typ

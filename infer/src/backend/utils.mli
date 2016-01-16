@@ -154,7 +154,7 @@ val pp_current_time : Format.formatter -> unit -> unit
 (** Print the time in seconds elapsed since the beginning of the execution of the current command. *)
 val pp_elapsed_time : Format.formatter -> unit -> unit
 
-(** {2 SymOp and Timeouts: units of symbolic execution} *)
+(** {2 SymOp and Failures: units of symbolic execution} *)
 
 (** initial time of the analysis, i.e. when this module is loaded, gotten from Unix.time *)
 val initial_analysis_time : float
@@ -174,16 +174,19 @@ val get_timeout_seconds : unit -> int
 (** Set the timeout values in seconds and symops, computed as a multiple of the integer parameter *)
 val set_iterations : int -> unit
 
-type timeout_kind =
-  | TOtime (* max time exceeded *)
-  | TOsymops of int (* max symop's exceeded *)
-  | TOrecursion of int (* max recursion level exceeded *)
+type failure_kind =
+  | FKtimeout (* max time exceeded *)
+  | FKsymops_timeout of int (* max symop's exceeded *)
+  | FKrecursion_timeout of int (* max recursion level exceeded *)
+  | FKcrash of string (* uncaught exception or failed assertion *)
 
 (** Timeout exception *)
-exception Timeout_exe of timeout_kind
+exception Analysis_failure_exe of failure_kind
 
 (** check that the exception is not a timeout exception *)
-val exn_not_timeout : exn -> bool
+val exn_not_failure : exn -> bool
+
+val pp_failure_kind : Format.formatter -> failure_kind -> unit
 
 (** Count the number of symbolic operations *)
 module SymOp : sig
@@ -221,28 +224,17 @@ module SymOp : sig
   val report_total : Format.formatter -> unit -> unit
 end
 
-(** Modified version of Arg module from the ocaml distribution *)
-module Arg2 : sig
-  type spec = Arg.spec
-
-  type key = string
-  type doc = string
-  type usage_msg = string
-  type anon_fun = (string -> unit)
-
-  val current : int ref
+module Arg : sig
+  include module type of Arg with type spec = Arg.spec
 
   (** type of aligned commend-line options *)
-  type aligned
+  type aligned = private (key * spec * doc)
 
   val align : (key * spec * doc) list -> aligned list
 
   val parse : aligned list -> anon_fun -> usage_msg -> unit
 
   val usage : aligned list -> usage_msg -> unit
-
-  val to_arg_desc : aligned -> (key * spec * doc)
-  val from_arg_desc : (key * spec * doc) -> aligned
 
   (** [create_options_desc double_minus unsorted_desc title] creates a group of sorted command-line arguments.
       [double_minus] is a booleand indicating whether the [-- option = nn] format or [- option n] format is to be used.
