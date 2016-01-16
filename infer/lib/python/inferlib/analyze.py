@@ -237,7 +237,7 @@ def run_command(cmd, debug_mode, javac_arguments, step, analyzer):
 
 class Infer:
 
-    def __init__(self, args, javac_args):
+    def __init__(self, args, javac, javac_args):
         self.args = args
         if self.args.analyzer not in config.ANALYZERS:
             help_exit('Unknown analysis mode \"{0}\"'
@@ -245,7 +245,7 @@ class Infer:
 
         utils.configure_logging(self.args.debug)
 
-        self.javac = jwlib.CompilerCall(javac_args)
+        self.javac = jwlib.CompilerCall(javac, javac_args)
 
         if not self.javac.args.version:
             if javac_args is None:

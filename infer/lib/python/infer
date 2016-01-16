@@ -26,7 +26,7 @@ MODULE_TO_COMMAND = {
     'analyze': ['analyze'],
     'buck': ['buck'],
     'gradle': ['gradle', 'gradlew'],
-    'javac': ['javac'],
+    'javac': ['javac', 'topljavac'],
     'make': ['make', 'clang', 'clang++', 'cc', 'gcc', 'g++'],
     'xcodebuild': ['xcodebuild'],
     'mvn': ['mvn']

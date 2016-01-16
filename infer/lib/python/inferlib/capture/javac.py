@@ -30,7 +30,7 @@ create_argparser = util.base_argparser(MODULE_DESCRIPTION, MODULE_NAME)
 
 class JavacCapture:
     def __init__(self, args, cmd):
-        self.analysis = analyze.Infer(args, cmd[1:])
+        self.analysis = analyze.Infer(args, cmd[0], cmd[1:])
 
     def capture(self):
         try:
