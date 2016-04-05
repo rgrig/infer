@@ -7,7 +7,6 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open Utils
 module L = Logging
 
 type log_t =
@@ -55,7 +54,14 @@ let log_issue
     ?(ltr = None)
     ?(pre = None)
     exn =
+  let should_suppress_warnings summary =
+    !Config.curr_language = Config.Java &&
+    let annotated_signature =
+      Annotations.get_annotated_signature summary.Specs.attributes in
+    let ret_annotation, _ = annotated_signature.Annotations.ret in
+    Annotations.ia_is_suppress_warnings ret_annotation in
   match Specs.get_summary proc_name with
+  | Some summary when should_suppress_warnings summary -> ()
   | Some summary ->
       let err_log = summary.Specs.attributes.ProcAttributes.err_log in
       log_issue_from_errlog err_kind err_log ~loc:loc ~node_id:node_id

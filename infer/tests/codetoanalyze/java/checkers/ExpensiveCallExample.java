@@ -17,6 +17,14 @@ import com.facebook.infer.annotation.Expensive;
 import com.facebook.infer.annotation.PerformanceCritical;
 
 
+interface AnnotatedInterface {
+
+  @PerformanceCritical
+  void annotatedPerformanceCriticalInInterface();
+
+}
+
+
 class Other {
 
   @Expensive
@@ -30,7 +38,7 @@ class Other {
 }
 
 
-public class ExpensiveCallExample {
+public class ExpensiveCallExample implements AnnotatedInterface {
 
   Other mOther;
 
@@ -38,7 +46,8 @@ public class ExpensiveCallExample {
 
   @Expensive
   void expensiveMethod() {
-    mOther = new Other();
+    // The checker should still report the expensive call stack despite the call cycle
+    methodWrapper();
   }
 
   void methodWrapper() {
@@ -82,6 +91,10 @@ public class ExpensiveCallExample {
   @PerformanceCritical
   View callsFindViewByIdFromActivity(FragmentActivity activity, int id) {
     return activity.findViewById(id);
+  }
+
+  public void annotatedPerformanceCriticalInInterface() {
+    mOther.callsExpensive1();
   }
 
 }

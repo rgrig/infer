@@ -11,8 +11,6 @@
 (** log messages at different levels of verbosity *)
 
 module F = Format
-open Utils
-
 
 (* =============== START of module MyErr =============== *)
 (** type of printable elements *)
@@ -71,7 +69,7 @@ let current_out_formatter = ref F.std_formatter
 let current_err_formatter = ref F.err_formatter
 
 (** Get the current err formatter *)
-let get_err_formatter fmt = !current_err_formatter
+let get_err_formatter () = !current_err_formatter
 
 (** Set the current out formatter *)
 let set_out_formatter fmt =
@@ -102,6 +100,10 @@ let reset_delayed_prints () =
 let get_delayed_prints () =
   !delayed_actions
 
+(** set the delayed print actions *)
+let set_delayed_prints new_delayed_actions =
+  delayed_actions := new_delayed_actions
+
 let do_print fmt fmt_string =
   F.fprintf fmt fmt_string
 
@@ -129,8 +131,8 @@ let stdout fmt_string =
 
 (** print a warning with information of the position in the ml source where it oririnated.
     use as: warning_position "description" (try assert false with Assert_failure x -> x); *)
-let warning_position (s: string) (mloc: ml_location) =
-  err "WARNING: %s in %a@." s pp_ml_location_opt (Some mloc)
+let warning_position (s: string) (ml_loc: ml_loc) =
+  err "WARNING: %s in %a@." s pp_ml_loc_opt (Some ml_loc)
 
 (** dump a string *)
 let d_str (s: string) = add_print_action (PTstr, Obj.repr s)
@@ -159,7 +161,7 @@ let d_ln () = add_print_action (PTstrln, Obj.repr "")
 (** dump an indentation *)
 let d_indent indent =
   let s = ref "" in
-  for i = 1 to indent do s := "  " ^ !s done;
+  for _ = 1 to indent do s := "  " ^ !s done;
   if indent <> 0 then add_print_action (PTstr, Obj.repr !s)
 
 (** dump command to increase the indentation level *)
@@ -170,13 +172,26 @@ let d_increase_indent (indent: int) =
 let d_decrease_indent (indent: int) =
   add_print_action (PTdecrease_indent, Obj.repr indent)
 
-let log_progress text counter total =
-  if !Config.show_progress_bar then
-    (counter := !counter + 1;
-     let percentage = (100 * !counter) / total in
-     F.fprintf Format.err_formatter "%s %d%s" text percentage "%\r";
-     F.fprintf Format.err_formatter "@?")
-
 let log_progress_simple text =
   if !Config.show_progress_bar then
     F.fprintf Format.err_formatter "%s@?" text
+
+let log_progress_file () =
+  log_progress_simple "F"
+
+let log_progress_procedure () =
+  log_progress_simple "."
+
+let log_progress_timeout_event failure_kind =
+  if !Config.developer_mode then
+    begin
+      match failure_kind with
+      | FKtimeout ->
+          log_progress_simple "T"
+      | FKsymops_timeout _ ->
+          log_progress_simple "S"
+      | FKrecursion_timeout _ ->
+          log_progress_simple "R"
+      | FKcrash _ ->
+          log_progress_simple "C"
+    end

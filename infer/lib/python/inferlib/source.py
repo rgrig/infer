@@ -11,24 +11,12 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 import codecs
-try:
-    import pygments
-    import pygments.formatters
-    import pygments.lexers
-except ImportError:
-    pygments = None
-import sys
 
-from . import config, utils
+from . import colorize, config, utils
 
 BASE_INDENT = 2
 # how many lines of context around each report
 SOURCE_CONTEXT = 2
-
-# syntax highlighting modes
-PLAIN_FORMATTER = 0
-TERMINAL_FORMATTER = 1
-
 
 class Indenter(str):
     def __init__(self):
@@ -75,29 +63,30 @@ def build_source_context(source_name, mode, report_line):
     # could go beyond last line, checked in the loop
     end_line = report_line + SOURCE_CONTEXT
 
-    n_length = len(str(end_line))
+    # get source excerpt
     line_number = 1
-    s = ''
-    with codecs.open(source_name, 'r', encoding=config.LOCALE) as source_file:
+    excerpt = ''
+    with codecs.open(source_name, 'r',
+                     encoding=config.LOCALE, errors="replace") as source_file:
+        # avoid going past the end of the file
         for line in source_file:
             if start_line <= line_number <= end_line:
-                num = str(line_number).zfill(n_length)
-                caret = '  '
-                if line_number == report_line:
-                    caret = '> '
-                s += u'%s. %s%s' % (num, caret, line)
+                excerpt += line
             line_number += 1
-    return _syntax_highlighting(source_name, mode, s)
+    excerpt = colorize.syntax_highlighting(source_name, mode, excerpt)
 
+    # number lines and add caret at the right position
+    n_length = len(str(end_line))
+    s = ''
+    line_number = start_line
+    for line in excerpt.split('\n'):
+        num = colorize.color((str(line_number) + '.').zfill(n_length),
+                             colorize.DIM, mode)
+        caret = '  '
+        if line_number == report_line:
+            caret = colorize.color('> ',
+                                   colorize.HEADER, mode)
+        s += '%s %s%s\n' % (num, caret, line)
+        line_number += 1
 
-def _syntax_highlighting(source_name, mode, s):
-    if pygments is None or mode == PLAIN_FORMATTER:
-        return s
-
-    lexer = pygments.lexers.get_lexer_for_filename(source_name)
-    formatter = None
-    if mode == TERMINAL_FORMATTER:
-        if not sys.stdout.isatty():
-            return s
-        formatter = pygments.formatters.TerminalFormatter()
-    return pygments.highlight(s, lexer, formatter)
+    return s

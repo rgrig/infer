@@ -7,24 +7,18 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
+
 import argparse
 import os
 import logging
 import subprocess
 import traceback
 
-from inferlib import analyze
-
-
-def create_infer_command(args, javac_arguments):
-    infer_args = ['-o', args.infer_out]
-    if args.debug:
-        infer_args.append('--debug')
-    infer_args += ['--analyzer', 'capture']
-
-    return analyze.Infer(analyze.infer_parser.parse_args(infer_args),
-                         analyze.get_javac_args(['javac'] + javac_arguments))
-
+from inferlib import analyze, jwlib, utils
 
 def get_build_output(build_cmd):
     #  TODO make it return generator to be able to handle large builds
@@ -39,7 +33,8 @@ def run_compilation_commands(cmds, clean_cmd):
     """
     #  TODO call it in parallel
     if len(cmds) == 0:
-        print('Nothing to compile. Try running `%s` first.' % clean_cmd)
+        utils.stdout('Nothing to compile. Try running `{}` first.'
+                     .format(clean_cmd))
         return os.EX_NOINPUT
     for cmd in cmds:
         if cmd.start() != os.EX_OK:
@@ -59,7 +54,7 @@ def run_cmd_ignore_fail(cmd):
 def log_java_version():
     java_version = run_cmd_ignore_fail(['java', '-version'])
     javac_version = run_cmd_ignore_fail(['javac', '-version'])
-    logging.info("java versions:\n%s%s", java_version, javac_version)
+    logging.info('java versions:\n%s%s', java_version, javac_version)
 
 
 def base_argparser(description, module_name):
@@ -68,7 +63,7 @@ def base_argparser(description, module_name):
         description/usage information and no arguments."""
         parser = argparse.ArgumentParser(add_help=False)
         group = parser.add_argument_group(
-            "{grp} module".format(grp=group_name),
+            '{grp} module'.format(grp=group_name),
             description=description,
         )
         return parser
@@ -81,7 +76,7 @@ def clang_frontend_argparser(description, module_name):
         clang for their capture phase, thus InferClang and clang wrappers"""
         parser = argparse.ArgumentParser(add_help=False)
         group = parser.add_argument_group(
-            "{grp} module".format(grp=group_name),
+            '{grp} module'.format(grp=group_name),
             description=description,
         )
         group.add_argument(
@@ -105,8 +100,12 @@ def clang_frontend_argparser(description, module_name):
             '-tm', '--testing_mode',
             dest='testing_mode',
             action='store_true',
-            help='Testing mode for the translation: Do not translate libraries'
-                 ' (including enums)')
+            help='Testing mode for the translation: Do not translate headers')
+        group.add_argument(
+            '--cxx',
+            dest='cxx',
+            action='store_true',
+            help='Analyze C++ code, still experimental')
         group.add_argument(
             '-fs', '--frontend-stats',
             dest='frontend_stats',
@@ -137,6 +136,9 @@ def get_clang_frontend_envvars(args):
         frontend_args += ['-project_root', args.project_root]
     if args.testing_mode:
         frontend_args.append('-testing_mode')
+    if args.cxx:
+        frontend_args.append('-cxx-experimental')
+        env_vars['FCP_INFER_CXX_MODELS'] = '1'
     if args.frontend_debug:
         frontend_args += ['-debug']
         env_vars['FCP_DEBUG_MODE'] = '1'

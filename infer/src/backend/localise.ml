@@ -11,7 +11,6 @@
 (** Support for localisation *)
 
 module F = Format
-open Utils
 
 (** type of string used for localisation *)
 type t = string
@@ -54,6 +53,7 @@ let pointer_size_mismatch = "POINTER_SIZE_MISMATCH"
 let precondition_not_found = "PRECONDITION_NOT_FOUND"
 let precondition_not_met = "PRECONDITION_NOT_MET"
 let premature_nil_termination = "PREMATURE_NIL_TERMINATION_ARGUMENT"
+let registered_observer_being_deallocated = "REGISTERED_OBSERVER_BEING_DEALLOCATED"
 let resource_leak = "RESOURCE_LEAK"
 let retain_cycle = "RETAIN_CYCLE"
 let return_value_ignored = "RETURN_VALUE_IGNORED"
@@ -132,7 +132,7 @@ module Tags = struct
   let create () = ref []
   let add tags tag value = tags := (tag, value) :: !tags
   let update tags tag value =
-    let tags' = IList.filter (fun (t, v) -> t <> tag) tags in
+    let tags' = IList.filter (fun (t, _) -> t <> tag) tags in
     (tag, value) :: tags'
   let get tags tag =
     try
@@ -185,8 +185,8 @@ let error_desc_set_bucket err_desc bucket show_in_message =
 (** get the value tag, if any *)
 let get_value_line_tag tags =
   try
-    let value = snd (IList.find (fun (_tag, value) -> _tag = Tags.value) tags) in
-    let line = snd (IList.find (fun (_tag, value) -> _tag = Tags.line) tags) in
+    let value = snd (IList.find (fun (_tag, _) -> _tag = Tags.value) tags) in
+    let line = snd (IList.find (fun (_tag, _) -> _tag = Tags.line) tags) in
     Some [value; line]
   with Not_found -> None
 
@@ -234,6 +234,28 @@ let by_call_to tags proc_name =
 
 let by_call_to_ra tags ra =
   "by " ^ call_to_at_line tags ra.Sil.ra_pname ra.Sil.ra_loc
+
+let rec format_typ = function
+  | Sil.Tptr (typ, _) when !Config.curr_language = Config.Java ->
+      format_typ typ
+  | Sil.Tstruct { Sil.struct_name = Some name } ->
+      Mangled.to_string name
+  | Sil.Tvar tname ->
+      Typename.name tname
+  | typ ->
+      Sil.typ_to_string typ
+
+let format_field f =
+  if !Config.curr_language = Config.Java
+  then Ident.java_fieldname_get_field f
+  else Ident.fieldname_to_string f
+
+let format_method pname =
+  match pname with
+  | Procname.Java pname_java ->
+      Procname.java_get_method pname_java
+  | _ ->
+      Procname.to_string pname
 
 let mem_dyn_allocated = "memory dynamically allocated"
 let lock_acquired = "lock acquired"
@@ -392,9 +414,29 @@ let desc_context_leak pname context_typ fieldname leak_path : error_desc =
       else (IList.fold_left leak_path_entry_to_str "" leak_path) ^ " Leaked " in
     path_prefix ^ context_str in
   let preamble =
-    let pname_str = Procname.java_get_class pname ^ "." ^ Procname.java_get_method pname in
+    let pname_str = match pname with
+      | Procname.Java pname_java ->
+          Printf.sprintf "%s.%s"
+            (Procname.java_get_class_name pname_java)
+            (Procname.java_get_method pname_java)
+      | _ ->
+          "" in
     "Context " ^ context_str ^ "may leak during method " ^ pname_str ^ ":\n" in
   { no_desc with descriptions = [preamble; leak_root; path_str] }
+
+let desc_fragment_retains_view fragment_typ fieldname fld_typ pname : error_desc =
+  (* TODO: try advice *)
+  let problem =
+    Printf.sprintf "Fragment %s does not nullify View field %s (type %s) in %s."
+      (format_typ fragment_typ)
+      (format_field fieldname)
+      (format_typ fld_typ)
+      (format_method pname) in
+  let consequences =
+    "If this Fragment is placed on the back stack, a reference to this (probably dead) View will be retained." in
+  let advice =
+    "In general, it is a good idea to initialize View's in onCreateView, then nullify them in onDestroyView." in
+  { no_desc with descriptions = [problem; consequences; advice] }
 
 let desc_custom_error loc : error_desc =
   { no_desc with descriptions = ["detected"; at_line (Tags.create ()) loc] }
@@ -437,7 +479,7 @@ let dereference_string deref_str value_str access_opt loc =
         let line_str = string_of_int n in
         Tags.add tags Tags.accessed_line line_str;
         ["last accessed on line " ^ line_str]
-    | Some (Last_assigned (n, ncf)) ->
+    | Some (Last_assigned (n, _)) ->
         let line_str = string_of_int n in
         Tags.add tags Tags.assigned_line line_str;
         ["last assigned on line " ^ line_str]
@@ -455,9 +497,9 @@ let dereference_string deref_str value_str access_opt loc =
     [(problem_str ^ " " ^ at_line tags loc)] in
   { no_desc with descriptions = value_desc:: access_desc @ problem_desc; tags = !tags }
 
-let parameter_field_not_null_checked_desc desc exp =
+let parameter_field_not_null_checked_desc (desc : error_desc) exp =
   let parameter_not_nullable_desc var =
-    let var_s = Sil.pvar_to_string var in
+    let var_s = Pvar.to_string var in
     let param_not_null_desc =
       "Parameter "^var_s^" is not checked for null, there could be a null pointer dereference:" in
     { desc with descriptions = param_not_null_desc :: desc.descriptions;
@@ -465,8 +507,8 @@ let parameter_field_not_null_checked_desc desc exp =
   let field_not_nullable_desc exp =
     let rec exp_to_string exp =
       match exp with
-      | Sil.Lfield (exp', field, typ) -> (exp_to_string exp')^" -> "^(Ident.fieldname_to_string field)
-      | Sil.Lvar pvar -> Mangled.to_string (Sil.pvar_get_name pvar)
+      | Sil.Lfield (exp', field, _) -> (exp_to_string exp')^" -> "^(Ident.fieldname_to_string field)
+      | Sil.Lvar pvar -> Mangled.to_string (Pvar.get_name pvar)
       | _ -> "" in
     let var_s = exp_to_string exp in
     let field_not_null_desc =
@@ -479,7 +521,7 @@ let parameter_field_not_null_checked_desc desc exp =
   | _ -> desc
 
 let has_tag (desc : error_desc) tag =
-  IList.exists (fun (tag', value) -> tag = tag') desc.tags
+  IList.exists (fun (tag', _) -> tag = tag') desc.tags
 
 let is_parameter_not_null_checked_desc desc = has_tag desc Tags.parameter_not_null_checked
 
@@ -604,8 +646,10 @@ let desc_leak hpred_type_opt value_str_opt resource_opt resource_action_opt loc 
           s, " to ", " on " in
     let typ_str =
       match hpred_type_opt with
-      | Some (Sil.Sizeof (Sil.Tstruct (_, _, Csu.Class, Some classname, _, _, _), _))
-        when !Config.curr_language = Config.Java ->
+      | Some (Sil.Sizeof (Sil.Tstruct
+                            { Sil.csu = Csu.Class _;
+                              Sil.struct_name = Some classname;
+                            }, _)) ->
           " of type " ^ Mangled.to_string classname ^ " "
       | _ -> " " in
     let desc_str =
@@ -678,14 +722,14 @@ let desc_retain_cycle prop cycle loc cycle_dotty =
     match Str.split_delim (Str.regexp_string "&old_") s with
     | [_; s'] -> s'
     | _ -> s in
-  let do_edge ((se, _), f, se') =
+  let do_edge ((se, _), f, _) =
     match se with
-    | Sil.Eexp(Sil.Lvar pvar, _) when Sil.pvar_equal pvar Sil.block_pvar ->
+    | Sil.Eexp(Sil.Lvar pvar, _) when Pvar.equal pvar Sil.block_pvar ->
         str_cycle:=!str_cycle^" ("^(string_of_int !ct)^") a block capturing "^(Ident.fieldname_to_string f)^"; ";
         ct:=!ct +1;
     | Sil.Eexp(Sil.Lvar pvar as e, _) ->
         let e_str = Sil.exp_to_string e in
-        let e_str = if Sil.pvar_is_seed pvar then
+        let e_str = if Pvar.is_seed pvar then
             remove_old e_str
           else e_str in
         str_cycle:=!str_cycle^" ("^(string_of_int !ct)^") object "^e_str^" retaining "^e_str^"."^(Ident.fieldname_to_string f)^", ";
@@ -698,6 +742,17 @@ let desc_retain_cycle prop cycle loc cycle_dotty =
   let desc = Format.sprintf "Retain cycle involving the following objects: %s  %s"
       !str_cycle (at_line tags loc) in
   { no_desc with descriptions = [desc]; tags = !tags; dotty = cycle_dotty }
+
+let registered_observer_being_deallocated_str obj_str =
+  "Object " ^ obj_str ^ " is registered in a notification center but not being removed before deallocation"
+
+let desc_registered_observer_being_deallocated pvar loc =
+  let tags = Tags.create () in
+  let obj_str = Pvar.to_string pvar in
+  { no_desc with descriptions = [ registered_observer_being_deallocated_str obj_str ^ at_line tags loc ^
+                                 ". Being still registered as observer of the notification " ^
+                                 "center, the deallocated object "
+                                 ^ obj_str ^ " may be notified in the future." ]; tags = !tags }
 
 let desc_return_statement_missing loc =
   let tags = Tags.create () in
@@ -748,18 +803,36 @@ let desc_stack_variable_address_escape expr_str addr_dexp_str loc =
       (at_line tags loc) in
   { no_desc with descriptions = [description]; tags = !tags }
 
-let desc_tainted_value_reaching_sensitive_function expr_str tainting_fun sensitive_fun loc =
+let desc_tainted_value_reaching_sensitive_function
+    taint_kind expr_str tainting_fun sensitive_fun loc =
   let tags = Tags.create () in
   Tags.add tags Tags.value expr_str;
-  let description = Format.sprintf
-      "Value %s could be insecure (tainted) due to call to function %s %s %s %s. Function %s %s"
-      expr_str
-      tainting_fun
-      "and is reaching sensitive function"
-      sensitive_fun
-      (at_line tags loc)
-      sensitive_fun
-      "requires its input to be verified or sanitized." in
+  let description =
+    match taint_kind with
+    | Sil.UnverifiedSSLSocket ->
+        Format.sprintf
+          "The hostname of SSL socket `%s` (returned from %s) has not been verified! Reading from the socket via the call to %s %s is dangerous. You should verify the hostname of the socket using a HostnameVerifier before reading; otherwise, you may be vulnerable to a man-in-the-middle attack."
+          expr_str
+          (format_method tainting_fun)
+          (format_method sensitive_fun)
+          (at_line tags loc)
+    | Sil.SharedPreferencesData ->
+        Format.sprintf
+          "`%s` holds sensitive data read from a SharedPreferences object (via call to %s). This data may leak via the call to %s %s."
+          expr_str
+          (format_method tainting_fun)
+          (format_method sensitive_fun)
+          (at_line tags loc)
+    | Sil.Unknown ->
+        Format.sprintf
+          "Value `%s` could be insecure (tainted) due to call to function %s %s %s %s. Function %s %s"
+          expr_str
+          (format_method tainting_fun)
+          "and is reaching sensitive function"
+          (format_method sensitive_fun)
+          (at_line tags loc)
+          (format_method sensitive_fun)
+          "requires its input to be verified or sanitized." in
   { no_desc with descriptions = [description]; tags = !tags }
 
 let desc_uninitialized_dangling_pointer_deref deref expr_str loc =

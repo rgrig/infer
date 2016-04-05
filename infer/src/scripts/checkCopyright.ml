@@ -9,7 +9,6 @@
 
 module L = Logging
 module F = Format
-open Utils
 
 let copyright_modified_exit_code = 1
 let copyright_malformed_exit_code = 2
@@ -163,7 +162,7 @@ let copyright_has_changed mono fb_year com_style prefix cstart cend lines_arr =
     !r in
   let new_copyright =
     let pp fmt () = pp_copyright mono fb_year com_style fmt prefix in
-    Utils.pp_to_string pp () in
+    pp_to_string pp () in
   old_copyright <> new_copyright
 
 let update_file fname mono fb_year com_style prefix cstart cend lines_arr =
@@ -197,7 +196,7 @@ let com_style_of_lang = [
   (".py", comment_style_shell);
 ]
 
-let file_should_have_copyright fname lines =
+let file_should_have_copyright fname =
   IList.mem_assoc Filename.check_suffix fname com_style_of_lang
 
 let get_filename_extension fname =
@@ -225,7 +224,7 @@ let check_copyright fname = match read_file fname with
   | Some lines ->
       match find_copyright_line lines 0 with
       | None ->
-          if file_should_have_copyright fname lines then
+          if file_should_have_copyright fname then
             begin
               let year = 1900 + (Unix.localtime (Unix.time ())).Unix.tm_year in
               let ext = get_filename_extension fname in
@@ -264,7 +263,10 @@ let check_copyright fname = match read_file fname with
 
 
 let speclist = [
-  ("-i", Arg.Set update_files, "Update copyright notice in-place");
+  "-i",
+  Arg.Set update_files,
+  "Update copyright notice in-place"
+  ;
 ]
 
 let usage_msg = "checkCopyright [-i] file1 ..."
@@ -273,6 +275,6 @@ let () =
   let to_check = ref [] in
   let add_file_to_check fname =
     to_check := fname :: !to_check in
-  Arg.parse (Arg.align speclist) add_file_to_check usage_msg;
+  Arg.parse "CHECKCOPYRIGHT_ARGS" (Arg.align speclist) add_file_to_check usage_msg;
   IList.iter check_copyright (IList.rev !to_check);
   exit 0

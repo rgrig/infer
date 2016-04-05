@@ -10,13 +10,16 @@
 
 (** Functions for Propositions (i.e., Symbolic Heaps) *)
 
-open Utils
 open Sil
 
 type normal (** kind for normal props, i.e. normalized *)
 type exposed (** kind for exposed props *)
 
 (** Proposition. *)
+
+type pi = Sil.atom list
+type sigma = Sil.hpred list
+
 type 'a t (** the kind 'a should range over [normal] and [exposed] *)
 
 (** type to describe different strategies for initializing fields of a structure. [No_init] does not
@@ -26,7 +29,7 @@ type struct_init_mode =
   | No_init
   | Fld_init
 
-exception Cannot_star of ml_location
+exception Cannot_star of ml_loc
 
 (** {2 Basic Functions for propositions} *)
 
@@ -34,7 +37,7 @@ exception Cannot_star of ml_location
 val prop_compare : 'a t -> 'a t -> int
 
 (** Check the equality of two sigma's *)
-val sigma_equal : Sil.hpred list -> Sil.hpred list -> bool
+val sigma_equal : sigma -> sigma -> bool
 
 (** Check the equality of two propositions *)
 val prop_equal : 'a t -> 'a t -> bool
@@ -46,23 +49,23 @@ val pp_sub : printenv -> Format.formatter -> subst -> unit
 val d_sub : subst -> unit
 
 (** Pretty print a pi. *)
-val pp_pi : printenv -> Format.formatter -> Sil.atom list -> unit
+val pp_pi : printenv -> Format.formatter -> pi -> unit
 
 (** Dump a pi. *)
-val d_pi : Sil.atom list -> unit
+val d_pi : pi -> unit
 
 (** Pretty print a sigma. *)
-val pp_sigma : printenv -> Format.formatter -> Sil.hpred list -> unit
+val pp_sigma : printenv -> Format.formatter -> sigma -> unit
 
 (** Dump a sigma. *)
-val d_sigma : Sil.hpred list -> unit
+val d_sigma : sigma -> unit
 
 (** Dump a pi and a sigma *)
-val d_pi_sigma: Sil.atom list -> Sil.hpred list -> unit
+val d_pi_sigma: pi -> sigma -> unit
 
 (** Split sigma into stack and nonstack parts.
     The boolean indicates whether the stack should only include local variales. *)
-val sigma_get_stack_nonstack : bool -> Sil.hpred list -> Sil.hpred list * Sil.hpred list
+val sigma_get_stack_nonstack : bool -> sigma -> sigma * sigma
 
 (** Update the object substitution given the stack variables in the prop *)
 val prop_update_obj_sub : printenv -> 'a t -> printenv
@@ -116,7 +119,7 @@ val prop_fav_nonpure : normal t -> fav
 val prop_footprint_fav : 'a t -> fav
 
 (** Compute all the free program variables in the prop *)
-val prop_fpv: 'a t -> Sil.pvar list
+val prop_fpv: 'a t -> Pvar.t list
 
 (** Apply substitution for pi *)
 val pi_sub : subst -> atom list -> atom list
@@ -156,8 +159,11 @@ val atom_negate : Sil.atom -> Sil.atom
 
 (** type for arithmetic problems *)
 type arith_problem =
-  | Div0 of Sil.exp (* division by zero *)
-  | UminusUnsigned of Sil.exp * Sil.typ (* unary minus of unsigned type applied to the given expression *)
+  (* division by zero *)
+  | Div0 of Sil.exp
+
+  (* unary minus of unsigned type applied to the given expression *)
+  | UminusUnsigned of Sil.exp * Sil.typ
 
 (** Look for an arithmetic problem in [exp] *)
 val find_arithmetic_problem : path_pos -> normal t -> Sil.exp -> arith_problem option * normal t
@@ -173,7 +179,7 @@ val exp_normalize_noabs : Sil.subst -> Sil.exp -> Sil.exp
 (** Collapse consecutive indices that should be added. For instance,
     this function reduces x[1][1] to x[2]. The [typ] argument is used
     to ensure the soundness of this collapsing. *)
-val exp_collapse_consecutive_indices_prop : 'a t -> Sil.typ -> Sil.exp -> Sil.exp
+val exp_collapse_consecutive_indices_prop : Sil.typ -> Sil.exp -> Sil.exp
 
 (** Normalize [exp] used for the address of a heap cell.
     This normalization does not combine two offsets inside [exp]. *)
@@ -213,18 +219,19 @@ val mk_neq : exp -> exp -> atom
 val mk_eq : exp -> exp -> atom
 
 (** create a strexp of the given type, populating the structures if [expand_structs] is true *)
-val create_strexp_of_type: Sil.tenv option -> struct_init_mode -> Sil.typ -> Sil.inst -> Sil.strexp
+val create_strexp_of_type: Tenv.t option -> struct_init_mode -> Sil.typ -> Sil.inst -> Sil.strexp
 
 (** Construct a pointsto. *)
 val mk_ptsto : exp -> strexp -> exp -> hpred
 
 (** Construct a points-to predicate for an expression using either the provided expression [name] as
     base for fresh identifiers. *)
-val mk_ptsto_exp : Sil.tenv option -> struct_init_mode -> exp * exp * exp option -> Sil.inst -> hpred
+val mk_ptsto_exp : Tenv.t option -> struct_init_mode -> exp * exp * exp option -> Sil.inst -> hpred
 
 (** Construct a points-to predicate for a single program variable.
     If [expand_structs] is true, initialize the fields of structs with fresh variables. *)
-val mk_ptsto_lvar : Sil.tenv option -> struct_init_mode -> Sil.inst -> pvar * exp * exp option -> hpred
+val mk_ptsto_lvar :
+  Tenv.t option -> struct_init_mode -> Sil.inst -> Pvar.t * exp * exp option -> hpred
 
 (** Construct a lseg predicate *)
 val mk_lseg : lseg_kind -> hpara -> exp -> exp -> exp list -> hpred
@@ -236,7 +243,8 @@ val mk_dllseg : lseg_kind -> hpara_dll -> exp -> exp -> exp -> exp -> exp list -
 val mk_hpara : Ident.t -> Ident.t -> Ident.t list -> Ident.t list -> hpred list -> hpara
 
 (** Construct a dll_hpara *)
-val mk_dll_hpara : Ident.t -> Ident.t -> Ident.t -> Ident.t list -> Ident.t list -> hpred list -> hpara_dll
+val mk_dll_hpara :
+  Ident.t -> Ident.t -> Ident.t -> Ident.t list -> Ident.t list -> hpred list -> hpara_dll
 
 (** Proposition [true /\ emp]. *)
 val prop_emp : normal t
@@ -286,6 +294,9 @@ val get_autorelease_attribute : 'a t -> exp -> attribute option
 (** Get the div0 attribute associated to the expression, if any *)
 val get_div0_attribute : 'a t -> exp -> attribute option
 
+(** Get the observer attribute associated to the expression, if any *)
+val get_observer_attribute : 'a t -> exp -> attribute option
+
 (** Get the objc null attribute associated to the expression, if any *)
 val get_objc_null_attribute : 'a t -> exp -> attribute option
 
@@ -309,7 +320,8 @@ val mark_vars_as_undefined : normal t -> Sil.exp list -> Procname.t -> Location.
 (** Remove an attribute from all the atoms in the heap *)
 val remove_attribute : Sil.attribute -> 'a t -> normal t
 
-(** [replace_objc_null lhs rhs]. If rhs has the objc_null attribute, replace the attribute and set the lhs = 0 *)
+(** [replace_objc_null lhs rhs].
+    If rhs has the objc_null attribute, replace the attribute and set the lhs = 0 *)
 val replace_objc_null : normal t -> exp -> exp -> normal t
 
 val nullify_exp_with_objc_null : normal t -> exp -> normal t
@@ -340,7 +352,7 @@ val get_sigma_footprint : 'a t -> hpred list
 
 (** Deallocate the stack variables in [pvars], and replace them by normal variables.
     Return the list of stack variables whose address was still present after deallocation. *)
-val deallocate_stack_vars : normal t -> pvar list -> Sil.pvar list * normal t
+val deallocate_stack_vars : normal t -> Pvar.t list -> Pvar.t list * normal t
 
 (** Canonicalize the names of primed variables. *)
 val prop_rename_primed_footprint_vars : normal t -> normal t
@@ -385,25 +397,25 @@ val prop_primed_vars_to_normal_vars : normal t -> normal t
 val prop_rename_primed_fresh : normal t -> normal t
 
 (** Build an exposed prop from pi *)
-val from_pi : Sil.atom list -> exposed t
+val from_pi : pi -> exposed t
 
 (** Build an exposed prop from sigma *)
-val from_sigma : Sil.hpred list -> exposed t
+val from_sigma : sigma -> exposed t
 
 (** Replace the substitution part of a prop *)
 val replace_sub : Sil.subst -> 'a t -> exposed t
 
 (** Replace the pi part of a prop *)
-val replace_pi : Sil.atom list -> 'a t -> exposed t
+val replace_pi : pi -> 'a t -> exposed t
 
 (** Replace the sigma part of a prop *)
-val replace_sigma : Sil.hpred list -> 'a t -> exposed t
+val replace_sigma : sigma -> 'a t -> exposed t
 
 (** Replace the sigma part of the footprint of a prop *)
-val replace_sigma_footprint : Sil.hpred list -> 'a t -> exposed t
+val replace_sigma_footprint : sigma -> 'a t -> exposed t
 
 (** Replace the pi part of the footprint of a prop *)
-val replace_pi_footprint : Sil.atom list -> 'a t -> exposed t
+val replace_pi_footprint : pi -> 'a t -> exposed t
 
 (** Rename free variables in a prop replacing them with existentially quantified vars *)
 val prop_rename_fav_with_existentials : normal t -> normal t
@@ -489,7 +501,7 @@ val get_fld_typ_path_opt : Sil.ExpSet.t -> Sil.exp -> Sil.HpredSet.t ->
   (Ident.fieldname option * Sil.typ) list option
 
 (** filter [pi] by removing the pure atoms that do not contain an expression in [exps] *)
-val compute_reachable_atoms : Sil.atom list -> Sil.ExpSet.t -> Sil.atom list
+val compute_reachable_atoms : pi -> Sil.ExpSet.t -> pi
 
 (** {2 Internal modules} *)
 
@@ -505,10 +517,17 @@ end
 
 module CategorizePreconditions : sig
   type pre_category =
-    | NoPres (* no preconditions *)
-    | Empty (* the preconditions impose no restrictions *)
-    | OnlyAllocation (* the preconditions only demand that some pointers are allocated *)
-    | DataConstraints (* the preconditions impose constraints on the values of variables and/or memory *)
+    (* no preconditions *)
+    | NoPres
+
+    (* the preconditions impose no restrictions *)
+    | Empty
+
+    (* the preconditions only demand that some pointers are allocated *)
+    | OnlyAllocation
+
+    (* the preconditions impose constraints on the values of variables and/or memory *)
+    | DataConstraints
 
   (** categorize a list of preconditions *)
   val categorize : 'a t list -> pre_category

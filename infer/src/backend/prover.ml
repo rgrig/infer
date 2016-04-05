@@ -12,7 +12,6 @@
 
 module L = Logging
 module F = Format
-open Utils
 
 let decrease_indent_when_exception thunk =
   try (thunk ())
@@ -194,20 +193,8 @@ module Inequalities : sig
   (** type for inequalities (and implied disequalities) *)
   type t
 
-  (** Extract inequalities and disequalities from [pi] *)
-  val from_pi : Sil.atom list -> t
-
-  (** Extract inequalities and disequalities from [sigma] *)
-  val from_sigma : Sil.hpred list -> t
-
   (** Extract inequalities and disequalities from [prop] *)
   val from_prop : Prop.normal Prop.t -> t
-
-  (** Join two sets of inequalities *)
-  val join : t -> t -> t
-
-  (** Pretty print inequalities and disequalities *)
-  val pp : printenv -> Format.formatter -> t -> unit
 
   (** Check [t |- e1!=e2]. Result [false] means "don't know". *)
   val check_ne : t -> Sil.exp -> Sil.exp -> bool
@@ -227,6 +214,19 @@ module Inequalities : sig
   (** Return [true] if a simple inconsistency is detected *)
   val inconsistent : t -> bool
 
+(*
+  (** Extract inequalities and disequalities from [pi] *)
+  val from_pi : Sil.atom list -> t
+
+  (** Extract inequalities and disequalities from [sigma] *)
+  val from_sigma : Sil.hpred list -> t
+
+  (** Join two sets of inequalities *)
+  val join : t -> t -> t
+
+  (** Pretty print inequalities and disequalities *)
+  val pp : printenv -> Format.formatter -> t -> unit
+
   (** Pretty print <= *)
   val d_leqs : t -> unit
 
@@ -235,6 +235,7 @@ module Inequalities : sig
 
   (** Pretty print <> *)
   val d_neqs : t -> unit
+*)
 end = struct
 
   type t = {
@@ -483,6 +484,7 @@ end = struct
     IList.exists inconsistent_leq leqs ||
     IList.exists inconsistent_lt lts
 
+(*
   (** Pretty print inequalities and disequalities *)
   let pp pe fmt { leqs = leqs; lts = lts; neqs = neqs } =
     let pp_leq fmt (e1, e2) = F.fprintf fmt "%a<=%a" (Sil.pp_exp pe) e1 (Sil.pp_exp pe) e2 in
@@ -501,6 +503,7 @@ end = struct
   let d_neqs { leqs = leqs; lts = lts; neqs = neqs } =
     let elist = IList.map (fun (e1, e2) -> Sil.BinOp(Sil.Ne, e1, e2)) lts in
     Sil.d_exp_list elist
+*)
 end
 (* End of module Inequalities *)
 
@@ -543,7 +546,7 @@ let is_root prop base_exp exp =
         if check_equal prop base_exp e
         then Some offlist_past
         else None
-    | Sil.Cast(t, sub_exp) -> f offlist_past sub_exp
+    | Sil.Cast(_, sub_exp) -> f offlist_past sub_exp
     | Sil.Lfield(sub_exp, fldname, typ) -> f (Sil.Off_fld (fldname, typ) :: offlist_past) sub_exp
     | Sil.Lindex(sub_exp, e) -> f (Sil.Off_index e :: offlist_past) sub_exp
   in f [] exp
@@ -620,14 +623,14 @@ let check_disequal prop e1 e2 =
                else
                  let sigma_rest' = (IList.rev sigma_irrelevant) @ sigma_rest
                  in f [] e2 sigma_rest')
-      | Sil.Hdllseg (Sil.Lseg_NE, _, iF, oB, oF, iB, _) :: sigma_rest ->
+      | Sil.Hdllseg (Sil.Lseg_NE, _, iF, _, _, iB, _) :: sigma_rest ->
           if is_root prop iF e != None || is_root prop iB e != None then
             let sigma_irrelevant' = (IList.rev sigma_irrelevant) @ sigma_rest
             in Some (true, sigma_irrelevant')
           else
             let sigma_irrelevant' = (IList.rev sigma_irrelevant) @ sigma_rest
             in Some (false, sigma_irrelevant')
-      | Sil.Hdllseg (Sil.Lseg_PE, _, iF, oB, oF, iB, _) as hpred :: sigma_rest ->
+      | Sil.Hdllseg (Sil.Lseg_PE, _, iF, _, oF, _, _) as hpred :: sigma_rest ->
           (match is_root prop iF e with
            | None ->
                let sigma_irrelevant' = hpred :: sigma_irrelevant
@@ -690,14 +693,13 @@ let check_lt_normalized prop e1 e2 =
     | Some upper1, Some lower2 -> Sil.Int.leq upper1 lower2 in
   (upper_lower_check ()) || (Inequalities.check_lt ineq e1 e2)
 
-(* given an atom and a proposition returns a unique identifier. *)
-(* We use this to distinguish among different queries *)
+(** Given an atom and a proposition returns a unique identifier.
+    We use this to distinguish among different queries. *)
 let get_smt_key a p =
   let tmp_filename = Filename.temp_file "smt_query" ".cns" in
   let outc_tmp = open_out tmp_filename in
   let fmt_tmp = F.formatter_of_out_channel outc_tmp in
-  let pe = Utils.pe_text in
-  let () = F.fprintf fmt_tmp "%a%a" (Sil.pp_atom pe) a (Prop.pp_prop pe) p in
+  let () = F.fprintf fmt_tmp "%a%a" (Sil.pp_atom pe_text) a (Prop.pp_prop pe_text) p in
   close_out outc_tmp;
   Digest.to_hex (Digest.file tmp_filename)
 
@@ -706,20 +708,23 @@ let check_atom prop a0 =
   let a = Prop.atom_normalize_prop prop a0 in
   let prop_no_fp = Prop.replace_sigma_footprint [] (Prop.replace_pi_footprint [] prop) in
   if !Config.smt_output then begin
-    let pe = Utils.pe_text in
     let key = get_smt_key a prop_no_fp in
-    let key_filename = DB.Results_dir.path_to_filename DB.Results_dir.Abs_source_dir [(key ^ ".cns")] in
+    let key_filename =
+      DB.Results_dir.path_to_filename DB.Results_dir.Abs_source_dir [(key ^ ".cns")] in
     let outc = open_out (DB.filename_to_string key_filename) in
     let fmt = F.formatter_of_out_channel outc in
     L.d_str ("ID: "^key); L.d_ln ();
     L.d_str "CHECK_ATOM_BOUND: "; Sil.d_atom a; L.d_ln ();
     L.d_str "WHERE:"; L.d_ln(); Prop.d_prop prop_no_fp; L.d_ln (); L.d_ln ();
-    let () = F.fprintf fmt "ID: %s @\nCHECK_ATOM_BOUND: %a@\nWHERE:@\n%a" key (Sil.pp_atom pe) a (Prop.pp_prop pe) prop_no_fp in
+    F.fprintf fmt "ID: %s @\nCHECK_ATOM_BOUND: %a@\nWHERE:@\n%a"
+      key (Sil.pp_atom pe_text) a (Prop.pp_prop pe_text) prop_no_fp;
     close_out outc;
   end;
   match a with
-  | Sil.Aeq (Sil.BinOp (Sil.Le, e1, e2), Sil.Const (Sil.Cint i)) when Sil.Int.isone i -> check_le_normalized prop e1 e2
-  | Sil.Aeq (Sil.BinOp (Sil.Lt, e1, e2), Sil.Const (Sil.Cint i)) when Sil.Int.isone i -> check_lt_normalized prop e1 e2
+  | Sil.Aeq (Sil.BinOp (Sil.Le, e1, e2), Sil.Const (Sil.Cint i))
+    when Sil.Int.isone i -> check_le_normalized prop e1 e2
+  | Sil.Aeq (Sil.BinOp (Sil.Lt, e1, e2), Sil.Const (Sil.Cint i))
+    when Sil.Int.isone i -> check_lt_normalized prop e1 e2
   | Sil.Aeq (e1, e2) -> check_equal prop e1 e2
   | Sil.Aneq (e1, e2) -> check_disequal prop e1 e2
 
@@ -727,11 +732,6 @@ let check_atom prop a0 =
 let check_le prop e1 e2 =
   let e1_le_e2 = Sil.BinOp (Sil.Le, e1, e2) in
   check_atom prop (Prop.mk_inequality e1_le_e2)
-
-(** Check [prop |- e1<e2]. Result [false] means "don't know". *)
-let check_lt prop e1 e2 =
-  let e1_lt_e2 = Sil.BinOp (Sil.Lt, e1, e2) in
-  check_atom prop (Prop.mk_inequality e1_lt_e2)
 
 (** Check whether [prop |- allocated(e)]. *)
 let check_allocatedness prop e =
@@ -755,10 +755,6 @@ let compute_upper_bound_of_exp p e =
   let ineq = Inequalities.from_prop p in
   Inequalities.compute_upper_bound ineq e
 
-let pair_compare compare1 compare2 (x1, x2) (y1, y2) =
-  let n1 = compare1 x1 y1 in
-  if n1 <> 0 then n1 else compare2 x2 y2
-
 (** Check if two hpreds have the same allocated lhs *)
 let check_inconsistency_two_hpreds prop =
   let sigma = Prop.get_sigma prop in
@@ -771,7 +767,8 @@ let check_inconsistency_two_hpreds prop =
     | (Sil.Hdllseg (Sil.Lseg_NE, _, iF, _, _, iB, _) as hpred) :: sigma_rest ->
         if Sil.exp_equal iF e || Sil.exp_equal iB e then true
         else f e (hpred:: sigma_seen) sigma_rest
-    | Sil.Hlseg (Sil.Lseg_PE, _, e1, Sil.Const (Sil.Cint i), _) as hpred :: sigma_rest when Sil.Int.iszero i ->
+    | Sil.Hlseg (Sil.Lseg_PE, _, e1, Sil.Const (Sil.Cint i), _) as hpred :: sigma_rest
+      when Sil.Int.iszero i ->
         if Sil.exp_equal e1 e then true
         else f e (hpred:: sigma_seen) sigma_rest
     | Sil.Hlseg (Sil.Lseg_PE, _, e1, e2, _) as hpred :: sigma_rest ->
@@ -783,10 +780,11 @@ let check_inconsistency_two_hpreds prop =
           let e_new = Prop.exp_normalize_prop prop_new e
           in f e_new [] sigma_new
         else f e (hpred:: sigma_seen) sigma_rest
-    | Sil.Hdllseg (Sil.Lseg_PE, _, e1, e2, Sil.Const (Sil.Cint i), _, _) as hpred :: sigma_rest when Sil.Int.iszero i ->
+    | Sil.Hdllseg (Sil.Lseg_PE, _, e1, _, Sil.Const (Sil.Cint i), _, _) as hpred :: sigma_rest
+      when Sil.Int.iszero i ->
         if Sil.exp_equal e1 e then true
         else f e (hpred:: sigma_seen) sigma_rest
-    | Sil.Hdllseg (Sil.Lseg_PE, _, e1, e2, e3, e4, _) as hpred :: sigma_rest ->
+    | Sil.Hdllseg (Sil.Lseg_PE, _, e1, _, e3, _, _) as hpred :: sigma_rest ->
         if Sil.exp_equal e1 e
         then
           let prop' = Prop.normalize (Prop.from_sigma (sigma_seen@sigma_rest)) in
@@ -816,18 +814,23 @@ let check_inconsistency_base prop =
   let inconsistent_ptsto _ =
     check_allocatedness prop Sil.exp_zero in
   let inconsistent_this_self_var () =
-    let procdesc = Cfg.Node.get_proc_desc (State.get_node ()) in
-    let procedure_attr = Cfg.Procdesc.get_attributes procdesc in
-    let is_java_this pvar = !Config.curr_language = Config.Java && Sil.pvar_is_this pvar in
-    let is_objc_instance_self pvar = !Config.curr_language = Config.C_CPP &&
-                                     Sil.pvar_get_name pvar = Mangled.from_string "self" &&
-                                     procedure_attr.ProcAttributes.is_objc_instance_method in
-    let is_cpp_this pvar = !Config.curr_language = Config.C_CPP && Sil.pvar_is_this pvar &&
-                           procedure_attr.ProcAttributes.is_cpp_instance_method in
+    let procdesc =
+      Cfg.Node.get_proc_desc (State.get_node ()) in
+    let procedure_attr =
+      Cfg.Procdesc.get_attributes procdesc in
+    let is_java_this pvar =
+      !Config.curr_language = Config.Java && Pvar.is_this pvar in
+    let is_objc_instance_self pvar =
+      !Config.curr_language = Config.C_CPP &&
+      Pvar.get_name pvar = Mangled.from_string "self" &&
+      procedure_attr.ProcAttributes.is_objc_instance_method in
+    let is_cpp_this pvar =
+      !Config.curr_language = Config.C_CPP && Pvar.is_this pvar &&
+      procedure_attr.ProcAttributes.is_cpp_instance_method in
     let do_hpred = function
       | Sil.Hpointsto (Sil.Lvar pv, Sil.Eexp (e, _), _) ->
           Sil.exp_equal e Sil.exp_zero &&
-          Sil.pvar_is_seed pv &&
+          Pvar.is_seed pv &&
           (is_java_this pv || is_cpp_this pv || is_objc_instance_self pv)
       | _ -> false in
     IList.exists do_hpred sigma in
@@ -1120,7 +1123,7 @@ let exp_imply calc_missing subs e1_in e2_in : subst2 =
     | e1, Sil.Var v2 ->
         let occurs_check v e = (* check whether [v] occurs in normalized [e] *)
           if Sil.fav_mem (Sil.exp_fav e) v
-             && Sil.fav_mem (Sil.exp_fav (Prop.exp_normalize_prop Prop.prop_emp e)) v
+          && Sil.fav_mem (Sil.exp_fav (Prop.exp_normalize_prop Prop.prop_emp e)) v
           then raise (IMPL_EXC ("occurs check", subs, (EXC_FALSE_EXPS (e1, e2)))) in
         if Ident.is_primed v2 then
           let () = occurs_check v2 e1 in
@@ -1131,23 +1134,23 @@ let exp_imply calc_missing subs e1_in e2_in : subst2 =
     | e1, Sil.BinOp (Sil.PlusA, Sil.Var v2, e2)
     | e1, Sil.BinOp (Sil.PlusA, e2, Sil.Var v2) when Ident.is_primed v2 || Ident.is_footprint v2 ->
         do_imply subs (Sil.BinOp (Sil.MinusA, e1, e2)) (Sil.Var v2)
-    | Sil.Var v1, e2 ->
+    | Sil.Var _, e2 ->
         if calc_missing then
           let () = ProverState.add_missing_pi (Sil.Aeq (e1_in, e2_in)) in
           subs
         else raise (IMPL_EXC ("expressions not equal", subs, (EXC_FALSE_EXPS (e1, e2))))
-    | Sil.Lvar pv1, Sil.Const _ when Sil.pvar_is_global pv1 ->
+    | Sil.Lvar pv1, Sil.Const _ when Pvar.is_global pv1 ->
         if calc_missing then
           let () = ProverState.add_missing_pi (Sil.Aeq (e1_in, e2_in)) in
           subs
         else raise (IMPL_EXC ("expressions not equal", subs, (EXC_FALSE_EXPS (e1, e2))))
     | Sil.Lvar v1, Sil.Lvar v2 ->
-        if Sil.pvar_equal v1 v2 then subs
+        if Pvar.equal v1 v2 then subs
         else raise (IMPL_EXC ("expressions not equal", subs, (EXC_FALSE_EXPS (e1, e2))))
     | Sil.Const c1, Sil.Const c2 ->
         if (Sil.const_equal c1 c2) then subs
         else raise (IMPL_EXC ("constants not equal", subs, (EXC_FALSE_EXPS (e1, e2))))
-    | Sil.Const (Sil.Cint n1), Sil.BinOp (Sil.PlusPI, _, _) ->
+    | Sil.Const (Sil.Cint _), Sil.BinOp (Sil.PlusPI, _, _) ->
         raise (IMPL_EXC ("pointer+index cannot evaluate to a constant", subs, (EXC_FALSE_EXPS (e1, e2))))
     | Sil.Const (Sil.Cint n1), Sil.BinOp (Sil.PlusA, f1, Sil.Const (Sil.Cint n2)) ->
         do_imply subs (Sil.exp_int (n1 -- n2)) f1
@@ -1159,13 +1162,13 @@ let exp_imply calc_missing subs e1_in e2_in : subst2 =
         do_imply subs (Sil.Lvar pv1) (Sil.BinOp (Sil.MinusA, e2, e1))
     | e1, Sil.Const _ ->
         raise (IMPL_EXC ("lhs not constant", subs, (EXC_FALSE_EXPS (e1, e2))))
-    | Sil.Lfield(e1, fd1, t1), Sil.Lfield(e2, fd2, t2) when fd1 == fd2 ->
+    | Sil.Lfield(e1, fd1, _), Sil.Lfield(e2, fd2, _) when fd1 == fd2 ->
         do_imply subs e1 e2
     | Sil.Lindex(e1, f1), Sil.Lindex(e2, f2) ->
         do_imply (do_imply subs e1 e2) f1 f2
     | _ ->
         d_impl_err ("exp_imply not implemented", subs, (EXC_FALSE_EXPS (e1, e2)));
-        raise (Exceptions.Abduction_case_not_implemented (try assert false with Assert_failure x -> x)) in
+        raise (Exceptions.Abduction_case_not_implemented __POS__) in
   do_imply subs e1 e2
 
 (** Convert a path (from lhs of a |-> to a field name present only in
@@ -1177,7 +1180,7 @@ let path_to_id path =
     | Sil.Var id ->
         if Ident.is_footprint id then None
         else Some (Ident.name_to_string (Ident.get_name id) ^ (string_of_int (Ident.get_stamp id)))
-    | Sil.Lfield (e, fld, t) ->
+    | Sil.Lfield (e, fld, _) ->
         (match f e with
          | None -> None
          | Some s -> Some (s ^ "_" ^ (Ident.fieldname_to_string fld)))
@@ -1185,7 +1188,7 @@ let path_to_id path =
         (match f e with
          | None -> None
          | Some s -> Some (s ^ "_" ^ (Sil.exp_to_string ind)))
-    | Sil.Lvar pv ->
+    | Sil.Lvar _ ->
         Some (Sil.exp_to_string path)
     | Sil.Const (Sil.Cstr s) ->
         Some ("_const_str_" ^ s)
@@ -1220,14 +1223,14 @@ let array_size_imply calc_missing subs size1 size2 indices2 =
 let rec sexp_imply source calc_index_frame calc_missing subs se1 se2 typ2 : subst2 * (Sil.strexp option) * (Sil.strexp option) =
   (* L.d_str "sexp_imply "; Sil.d_sexp se1; L.d_str " "; Sil.d_sexp se2; L.d_str " : "; Sil.d_typ_full typ2; L.d_ln(); *)
   match se1, se2 with
-  | Sil.Eexp (e1, inst1), Sil.Eexp (e2, inst2) ->
+  | Sil.Eexp (e1, _), Sil.Eexp (e2, _) ->
       (exp_imply calc_missing subs e1 e2, None, None)
   | Sil.Estruct (fsel1, inst1), Sil.Estruct (fsel2, _) ->
       let subs', fld_frame, fld_missing = struct_imply source calc_missing subs fsel1 fsel2 typ2 in
       let fld_frame_opt = if fld_frame != [] then Some (Sil.Estruct (fld_frame, inst1)) else None in
       let fld_missing_opt = if fld_missing != [] then Some (Sil.Estruct (fld_missing, inst1)) else None in
       subs', fld_frame_opt, fld_missing_opt
-  | Sil.Estruct _, Sil.Eexp (e2, inst2) ->
+  | Sil.Estruct _, Sil.Eexp (e2, _) ->
       begin
         let e2' = Sil.exp_sub (snd subs) e2 in
         match e2' with
@@ -1237,7 +1240,7 @@ let rec sexp_imply source calc_index_frame calc_missing subs se1 se2 typ2 : subs
             (fst subs, sub2'), None, None
         | _ ->
             d_impl_err ("sexp_imply not implemented", subs, (EXC_FALSE_SEXPS (se1, se2)));
-            raise (Exceptions.Abduction_case_not_implemented (try assert false with Assert_failure x -> x))
+            raise (Exceptions.Abduction_case_not_implemented __POS__)
       end
   | Sil.Earray (size1, esel1, inst1), Sil.Earray (size2, esel2, _) ->
       let indices2 = IList.map fst esel2 in
@@ -1252,20 +1255,20 @@ let rec sexp_imply source calc_index_frame calc_missing subs se1 se2 typ2 : subs
   | Sil.Eexp (_, inst), Sil.Estruct (fsel, inst') ->
       d_impl_err ("WARNING: function call with parameters of struct type, treating as unknown", subs, (EXC_FALSE_SEXPS (se1, se2)));
       let fsel' =
-        let g (f, se) = (f, Sil.Eexp (Sil.Var (Ident.create_fresh Ident.knormal), inst)) in
+        let g (f, _) = (f, Sil.Eexp (Sil.Var (Ident.create_fresh Ident.knormal), inst)) in
         IList.map g fsel in
       sexp_imply source calc_index_frame calc_missing subs (Sil.Estruct (fsel', inst')) se2 typ2
-  | Sil.Eexp _, Sil.Earray (size, esel, inst)
-  | Sil.Estruct _, Sil.Earray (size, esel, inst) ->
+  | Sil.Eexp _, Sil.Earray (size, _, inst)
+  | Sil.Estruct _, Sil.Earray (size, _, inst) ->
       let se1' = Sil.Earray (size, [(Sil.exp_zero, se1)], inst) in
       sexp_imply source calc_index_frame calc_missing subs se1' se2 typ2
-  | Sil.Earray (size, _, _), Sil.Eexp (e, inst) ->
+  | Sil.Earray (size, _, _), Sil.Eexp (_, inst) ->
       let se2' = Sil.Earray (size, [(Sil.exp_zero, se2)], inst) in
       let typ2' = Sil.Tarray (typ2, size) in
       sexp_imply source true calc_missing subs se1 se2' typ2' (* calculate index_frame because the rhs is a singleton array *)
   | _ ->
       d_impl_err ("sexp_imply not implemented", subs, (EXC_FALSE_SEXPS (se1, se2)));
-      raise (Exceptions.Abduction_case_not_implemented (try assert false with Assert_failure x -> x))
+      raise (Exceptions.Abduction_case_not_implemented __POS__)
 
 and struct_imply source calc_missing subs fsel1 fsel2 typ2 : subst2 * ((Ident.fieldname * Sil.strexp) list) * ((Ident.fieldname * Sil.strexp) list) =
   match fsel1, fsel2 with
@@ -1323,7 +1326,7 @@ and array_imply source calc_index_frame calc_missing subs esel1 esel2 typ2
 
 and sexp_imply_nolhs source calc_missing subs se2 typ2 =
   match se2 with
-  | Sil.Eexp (_e2, inst) ->
+  | Sil.Eexp (_e2, _) ->
       let e2 = Sil.exp_sub (snd subs) _e2 in
       begin
         match e2 with
@@ -1343,19 +1346,15 @@ and sexp_imply_nolhs source calc_missing subs se2 typ2 =
             raise (IMPL_EXC ("exp only in rhs is not a primed var", subs, EXC_FALSE))
       end
   | Sil.Estruct (fsel2, _) ->
-      (fun (x, y, z) -> x) (struct_imply source calc_missing subs [] fsel2 typ2)
+      (fun (x, _, _) -> x) (struct_imply source calc_missing subs [] fsel2 typ2)
   | Sil.Earray (_, esel2, _) ->
-      (fun (x, y, z) -> x) (array_imply source false calc_missing subs [] esel2 typ2)
+      (fun (x, _, _) -> x) (array_imply source false calc_missing subs [] esel2 typ2)
 
 let rec exp_list_imply calc_missing subs l1 l2 = match l1, l2 with
   | [],[] -> subs
   | e1:: l1, e2:: l2 ->
       exp_list_imply calc_missing (exp_imply calc_missing subs e1 e2) l1 l2
   | _ -> assert false
-
-let filter_ptsto_lhs sub e0 = function
-  | Sil.Hpointsto (e, _, _) -> if Sil.exp_equal e0 (Sil.exp_sub sub e) then Some () else None
-  | _ -> None
 
 let filter_ne_lhs sub e0 = function
   | Sil.Hpointsto (e, _, _) -> if Sil.exp_equal e0 (Sil.exp_sub sub e) then Some () else None
@@ -1367,11 +1366,11 @@ let filter_ne_lhs sub e0 = function
   | _ -> None
 
 let filter_hpred sub hpred2 hpred1 = match (Sil.hpred_sub sub hpred1), hpred2 with
-  | Sil.Hlseg(Sil.Lseg_NE, hpara1, e1, f1, el1), Sil.Hlseg(Sil.Lseg_PE, hpara2, e2, f2, el2) ->
+  | Sil.Hlseg(Sil.Lseg_NE, hpara1, e1, f1, el1), Sil.Hlseg(Sil.Lseg_PE, _, _, _, _) ->
       if Sil.hpred_equal (Sil.Hlseg(Sil.Lseg_PE, hpara1, e1, f1, el1)) hpred2 then Some false else None
-  | Sil.Hlseg(Sil.Lseg_PE, hpara1, e1, f1, el1), Sil.Hlseg(Sil.Lseg_NE, hpara2, e2, f2, el2) ->
+  | Sil.Hlseg(Sil.Lseg_PE, hpara1, e1, f1, el1), Sil.Hlseg(Sil.Lseg_NE, _, _, _, _) ->
       if Sil.hpred_equal (Sil.Hlseg(Sil.Lseg_NE, hpara1, e1, f1, el1)) hpred2 then Some true else None (* return missing disequality *)
-  | Sil.Hpointsto(e1, se1, te1), Sil.Hlseg(k, hpara2, e2, f2, el2) ->
+  | Sil.Hpointsto(e1, _, _), Sil.Hlseg(_, _, e2, _, _) ->
       if Sil.exp_equal e1 e2 then Some false else None
   | hpred1, hpred2 -> if Sil.hpred_equal hpred1 hpred2 then Some false else None
 
@@ -1381,7 +1380,7 @@ let hpred_has_primed_lhs sub hpred =
         find_primed e
     | Sil.Lindex (e, _) ->
         find_primed e
-    | Sil.BinOp (Sil.PlusPI, e1, e2) ->
+    | Sil.BinOp (Sil.PlusPI, e1, _) ->
         find_primed e1
     | _ ->
         Sil.fav_exists (Sil.exp_fav e) Ident.is_primed in
@@ -1391,20 +1390,18 @@ let hpred_has_primed_lhs sub hpred =
       exp_has_primed e
   | Sil.Hlseg (_, _, e, _, _) ->
       exp_has_primed e
-  | Sil.Hdllseg (_, _, iF, oB, oF, iB, _) ->
+  | Sil.Hdllseg (_, _, iF, _, _, iB, _) ->
       exp_has_primed iF && exp_has_primed iB
 
 let move_primed_lhs_from_front subs sigma = match sigma with
   | [] -> sigma
-  | hpred:: sigma' ->
+  | hpred:: _ ->
       if hpred_has_primed_lhs (snd subs) hpred then
         let (sigma_primed, sigma_unprimed) = IList.partition (hpred_has_primed_lhs (snd subs)) sigma
         in match sigma_unprimed with
         | [] -> raise (IMPL_EXC ("every hpred has primed lhs, cannot proceed", subs, (EXC_FALSE_SIGMA sigma)))
         | _:: _ -> sigma_unprimed @ sigma_primed
       else sigma
-
-let name_n = Ident.string_to_name "n"
 
 (** [expand_hpred_pointer calc_index_frame hpred] expands [hpred] if it is a |-> whose lhs is a Lfield or Lindex or ptr+off.
     Return [(changed, calc_index_frame', hpred')] where [changed] indicates whether the predicate has changed. *)
@@ -1414,11 +1411,17 @@ let expand_hpred_pointer calc_index_frame hpred : bool * bool * Sil.hpred =
         let t' = match t, typ_fld with
           | _, Sil.Tstruct _ -> (* the struct type of fld is known *)
               Sil.Sizeof (typ_fld, Sil.Subtype.exact)
-          | Sil.Sizeof (_t, st), _ -> (* the struct type of fld is not known -- typically Tvoid *)
+          | Sil.Sizeof (t1, st), _ -> (* the struct type of fld is not known -- typically Tvoid *)
               Sil.Sizeof
                 (Sil.Tstruct
-                   ([(fld, _t, Sil.item_annotation_empty)],
-                    [], Csu.Struct, None, [], [], Sil.item_annotation_empty), st)
+                   { Sil.instance_fields = [(fld, t1, Sil.item_annotation_empty)];
+                     static_fields = [];
+                     csu = Csu.Struct;
+                     struct_name = None;
+                     Sil.superclasses = [];
+                     Sil.def_methods = [];
+                     Sil.struct_annotations = Sil.item_annotation_empty;
+                   }, st)
           (* None as we don't know the stuct name *)
           | _ -> raise (Failure "expand_hpred_pointer: Unexpected non-sizeof type in Lfield") in
         let hpred' = Sil.Hpointsto (e, Sil.Estruct ([(fld, se)], Sil.inst_none), t') in
@@ -1440,115 +1443,182 @@ let expand_hpred_pointer calc_index_frame hpred : bool * bool * Sil.hpred =
     | _ -> changed, calc_index_frame, hpred in
   expand false calc_index_frame hpred
 
-let object_type = Typename.Java.from_string "java.lang.Object"
+module Subtyping_check =
+struct
 
-let serializable_type = Typename.Java.from_string "java.io.Serializable"
+  let object_type = Typename.Java.from_string "java.lang.Object"
 
-let cloneable_type = Typename.Java.from_string "java.lang.Cloneable"
+  let serializable_type = Typename.Java.from_string "java.io.Serializable"
 
-let is_interface tenv class_name =
-  match Sil.tenv_lookup tenv class_name with
-  | Some (Sil.Tstruct (fields, sfields, Csu.Class, Some c1', supers1, methods, iann)) ->
-      (IList.length fields = 0) && (IList.length methods = 0)
-  | _ -> false
+  let cloneable_type = Typename.Java.from_string "java.lang.Cloneable"
 
-(** check if c1 is a subclass of c2 *)
-let check_subclass_tenv tenv c1 c2 =
-  let rec check cn =
-    Typename.equal cn c2 || Typename.equal c2 object_type ||
-    match Sil.tenv_lookup tenv cn with
-    | Some (Sil.Tstruct (_, _, Csu.Class, Some c1', supers1, _, _)) ->
-        IList.exists check supers1
-    | _ -> false in
-  check c1
+  let is_interface tenv class_name =
+    match Tenv.lookup tenv class_name with
+    | Some ({ Sil.csu = Csu.Class Csu.Java; struct_name = Some _ } as struct_typ) ->
+        (IList.length struct_typ.Sil.instance_fields = 0) &&
+        (IList.length struct_typ.Sil.def_methods = 0)
+    | _ -> false
 
-let check_subclass tenv c1 c2 =
-  let f = check_subclass_tenv tenv in
-  Sil.Subtype.check_subtype f c1 c2
+  let is_root_class class_name =
+    match class_name with
+    | Typename.TN_csu (Csu.Class Csu.Java, _) ->
+        Typename.equal class_name object_type
+    | Typename.TN_csu (Csu.Class Csu.CPP, _) ->
+        false
+    | _ -> false
 
-(** check that t1 and t2 are the same primitive type *)
-let check_subtype_basic_type t1 t2 =
-  match t2 with
-  | (Sil.Tint Sil.IInt) | (Sil.Tint Sil.IBool)
-  | (Sil.Tint Sil.IChar) | (Sil.Tfloat Sil.FDouble)
-  | (Sil.Tfloat Sil.FFloat) | (Sil.Tint Sil.ILong)
-  | (Sil.Tint Sil.IShort) -> Sil.typ_equal t1 t2
-  | _ -> false
+  (** check if c1 is a subclass of c2 *)
+  let check_subclass_tenv tenv c1 c2 =
+    let rec check cn =
+      Typename.equal cn c2 || is_root_class c2 ||
+      match Tenv.lookup tenv cn with
+      | Some ({ Sil.struct_name = Some _; csu = Csu.Class _; superclasses }) ->
+          IList.exists check superclasses
+      | _ -> false in
+    check c1
 
-(** check if t1 is a subtype of t2 *)
-let rec check_subtype tenv t1 t2 =
-  match t1, t2 with
-  | Sil.Tstruct (_, _, Csu.Class, Some c1, _, _, _),
-    Sil.Tstruct (_, _, Csu.Class, Some c2, _, _, _) ->
-      let cn1 = Typename.TN_csu (Csu.Class, c1)
-      and cn2 = Typename.TN_csu (Csu.Class, c2) in
-      (check_subclass tenv cn1 cn2)
+  let check_subclass tenv c1 c2 =
+    let f = check_subclass_tenv tenv in
+    Sil.Subtype.check_subtype f c1 c2
 
-  | Sil.Tarray (dom_type1, _), Sil.Tarray (dom_type2, _) ->
-      check_subtype tenv dom_type1 dom_type2
+  (** check that t1 and t2 are the same primitive type *)
+  let check_subtype_basic_type t1 t2 =
+    match t2 with
+    | Sil.Tint Sil.IInt | Sil.Tint Sil.IBool
+    | Sil.Tint Sil.IChar | Sil.Tfloat Sil.FDouble
+    | Sil.Tfloat Sil.FFloat | Sil.Tint Sil.ILong
+    | Sil.Tint Sil.IShort -> Sil.typ_equal t1 t2
+    | _ -> false
 
-  | Sil.Tptr (dom_type1, _), Sil.Tptr (dom_type2, _) ->
-      check_subtype tenv dom_type1 dom_type2
+  (** check if t1 is a subtype of t2, in Java *)
+  let rec check_subtype_java tenv t1 t2 =
+    match t1, t2 with
+    | Sil.Tstruct { Sil.csu = Csu.Class Csu.Java; struct_name = Some c1 },
+      Sil.Tstruct { Sil.csu = Csu.Class Csu.Java; struct_name = Some c2 } ->
+        let cn1 = Typename.TN_csu (Csu.Class Csu.Java, c1)
+        and cn2 = Typename.TN_csu (Csu.Class Csu.Java, c2) in
+        check_subclass tenv cn1 cn2
 
-  | Sil.Tarray _, Sil.Tstruct (_, _, Csu.Class, Some c2, _, _, _) ->
-      let cn2 = Typename.TN_csu (Csu.Class, c2) in
-      Typename.equal cn2 serializable_type
-      || Typename.equal cn2 cloneable_type
-      || Typename.equal cn2 object_type
+    | Sil.Tarray (dom_type1, _), Sil.Tarray (dom_type2, _) ->
+        check_subtype_java tenv dom_type1 dom_type2
 
-  | _ -> (check_subtype_basic_type t1 t2)
+    | Sil.Tptr (dom_type1, _), Sil.Tptr (dom_type2, _) ->
+        check_subtype_java tenv dom_type1 dom_type2
 
-let rec case_analysis_type tenv (t1, st1) (t2, st2) =
-  match t1, t2 with
-  | Sil.Tstruct (_, _, Csu.Class, Some c1, _, _, _),
-    Sil.Tstruct (_, _, Csu.Class, Some c2, _, _, _) ->
-      let cn1 = Typename.TN_csu (Csu.Class, c1)
-      and cn2 = Typename.TN_csu (Csu.Class, c2) in
-      (Sil.Subtype.case_analysis (cn1, st1) (cn2, st2) (check_subclass tenv) (is_interface tenv))
+    | Sil.Tarray _, Sil.Tstruct { Sil.csu = Csu.Class Csu.Java; struct_name = Some c2 } ->
+        let cn2 = Typename.TN_csu (Csu.Class Csu.Java, c2) in
+        Typename.equal cn2 serializable_type
+        || Typename.equal cn2 cloneable_type
+        || Typename.equal cn2 object_type
+    | _ -> check_subtype_basic_type t1 t2
 
-  | Sil.Tarray (dom_type1, _), Sil.Tarray (dom_type2, _) ->
-      (case_analysis_type tenv (dom_type1, st1) (dom_type2, st2))
+  let get_cpp_objc_type_name t =
+    match t with
+    | Sil.Tstruct { Sil.csu = Csu.Class csu; struct_name = Some c }
+      when csu = Csu.CPP || csu = Csu.Objc ->
+        Some (Typename.TN_csu (Csu.Class csu, c))
+    | _ -> None
 
-  | Sil.Tptr (dom_type1, _), Sil.Tptr (dom_type2, _) ->
-      (case_analysis_type tenv (dom_type1, st1) (dom_type2, st2))
+  (** check if t1 is a subtype of t2 *)
+  let check_subtype tenv t1 t2 =
+    if !Config.curr_language = Config.Java then
+      check_subtype_java tenv t1 t2
+    else
+      match get_cpp_objc_type_name t1, get_cpp_objc_type_name t2 with
+      | Some cn1, Some cn2 -> check_subclass tenv cn1 cn2
+      | _ -> false
 
-  | Sil.Tstruct (_, _, Csu.Class, Some c1, _, _, _), Sil.Tarray _ ->
-      let cn1 = Typename.TN_csu (Csu.Class, c1) in
-      if (Typename.equal cn1 serializable_type
-          || Typename.equal cn1 cloneable_type
-          || Typename.equal cn1 object_type) &&
-         (st1 <> Sil.Subtype.exact) then (Some st1, None)
-      else (None, Some st1)
+  let rec case_analysis_type_java tenv (t1, st1) (t2, st2) =
+    match t1, t2 with
+    | Sil.Tstruct { Sil.csu = Csu.Class Csu.Java; struct_name = Some c1 },
+      Sil.Tstruct { Sil.csu = Csu.Class Csu.Java; struct_name = Some c2 } ->
+        let cn1 = Typename.TN_csu (Csu.Class Csu.Java, c1)
+        and cn2 = Typename.TN_csu (Csu.Class Csu.Java, c2) in
+        Sil.Subtype.case_analysis (cn1, st1) (cn2, st2)
+          (check_subclass tenv) (is_interface tenv)
 
-  | _ -> if (check_subtype_basic_type t1 t2) then (Some st1, None)
-      else (None, Some st1)
+    | Sil.Tarray (dom_type1, _), Sil.Tarray (dom_type2, _) ->
+        case_analysis_type_java tenv (dom_type1, st1) (dom_type2, st2)
 
-(** perform case analysis on [texp1 <: texp2], and return the updated types in the true and false case, if they are possible *)
-let subtype_case_analysis tenv texp1 texp2 =
-  match texp1, texp2 with
-  | Sil.Sizeof (t1, st1), Sil.Sizeof (t2, st2) ->
-      begin
-        let pos_opt, neg_opt = case_analysis_type tenv (t1, st1) (t2, st2) in
-        let pos_type_opt = match pos_opt with
-          | None -> None
-          | Some st1' ->
-              let t1' = if (check_subtype tenv t1 t2) then t1 else t2 in
-              Some (Sil.Sizeof (t1', st1')) in
-        let neg_type_opt = match neg_opt with
-          | None -> None
-          | Some st1' -> Some (Sil.Sizeof (t1, st1')) in
-        pos_type_opt, neg_type_opt
-      end
-  | _ -> (* don't know, consider both possibilities *)
-      Some texp1, Some texp1
+    | Sil.Tptr (dom_type1, _), Sil.Tptr (dom_type2, _) ->
+        case_analysis_type_java tenv (dom_type1, st1) (dom_type2, st2)
+
+    | Sil.Tstruct { Sil.csu = Csu.Class Csu.Java; struct_name = Some c1 }, Sil.Tarray _ ->
+        let cn1 = Typename.TN_csu (Csu.Class Csu.Java, c1) in
+        if (Typename.equal cn1 serializable_type
+            || Typename.equal cn1 cloneable_type
+            || Typename.equal cn1 object_type) &&
+           st1 <> Sil.Subtype.exact then Some st1, None
+        else (None, Some st1)
+
+    | _ -> if check_subtype_basic_type t1 t2 then Some st1, None
+        else None, Some st1
+
+  let case_analysis_type tenv (t1, st1) (t2, st2) =
+    if !Config.curr_language = Config.Java then
+      case_analysis_type_java tenv (t1, st1) (t2, st2)
+    else match get_cpp_objc_type_name t1, get_cpp_objc_type_name t2 with
+      | Some cn1, Some cn2 ->
+          (* cn1 <: cn2 or cn2 <: cn1 is implied in Java when we get two types compared *)
+          (* that get through the type system, but not in C++ because of multiple inheritance, *)
+          (* and not in ObjC because of being weakly typed, *)
+          (* and the algorithm will only work correctly if this is the case *)
+          if check_subclass tenv cn1 cn2 || check_subclass tenv cn2 cn1 then
+            Sil.Subtype.case_analysis (cn1, st1) (cn2, st2) (check_subclass tenv)
+              (is_interface tenv)
+          else None, Some st1
+      | _ -> None, Some st1
+
+  (** perform case analysis on [texp1 <: texp2], and return the updated types in the true and false
+      case, if they are possible *)
+  let subtype_case_analysis tenv texp1 texp2 =
+    match texp1, texp2 with
+    | Sil.Sizeof (t1, st1), Sil.Sizeof (t2, st2) ->
+        begin
+          let pos_opt, neg_opt = case_analysis_type tenv (t1, st1) (t2, st2) in
+          let pos_type_opt = match pos_opt with
+            | None -> None
+            | Some st1' ->
+                let t1' = if check_subtype tenv t1 t2 then t1 else t2 in
+                Some (Sil.Sizeof (t1', st1')) in
+          let neg_type_opt = match neg_opt with
+            | None -> None
+            | Some st1' -> Some (Sil.Sizeof (t1, st1')) in
+          pos_type_opt, neg_type_opt
+        end
+    | _ -> (* don't know, consider both possibilities *)
+        Some texp1, Some texp1
+end
 
 let cast_exception tenv texp1 texp2 e1 subs =
   let _ = match texp1, texp2 with
-    | Sil.Sizeof (t1, st1), Sil.Sizeof (t2, st2) ->
-        if (!Config.developer_mode) || ((Sil.Subtype.is_cast st2) && not (check_subtype tenv t1 t2)) then
+    | Sil.Sizeof (t1, _), Sil.Sizeof (t2, st2) ->
+        if !Config.developer_mode ||
+           (Sil.Subtype.is_cast st2 &&
+            not (Subtyping_check.check_subtype tenv t1 t2)) then
           ProverState.checks := Class_cast_check (texp1, texp2, e1) :: !ProverState.checks
     | _ -> () in
   raise (IMPL_EXC ("class cast exception", subs, EXC_FALSE))
+
+(** get all methods that override [supertype].[pname] in [tenv].
+    Note: supertype should be a type T rather than a pointer to type T
+    Note: [pname] wil never be included in the returned result *)
+let get_overrides_of tenv supertype pname =
+  let typ_has_method pname = function
+    | Sil.Tstruct { Sil.def_methods } ->
+        IList.exists (fun m -> Procname.equal pname m) def_methods
+    | _ -> false in
+  let gather_overrides tname struct_typ overrides_acc =
+    let typ = Sil.Tstruct struct_typ in
+    (* get all types in the type environment that are non-reflexive subtypes of [supertype] *)
+    if not (Sil.typ_equal typ supertype) && Subtyping_check.check_subtype tenv typ supertype then
+      (* only select the ones that implement [pname] as overrides *)
+      let resolved_pname =
+        Procname.replace_class pname (Typename.name tname) in
+      if typ_has_method resolved_pname typ then (typ, resolved_pname) :: overrides_acc
+      else overrides_acc
+    else overrides_acc in
+  Tenv.fold gather_overrides tenv []
 
 (** Check the equality of two types ignoring flags in the subtyping components *)
 let texp_equal_modulo_subtype_flag texp1 texp2 = match texp1, texp2 with
@@ -1558,16 +1628,23 @@ let texp_equal_modulo_subtype_flag texp1 texp2 = match texp1, texp2 with
 
 (** check implication between type expressions *)
 let texp_imply tenv subs texp1 texp2 e1 calc_missing =
-  let types_subject_to_cast = (* check whether the types could be subject to dynamic cast: classes and arrays *)
+  (* check whether the types could be subject to dynamic cast: *)
+  (* classes and arrays in Java, and just classes in C++ and ObjC *)
+  let types_subject_to_dynamic_cast =
     match texp1, texp2 with
     | Sil.Sizeof (Sil.Tstruct _, _), Sil.Sizeof (Sil.Tstruct _, _)
     | Sil.Sizeof (Sil.Tarray _, _), Sil.Sizeof (Sil.Tarray _, _)
     | Sil.Sizeof (Sil.Tarray _, _), Sil.Sizeof (Sil.Tstruct _, _)
-    | Sil.Sizeof (Sil.Tstruct _, _), Sil.Sizeof (Sil.Tarray _, _) -> true
+    | Sil.Sizeof (Sil.Tstruct _, _), Sil.Sizeof (Sil.Tarray _, _)
+      when !Config.curr_language = Config.Java -> true
+
+    | Sil.Sizeof (typ1, _), Sil.Sizeof (typ2, _) ->
+        (Sil.is_cpp_class typ1 && Sil.is_cpp_class typ2) ||
+        (Sil.is_objc_class typ1 && Sil.is_objc_class typ2)
     | _ -> false in
-  if !Config.curr_language = Config.Java && types_subject_to_cast then
+  if types_subject_to_dynamic_cast then
     begin
-      let pos_type_opt, neg_type_opt = subtype_case_analysis tenv texp1 texp2 in
+      let pos_type_opt, neg_type_opt = Subtyping_check.subtype_case_analysis tenv texp1 texp2 in
       let has_changed = match pos_type_opt with
         | Some texp1' ->
             not (texp_equal_modulo_subtype_flag texp1' texp1)
@@ -1576,7 +1653,7 @@ let texp_imply tenv subs texp1 texp2 e1 calc_missing =
         begin
           match pos_type_opt with
           | None -> cast_exception tenv texp1 texp2 e1 subs
-          | Some texp1' ->
+          | Some _ ->
               if has_changed then None, pos_type_opt (* missing *)
               else pos_type_opt, None (* frame *)
         end
@@ -1595,17 +1672,17 @@ let texp_imply tenv subs texp1 texp2 e1 calc_missing =
 (** pre-process implication between a non-array and an array: the non-array is turned into an array of size given by its type
     only active in type_size mode *)
 let sexp_imply_preprocess se1 texp1 se2 = match se1, texp1, se2 with
-  | Sil.Eexp (e1, inst), Sil.Sizeof _, Sil.Earray _ when !Config.type_size ->
+  | Sil.Eexp (_, inst), Sil.Sizeof _, Sil.Earray _ when !Config.type_size ->
       let se1' = Sil.Earray (texp1, [(Sil.exp_zero, se1)], inst) in
       L.d_strln_color Orange "sexp_imply_preprocess"; L.d_str " se1: "; Sil.d_sexp se1; L.d_ln (); L.d_str " se1': "; Sil.d_sexp se1'; L.d_ln ();
       se1'
   | _ -> se1
 
-(** handle parameter subtype for java: when the type of a callee variable in the caller is a strict subtype
+(** handle parameter subtype: when the type of a callee variable in the caller is a strict subtype
     of the one in the callee, add a type frame and type missing *)
 let handle_parameter_subtype tenv prop1 sigma2 subs (e1, se1, texp1) (se2, texp2) =
   let is_callee = match e1 with
-    | Sil.Lvar pv -> Sil.pvar_is_callee pv
+    | Sil.Lvar pv -> Pvar.is_callee pv
     | _ -> false in
   let is_allocated_lhs e =
     let filter = function
@@ -1621,14 +1698,18 @@ let handle_parameter_subtype tenv prop1 sigma2 subs (e1, se1, texp1) (se2, texp2
       | _ -> false in
     if IList.exists filter sigma2 then !sub_opt else None in
   let add_subtype () = match texp1, texp2, se1, se2 with
-    | Sil.Sizeof(Sil.Tptr (_t1, _), _), Sil.Sizeof(Sil.Tptr (_t2, _), sub2), Sil.Eexp(e1', _), Sil.Eexp(e2', _) when not (is_allocated_lhs e1') ->
+    | Sil.Sizeof(Sil.Tptr (_t1, _), _), Sil.Sizeof(Sil.Tptr (_t2, _), _),
+      Sil.Eexp(e1', _), Sil.Eexp(e2', _)
+      when not (is_allocated_lhs e1') ->
         begin
-          let t1, t2 = Sil.expand_type tenv _t1, Sil.expand_type tenv _t2 in
+          let t1, t2 = Tenv.expand_type tenv _t1, Tenv.expand_type tenv _t2 in
           match type_rhs e2' with
           | Some (t2_ptsto , sub2) ->
-              if not (Sil.typ_equal t1 t2) && check_subtype tenv t1 t2
+              if not (Sil.typ_equal t1 t2) && Subtyping_check.check_subtype tenv t1 t2
               then begin
-                let pos_type_opt, _ = subtype_case_analysis tenv (Sil.Sizeof(t1, Sil.Subtype.subtypes)) (Sil.Sizeof(t2_ptsto, sub2)) in
+                let pos_type_opt, _ =
+                  Subtyping_check.subtype_case_analysis tenv
+                    (Sil.Sizeof (t1, Sil.Subtype.subtypes)) (Sil.Sizeof (t2_ptsto, sub2)) in
                 match pos_type_opt with
                 | Some t1_noptr ->
                     ProverState.add_frame_typ (e1', t1_noptr);
@@ -1638,19 +1719,16 @@ let handle_parameter_subtype tenv prop1 sigma2 subs (e1, se1, texp1) (se2, texp2
           | None -> ()
         end
     | _ -> () in
-  if is_callee &&
-     !Config.footprint &&
-     (!Config.Experiment.activate_subtyping_in_cpp || !Config.curr_language = Config.Java)
-  then add_subtype ()
+  if is_callee && !Config.footprint then add_subtype ()
 
 let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 : subst2 * Prop.normal Prop.t = match hpred2 with
   | Sil.Hpointsto (_e2, se2, texp2) ->
       let e2 = Sil.exp_sub (snd subs) _e2 in
       let _ = match e2 with
-        | Sil.Lvar p -> ()
+        | Sil.Lvar _ -> ()
         | Sil.Var v -> if Ident.is_primed v then
               (d_impl_err ("rhs |-> not implemented", subs, (EXC_FALSE_HPRED hpred2));
-               raise (Exceptions.Abduction_case_not_implemented (try assert false with Assert_failure x -> x)))
+               raise (Exceptions.Abduction_case_not_implemented __POS__))
         | _ -> () in
       (match Prop.prop_iter_create prop1 with
        | None -> raise (IMPL_EXC ("lhs is empty", subs, EXC_FALSE))
@@ -1688,7 +1766,7 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
                         let prop1' = Prop.prop_iter_remove_curr_then_to_prop iter1'
                         in (subs', prop1')
                       with
-                      | IMPL_EXC (s, _, body) when calc_missing ->
+                      | IMPL_EXC (s, _, _) when calc_missing ->
                           raise (MISSING_EXC s))
                  | Sil.Hlseg (Sil.Lseg_NE, para1, e1, f1, elist1), _ -> (** Unroll lseg *)
                      let n' = Sil.Var (Ident.create_fresh Ident.kprimed) in
@@ -1732,10 +1810,10 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
   | Sil.Hlseg (k, para2, _e2, _f2, _elist2) -> (* for now ignore implications between PE and NE *)
       let e2, f2 = Sil.exp_sub (snd subs) _e2, Sil.exp_sub (snd subs) _f2 in
       let _ = match e2 with
-        | Sil.Lvar p -> ()
+        | Sil.Lvar _ -> ()
         | Sil.Var v -> if Ident.is_primed v then
               (d_impl_err ("rhs |-> not implemented", subs, (EXC_FALSE_HPRED hpred2));
-               raise (Exceptions.Abduction_case_not_implemented (try assert false with Assert_failure x -> x)))
+               raise (Exceptions.Abduction_case_not_implemented __POS__))
         | _ -> ()
       in
       if Sil.exp_equal e2 f2 && k == Sil.Lseg_PE then (subs, prop1)
@@ -1786,22 +1864,23 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
         )
   | Sil.Hdllseg (Sil.Lseg_PE, _, _, _, _, _, _) ->
       (d_impl_err ("rhs dllsegPE not implemented", subs, (EXC_FALSE_HPRED hpred2));
-       raise (Exceptions.Abduction_case_not_implemented (try assert false with Assert_failure x -> x)))
-  | Sil.Hdllseg (k, para2, iF2, oB2, oF2, iB2, elist2) -> (* for now ignore implications between PE and NE *)
+       raise (Exceptions.Abduction_case_not_implemented __POS__))
+  | Sil.Hdllseg (_, para2, iF2, oB2, oF2, iB2, elist2) ->
+      (* for now ignore implications between PE and NE *)
       let iF2, oF2 = Sil.exp_sub (snd subs) iF2, Sil.exp_sub (snd subs) oF2 in
       let iB2, oB2 = Sil.exp_sub (snd subs) iB2, Sil.exp_sub (snd subs) oB2 in
       let _ = match oF2 with
-        | Sil.Lvar p -> ()
+        | Sil.Lvar _ -> ()
         | Sil.Var v -> if Ident.is_primed v then
               (d_impl_err ("rhs dllseg not implemented", subs, (EXC_FALSE_HPRED hpred2));
-               raise (Exceptions.Abduction_case_not_implemented (try assert false with Assert_failure x -> x)))
+               raise (Exceptions.Abduction_case_not_implemented __POS__))
         | _ -> ()
       in
       let _ = match oB2 with
-        | Sil.Lvar p -> ()
+        | Sil.Lvar _ -> ()
         | Sil.Var v -> if Ident.is_primed v then
               (d_impl_err ("rhs dllseg not implemented", subs, (EXC_FALSE_HPRED hpred2));
-               raise (Exceptions.Abduction_case_not_implemented (try assert false with Assert_failure x -> x)))
+               raise (Exceptions.Abduction_case_not_implemented __POS__))
         | _ -> ()
       in
       (match Prop.prop_iter_create prop1 with
@@ -1862,22 +1941,23 @@ and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : (subst2 *
       | Config.C_CPP -> Sil.Sizeof (Sil.Tarray (Sil.Tint Sil.IChar, size), Sil.Subtype.exact)
       | Config.Java ->
           let object_type =
-            Typename.TN_csu (Csu.Class, Mangled.from_string "java.lang.String") in
-          let typ = match Sil.tenv_lookup tenv object_type with
+            Typename.TN_csu (Csu.Class Csu.Java, Mangled.from_string "java.lang.String") in
+          let typ = match Tenv.lookup tenv object_type with
             | Some typ -> typ
             | None -> assert false in
-          Sil.Sizeof (typ, Sil.Subtype.exact) in
+          Sil.Sizeof (Sil.Tstruct typ, Sil.Subtype.exact) in
     Sil.Hpointsto (root, sexp, const_string_texp) in
   let mk_constant_class_hpred s = (* creat an hpred from a constant class *)
     let root = Sil.Const (Sil.Cclass (Ident.string_to_name s)) in
     let sexp = (* TODO: add appropriate fields *)
       Sil.Estruct ([(Ident.create_fieldname (Mangled.from_string "java.lang.Class.name") 0, Sil.Eexp ((Sil.Const (Sil.Cstr s), Sil.Inone)))], Sil.inst_none) in
     let class_texp =
-      let class_type = Typename.TN_csu (Csu.Class, Mangled.from_string "java.lang.Class") in
-      let typ = match Sil.tenv_lookup tenv class_type with
+      let class_type =
+        Typename.TN_csu (Csu.Class Csu.Java, Mangled.from_string "java.lang.Class") in
+      let typ = match Tenv.lookup tenv class_type with
         | Some typ -> typ
         | None -> assert false in
-      Sil.Sizeof (typ, Sil.Subtype.exact) in
+      Sil.Sizeof (Sil.Tstruct typ, Sil.Subtype.exact) in
     Sil.Hpointsto (root, sexp, class_texp) in
   try
     (match move_primed_lhs_from_front subs sigma2 with
@@ -1936,7 +2016,7 @@ and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : (subst2 *
     ProverState.add_missing_sigma sigma2;
     subs, prop1
 
-let prepare_prop_for_implication (sub1, sub2) pi1 sigma1 =
+let prepare_prop_for_implication (_, sub2) pi1 sigma1 =
   let pi1' = (Prop.pi_sub sub2 (ProverState.get_missing_pi ())) @ pi1 in
   let sigma1' = (Prop.sigma_sub sub2 (ProverState.get_missing_sigma ())) @ sigma1 in
   let ep = Prop.replace_sub sub2 (Prop.replace_sigma sigma1' (Prop.from_pi pi1')) in
@@ -1978,19 +2058,19 @@ let rec pre_check_pure_implication calc_missing subs pi1 pi2 =
              (* The commented-out condition should always hold. *)
              let sub2' = extend_sub (snd subs) v2 e2 in
              pre_check_pure_implication calc_missing (fst subs, sub2') pi1 pi2'
-         | e2, f2 ->
+         | _ ->
              let pi1' = Prop.pi_sub (fst subs) pi1 in
              let prop_for_impl = prepare_prop_for_implication subs pi1' [] in
              imply_atom calc_missing subs prop_for_impl (Sil.Aeq (e2_in, f2_in));
              pre_check_pure_implication calc_missing subs pi1 pi2'
         )
-  | Sil.Aeq (e1, e2) :: pi2' -> (* must be an inequality *)
+  | Sil.Aeq _ :: pi2' -> (* must be an inequality *)
       pre_check_pure_implication calc_missing subs pi1 pi2'
-  | Sil.Aneq (Sil.Var v, f2):: pi2' ->
+  | Sil.Aneq (Sil.Var v, _):: pi2' ->
       if not (Ident.is_primed v || calc_missing)
       then raise (IMPL_EXC("ineq e2=f2 in rhs with e2 not primed var", (Sil.sub_empty, Sil.sub_empty), EXC_FALSE))
       else pre_check_pure_implication calc_missing subs pi1 pi2'
-  | Sil.Aneq (e1, e2):: pi2' ->
+  | Sil.Aneq _ :: pi2' ->
       if calc_missing then pre_check_pure_implication calc_missing subs pi1 pi2'
       else raise (IMPL_EXC ("ineq e2=f2 in rhs with e2 not primed var", (Sil.sub_empty, Sil.sub_empty), EXC_FALSE))
 
@@ -2066,7 +2146,7 @@ let check_implication_base pname tenv check_frame_empty calc_missing prop1 prop2
   | MISSING_EXC s ->
       L.d_strln ("WARNING: footprint failed to find MISSING because: " ^ s);
       None
-  | (Exceptions.Abduction_case_not_implemented mloc as exn) ->
+  | (Exceptions.Abduction_case_not_implemented _ as exn) ->
       Reporting.log_error pname exn;
       None
 
@@ -2136,4 +2216,13 @@ let find_minimum_pure_cover cases =
   in try Some (shrink (grow [] cases))
   with NO_COVER -> None
 
+(*
+(** Check [prop |- e1<e2]. Result [false] means "don't know". *)
+let check_lt prop e1 e2 =
+  let e1_lt_e2 = Sil.BinOp (Sil.Lt, e1, e2) in
+  check_atom prop (Prop.mk_inequality e1_lt_e2)
 
+let filter_ptsto_lhs sub e0 = function
+  | Sil.Hpointsto (e, _, _) -> if Sil.exp_equal e0 (Sil.exp_sub sub e) then Some () else None
+  | _ -> None
+*)

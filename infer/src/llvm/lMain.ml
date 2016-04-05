@@ -7,8 +7,6 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open Utils
-
 let arg_desc =
   let options_to_keep = ["-results_dir"; "-project_root"] in
   let desc =
@@ -17,18 +15,20 @@ let arg_desc =
       "-c",
       Arg.String (fun cfile -> LConfig.source_filename := Some cfile),
       Some "cfile",
-      "C/C++ file being translated";
+      "C/C++ file being translated"
+      ;
       "-debug",
       Arg.Unit (fun _ -> LConfig.debug_mode := true),
       None,
       "Enables debug mode"
+      ;
     ] in
   Arg.create_options_desc false "Parsing Options" desc
 
 let usage = "Usage: InferLLVM -c <cfile> [options]\n"
 
 let print_usage_exit () =
-  Utils.Arg.usage arg_desc usage;
+  Arg.usage arg_desc usage;
   exit(1)
 
 let init_global_state source_filename =
@@ -41,7 +41,6 @@ let init_global_state source_filename =
   end;
   DB.Results_dir.init ();
   Ident.NameGenerator.reset ();
-  SymOp.reset_total ();
   Config.nLOC := FileLOC.file_get_loc source_filename
 
 let store_icfg tenv cg cfg =
@@ -49,9 +48,7 @@ let store_icfg tenv cg cfg =
   let get_internal_file = DB.source_dir_get_internal_file source_dir in
   let cg_file = get_internal_file ".cg" in
   let cfg_file = get_internal_file ".cfg" in
-  Cfg.add_removetemps_instructions cfg;
-  Preanal.doit cfg tenv;
-  Cfg.add_abstraction_instructions cfg;
+  Preanal.doit cfg cg tenv;
   Cg.store_to_file cg_file cg;
   Cfg.store_cfg_to_file cfg_file true cfg;
   if !LConfig.debug_mode then
@@ -65,10 +62,10 @@ let store_icfg tenv cg cfg =
 let store_tenv tenv =
   let tenv_filename = DB.global_tenv_fname () in
   if DB.file_exists tenv_filename then DB.file_remove tenv_filename;
-  Sil.store_tenv_to_file tenv_filename tenv
+  Tenv.store_to_file tenv_filename tenv
 
 let () =
-  Arg.parse arg_desc (fun arg -> ()) usage;
+  Arg.parse "INFERLLVM_ARGS" arg_desc (fun _ -> ()) usage;
   begin match !LConfig.source_filename with
     | None -> print_usage_exit ()
     | Some source_filename -> init_global_state source_filename

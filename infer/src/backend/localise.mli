@@ -51,6 +51,7 @@ val pointer_size_mismatch : t
 val precondition_not_found : t
 val precondition_not_met : t
 val premature_nil_termination : t
+val registered_observer_being_deallocated : t
 val retain_cycle : t
 val resource_leak : t
 val return_value_ignored : t
@@ -107,7 +108,8 @@ val error_desc_get_tag_call_procedure : error_desc -> string
 (** get the bucket value of an error_desc, if any *)
 val error_desc_get_bucket : error_desc -> string option
 
-(** set the bucket value of an error_desc; the boolean indicates where the bucket should be shown in the message *)
+(** set the bucket value of an error_desc.
+    The boolean indicates where the bucket should be shown in the message *)
 val error_desc_set_bucket : error_desc -> string -> bool -> error_desc
 
 (** hash function for error_desc *)
@@ -205,7 +207,11 @@ val desc_null_test_after_dereference : string -> int -> Location.t -> error_desc
 val java_unchecked_exn_desc : Procname.t -> Typename.t -> string -> error_desc
 
 val desc_context_leak :
-  Procname.t -> Sil.typ -> Ident.fieldname -> (Ident.fieldname option * Sil.typ) list -> error_desc
+  Procname.t -> Sil.typ -> Ident.fieldname ->
+  (Ident.fieldname option * Sil.typ) list -> error_desc
+
+val desc_fragment_retains_view :
+  Sil.typ -> Ident.fieldname -> Sil.typ -> Procname.t -> error_desc
 
 (* Create human-readable error description for assertion failures *)
 val desc_custom_error : Location.t -> error_desc
@@ -224,6 +230,10 @@ val desc_retain_cycle :
   Prop.normal Prop.t -> ((Sil.strexp * Sil.typ) * Ident.fieldname * Sil.strexp) list ->
   Location.t -> string option -> error_desc
 
+val registered_observer_being_deallocated_str : string -> string
+
+val desc_registered_observer_being_deallocated : Pvar.t -> Location.t -> error_desc
+
 val desc_return_statement_missing : Location.t -> error_desc
 
 val desc_return_value_ignored : Procname.t -> Location.t -> error_desc
@@ -238,6 +248,6 @@ val desc_unary_minus_applied_to_unsigned_expression :
   string option -> string -> Location.t -> error_desc
 
 val desc_tainted_value_reaching_sensitive_function :
-  string -> string -> string -> Location.t -> error_desc
+  Sil.taint_kind -> string -> Procname.t -> Procname.t -> Location.t -> error_desc
 
 val desc_uninitialized_dangling_pointer_deref : deref_str -> string -> Location.t -> error_desc

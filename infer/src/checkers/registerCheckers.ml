@@ -11,7 +11,6 @@
 
 module L = Logging
 module F = Format
-open Utils
 
 (** Flags to activate checkers. *)
 let active_procedure_checkers () =
@@ -27,7 +26,9 @@ let active_procedure_checkers () =
         Checkers.callback_checkVisibleForTesting, false;
         Checkers.callback_check_write_to_parcel, false;
         Checkers.callback_find_deserialization, false;
+        CheckTraceCallSequence.callback_check_trace_call_sequence, false;
         Dataflow.callback_test_dataflow, false;
+        FragmentRetainsViewChecker.callback_fragment_retains_view, checkers_enabled;
         SqlChecker.callback_sql, false;
         Eradicate.callback_eradicate, !Config.eradicate;
         CodeQuery.code_query_callback, !CodeQuery.query <> None;

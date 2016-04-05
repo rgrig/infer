@@ -11,9 +11,6 @@
 open Javalib_pack
 open Sawja_pack
 
-
-open Utils
-
 (** Type transformations between Javalib datatypes and sil datatypes *)
 
 exception Type_tranlsation_error of string
@@ -49,8 +46,8 @@ let cast_type = function
 
 let const_type const =
   match const with
-  | `String str -> (JBasics.TObject (JBasics.TClass (JBasics.make_cn JConfig.string_cl)))
-  | `Class cl -> (JBasics.TObject (JBasics.TClass (JBasics.make_cn JConfig.class_cl)))
+  | `String _ -> (JBasics.TObject (JBasics.TClass (JBasics.make_cn JConfig.string_cl)))
+  | `Class _ -> (JBasics.TObject (JBasics.TClass (JBasics.make_cn JConfig.class_cl)))
   | `Double _ -> (JBasics.TBasic `Double)
   | `Int _ -> (JBasics.TBasic`Int)
   | `Float _ -> (JBasics.TBasic`Float)
@@ -59,7 +56,7 @@ let const_type const =
 
 
 let typename_of_classname cn =
-  Typename.TN_csu (Csu.Class, (Mangled.from_string (JBasics.cn_name cn)))
+  Typename.TN_csu (Csu.Class Csu.Java, (Mangled.from_string (JBasics.cn_name cn)))
 
 
 let rec get_named_type vt =
@@ -91,7 +88,8 @@ let rec create_array_type typ dim =
 
 let extract_cn_no_obj typ =
   match typ with
-  | Sil.Tptr (Sil.Tstruct (_, _, Csu.Class, Some classname, _, _, _), Sil.Pk_pointer) ->
+  | Sil.Tptr (Sil.Tstruct { Sil.csu = Csu.Class _; struct_name = Some classname },
+              Sil.Pk_pointer) ->
       let class_name = (Mangled.to_string classname) in
       if class_name = JConfig.object_cl then None
       else
@@ -195,7 +193,7 @@ let get_method_kind m = if Javalib.is_static_method m then Procname.Static else 
 let get_method_procname cn ms kind =
   let return_type_name, method_name, args_type_name = method_signature_names ms in
   let class_name = cn_to_java_type cn in
-  Procname.mangled_java class_name return_type_name method_name args_type_name kind
+  Procname.java class_name return_type_name method_name args_type_name kind
 
 let get_class_procnames cn node =
   let collect jmethod procnames =
@@ -239,7 +237,15 @@ let collect_interface_field cn inf l =
 
 let dummy_type cn =
   let classname = Mangled.from_string (JBasics.cn_name cn) in
-  Sil.Tstruct ([], [], Csu.Class, Some classname, [], [], Sil.item_annotation_empty)
+  Sil.Tstruct {
+    Sil.instance_fields = [];
+    static_fields = [];
+    csu = Csu.Class Csu.Java;
+    struct_name = Some classname;
+    superclasses = [];
+    def_methods = [];
+    struct_annotations = Sil.item_annotation_empty;
+  }
 
 
 let collect_models_class_fields classpath_field_map cn cf fields =
@@ -283,7 +289,7 @@ let add_model_fields program classpath_fields cn =
 let rec get_all_fields program tenv cn =
   let extract_class_fields classname =
     match get_class_type_no_pointer program tenv classname with
-    | Sil.Tstruct (nonstatic, static, _, _, _, _, _) -> (static, nonstatic)
+    | Sil.Tstruct { Sil.instance_fields; static_fields } -> (static_fields, instance_fields)
     | _ -> assert false in
   let trans_fields classname =
     match JClasspath.lookup_node classname program with
@@ -306,8 +312,9 @@ and create_sil_type program tenv cn =
   | None -> dummy_type cn
   | Some node ->
       let create_super_list interface_names =
+        IList.iter (fun cn -> ignore (get_class_type_no_pointer program tenv cn)) interface_names;
         IList.map typename_of_classname interface_names in
-      let (super_list, nonstatic_fields, static_fields, item_annotation) =
+      let superclasses, instance_fields, static_fields, struct_annotations =
         match node with
         | Javalib.JInterface jinterface ->
             let static_fields, _ = get_all_fields program tenv cn in
@@ -326,26 +333,33 @@ and create_sil_type program tenv cn =
               | Some super_cn ->
                   let super_classname =
                     match get_class_type_no_pointer program tenv super_cn with
-                    | Sil.Tstruct (_, _, _, Some classname, _, _, _) ->
-                        Typename.TN_csu (Csu.Class, classname)
+                    | Sil.Tstruct { Sil.struct_name =  Some classname } ->
+                        Typename.TN_csu (Csu.Class Csu.Java, classname)
                     | _ -> assert false in
                   super_classname :: interface_list in
             (super_classname_list, nonstatic_fields, static_fields, item_annotation) in
       let classname = Mangled.from_string (JBasics.cn_name cn) in
-      let method_procnames = get_class_procnames cn node in
-      Sil.Tstruct (nonstatic_fields, static_fields, Csu.Class,
-                   Some classname, super_list, method_procnames, item_annotation)
-
+      let def_methods = IList.map (fun j -> Procname.Java j) (get_class_procnames cn node) in
+      Sil.Tstruct {
+        Sil.instance_fields;
+        static_fields;
+        csu = Csu.Class Csu.Java;
+        struct_name = Some classname;
+        superclasses;
+        def_methods;
+        struct_annotations;
+      }
 
 and get_class_type_no_pointer program tenv cn =
   let named_type = typename_of_classname cn in
-  let class_type_np =
-    match Sil.tenv_lookup tenv named_type with
-    | None -> create_sil_type program tenv cn
-    | Some t -> t in
-  Sil.tenv_add tenv named_type class_type_np;
-  class_type_np
-
+  match Tenv.lookup tenv named_type with
+  | None ->
+      (match create_sil_type program tenv cn with
+       | (Sil.Tstruct struct_typ) as typ->
+           Tenv.add tenv named_type struct_typ;
+           typ
+       | _ -> assert false)
+  | Some struct_typ -> Sil.Tstruct struct_typ
 
 let get_class_type program tenv cn =
   let t = get_class_type_no_pointer program tenv cn in
@@ -360,7 +374,7 @@ let is_closeable program tenv typ =
   let closeable_typ = get_class_type program tenv closeable_cn in
   let autocloseable_cn = JBasics.make_cn "java.lang.AutoCloseable" in
   let autocloseable_typ = get_class_type program tenv autocloseable_cn in
-  let implements t = Prover.check_subtype tenv typ t in
+  let implements t = Prover.Subtyping_check.check_subtype tenv typ t in
   implements closeable_typ || implements autocloseable_typ
 
 
@@ -403,7 +417,7 @@ let get_var_type_from_sig context var =
     let tenv = JContext.get_tenv context in
     let vt', var' =
       IList.find
-        (fun (vt', var') -> JBir.var_equal var var')
+        (fun (_, var') -> JBir.var_equal var var')
         (JBir.params (JContext.get_impl context)) in
     Some (param_type program tenv (JContext.get_cn context) var' vt')
   with Not_found -> None
@@ -412,7 +426,7 @@ let get_var_type_from_sig context var =
 let get_var_type context var =
   let typ_opt = JContext.get_var_type context var in
   match typ_opt with
-  | Some atype -> typ_opt
+  | Some _ -> typ_opt
   | None -> get_var_type_from_sig context var
 
 
@@ -433,7 +447,7 @@ let rec expr_type context expr =
       (match get_var_type context var with
        | Some typ -> typ
        | None -> (value_type program tenv vt))
-  | JBir.Binop ((JBir.ArrayLoad typ), e1, e2) ->
+  | JBir.Binop ((JBir.ArrayLoad _), e1, _) ->
       let typ = expr_type context e1 in
       (extract_array_type typ)
   | _ -> value_type program tenv (JBir.type_of_expr expr)
@@ -452,10 +466,10 @@ let return_type program tenv ms meth_kind =
 
 
 let add_models_types tenv =
-  let add_type t typename typ =
-    if not (Sil.tenv_mem t typename) then
-      Sil.tenv_add tenv typename typ in
-  Sil.tenv_iter (add_type tenv) !JClasspath.models_tenv
+  let add_type t typename struct_typ =
+    if not (Tenv.mem t typename) then
+      Tenv.add tenv typename struct_typ in
+  Tenv.iter (add_type tenv) !JClasspath.models_tenv
 
 
 (* TODO #6604630: remove *)

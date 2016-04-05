@@ -52,6 +52,9 @@ public class InferRunner {
       "/dependencies/java/jackson/jackson-2.2.3.jar",
   };
 
+  private static final String CXX_INCLUDE_DIR =
+      "/facebook-clang-plugins/clang/include/c++/v1/";
+
   private static final String IPHONESIMULATOR_ISYSROOT_SUFFIX =
       "/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk";
 
@@ -202,6 +205,21 @@ public class InferRunner {
     return stdParam;
   }
 
+  private static String getSystemHeaderFlag(Language lang) {
+    String headerFlag = "";
+    switch (lang) {
+      case CPP:
+        String current_dir = System.getProperty("user.dir");
+        headerFlag = new StringBuilder()
+          .append("-isystem")
+          .append(current_dir)
+          .append(CXX_INCLUDE_DIR)
+          .toString();
+        break;
+    }
+    return headerFlag;
+  }
+
   public static ImmutableList<String> createClangCommand(
     String sourceFile,
     Language lang,
@@ -226,6 +244,7 @@ public class InferRunner {
         .add("-x")
         .add(getClangLangOption(lang))
         .add(getStdParam(lang))
+        .add(getSystemHeaderFlag(lang))
         .addAll(isysrootOption.build())
         .addAll(arcOption.build())
         .add("-c")
@@ -243,7 +262,8 @@ public class InferRunner {
       boolean analyze,
       @Nullable String isysroot,
       @Nullable String ml_buckets,
-      boolean arc) {
+      boolean arc,
+      boolean headers) {
     File resultsDir = createResultsDir(folder);
     String resultsDirName = resultsDir.getAbsolutePath();
     InferRunner.bugsFile = new File(resultsDir, BUGS_FILE_NAME);
@@ -254,6 +274,10 @@ public class InferRunner {
       analyzeOption
           .add("--analyzer")
           .add("capture");
+    }
+    if (headers) {
+      analyzeOption
+          .add("--headers");
     }
     ImmutableList.Builder<String> ml_bucketsOption =
         new ImmutableList.Builder<>();
@@ -267,12 +291,32 @@ public class InferRunner {
         .add("--out")
         .add(resultsDirName)
         .add("--testing_mode")
+        .add("--cxx")
         .addAll(analyzeOption.build())
         .addAll(ml_bucketsOption.build())
         .add("--")
         .addAll(createClangCommand(sourceFile, lang, isysroot, arc))
         .build();
     return inferCmd;
+  }
+
+  public static ImmutableList<String> createClangInferCommand(
+      TemporaryFolder folder,
+      String sourceFile,
+      Language lang,
+      boolean analyze,
+      @Nullable String isysroot,
+      @Nullable String ml_buckets,
+      boolean arc) {
+    return createClangInferCommand(
+        folder,
+        sourceFile,
+        lang,
+        analyze,
+        isysroot,
+        ml_buckets,
+        arc,
+        false);
   }
 
   public static ImmutableList<String> createCInferCommandFrontend(
@@ -366,6 +410,20 @@ public class InferRunner {
         false);
   }
 
+  public static ImmutableList<String> createCPPInferCommandIncludeHeaders(
+      TemporaryFolder folder,
+      String sourceFile) {
+    return createClangInferCommand(
+        folder,
+        sourceFile,
+        Language.CPP,
+        true,
+        null,
+        null,
+        false,
+        true);
+  }
+
   public static ImmutableList<String> createCPPInferCommandWithMLBuckets(
       TemporaryFolder folder,
       String sourceFile,
@@ -390,6 +448,20 @@ public class InferRunner {
         true,
         getXcodeRoot() + IPHONESIMULATOR_ISYSROOT_SUFFIX,
         null,
+        false);
+  }
+
+  public static ImmutableList<String> createObjCInferCommandSimple(
+      TemporaryFolder folder,
+      String sourceFile,
+      String ml_bucket) throws IOException, InterruptedException {
+    return createClangInferCommand(
+        folder,
+        sourceFile,
+        Language.ObjC,
+        true,
+        null,
+        ml_bucket,
         false);
   }
 

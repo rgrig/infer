@@ -9,7 +9,6 @@
 
 module L = Logging
 module P = Printf
-open Utils
 
 (** Module for Type Error messages. *)
 
@@ -36,8 +35,8 @@ struct
   let equal (n1, i1) (n2, i2) =
     Cfg.Node.equal n1 n2 && i1 = i2
   let hash (n, i) = Hashtbl.hash (Cfg.Node.hash n, i)
-  let get_node (n, i) = n
-  let replace_node (n, i) n' = (n', i)
+  let get_node (n, _) = n
+  let replace_node (_, i) n' = (n', i)
   let create_generator n = (n, ref 0)
   let gen instr_ref_gen =
     let (node, ir) = instr_ref_gen in
@@ -89,11 +88,12 @@ module H = Hashtbl.Make(struct
           Procname.equal pn1 pn2
       | Field_not_initialized (_, _), _
       | _, Field_not_initialized (_, _) -> false
-      | Field_not_mutable (fn1, od1), Field_not_mutable (fn2, od2) ->
+      | Field_not_mutable (fn1, _), Field_not_mutable (fn2, _) ->
           Ident.fieldname_equal fn1 fn2
       | Field_not_mutable _, _
       | _, Field_not_mutable _ -> false
-      | Field_annotation_inconsistent (ann1, fn1, od1), Field_annotation_inconsistent (ann2, fn2, od2) ->
+      | Field_annotation_inconsistent (ann1, fn1, _),
+        Field_annotation_inconsistent (ann2, fn2, _) ->
           ann1 = ann2 &&
           Ident.fieldname_equal fn1 fn2
       | Field_annotation_inconsistent _, _
@@ -103,21 +103,21 @@ module H = Hashtbl.Make(struct
           Procname.equal pn1 pn2
       | Field_over_annotated (_, _), _
       | _, Field_over_annotated (_, _) -> false
-      | Null_field_access (so1, fn1, od1, ii1), Null_field_access (so2, fn2, od2, ii2) ->
+      | Null_field_access (so1, fn1, _, ii1), Null_field_access (so2, fn2, _, ii2) ->
           (opt_equal string_equal) so1 so2 &&
           Ident.fieldname_equal fn1 fn2 &&
           bool_equal ii1 ii2
       | Null_field_access _, _
       | _, Null_field_access _ -> false
-      | Call_receiver_annotation_inconsistent (ann1, so1, pn1, od1),
-        Call_receiver_annotation_inconsistent (ann2, so2, pn2, od2) ->
+      | Call_receiver_annotation_inconsistent (ann1, so1, pn1, _),
+        Call_receiver_annotation_inconsistent (ann2, so2, pn2, _) ->
           ann1 = ann2 &&
           (opt_equal string_equal) so1 so2 &&
           Procname.equal pn1 pn2
       | Call_receiver_annotation_inconsistent _, _
       | _, Call_receiver_annotation_inconsistent _ -> false
-      | Parameter_annotation_inconsistent (ann1, s1, n1, pn1, cl1, od1),
-        Parameter_annotation_inconsistent (ann2, s2, n2, pn2, cl2, od2) ->
+      | Parameter_annotation_inconsistent (ann1, s1, n1, pn1, cl1, _),
+        Parameter_annotation_inconsistent (ann2, s2, n2, pn2, cl2, _) ->
           ann1 = ann2 &&
           string_equal s1 s2 &&
           int_equal n1 n2 &&
@@ -125,8 +125,8 @@ module H = Hashtbl.Make(struct
           Location.equal cl1 cl2
       | Parameter_annotation_inconsistent _, _
       | _, Parameter_annotation_inconsistent _ -> false
-      | Return_annotation_inconsistent (ann1, pn1, od1),
-        Return_annotation_inconsistent (ann2, pn2, od2) ->
+      | Return_annotation_inconsistent (ann1, pn1, _),
+        Return_annotation_inconsistent (ann2, pn2, _) ->
           ann1 = ann2 && Procname.equal pn1 pn2
       | Return_annotation_inconsistent _, _
       | _, Return_annotation_inconsistent _ -> false
@@ -159,19 +159,19 @@ module H = Hashtbl.Make(struct
           Hashtbl.hash (1, b, string_opt_hash so, nn)
       | Field_not_initialized (fn, pn) ->
           Hashtbl.hash (2, string_hash ((Ident.fieldname_to_string fn) ^ (Procname.to_string pn)))
-      | Field_not_mutable (fn, od) ->
+      | Field_not_mutable (fn, _) ->
           Hashtbl.hash (3, string_hash (Ident.fieldname_to_string fn))
-      | Field_annotation_inconsistent (ann, fn, od) ->
+      | Field_annotation_inconsistent (ann, fn, _) ->
           Hashtbl.hash (4, ann, string_hash (Ident.fieldname_to_string fn))
       | Field_over_annotated (fn, pn) ->
           Hashtbl.hash (5, string_hash ((Ident.fieldname_to_string fn) ^ (Procname.to_string pn)))
-      | Null_field_access (so, fn, od, ii) ->
+      | Null_field_access (so, fn, _, _) ->
           Hashtbl.hash (6, string_opt_hash so, string_hash (Ident.fieldname_to_string fn))
-      | Call_receiver_annotation_inconsistent (ann, so, pn, od) ->
+      | Call_receiver_annotation_inconsistent (ann, so, pn, _) ->
           Hashtbl.hash (7, ann, string_opt_hash so, Procname.hash_pname pn)
-      | Parameter_annotation_inconsistent (ann, s, n, pn, cl, od) ->
+      | Parameter_annotation_inconsistent (ann, s, n, pn, _, _) ->
           Hashtbl.hash (8, ann, string_hash s, n, Procname.hash_pname pn)
-      | Return_annotation_inconsistent (ann, pn, od) ->
+      | Return_annotation_inconsistent (ann, pn, _) ->
           Hashtbl.hash (9, ann, Procname.hash_pname pn)
       | Return_over_annotated pn ->
           Hashtbl.hash (10, Procname.hash_pname pn)
@@ -304,11 +304,15 @@ type st_report_error =
 
 (** Report an error right now. *)
 let report_error_now
-    (st_report_error : st_report_error)
-    node err_instance instr_ref_opt loc proc_name : unit =
+    (st_report_error : st_report_error) node err_instance loc pname : unit =
   let demo_mode = true in
   let do_print_base ew_string kind_s s =
-    L.stdout "%s %s in %s %s@." ew_string kind_s (Procname.java_get_method proc_name) s in
+    let mname = match pname with
+      | Procname.Java pname_java ->
+          Procname.java_get_method pname_java
+      | _ ->
+          Procname.to_simplified_string pname in
+    L.stdout "%s %s in %s %s@." ew_string kind_s mname s in
   let do_print ew_string kind_s s =
     L.stdout "%s:%d " (DB.source_file_to_string loc.Location.file) loc.Location.line;
     do_print_base ew_string kind_s s in
@@ -337,7 +341,14 @@ let report_error_now
         None
     | Field_not_initialized (fn, pn) ->
         let constructor_name =
-          if Procname.is_constructor pn then "the constructor" else Procname.java_get_method pn in
+          if Procname.is_constructor pn
+          then "the constructor"
+          else
+            match pn with
+            | Procname.Java pn_java ->
+                Procname.java_get_method pn_java
+            | _ ->
+                Procname.to_simplified_string pn in
         true,
         "ERADICATE_FIELD_NOT_INITIALIZED",
         P.sprintf
@@ -379,7 +390,14 @@ let report_error_now
         origin_loc
     | Field_over_annotated (fn, pn) ->
         let constructor_name =
-          if Procname.is_constructor pn then "the constructor" else Procname.java_get_method pn in
+          if Procname.is_constructor pn
+          then "the constructor"
+          else
+            match pn with
+            | Procname.Java pn_java ->
+                Procname.java_get_method pn_java
+            | _ ->
+                Procname.to_simplified_string pn in
         true,
         "ERADICATE_FIELD_OVER_ANNOTATED",
         P.sprintf
@@ -424,7 +442,7 @@ let report_error_now
         None,
         None,
         origin_loc
-    | Parameter_annotation_inconsistent (ann, s, n, pn, callee_loc, (origin_desc, origin_loc, _)) ->
+    | Parameter_annotation_inconsistent (ann, s, n, pn, _, (origin_desc, origin_loc, _)) ->
         let kind_s, description = match ann with
           | Annotations.Nullable ->
               "ERADICATE_PARAMETER_NOT_NULLABLE",
@@ -434,13 +452,14 @@ let report_error_now
                 n
                 s
                 origin_desc
-          | Annotations.Present -> "ERADICATE_PARAMETER_VALUE_ABSENT",
-                                   P.sprintf
-                                     "`%s` needs a present value in parameter %d but argument `%s` can be absent. %s"
-                                     (Procname.to_simplified_string pn)
-                                     n
-                                     s
-                                     origin_desc in
+          | Annotations.Present ->
+              "ERADICATE_PARAMETER_VALUE_ABSENT",
+              P.sprintf
+                "`%s` needs a present value in parameter %d but argument `%s` can be absent. %s"
+                (Procname.to_simplified_string pn)
+                n
+                s
+                origin_desc in
         true,
         kind_s,
         description,
@@ -494,19 +513,20 @@ let report_error_now
           | n -> (string_of_int n)^"th" in
         false,
         "ERADICATE_INCONSISTENT_SUBCLASS_PARAMETER_ANNOTATION",
-        P.sprintf "%s parameter `%s` of method `%s` is not `@Nullable` but is declared `@Nullable` in the parent class method `%s`."
+        P.sprintf
+          "%s parameter `%s` of method `%s` is not `@Nullable` but is declared `@Nullable`\
+           in the parent class method `%s`."
           (translate_position pos) param_name
           (Procname.to_simplified_string ~withclass: true pn)
           (Procname.to_simplified_string ~withclass: true opn),
         None,
         None,
-        None
-  in
+        None in
   let ew_string = if is_err then "Error" else "Warning" in
   (if demo_mode then do_print_demo else do_print) ew_string kind_s description;
   let always_report = Strict.err_instance_get_strict err_instance <> None in
   st_report_error
-    proc_name
+    pname
     (Cfg.Node.get_proc_desc node)
     kind_s
     loc
@@ -520,13 +540,12 @@ let report_error_now
 
 (** Report an error unless is has been reported already, or unless it's a forall error
     since it requires waiting until the end of the analysis and be printed by flush. *)
-let report_error st_report_error find_canonical_duplicate node
-    err_instance instr_ref_opt loc proc_name =
+let report_error (st_report_error : st_report_error) find_canonical_duplicate node
+    err_instance instr_ref_opt loc pname_java =
   let should_report_now =
     add_err find_canonical_duplicate err_instance instr_ref_opt loc in
   if should_report_now then
-    report_error_now
-      st_report_error node err_instance instr_ref_opt loc proc_name
+    report_error_now st_report_error node err_instance loc pname_java
 
 (** Report the forall checks at the end of the analysis and reset the error table *)
 let report_forall_checks_and_reset st_report_error proc_name =
@@ -536,8 +555,7 @@ let report_forall_checks_and_reset st_report_error proc_name =
         let node = InstrRef.get_node instr_ref in
         State.set_node node;
         if is_forall && err_state.always
-        then report_error_now
-            st_report_error node err_instance instr_ref_opt err_state.loc proc_name
+        then report_error_now st_report_error node err_instance err_state.loc proc_name
     | None, _ -> () in
   H.iter iter err_tbl;
   reset ()

@@ -9,7 +9,6 @@
 
 module L = Logging
 module F = Format
-open Utils
 
 (** Check an implicit cast when returning an immutable collection from a method whose type is mutable. *)
 let check_immutable_cast curr_pname curr_pdesc typ_expected typ_found_opt loc : unit =
@@ -46,5 +45,5 @@ let check_immutable_cast curr_pname curr_pdesc typ_expected typ_found_opt loc : 
       end
   | None -> ()
 
-let callback_check_immutable_cast get_proc_desc idenv proc_name =
-  Eradicate.callback_check_return_type check_immutable_cast get_proc_desc idenv proc_name
+let callback_check_immutable_cast =
+  Eradicate.callback_check_return_type check_immutable_cast

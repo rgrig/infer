@@ -10,27 +10,26 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
-@interface My_manager :NSObject
-- (int) my_mehtod;
+@interface My_manager : NSObject
+- (int)my_method;
 
 @end
 
 @implementation My_manager
 
-- (int) m
-{
-    void (^b)(int a);
-    int z = 3;
-    CGContextRef context = CGBitmapContextCreate(NULL, 0, 0, 8, 0, 0, 0);
-    CGImageRef newImage = CGBitmapContextCreateImage(context);
-    b = ^(int a) {
-        if (newImage) CGImageRelease(newImage);
-    };
-    b(z);
-    if (context) CGContextRelease(context);
-    return z;
+- (int)blockReleaseTODO {
+  void (^b)(int a);
+  int z = 3;
+  CGContextRef context = CGBitmapContextCreate(NULL, 0, 0, 8, 0, 0, 0);
+  CGImageRef newImage = CGBitmapContextCreateImage(context);
+  b = ^(int a) {
+    if (newImage)
+      CGImageRelease(newImage);
+  };
+  b(z); // currently doesn't work due to PRECONDITION_NOT_MET here
+  if (context)
+    CGContextRelease(context);
+  return z;
 }
-
-
 
 @end

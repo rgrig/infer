@@ -7,7 +7,6 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open Utils
 open LAst
 
 exception ImproperTypeError of string
@@ -31,7 +30,7 @@ let trans_operand : LAst.operand -> Sil.exp = function
   | Const const -> trans_constant const
 
 let rec trans_typ : LAst.typ -> Sil.typ = function
-  | Tint i -> Sil.Tint Sil.IInt (* TODO: check what size int is needed here *)
+  | Tint _i -> Sil.Tint Sil.IInt (* TODO: check what size int is needed here *)
   | Tfloat -> Sil.Tfloat Sil.FFloat
   | Tptr tp -> Sil.Tptr (trans_typ tp, Sil.Pk_pointer)
   | Tvector (i, tp)
@@ -70,7 +69,7 @@ let rec trans_annotated_instructions
         | Ret None -> (sil_instrs, locals)
         | Ret (Some (tp, exp)) ->
             let procname = Cfg.Procdesc.get_proc_name procdesc in
-            let ret_var = Sil.get_ret_pvar procname in
+            let ret_var = Pvar.get_ret_pvar procname in
             let new_sil_instr =
               Sil.Set (Sil.Lvar ret_var, trans_typ tp, trans_operand exp, location) in
             (new_sil_instr :: sil_instrs, locals)
@@ -82,13 +81,16 @@ let rec trans_annotated_instructions
             let new_sil_instr =
               Sil.Set (trans_variable var, trans_typ tp, trans_operand op, location) in
             (new_sil_instr :: sil_instrs, locals)
-        | Alloc (var, tp, num_elems) ->
+        | Alloc (var, tp, _num_elems) ->
             (* num_elems currently ignored *)
             begin match var with
               | Global (Name var_name) | Local (Name var_name) ->
                   let new_local = (Mangled.from_string var_name, trans_typ (Tptr tp)) in
                   (sil_instrs, new_local :: locals)
-              | _ -> raise (ImproperTypeError "Not expecting alloca instruction to a numbered variable.")
+              | _ ->
+                  raise
+                    (ImproperTypeError
+                       "Not expecting alloca instruction to a numbered variable.")
             end
         | Call (ret_var, func_var, typed_args) ->
             let new_sil_instr = Sil.Call (
@@ -126,7 +128,6 @@ let trans_function_def (cfg : Cfg.cfg) (cg: Cg.t) (metadata : LAst.metadata_map)
         | None -> Sil.Tvoid
         | Some ret_tp -> trans_typ ret_tp in
       let (proc_attrs : ProcAttributes.t) =
-        let open Sil in
         { (ProcAttributes.default proc_name Config.C_CPP) with
           ProcAttributes.formals =
             IList.map (fun (tp, name) -> (Mangled.from_string name, trans_typ tp)) params;
@@ -135,11 +136,7 @@ let trans_function_def (cfg : Cfg.cfg) (cg: Cg.t) (metadata : LAst.metadata_map)
           locals = []; (* TODO *)
           ret_type;
         } in
-      let (procdesc_builder : Cfg.Procdesc.proc_desc_builder) =
-        { Cfg.Procdesc.cfg = cfg;
-          proc_attributes = proc_attrs;
-        } in
-      let procdesc = Cfg.Procdesc.create procdesc_builder in
+      let procdesc = Cfg.Procdesc.create cfg proc_attrs in
       let start_kind = Cfg.Node.Start_node procdesc in
       let start_node = Cfg.Node.create cfg (source_only_location ()) start_kind [] procdesc [] in
       let exit_kind = Cfg.Node.Exit_node procdesc in
@@ -151,7 +148,8 @@ let trans_function_def (cfg : Cfg.cfg) (cg: Cg.t) (metadata : LAst.metadata_map)
         (* link all nodes in a chain for now *)
         | [] -> Cfg.Node.set_succs_exn start_node [exit_node] [exit_node]
         | nd :: nds -> Cfg.Node.set_succs_exn start_node [nd] [exit_node]; link_nodes nd nds in
-      let (sil_instrs, locals) = trans_annotated_instructions cfg procdesc metadata annotated_instrs in
+      let (sil_instrs, locals) =
+        trans_annotated_instructions cfg procdesc metadata annotated_instrs in
       let nodes = IList.map (node_of_sil_instr cfg procdesc) sil_instrs in
       Cfg.Procdesc.set_start_node procdesc start_node;
       Cfg.Procdesc.set_exit_node procdesc exit_node;
@@ -160,10 +158,10 @@ let trans_function_def (cfg : Cfg.cfg) (cg: Cg.t) (metadata : LAst.metadata_map)
       Cg.add_defined_node cg proc_name;
       IList.iter (Cg.add_edge cg proc_name) (callees_of_function_def func_def)
 
-let trans_program : LAst.program -> Cfg.cfg * Cg.t * Sil.tenv = function
+let trans_program : LAst.program -> Cfg.cfg * Cg.t * Tenv.t = function
     Program (func_defs, metadata) ->
       let cfg = Cfg.Node.create_cfg () in
       let cg = Cg.create () in
-      let tenv = Sil.create_tenv () in
+      let tenv = Tenv.create () in
       IList.iter (trans_function_def cfg cg metadata) func_defs;
       (cfg, cg, tenv)

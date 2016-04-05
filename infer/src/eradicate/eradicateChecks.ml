@@ -7,7 +7,6 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open Utils
 module L = Logging
 
 (** Module for the checks called by Eradicate. *)
@@ -27,6 +26,10 @@ let activate_field_over_annotated = Config.from_env_variable "ERADICATE_FIELD_OV
 (* activate the return over annotated warning *)
 let activate_return_over_annotated = Config.from_env_variable "ERADICATE_RETURN_OVER_ANNOTATED"
 
+(* activate the propagation of nullable to the return value *)
+let activate_propagate_return_nullable =
+  Config.from_env_variable "ERADICATE_PROPAGATE_RETURN_NULLABLE"
+
 (* do not report RETURN_NOT_NULLABLE if the return is annotated @Nonnull *)
 let return_nonnull_silent = true
 
@@ -42,12 +45,13 @@ let get_field_annotation fn typ =
         (* TODO (t4968422) eliminate not !Config.eradicate check by marking fields as nullified *)
         (* outside of Eradicate in some other way *)
         if (Models.Inference.enabled || not !Config.eradicate)
-           && Models.Inference.field_is_marked fn
+        && Models.Inference.field_is_marked fn
         then Annotations.mk_ia Annotations.Nullable ia
         else ia in
       Some (t, ia')
 
-let report_error = TypeErr.report_error Checkers.ST.report_error
+let report_error =
+  TypeErr.report_error Checkers.ST.report_error
 
 let explain_expr node e =
   match Errdesc.exp_rv_dexp node e with
@@ -115,7 +119,7 @@ type from_call =
   | From_containsKey (** x.containsKey *)
 
 (** Check the normalized "is zero" or "is not zero" condition of a prune instruction. *)
-let check_condition case_zero find_canonical_duplicate get_proc_desc curr_pname
+let check_condition case_zero find_canonical_duplicate curr_pname
     node e typ ta true_branch from_call idenv linereader loc instr_ref : unit =
   let is_fun_nonnull ta = match TypeAnnotation.get_origin ta with
     | TypeOrigin.Proc proc_origin ->
@@ -130,12 +134,12 @@ let check_condition case_zero find_canonical_duplicate get_proc_desc curr_pname
     let throwable_found = ref false in
     let throwable_class = Mangled.from_string "java.lang.Throwable" in
     let typ_is_throwable = function
-      | Sil.Tstruct (_, _, Csu.Class, Some c, _, _, _) ->
+      | Sil.Tstruct { Sil.csu = Csu.Class _; struct_name = Some c } ->
           Mangled.equal c throwable_class
       | _ -> false in
     let do_instr = function
       | Sil.Call (_, Sil.Const (Sil.Cfun pn), [_; (Sil.Sizeof(t, _), _)], _, _) when
-          Procname.equal pn SymExec.ModelBuiltins.__instanceof && typ_is_throwable t ->
+          Procname.equal pn ModelBuiltins.__instanceof && typ_is_throwable t ->
           throwable_found := true
       | _ -> () in
     let do_node n =
@@ -183,7 +187,7 @@ let check_nonzero find_canonical_duplicate = check_condition false find_canonica
 (** Check an assignment to a field. *)
 let check_field_assignment
     find_canonical_duplicate curr_pname node instr_ref typestate exp_lhs
-    exp_rhs typ loc fname t_ia_opt typecheck_expr print_current_state : unit =
+    exp_rhs typ loc fname t_ia_opt typecheck_expr : unit =
   let (t_lhs, ta_lhs, _) =
     typecheck_expr node instr_ref curr_pname typestate exp_lhs
       (typ, TypeAnnotation.const Annotations.Nullable false TypeOrigin.ONone, [loc]) loc in
@@ -191,14 +195,16 @@ let check_field_assignment
     typecheck_expr node instr_ref curr_pname typestate exp_rhs
       (typ, TypeAnnotation.const Annotations.Nullable false TypeOrigin.ONone, [loc]) loc in
   let should_report_nullable =
-    let field_is_inject_view () = match t_ia_opt with
-      | Some (_, ia) -> Annotations.ia_is_inject_view ia
-      | _ -> false in
+    let field_is_field_injector_readwrite () = match t_ia_opt with
+      | Some (_, ia) ->
+          Annotations.ia_is_field_injector_readwrite ia
+      | _ ->
+          false in
     TypeAnnotation.get_value Annotations.Nullable ta_lhs = false &&
     TypeAnnotation.get_value Annotations.Nullable ta_rhs = true &&
     PatternMatch.type_is_class t_lhs &&
     not (Ident.java_fieldname_is_outer_instance fname) &&
-    not (field_is_inject_view ()) in
+    not (field_is_field_injector_readwrite ()) in
   let should_report_absent =
     activate_optional_present &&
     TypeAnnotation.get_value Annotations.Present ta_lhs = true &&
@@ -249,14 +255,15 @@ let check_constructor_initialization
   if Procname.is_constructor curr_pname
   then begin
     match PatternMatch.get_this_type (Cfg.Procdesc.get_attributes curr_pdesc) with
-    | Some (Sil.Tptr (Sil.Tstruct (ftal, _, _, nameo, _, _, _) as ts, _)) ->
-        let do_fta (fn, ft, ia) =
+    | Some (Sil.Tptr (Sil.Tstruct { Sil.instance_fields; struct_name } as ts, _)) ->
+        let do_field (fn, ft, _) =
           let annotated_with f = match get_field_annotation fn ts with
             | None -> false
             | Some (_, ia) -> f ia in
           let nullable_annotated = annotated_with Annotations.ia_is_nullable in
           let nonnull_annotated = annotated_with Annotations.ia_is_nonnull in
-          let inject_annotated = annotated_with Annotations.ia_is_inject in
+          let injector_readonly_annotated =
+            annotated_with Annotations.ia_is_field_injector_readonly in
 
           let final_type_annotation_with unknown list f =
             let filter_range_opt = function
@@ -264,7 +271,7 @@ let check_constructor_initialization
               | None -> unknown in
             IList.exists
               (function pname, typestate ->
-                let pvar = Sil.mk_pvar
+                let pvar = Pvar.mk
                     (Mangled.from_string (Ident.fieldname_to_string fn))
                     pname in
                 filter_range_opt (TypeState.lookup_pvar pvar typestate))
@@ -282,18 +289,18 @@ let check_constructor_initialization
               (Lazy.force final_constructor_typestates)
               (fun ta -> TypeAnnotation.get_value Annotations.Nullable ta = true) in
 
-          let should_check_field =
+          let should_check_field_initialization =
             let in_current_class =
               let fld_cname = Ident.java_fieldname_get_class fn in
-              match nameo with
+              match struct_name with
               | None -> false
               | Some name -> Mangled.equal name (Mangled.from_string fld_cname) in
-            not inject_annotated &&
+            not injector_readonly_annotated &&
             PatternMatch.type_is_class ft &&
             in_current_class &&
             not (Ident.java_fieldname_is_outer_instance fn) in
 
-          if should_check_field then
+          if should_check_field_initialization then
             begin
               if Models.Inference.enabled then Models.Inference.field_add_nullable_annotation fn;
 
@@ -321,13 +328,30 @@ let check_constructor_initialization
                   curr_pname;
             end in
 
-        IList.iter do_fta ftal
+        IList.iter do_field instance_fields
     | _ -> ()
   end
 
+(** Make the return type @Nullable by modifying the spec. *)
+let spec_make_return_nullable curr_pname =
+  match Specs.get_summary curr_pname with
+  | Some summary ->
+      let proc_attributes = Specs.get_attributes summary in
+      let method_annotation = proc_attributes.ProcAttributes.method_annotation in
+      let method_annotation' = Annotations.method_annotation_mark_return
+          Annotations.Nullable method_annotation in
+      let proc_attributes' =
+        { proc_attributes with
+          ProcAttributes.method_annotation = method_annotation' } in
+      let summary' =
+        { summary with
+          Specs.attributes = proc_attributes' } in
+      Specs.add_summary curr_pname summary'
+  | None -> ()
+
 (** Check the annotations when returning from a method. *)
 let check_return_annotation
-    find_canonical_duplicate curr_pname curr_pdesc exit_node ret_range
+    find_canonical_duplicate curr_pname exit_node ret_range
     ret_ia ret_implicitly_nullable loc : unit =
   let ret_annotated_nullable = Annotations.ia_is_nullable ret_ia in
   let ret_annotated_present = Annotations.ia_is_present ret_ia in
@@ -352,10 +376,12 @@ let check_return_annotation
         activate_return_over_annotated in
 
       if return_not_nullable && Models.Inference.enabled then
-        Models.Inference.proc_add_return_nullable curr_pname;
+        Models.Inference.proc_mark_return_nullable curr_pname;
 
-      if return_not_nullable && !Config.ondemand_enabled then
-        Ondemand.proc_add_return_nullable curr_pname;
+      if return_not_nullable &&
+         activate_propagate_return_nullable
+      then
+        spec_make_return_nullable curr_pname;
 
       if return_not_nullable || return_value_not_present then
         begin
@@ -391,11 +417,10 @@ let check_call_receiver
     typestate
     call_params
     callee_pname
-    callee_loc
     (instr_ref : TypeErr.InstrRef.t)
     loc
     typecheck_expr
-    print_current_state : unit =
+  : unit =
   match call_params with
   | ((original_this_e, this_e), typ) :: _ ->
       let (_, this_ta, _) =
@@ -424,8 +449,7 @@ let check_call_receiver
 (** Check the parameters of a call. *)
 let check_call_parameters
     find_canonical_duplicate curr_pname node typestate callee_attributes
-    sig_params call_params loc annotated_signature
-    instr_ref typecheck_expr print_current_state : unit =
+    sig_params call_params loc instr_ref typecheck_expr : unit =
   let callee_pname = callee_attributes.ProcAttributes.proc_name in
   let has_this = is_virtual sig_params in
   let tot_param_num = IList.length sig_params - (if has_this then 1 else 0) in
@@ -492,8 +516,7 @@ let check_call_parameters
 (** Checks if the annotations are consistent with the inherited class or with the
     implemented interfaces *)
 let check_overridden_annotations
-    find_canonical_duplicate get_proc_desc tenv proc_name proc_desc annotated_signature =
-
+    find_canonical_duplicate tenv proc_name proc_desc annotated_signature =
   let start_node = Cfg.Procdesc.get_start_node proc_desc in
   let loc = Cfg.Node.get_loc start_node in
 
@@ -514,11 +537,11 @@ let check_overridden_annotations
 
   and check_params overriden_proc_name overriden_signature =
     let compare pos current_param overriden_param : int =
-      let current_name, current_ia, current_type = current_param in
-      let _, overriden_ia, overriden_type = overriden_param in
+      let current_name, current_ia, _ = current_param in
+      let _, overriden_ia, _ = overriden_param in
       let () =
         if not (Annotations.ia_is_nullable current_ia)
-           && Annotations.ia_is_nullable overriden_ia then
+        && Annotations.ia_is_nullable overriden_ia then
           report_error
             find_canonical_duplicate
             start_node

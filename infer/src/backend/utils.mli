@@ -68,17 +68,14 @@ module StringMap : Map.S with type key = string
 
 (** {2 Printing} *)
 
-(** Type of location in ml source: file,line,column *)
-type ml_location = string * int * int
+(** Type of location in ml source: __POS__ *)
+type ml_loc = string * int * int * int
 
-(** String describing the file of an ml location *)
-val ml_location_file_string : ml_location -> string
-
-(** Turn an ml location into a string *)
-val ml_location_string : ml_location -> string
+(** Convert a ml location to a string *)
+val ml_loc_to_string : ml_loc -> string
 
 (** Pretty print a location of ml source *)
-val pp_ml_location_opt : Format.formatter -> ml_location option -> unit
+val pp_ml_loc_opt : Format.formatter -> ml_loc option -> unit
 
 (** Colors supported in printing *)
 type color = Black | Blue | Green | Orange | Red
@@ -163,13 +160,10 @@ val initial_analysis_time : float
 val symops_per_iteration : int ref
 
 (** number of seconds to multiply by the number of iterations, after which there is a timeout *)
-val seconds_per_iteration : int ref
-
-(** timeout value from the -iterations command line option *)
-val iterations_cmdline : int ref
+val seconds_per_iteration : float ref
 
 (** Timeout in seconds for each function *)
-val get_timeout_seconds : unit -> int
+val get_timeout_seconds : unit -> float
 
 (** Set the timeout values in seconds and symops, computed as a multiple of the integer parameter *)
 val set_iterations : int -> unit
@@ -190,38 +184,45 @@ val pp_failure_kind : Format.formatter -> failure_kind -> unit
 
 (** Count the number of symbolic operations *)
 module SymOp : sig
-  (** Count one symop *)
-  val pay : unit -> unit
-
-  (** Reset the counter and activate the alarm *)
-  val set_alarm : unit -> unit
-
-  (** De-activate the alarm *)
-  val unset_alarm : unit -> unit
-
-  (** set the handler for the wallclock timeout *)
-  val set_wallclock_timeout_handler : (unit -> unit) -> unit
-
-  (** Set the wallclock alarm checked at every pay() *)
-  val set_wallclock_alarm : int -> unit
-
-  (** Unset the wallclock alarm checked at every pay() *)
-  val unset_wallclock_alarm : unit -> unit
+  (** Internal state of the module *)
+  type t
 
   (** if the wallclock alarm has expired, raise a timeout exception *)
   val check_wallclock_alarm : unit -> unit
 
+  (** Return the time remaining before the wallclock alarm expires *)
+  val get_remaining_wallclock_time : unit -> float
+
   (** Return the total number of symop's since the beginning *)
   val get_total : unit -> int
+
+  (** Count one symop *)
+  val pay : unit -> unit
 
   (** Reset the total number of symop's *)
   val reset_total : unit -> unit
 
-  (** Report the stats since the last reset *)
-  val report : Format.formatter -> unit -> unit
+  (** Restore the old state. *)
+  val restore_state : t -> unit
 
-  (** Report the stats since the loading of this module *)
-  val report_total : Format.formatter -> unit -> unit
+  (** Return the old state, and revert the current state to the initial one.
+      If keep_symop_total is true, share the total counter. *)
+  val save_state : keep_symop_total:bool -> t
+
+  (** Reset the counter and activate the alarm *)
+  val set_alarm : unit -> unit
+
+  (** Set the wallclock alarm checked at every pay() *)
+  val set_wallclock_alarm : float -> unit
+
+  (** set the handler for the wallclock timeout *)
+  val set_wallclock_timeout_handler : (unit -> unit) -> unit
+
+  (** De-activate the alarm *)
+  val unset_alarm : unit -> unit
+
+  (** Unset the wallclock alarm checked at every pay() *)
+  val unset_wallclock_alarm : unit -> unit
 end
 
 module Arg : sig
@@ -232,7 +233,12 @@ module Arg : sig
 
   val align : (key * spec * doc) list -> aligned list
 
-  val parse : aligned list -> anon_fun -> usage_msg -> unit
+  (** [parse env_var arg_desc anon_fun usage_msg] prepends the decoded value of environment variable
+      [env_var] to [Sys.argv] and then parses the result using the standard [Arg.parse].  Therefore
+      arguments passed on the command line supercede those specified in the environment variable.
+      WARNING: If an argument appears both in the environment variable and on the command line, it
+      will be interpreted twice. *)
+  val parse : string -> aligned list -> anon_fun -> usage_msg -> unit
 
   val usage : aligned list -> usage_msg -> unit
 
@@ -247,6 +253,14 @@ module Arg : sig
   val create_options_desc : bool -> string -> (string * Arg.spec * string option * string) list -> aligned list
 
 end
+
+(** Compute a 32-character hexadecimal crc using the Digest module  *)
+val string_crc_hex32 : string -> string
+
+(** Append a crc to the string, using string_crc_hex32.
+    Cut the string if it exceeds the cutoff limit.
+    Use an optional key to compute the crc.  *)
+val string_append_crc_cutoff : ?cutoff:int -> ?key:string -> string -> string
 
 (** Check if the lhs is a substring of the rhs. *)
 val string_is_prefix : string -> string -> bool
@@ -308,22 +322,10 @@ val base_arg_desc : arg_list
 (** Reserved command-line arguments *)
 val reserved_arg_desc : arg_list
 
-(** Escape a string for use in a CSV or XML file: replace reserved characters with escape sequences *)
-module Escape : sig
-  (** escape a string specifying the per character escaping function *)
-  val escape_map : (char -> string option) -> string -> string
-  val escape_dotty : string -> string (** escape a string to be used in a dotty file *)
-  val escape_csv : string -> string (** escape a string to be used in a csv file *)
-  val escape_path : string -> string (** escape a path replacing the directory separator with an underscore *)
-  val escape_xml : string -> string (** escape a string to be used in an xml file *)
-end
-
-
 (** flags for a procedure *)
 type proc_flags = (string, string) Hashtbl.t
 
 (** keys for proc_flags *)
-val proc_flag_iterations : string (** key to specify procedure-specific iterations *)
 val proc_flag_skip : string (** key to specify that a function should be treated as a skip function *)
 val proc_flag_ignore_return : string (** key to specify that it is OK to ignore the return value *)
 
@@ -362,3 +364,22 @@ val analyzers: analyzer list
 val string_of_analyzer: analyzer -> string
 
 val analyzer_of_string: string -> analyzer
+
+(** Call f x with Config.abs_val set to zero.
+    Restore the initial value also in case of exception. *)
+val run_with_abs_val_equal_zero : ('a -> 'b) -> 'a -> 'b
+
+(** Call f x with Config.footprint set to true.
+    Restore the initial value of footprint also in case of exception. *)
+val run_in_footprint_mode : ('a -> 'b) -> 'a -> 'b
+
+(** Call f x with Config.footprint set to false.
+    Restore the initial value of footprint also in case of exception. *)
+val run_in_re_execution_mode : ('a -> 'b) -> 'a -> 'b
+
+(** [set_reference_and_call_function ref val f x] calls f x with ref set to val.
+    Restore the initial value also in case of exception. *)
+val set_reference_and_call_function : 'a ref -> 'a -> ('b -> 'c) -> 'b -> 'c
+
+(** Pritn stack trace and throw assert false *)
+val assert_false : ml_loc -> 'a

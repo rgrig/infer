@@ -32,7 +32,7 @@ module NodeTbl : Hashtbl.S with type key = Cfg.Node.t
     representation of a file: the type environment, the control graph and the control
     flow graph *)
 type icfg = {
-  tenv : Sil.tenv;
+  tenv : Tenv.t;
   cg : Cg.t;
   cfg : Cfg.cfg;
 }
@@ -63,7 +63,7 @@ val get_impl : t -> JBir.t
 val get_cn : t -> JBasics.class_name
 
 (** returns the type environment that corresponds to the current file. *)
-val get_tenv : t -> Sil.tenv
+val get_tenv : t -> Tenv.t
 
 (** returns the control graph that corresponds to the current file.  *)
 val get_cg : t -> Cg.t
@@ -106,7 +106,7 @@ val get_node : t -> JCode.jcode Javalib.interface_or_class
 val get_never_null_matcher : t -> Inferconfig.NeverReturnNull.matcher
 
 (** [set_pvar context var type] adds a variable with a type to the context  *)
-val set_pvar : t -> JBir.var -> Sil.typ -> Sil.pvar
+val set_pvar : t -> JBir.var -> Sil.typ -> Pvar.t
 
 (** [get_var_type context var] returns the type of the variable, if the variable is in the context *)
 val get_var_type : t -> JBir.var -> Sil.typ option
@@ -118,7 +118,7 @@ val reset_pvar_type : t -> unit
 val reset_exn_node_table : unit -> unit
 
 (** adds the exception node for a given method *)
-val add_exn_node : Procname.Hash.key -> Cfg.Node.t -> unit
+val add_exn_node : Procname.t -> Cfg.Node.t -> unit
 
 (** returns the exception node of a given method *)
 val get_exn_node : Cfg.Procdesc.t -> Cfg.Node.t option

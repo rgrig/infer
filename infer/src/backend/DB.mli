@@ -26,7 +26,12 @@ val filename_concat : filename -> string -> filename
 val filename_add_suffix : filename -> string -> filename
 val file_exists : filename -> bool
 val file_remove : filename -> unit
-val file_modified_time : filename -> float (** Return the time when a file was last modified. The file must exist. *)
+
+(** Return the time when a file was last modified. The file must exist. *)
+val file_modified_time : ?symlink:bool -> filename -> float
+
+(** Return whether filename was updated after analysis started. File doesn't have to exist *)
+val file_was_updated_after_start : filename -> bool
 
 (** {2 Results Directory} *)
 
@@ -62,6 +67,9 @@ type source_file
 
 (** Maps from source_file *)
 module SourceFileMap : Map.S with type key = source_file
+
+(** Set of source files *)
+module SourceFileSet : Set.S with type elt = source_file
 
 (** current source file *)
 val current_source : source_file ref
@@ -126,6 +134,9 @@ val source_file_in_resdir : source_file -> filename
 (** directory where the results of the capture phase are stored *)
 val captured_dir : unit -> filename
 
+(** create the directory containing the file bane *)
+val filename_create_dir : filename -> unit
+
 (** Find the source directories in the current results dir *)
 val find_source_dirs : unit -> source_dir list
 
@@ -133,13 +144,13 @@ val find_source_dirs : unit -> source_dir list
 val create_dir : string -> unit
 
 (** Read a file using a lock to allow write attempts in parallel. *)
-val read_file_with_lock : string -> string -> Bytes.t option
+val read_file_with_lock : string -> string -> bytes option
 
 (** Update the file contents with the update function provided.
     If the directory does not exist, it is created.
     If the file does not exist, it is created, and update is given the empty string.
     A lock is used to allow write attempts in parallel. *)
-val update_file_with_lock : string -> string -> (Bytes.t -> Bytes.t) -> unit
+val update_file_with_lock : string -> string -> (bytes -> bytes) -> unit
 
 (** get the path of the global type environment (only used in Java) *)
 val global_tenv_fname : unit -> filename

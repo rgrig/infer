@@ -10,7 +10,6 @@
 
 (** Database of analysis results *)
 
-open Utils
 module F = Format
 module L = Logging
 
@@ -38,6 +37,8 @@ end
 
 module SourceFileMap = Map.Make(OrderedSourceFile)
 
+module SourceFileSet = Set.Make(OrderedSourceFile)
+
 let source_file_from_string path =
   if Filename.is_relative path then
     Relative path
@@ -50,17 +51,15 @@ let abs_source_file_from_path fname =
 
 (** convert a project root directory and a full path to a rooted source file *)
 let rel_source_file_from_abs_path root fname =
-  if Utils.string_is_prefix root fname then
-    let relative_fname = filename_to_relative root fname in
-    Relative relative_fname
+  let relative_complemented_fname = filename_to_relative root fname in
+  if string_is_prefix root fname &&
+     Filename.is_relative relative_complemented_fname then
+    Relative relative_complemented_fname
   else
     (* The project root is not a prefix of the file name *)
     abs_source_file_from_path fname
 
-type encoding_type =
-    Enc_base | Enc_path_with_underscores | Enc_crc
-
-let curr_encoding = Enc_crc
+let curr_encoding = `Enc_crc
 
 let source_file_to_string fname =
   match fname with
@@ -89,15 +88,14 @@ let source_file_to_rel_path fname =
 let source_file_encoding source_file =
   let source_file_s = source_file_to_string source_file in
   match curr_encoding with
-  | Enc_base ->
+  | `Enc_base ->
       Filename.basename source_file_s
-  | Enc_path_with_underscores ->
+  | `Enc_path_with_underscores ->
       Escape.escape_path source_file_s
-  | Enc_crc ->
+  | `Enc_crc ->
       let base = Filename.basename source_file_s in
       let dir = Filename.dirname source_file_s in
-      let crc = CRC.crc16 dir in
-      base ^ "." ^ crc
+      string_append_crc_cutoff ~key:dir base
 
 let source_file_empty = Absolute ""
 
@@ -116,7 +114,8 @@ let source_dir_to_string source_dir = source_dir
 
 (** get the path to an internal file with the given extention (.cfg, .cg, .tenv) *)
 let source_dir_get_internal_file source_dir extension =
-  let source_dir_name = Filename.chop_extension (Filename.basename source_dir) in
+  let source_dir_name =
+    string_append_crc_cutoff (Filename.chop_extension (Filename.basename source_dir)) in
   let fname = source_dir_name ^ extension in
   Filename.concat source_dir fname
 
@@ -184,8 +183,8 @@ module FilenameMap = Map.Make(
   end)
 
 (** Return the time when a file was last modified. The file must exist. *)
-let file_modified_time fname =
-  let stat = Unix.stat fname in
+let file_modified_time ?(symlink=false) fname =
+  let stat = (if symlink then Unix.lstat else Unix.stat) fname in
   stat.Unix.st_mtime
 
 (** Create a directory if it does not exist already. *)
@@ -202,6 +201,11 @@ let create_dir dir =
          if not created_concurrently then
            (L.err "@.ERROR: cannot create directory %s@." dir;
             assert false))
+
+let filename_create_dir fname =
+  let dirname = Filename.dirname fname in
+  if not (Sys.file_exists dirname)
+  then create_dir dirname
 
 let read_whole_file fd =
   let stats = Unix.fstat fd in
@@ -330,3 +334,15 @@ let is_source_file path =
   IList.exists
     (fun ext -> Filename.check_suffix path ext)
     Config.source_file_extentions
+
+let infer_start_time = lazy
+  (file_modified_time (Results_dir.path_to_filename Results_dir.Abs_root [Config.start_filename]))
+
+(** Return whether filename was updated after analysis started. File doesn't have to exist *)
+let file_was_updated_after_start fname =
+  if file_exists fname then
+    let file_mtime = file_modified_time fname in
+    file_mtime > Lazy.force infer_start_time
+  else
+    (* since file doesn't exist, it wasn't modified *)
+    false

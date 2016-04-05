@@ -10,7 +10,6 @@
 
 (** Functions for Theorem Proving *)
 
-open Ident
 open Sil
 
 (** {2 Ordinary Theorem Proving} *)
@@ -63,7 +62,7 @@ val get_bounds : Prop.normal Prop.t -> Sil.exp -> Sil.Int.t option * Sil.Int.t o
 (** {2 Abduction prover} *)
 
 (** [check_implication p1 p2] returns true if [p1|-p2] *)
-val check_implication : Procname.t -> Sil.tenv -> Prop.normal Prop.t -> Prop.exposed Prop.t -> bool
+val check_implication : Procname.t -> Tenv.t -> Prop.normal Prop.t -> Prop.exposed Prop.t -> bool
 
 type check =
   | Bounds_check
@@ -80,7 +79,7 @@ type implication_result =
     frame)] where [sub] is a substitution which instantiates the
     primed vars of [p1] and [p2], which are assumed to be disjoint. *)
 val check_implication_for_footprint :
-  Procname.t -> Sil.tenv -> Prop.normal Prop.t -> Prop.exposed Prop.t -> implication_result
+  Procname.t -> Tenv.t -> Prop.normal Prop.t -> Prop.exposed Prop.t -> implication_result
 
 (** {2 Cover: miminum set of pi's whose disjunction is equivalent to true} *)
 
@@ -92,17 +91,21 @@ val find_minimum_pure_cover : (Sil.atom list * 'a) list -> (Sil.atom list * 'a) 
 (** Computer an upper bound of an expression *)
 val compute_upper_bound_of_exp : Prop.normal Prop.t -> Sil.exp -> Sil.Int.t option
 
-
 (** {2 Subtype checking} *)
 
-(** check_subtype t1 t2 checks whether t1 is a subtype of t2, given the type environment tenv. *)
-val check_subtype : Sil.tenv -> Sil.typ -> Sil.typ -> bool
+module Subtyping_check :
+sig
 
-(** subtype_case_analysis tenv tecp1 texp2 performs case analysis on [texp1 <: texp2],
-    and returns the updated types in the true and false case, if they are possible *)
-val subtype_case_analysis : Sil.tenv -> Sil.exp -> Sil.exp -> Sil.exp option * Sil.exp option
+  (** check_subtype t1 t2 checks whether t1 is a subtype of t2, given the type environment tenv. *)
+  val check_subtype : Tenv.t -> Sil.typ -> Sil.typ -> bool
 
+  (** subtype_case_analysis tenv tecp1 texp2 performs case analysis on [texp1 <: texp2],
+      and returns the updated types in the true and false case, if they are possible *)
+  val subtype_case_analysis : Tenv.t -> Sil.exp -> Sil.exp -> Sil.exp option * Sil.exp option
 
+end
+
+val get_overrides_of : Tenv.t -> Sil.typ -> Procname.t -> (typ * Procname.t) list
 
 
 

@@ -18,6 +18,10 @@ public class InferBuiltins {
 
     public native static void __set_lock_attribute(Object o);
 
+    public native static void __set_locked_attribute(Object o);
+
+    public native static void __set_unlocked_attribute(Object o);
+
     public native static void _exit();
 
     private native static void __infer_assume(boolean condition);
@@ -34,7 +38,7 @@ public class InferBuiltins {
 
     public native static String __split_get_nth(String s, String sep, int n);
 
-    public native static void __set_taint_attribute(Object o);
+    public native static void __set_taint_attribute(Object o, String taintKind);
 
     public native static void __set_untaint_attribute(Object o);
 

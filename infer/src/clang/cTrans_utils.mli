@@ -24,6 +24,7 @@ type trans_state = {
   succ_nodes: Cfg.Node.t list;
   continuation: continuation option;
   priority: priority_node;
+  var_exp_typ: (Sil.exp * Sil.typ) option;
 }
 
 type trans_result = {
@@ -32,9 +33,15 @@ type trans_result = {
   ids: Ident.t list;
   instrs: Sil.instr list;
   exps: (Sil.exp * Sil.typ) list;
+  initd_exps: Sil.exp list;
+  is_cpp_call_virtual : bool;
 }
 
 val empty_res_trans: trans_result
+
+val collect_res_trans : trans_result list -> trans_result
+
+val extract_var_exp_or_fail : trans_state -> Sil.exp * Sil.typ
 
 val is_return_temp: continuation option -> bool
 
@@ -53,7 +60,7 @@ val fix_param_exps_mismatch : 'a list -> (Sil.exp * Sil.typ) list -> (Sil.exp * 
 val get_selector_receiver : Clang_ast_t.obj_c_message_expr_info -> string * Clang_ast_t.receiver_kind
 
 val define_condition_side_effects :
-  CContext.t -> (Sil.exp * Sil.typ) list -> Sil.instr list -> Location.t ->
+  (Sil.exp * Sil.typ) list -> Sil.instr list -> Location.t ->
   (Sil.exp * Sil.typ) list * Sil.instr list
 
 val extract_stmt_from_singleton : Clang_ast_t.stmt list -> string -> Clang_ast_t.stmt
@@ -100,11 +107,13 @@ val alloc_trans :
 val new_or_alloc_trans : trans_state -> Location.t -> Clang_ast_t.stmt_info ->
   Clang_ast_t.type_ptr -> string option -> string -> trans_result
 
-val cpp_new_trans : trans_state -> Location.t -> Clang_ast_t.stmt_info -> Sil.typ -> trans_result
+val cpp_new_trans : trans_state -> Location.t -> Sil.typ -> Sil.exp option -> trans_result
 
 val cast_trans :
   CContext.t -> (Sil.exp * Sil.typ) list -> Location.t -> Procname.t option -> Sil.typ ->
   (Ident.t * Sil.instr * Sil.exp) option
+
+val dereference_var_sil : Sil.exp * Sil.typ -> Location.t -> Ident.t list * Sil.instr list * Sil.exp
 
 (** Module for creating cfg nodes and other utility functions related to them.  *)
 module Nodes :
@@ -202,15 +211,15 @@ sig
     CContext.t -> Procname.t -> Location.t -> Clang_ast_t.obj_c_message_expr_info ->
     trans_result
 
-  val is_var_self : Sil.pvar -> bool -> bool
+  val is_var_self : Pvar.t -> bool -> bool
 end
 
-val is_logical_negation_of_int : Sil.tenv -> Clang_ast_t.expr_info -> Clang_ast_t.unary_operator_info -> bool
+val is_logical_negation_of_int :
+  Tenv.t -> Clang_ast_t.expr_info -> Clang_ast_t.unary_operator_info -> bool
 
 val is_dispatch_function : Clang_ast_t.stmt list -> int option
 
-val assign_default_params : Clang_ast_t.stmt list -> Clang_ast_t.stmt -> Clang_ast_t.stmt list
-
 val is_block_enumerate_function : Clang_ast_t.obj_c_message_expr_info -> bool
 
-val pointer_of_call_expr : Clang_ast_t.stmt -> Clang_ast_t.pointer option
+val var_or_zero_in_init_list : Tenv.t -> Sil.exp -> Sil.typ -> return_zero:bool ->
+  (Sil.exp * Sil.typ) list

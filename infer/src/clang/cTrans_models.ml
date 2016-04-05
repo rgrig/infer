@@ -7,7 +7,6 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open Utils
 open CFrontend_utils
 open Objc_models
 
@@ -36,11 +35,11 @@ let is_alloc_model typ funct =
 
 let rec get_func_type_from_stmt stmt =
   match stmt with
-  | Clang_ast_t.DeclRefExpr(stmt_info, stmt_list, expr_info, decl_ref_expr_info) ->
+  | Clang_ast_t.DeclRefExpr(_, _, expr_info, _) ->
       Some expr_info.Clang_ast_t.ei_type_ptr
   | _ ->
       match CFrontend_utils.Ast_utils.get_stmts_from_stmt stmt with
-      | stmt:: rest -> get_func_type_from_stmt stmt
+      | stmt:: _ -> get_func_type_from_stmt stmt
       | [] -> None
 
 let is_retain_predefined_model typ funct =
@@ -61,11 +60,11 @@ let is_autorelease_method funct =
 
 let get_builtinname method_name =
   if is_retain_method method_name then
-    Some SymExec.ModelBuiltins.__objc_retain
+    Some ModelBuiltins.__objc_retain
   else if is_autorelease_method method_name then
-    Some SymExec.ModelBuiltins.__set_autorelease_attribute
+    Some ModelBuiltins.__set_autorelease_attribute
   else if is_release_method method_name then
-    Some SymExec.ModelBuiltins.__objc_release
+    Some ModelBuiltins.__objc_release
   else None
 
 let is_modeled_builtin funct =
@@ -104,9 +103,9 @@ let builtin_predefined_model fun_stmt sil_fe =
       (match sil_fe with
        | Sil.Const (Sil.Cfun pn) when Specs.summary_exists pn -> sil_fe, false
        | Sil.Const (Sil.Cfun pn) when is_retain_predefined_model typ (Procname.to_string pn) ->
-           Sil.Const (Sil.Cfun SymExec.ModelBuiltins.__objc_retain_cf) , true
+           Sil.Const (Sil.Cfun ModelBuiltins.__objc_retain_cf) , true
        | Sil.Const (Sil.Cfun pn) when is_release_predefined_model typ (Procname.to_string pn) ->
-           Sil.Const (Sil.Cfun SymExec.ModelBuiltins.__objc_release_cf), true
+           Sil.Const (Sil.Cfun ModelBuiltins.__objc_release_cf), true
        | _ -> sil_fe, false)
   | _ -> sil_fe, false
 
@@ -127,7 +126,7 @@ let get_predefined_ms_method condition class_name method_name method_kind mk_pro
       | Some procname -> procname
       | None -> mk_procname class_name method_name method_kind in
     let ms = CMethod_signature.make_ms procname arguments return_type attributes
-        (Ast_expressions.dummy_source_range ()) false lang None None in
+        (Ast_expressions.dummy_source_range ()) false lang None None None in
     Some ms
   else None
 
@@ -139,13 +138,13 @@ let get_predefined_ms_stringWithUTF8String class_name method_name mk_procname la
   get_predefined_ms_method condition class_name method_name Procname.Class_objc_method
     mk_procname lang [("x", Ast_expressions.create_char_star_type)] id_type [] None
 
-let get_predefined_ms_retain_release class_name method_name mk_procname lang =
+let get_predefined_ms_retain_release method_name mk_procname lang =
   let condition = is_retain_or_release method_name in
   let return_type =
     if is_retain_method method_name || is_autorelease_method method_name
     then Ast_expressions.create_id_type else Ast_expressions.create_void_type in
   let class_name = CFrontend_config.nsobject_cl in
-  let class_type = Ast_expressions.create_class_type class_name in
+  let class_type = Ast_expressions.create_class_type (class_name, `OBJC) in
   let args = [(CFrontend_config.self, class_type)] in
   get_predefined_ms_method condition class_name method_name Procname.Instance_objc_method
     mk_procname lang args return_type [] (get_builtinname method_name)
@@ -154,7 +153,7 @@ let get_predefined_ms_autoreleasepool_init class_name method_name mk_procname la
   let condition =
     method_name = CFrontend_config.init
     && class_name = CFrontend_config.nsautorelease_pool_cl in
-  let class_type = Ast_expressions.create_class_type class_name in
+  let class_type = Ast_expressions.create_class_type (class_name, `OBJC) in
   get_predefined_ms_method condition class_name method_name Procname.Instance_objc_method
     mk_procname lang [(CFrontend_config.self, class_type)]
     Ast_expressions.create_void_type [] None
@@ -163,22 +162,27 @@ let get_predefined_ms_nsautoreleasepool_release class_name method_name mk_procna
   let condition =
     (method_name = CFrontend_config.release || method_name = CFrontend_config.drain)
     && class_name = CFrontend_config.nsautorelease_pool_cl in
-  let class_type = Ast_expressions.create_class_type class_name in
+  let class_type = Ast_expressions.create_class_type (class_name, `OBJC) in
   get_predefined_ms_method condition class_name method_name Procname.Instance_objc_method
     mk_procname lang [(CFrontend_config.self, class_type)] Ast_expressions.create_void_type
-    [] (Some SymExec.ModelBuiltins.__objc_release_autorelease_pool)
+    [] (Some ModelBuiltins.__objc_release_autorelease_pool)
+
+let get_predefined_ms_is_kind_of_class class_name method_name mk_procname lang =
+  let condition = method_name = CFrontend_config.is_kind_of_class in
+  let class_type = Ast_expressions.create_class_type (class_name, `OBJC) in
+  get_predefined_ms_method condition class_name method_name Procname.Instance_objc_method
+    mk_procname lang [(CFrontend_config.self, class_type)] Ast_expressions.create_BOOL_type
+    [] (Some ModelBuiltins.__instanceof)
 
 let get_predefined_model_method_signature class_name method_name mk_procname lang =
-  match get_predefined_ms_nsautoreleasepool_release class_name method_name mk_procname lang with
-  | Some ms -> Some ms
-  | None ->
-      let class_type = Ast_expressions.create_class_type class_name in
-      match get_predefined_ms_retain_release class_type method_name mk_procname lang with
-      | Some ms -> Some ms
-      | None ->
-          match get_predefined_ms_stringWithUTF8String class_name method_name mk_procname lang with
-          | Some ms -> Some ms
-          | None -> get_predefined_ms_autoreleasepool_init class_name method_name mk_procname lang
+  let next_predefined f = function
+    | Some _ as x -> x
+    | None -> f method_name mk_procname lang in
+  get_predefined_ms_nsautoreleasepool_release class_name method_name mk_procname lang
+  |> next_predefined get_predefined_ms_retain_release
+  |> next_predefined (get_predefined_ms_stringWithUTF8String class_name)
+  |> next_predefined (get_predefined_ms_autoreleasepool_init class_name)
+  |> next_predefined (get_predefined_ms_is_kind_of_class class_name)
 
 let dispatch_functions = [
   ("_dispatch_once", 1);

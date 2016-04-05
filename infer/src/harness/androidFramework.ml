@@ -11,8 +11,6 @@ module L = Logging
 module F = Format
 module TypSet = Sil.TypSet
 
-open Utils
-
 (** Android lifecycle types and their lifecycle methods that are called by the framework *)
 
 (** work-in-progress list of known callback-registering method names *)
@@ -25,12 +23,14 @@ let is_known_callback_register_method proc_str = StringSet.mem proc_str callback
 let on_destroy = "onDestroy"
 let on_destroy_view = "onDestroyView"
 
-(** return true if [procname] is a special lifecycle cleanup method *)
-let is_destroy_method procname =
-  if Procname.is_java procname then
-    let method_name = Procname.java_get_method procname in
-    string_equal method_name on_destroy || string_equal method_name on_destroy_view
-  else false
+(** return true if [pname] is a special lifecycle cleanup method *)
+let is_destroy_method pname =
+  match pname with
+  | Procname.Java pname_java ->
+      let method_name = Procname.java_get_method pname_java in
+      string_equal method_name on_destroy || string_equal method_name on_destroy_view
+  | _ ->
+      false
 
 let android_lifecycles =
   let android_content = "android.content" in
@@ -253,18 +253,21 @@ let android_callbacks =
 (* TODO (t4644852): factor out subtyping functions into some sort of JavaUtil module *)
 let get_all_supertypes typ tenv =
   let get_direct_supers = function
-    | Sil.Tstruct (_, _, Csu.Class, _, supers, _, _) -> supers
+    | Sil.Tstruct { Sil.csu = Csu.Class _; superclasses } ->
+        superclasses
     | _ -> [] in
   let rec add_typ class_name typs =
-    match Sil.tenv_lookup tenv class_name with
-    | Some typ -> get_supers_rec typ tenv (TypSet.add typ typs)
+    match Tenv.lookup tenv class_name with
+    | Some struct_typ ->
+        let typ' = Sil.Tstruct struct_typ in
+        get_supers_rec typ' (TypSet.add typ' typs)
     | None -> typs
-  and get_supers_rec typ tenv all_supers =
+  and get_supers_rec typ all_supers =
     let direct_supers = get_direct_supers typ in
     IList.fold_left
       (fun typs class_name -> add_typ class_name typs)
       all_supers direct_supers in
-  get_supers_rec typ tenv (TypSet.add typ TypSet.empty)
+  get_supers_rec typ (TypSet.add typ TypSet.empty)
 
 (** return true if [typ0] <: [typ1] *)
 let is_subtype (typ0 : Sil.typ) (typ1 : Sil.typ) tenv =
@@ -272,8 +275,8 @@ let is_subtype (typ0 : Sil.typ) (typ1 : Sil.typ) tenv =
 
 let is_subtype_package_class typ package classname tenv =
   let classname = Mangled.from_package_class package classname in
-  match Sil.tenv_lookup tenv (Typename.TN_csu (Csu.Class, classname)) with
-  | Some found_typ -> is_subtype typ found_typ tenv
+  match Tenv.lookup tenv (Typename.TN_csu (Csu.Class Csu.Java, classname)) with
+  | Some found_struct_typ -> is_subtype typ (Sil.Tstruct found_struct_typ) tenv
   | _ -> false
 
 let is_context typ tenv =
@@ -288,6 +291,10 @@ let is_activity typ tenv =
 let is_view typ tenv =
   is_subtype_package_class typ "android.view" "View" tenv
 
+let is_fragment typ tenv =
+  is_subtype_package_class typ "android.app" "Fragment" tenv ||
+  is_subtype_package_class typ "android.support.v4.app" "Fragment" tenv
+
 (** return true if [class_name] is a known callback class name *)
 let is_callback_class_name class_name = Mangled.MangledSet.mem class_name android_callbacks
 
@@ -295,7 +302,7 @@ let is_callback_class_name class_name = Mangled.MangledSet.mem class_name androi
 let is_callback_class typ tenv =
   let supertyps = get_all_supertypes typ tenv in
   TypSet.exists (fun typ -> match typ with
-      | Sil.Tstruct (_, _, Csu.Class, Some classname, _, _, _) ->
+      | Sil.Tstruct { Sil.csu = Csu.Class _; struct_name = Some classname } ->
           is_callback_class_name classname
       | _ -> false) supertyps
 
@@ -309,19 +316,20 @@ let is_android_lib_class class_name =
   let class_str = Typename.name class_name in
   string_is_prefix "android" class_str || string_is_prefix "com.android" class_str
 
-(** returns an option containing the var name and type of a callback registered by [procname], None
-    if no callback is registered *)
-let get_callback_registered_by procname args tenv =
+(** returns an option containing the var name and type of a callback registered by [procname],
+    None if no callback is registered *)
+let get_callback_registered_by (pname_java : Procname.java) args tenv =
   (* TODO (t4565077): this check should be replaced with a membership check in a hardcoded list of
    * Android callback registration methods *)
   (* for now, we assume a method is a callback registration method if it is a setter and has a
    * callback class as a non - receiver argument *)
   let is_callback_register_like =
     let has_non_this_callback_arg args = IList.length args > 1 in
-    let has_registery_name procname =
-      Procname.is_java procname && (PatternMatch.is_setter procname ||
-                                    is_known_callback_register_method (Procname.java_get_method procname)) in
-    has_registery_name procname && has_non_this_callback_arg args in
+    let has_registery_name () =
+      PatternMatch.is_setter pname_java ||
+      is_known_callback_register_method (Procname.java_get_method pname_java) in
+    has_registery_name () &&
+    has_non_this_callback_arg args in
   let is_ptr_to_callback_class typ tenv = match typ with
     | Sil.Tptr (typ, Sil.Pk_pointer) -> is_callback_class typ tenv
     | _ -> false in
@@ -336,54 +344,72 @@ let get_callback_registered_by procname args tenv =
 
 (** return a list of typ's corresponding to callback classes registered by [procdesc] *)
 let get_callbacks_registered_by_proc procdesc tenv =
-  let collect_callback_typs callback_typs node instr = match instr with
-    | Sil.Call([], Sil.Const (Sil.Cfun callee), args, loc, _) ->
+  let collect_callback_typs callback_typs _ instr = match instr with
+    | Sil.Call ([], Sil.Const (Sil.Cfun callee), args, _, _) ->
         begin
-          match get_callback_registered_by callee args tenv with
-          | Some (_, callback_typ) -> callback_typ :: callback_typs
-          | None -> callback_typs
+          match callee with
+          | Procname.Java callee_java ->
+              begin
+                match get_callback_registered_by callee_java args tenv with
+                | Some (_, callback_typ) -> callback_typ :: callback_typs
+                | None -> callback_typs
+              end
+          | _ ->
+              callback_typs
         end
     | _ -> callback_typs in
   Cfg.Procdesc.fold_instrs collect_callback_typs [] procdesc
 
-(** returns true if [procname] is a method that registers a callback *)
-let is_callback_register_method procname args tenv =
-  match get_callback_registered_by procname args tenv with
-  | Some _ -> true
-  | None -> false
-
 (** given an Android framework type mangled string [lifecycle_typ] (e.g., android.app.Activity) and
     a list of method names [lifecycle_procs_strs], get the appropriate typ and procnames *)
 let get_lifecycle_for_framework_typ_opt lifecycle_typ lifecycle_proc_strs tenv =
-  match Sil.tenv_lookup tenv (Typename.TN_csu (Csu.Class, lifecycle_typ)) with
-  | Some (Sil.Tstruct(_, _, Csu.Class, Some class_name, _, decl_procs, _) as lifecycle_typ) ->
+  match Tenv.lookup tenv (Typename.TN_csu (Csu.Class Csu.Java, lifecycle_typ)) with
+  | Some ({ Sil.csu = Csu.Class _; struct_name = Some _; def_methods } as lifecycle_typ) ->
       (* TODO (t4645631): collect the procedures for which is_java is returning false *)
       let lookup_proc lifecycle_proc =
         IList.find (fun decl_proc ->
-            Procname.is_java decl_proc && lifecycle_proc = Procname.java_get_method decl_proc
-          ) decl_procs in
+            match decl_proc with
+            | Procname.Java decl_proc_java ->
+                lifecycle_proc = Procname.java_get_method decl_proc_java
+            | _ ->
+                false
+          ) def_methods in
       (* convert each of the framework lifecycle proc strings to a lifecycle method procname *)
       let lifecycle_procs =
         IList.fold_left (fun lifecycle_procs lifecycle_proc_str ->
             try (lookup_proc lifecycle_proc_str) :: lifecycle_procs
             with Not_found -> lifecycle_procs)
           [] lifecycle_proc_strs in
-      Some (lifecycle_typ, lifecycle_procs)
+      Some (Sil.Tstruct lifecycle_typ, lifecycle_procs)
   | _ -> None
 
 (** return the complete list of (package, lifecycle_classname, lifecycle_methods) trios *)
 let get_lifecycles = android_lifecycles
 
 
-(** Checks if the exception is an uncheched exception *)
-let is_runtime_exception tenv exn =
-  let lookup = Sil.tenv_lookup tenv in
-  let runtime_exception_typename =
-    Typename.Java.from_string "java.lang.RuntimeException" in
-  match lookup runtime_exception_typename, lookup exn with
-  | Some runtime_exception_type, Some exn_type ->
-      is_subtype exn_type runtime_exception_type tenv
+let is_subclass tenv cn1 classname_str =
+  let typename =
+    Typename.Java.from_string classname_str in
+  let lookup = Tenv.lookup tenv in
+  match lookup cn1, lookup typename with
+  | Some typ1, Some typ2 ->
+      is_subtype (Sil.Tstruct typ1) (Sil.Tstruct typ2) tenv
   | _ -> false
+
+
+(** Checks if the exception is an uncheched exception *)
+let is_runtime_exception tenv typename =
+  is_subclass tenv typename "java.lang.RuntimeException"
+
+
+(** Checks if the class name is a Java exception *)
+let is_exception tenv typename =
+  is_subclass tenv typename "java.lang.Exception"
+
+
+(** Checks if the class name is a Java exception *)
+let is_throwable tenv typename =
+  is_subclass tenv typename "java.lang.Throwable"
 
 
 let non_stub_android_jar () =

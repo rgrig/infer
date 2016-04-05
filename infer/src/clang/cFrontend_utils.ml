@@ -10,8 +10,6 @@
 (** Module for utility functions for the whole frontend. Includes functions for printing,  *)
 (** for transformations of ast nodes and general utility functions such as  functions on lists *)
 
-open Utils
-
 module L = Logging
 module F = Format
 
@@ -41,43 +39,38 @@ struct
     pp Format.std_formatter fmt
 
   let print_tenv tenv =
-    Sil.tenv_iter (fun typname typ ->
+    Tenv.iter (fun typname struct_t ->
         match typname with
-        | Typename.TN_csu (Csu.Class, _) | Typename.TN_csu (Csu.Protocol, _) ->
-            (match typ with
-             | Sil.Tstruct (fields, _, _, cls, super_classes, methods, iann) ->
-                 print_endline (
-                   (Typename.to_string typname) ^ "\n"^
-                   "---> superclass and protocols " ^ (IList.to_string (fun tn ->
-                       "\t" ^ (Typename.to_string tn) ^ "\n") super_classes) ^
-                   "---> methods " ^
-                   (IList.to_string (fun x ->"\t" ^ (Procname.to_string x) ^ "\n") methods)
-                   ^ "  " ^
-                   "\t---> fields " ^ (IList.to_string field_to_string fields) ^ "\n")
-             | _ -> ())
+        | Typename.TN_csu (Csu.Class _, _) | Typename.TN_csu (Csu.Protocol, _) ->
+            print_endline (
+              (Typename.to_string typname) ^ " " ^
+              (Sil.item_annotation_to_string struct_t.struct_annotations) ^ "\n" ^
+              "---> superclass and protocols " ^ (IList.to_string (fun tn ->
+                  "\t" ^ (Typename.to_string tn) ^ "\n") struct_t.superclasses) ^
+              "---> methods " ^
+              (IList.to_string (fun x ->"\t" ^ (Procname.to_string x) ^ "\n") struct_t.def_methods)
+              ^ "  " ^
+              "\t---> fields " ^ (IList.to_string field_to_string struct_t.instance_fields) ^ "\n")
         | _ -> ()
       ) tenv
 
   let print_tenv_struct_unions tenv =
-    Sil.tenv_iter (fun typname typ ->
+    Tenv.iter (fun typname struct_t ->
         match typname with
         | Typename.TN_csu (Csu.Struct, _) | Typename.TN_csu (Csu.Union, _) ->
-            (match typ with
-             | (Sil.Tstruct (fields, static_fields, _, cls, super_classes, methods, iann)) ->
-                 (print_endline (
-                     (Typename.to_string typname)^"\n"^
-                     "\t---> fields "^(IList.to_string (fun (fieldname, typ, _) ->
-                         match typ with
-                         | Sil.Tvar tname -> "tvar"^(Typename.to_string tname)
-                         | Sil.Tstruct (_, _, _, _, _, _, _) | _ ->
-                             "\t struct "^(Ident.fieldname_to_string fieldname)^" "^
-                             (Sil.typ_to_string typ)^"\n") fields
-                       )
-                   )
-                 )
-             | _ -> ())
+            print_endline (
+              (Typename.to_string typname)^"\n"^
+              "\t---> fields "^(IList.to_string (fun (fieldname, typ, _) ->
+                  match typ with
+                  | Sil.Tvar tname -> "tvar"^(Typename.to_string tname)
+                  | Sil.Tstruct _ | _ ->
+                      "\t struct "^(Ident.fieldname_to_string fieldname)^" "^
+                      (Sil.typ_to_string typ)^"\n") struct_t.instance_fields
+                )
+            )
         | Typename.TN_typedef typname ->
-            print_endline ((Mangled.to_string typname)^"-->"^(Sil.typ_to_string typ))
+            print_endline
+              ((Mangled.to_string typname)^"-->"^(Sil.typ_to_string (Sil.Tstruct struct_t)))
         | _ -> ()
       ) tenv
 
@@ -95,17 +88,17 @@ struct
     L.err "AST Element> %s IN FILE> %s @.@." pointer !CFrontend_config.json
 
   let print_nodes nodes =
-    IList.iter (fun node -> print_endline (Cfg.Node.get_description Utils.pe_text node)) nodes
+    IList.iter (fun node -> print_endline (Cfg.Node.get_description pe_text node)) nodes
 
   let instrs_to_string instrs =
-    let pp fmt () = Format.fprintf fmt "%a" (Sil.pp_instr_list Utils.pe_text) instrs in
+    let pp fmt () = Format.fprintf fmt "%a" (Sil.pp_instr_list pe_text) instrs in
     pp_to_string pp ()
 
 end
 
 module Ast_utils =
 struct
-  type type_ptr_to_sil_type = Sil.tenv -> Clang_ast_t.type_ptr -> Sil.typ
+  type type_ptr_to_sil_type = Tenv.t -> Clang_ast_t.type_ptr -> Sil.typ
 
   let string_of_decl decl =
     let name = Clang_ast_proj.get_decl_kind_string decl in
@@ -142,7 +135,7 @@ struct
          | _ -> lstmt)
     (* given that this has not been translated, looking up for variables *)
     (* inside leads to inconsistencies *)
-    | ObjCAtCatchStmt (stmt_info, stmt_list, obj_c_message_expr_kind) ->
+    | ObjCAtCatchStmt _ ->
         []
     | _ -> snd (Clang_ast_proj.get_stmt_tuple stmt)
 
@@ -159,7 +152,7 @@ struct
 
   let get_unqualified_name name_info =
     let name = match name_info.Clang_ast_t.ni_qual_name with
-      | name :: quals -> name
+      | name :: _ -> name
       | [] -> name_info.Clang_ast_t.ni_name in
     fold_qual_name [name]
 
@@ -256,22 +249,6 @@ struct
     | Some name_info -> Some (get_qualified_name name_info)
     | None -> None
 
-  let rec getter_attribute_opt attributes =
-    match attributes with
-    | [] -> None
-    | attr:: rest ->
-        match attr with
-        | `Getter getter -> getter.Clang_ast_t.dr_name
-        | _ -> (getter_attribute_opt rest)
-
-  let rec setter_attribute_opt attributes =
-    match attributes with
-    | [] -> None
-    | attr:: rest ->
-        match attr with
-        | `Setter setter -> setter.Clang_ast_t.dr_name
-        | _ -> (setter_attribute_opt rest)
-
   let pointer_counter = ref 0
 
   let get_fresh_pointer () =
@@ -297,6 +274,16 @@ struct
     | Some decl_ptr -> get_decl decl_ptr
     | None -> None
 
+  let get_stmt stmt_ptr =
+    try
+      Some (Clang_ast_main.PointerMap.find stmt_ptr !CFrontend_config.pointer_stmt_index)
+    with Not_found -> Printing.log_stats "stmt with pointer %d not found\n" stmt_ptr; None
+
+  let get_stmt_opt stmt_ptr_opt =
+    match stmt_ptr_opt with
+    | Some stmt_ptr -> get_stmt stmt_ptr
+    | None -> None
+
   let get_decl_opt_with_decl_ref decl_ref_opt =
     match decl_ref_opt with
     | Some decl_ref -> get_decl decl_ref.Clang_ast_t.dr_decl_pointer
@@ -308,7 +295,7 @@ struct
 
   let update_enum_map enum_constant_pointer sil_exp =
     let open Clang_ast_main in
-    let (predecessor_pointer_opt, sil_exp_opt) =
+    let (predecessor_pointer_opt, _) =
       try PointerMap.find enum_constant_pointer !CFrontend_config.enum_map
       with Not_found -> assert false in
     let enum_map_value = (predecessor_pointer_opt, Some sil_exp) in
@@ -351,7 +338,7 @@ struct
     let typ = match typ_opt with Some t -> t | _ -> assert false in
     (* it needs extending to handle objC types *)
     match typ with
-    | Clang_ast_t.RecordType (ti, decl_ptr) -> get_decl decl_ptr
+    | Clang_ast_t.RecordType (_, decl_ptr) -> get_decl decl_ptr
     | _ -> None
 
   (*TODO take the attributes into account too. To be done after we get the attribute's arguments. *)
@@ -383,6 +370,23 @@ struct
       ignore (type_ptr_to_sil_type tenv (`DeclPtr dr.Clang_ast_t.dr_decl_pointer)) in
     IList.iter add_elem decl_ref_list
 
+(*
+  let rec getter_attribute_opt attributes =
+    match attributes with
+    | [] -> None
+    | attr:: rest ->
+        match attr with
+        | `Getter getter -> getter.Clang_ast_t.dr_name
+        | _ -> (getter_attribute_opt rest)
+
+  let rec setter_attribute_opt attributes =
+    match attributes with
+    | [] -> None
+    | attr:: rest ->
+        match attr with
+        | `Setter setter -> setter.Clang_ast_t.dr_name
+        | _ -> (setter_attribute_opt rest)
+*)
 end
 
 (* Global counter for anonymous block*)
@@ -395,13 +399,6 @@ let get_fresh_block_index () =
 
 module General_utils =
 struct
-
-  type warning_desc = {
-    name : string;
-    description : string;
-    suggestion : string; (* an optional suggestion or correction *)
-    loc : Location.t;
-  }
 
   type var_info = Clang_ast_t.decl_info * Clang_ast_t.type_ptr * Clang_ast_t.var_decl_info * bool
 
@@ -417,8 +414,6 @@ struct
     | [] -> ""
     | [item] -> item
     | item:: l' -> item^" "^(string_from_list l')
-
-  let get_fun_body fdecl_info = fdecl_info.Clang_ast_t.fdi_body
 
   let rec append_no_duplicates eq list1 list2 =
     match list2 with
@@ -438,7 +433,7 @@ struct
     let eq (m1, t1) (m2, t2) = (Mangled.equal m1 m2) && (Sil.typ_equal t1 t2) in
     append_no_duplicates eq list1 list2
 
-  let append_no_duplicated_pvars list1 list2 =
+  let append_no_duplicateds list1 list2 =
     let eq (e1, t1) (e2, t2) = (Sil.exp_equal e1 e2) && (Sil.typ_equal t1 t2) in
     append_no_duplicates eq list1 list2
 
@@ -473,6 +468,13 @@ struct
       Ident.fieldname_compare name1 name2 in
     IList.sort compare fields
 
+
+  let sort_fields_tenv tenv =
+    let sort_fields_struct typname st =
+      let st' = { st with Sil.instance_fields = (sort_fields st.Sil.instance_fields) } in
+      Tenv.add tenv typname st' in
+    Tenv.iter sort_fields_struct tenv
+
   let rec collect_list_tuples l (a, a1, b, c, d) =
     match l with
     | [] -> (a, a1, b, c, d)
@@ -496,7 +498,7 @@ struct
   (* It does not update the global block_counter *)
   let get_next_block_pvar defining_proc =
     let name = block_procname_with_index defining_proc (!block_counter +1) in
-    Sil.mk_pvar (Mangled.from_string (CFrontend_config.temp_var^"_"^name)) defining_proc
+    Pvar.mk (Mangled.from_string (CFrontend_config.temp_var^"_"^name)) defining_proc
 
   (* Reset  block counter *)
   let reset_block_counter () =
@@ -525,7 +527,7 @@ struct
       if n < i then acc else aux (n -1) (n :: acc)
     in aux j [] ;;
 
-  let replicate n el = IList.map (fun i -> el) (list_range 0 (n -1))
+  let replicate n el = IList.map (fun _ -> el) (list_range 0 (n -1))
 
   let mk_class_field_name field_qual_name =
     let field_name = field_qual_name.Clang_ast_t.ni_name in
@@ -556,43 +558,58 @@ struct
       | CFrontend_config.CPP
       | CFrontend_config.OBJCPP -> Ast_utils.string_of_type_ptr tp
       | _ -> "" in
-    let mangled = file ^ type_string in
+    (* remove __restrict from type name to avoid mismatches. Clang allows to declare function*)
+    (* with __restrict parameters and then define it without (it mostly applies to models).*)
+    (* We are not using this information right now so we can remove it to avoid dealing with*)
+    (* corner cases on different systems *)
+    let type_string_no_restrict = Str.global_replace (Str.regexp "__restrict") "" type_string in
+    let mangled = file ^ type_string_no_restrict in
     if String.length mangled == 0 then
       Procname.from_string_c_fun name
     else
-      let crc = CRC.crc16 mangled in
-      Procname.mangled_c_fun name crc
+      let crc = string_crc_hex32 mangled in
+      Procname.C (Procname.c name crc)
 
   let mk_procname_from_objc_method class_name method_name method_kind =
     let mangled = Procname.mangled_of_objc_method_kind method_kind in
-    Procname.mangled_c_method class_name method_name mangled
+    Procname.ObjC_Cpp
+      (Procname.objc_cpp class_name method_name mangled)
 
   let mk_procname_from_cpp_method class_name method_name tp =
     let type_name = Ast_utils.string_of_type_ptr tp in
-    let type_name_crc = Some (CRC.crc16 type_name) in
-    Procname.mangled_c_method class_name method_name type_name_crc
+    let type_name_crc = Some (string_crc_hex32 type_name) in
+    Procname.ObjC_Cpp
+      (Procname.objc_cpp class_name method_name type_name_crc)
+
+  let get_var_name_string name_info var_decl_info =
+    let clang_name = Ast_utils.get_qualified_name name_info in
+    match clang_name, var_decl_info.Clang_ast_t.vdi_parm_index_in_function with
+    | "", Some index -> "__param_" ^ string_of_int index
+    | "", None -> assert false
+    | _ -> clang_name
 
   let mk_sil_var name decl_info_type_ptr_opt procname outer_procname =
     let name_string = Ast_utils.get_qualified_name name in
-    let simple_name = Mangled.from_string name_string  in
     match decl_info_type_ptr_opt with
     | Some (decl_info, type_ptr, var_decl_info, should_be_mangled) ->
+        let name_string = get_var_name_string name var_decl_info in
+        let simple_name = Mangled.from_string name_string in
         if var_decl_info.Clang_ast_t.vdi_is_global then
           let global_mangled_name =
             if var_decl_info.Clang_ast_t.vdi_is_static_local then
               Mangled.from_string ((Procname.to_string outer_procname) ^ "_" ^ name_string)
             else simple_name in
-          Sil.mk_pvar_global global_mangled_name
-        else if not should_be_mangled then Sil.mk_pvar simple_name procname
+          Pvar.mk_global global_mangled_name
+        else if not should_be_mangled then Pvar.mk simple_name procname
         else
           let type_name = Ast_utils.string_of_type_ptr type_ptr in
           let start_location = fst decl_info.Clang_ast_t.di_source_range in
           let line_opt = start_location.Clang_ast_t.sl_line in
           let line_str = match line_opt with | Some line -> string_of_int line | None -> "" in
-          let mangled = CRC.crc16 (type_name ^ line_str) in
+          let mangled = string_crc_hex32 (type_name ^ line_str) in
           let mangled_name = Mangled.mangled name_string mangled in
-          Sil.mk_pvar mangled_name procname
-    | None -> Sil.mk_pvar simple_name procname
+          Pvar.mk mangled_name procname
+    | None -> Pvar.mk (Mangled.from_string name_string) procname
 
   let is_cpp_translation language =
     language = CFrontend_config.CPP || language = CFrontend_config.OBJCPP

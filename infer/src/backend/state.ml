@@ -12,37 +12,8 @@
 
 module L = Logging
 module F = Format
-open Utils
 
 type const_map = Cfg.Node.t -> Sil.exp -> Sil.const option
-
-(** Constant map for the procedure *)
-let const_map : const_map ref =
-  ref (fun node exp -> None)
-
-(** Diverging states since the last reset for the node *)
-let diverging_states_node = ref Paths.PathSet.empty
-
-(** Diverging states since the last reset for the procedure *)
-let diverging_states_proc = ref Paths.PathSet.empty
-
-(** Node target of a Sil.Goto_node instruction *)
-let goto_node = ref None
-
-(** Last instruction seen *)
-let last_instr = ref None
-
-(** Last node seen *)
-let last_node = ref (Cfg.Node.dummy ())
-
-(** Last node seen *)
-let last_path = ref None
-
-(** Last prop,tenv,pdesc seen *)
-let last_prop_tenv_pdesc = ref None
-
-(** Last session seen *)
-let last_session = ref 0
 
 (** failure statistics for symbolic execution on a given node *)
 type failure_stats = {
@@ -57,41 +28,103 @@ type failure_stats = {
 
 module NodeHash = Cfg.NodeHash
 
-(** Map visited nodes to failure statistics *)
-let failure_map : failure_stats NodeHash.t = NodeHash.create 1
+type t = {
+  (** Constant map for the procedure *)
+  mutable const_map : const_map;
+
+  (** Diverging states since the last reset for the node *)
+  mutable diverging_states_node : Paths.PathSet.t;
+
+  (** Diverging states since the last reset for the procedure *)
+  mutable diverging_states_proc : Paths.PathSet.t;
+
+  (** Node target of a Sil.Goto_node instruction *)
+  mutable goto_node : int option;
+
+  (** Last instruction seen *)
+  mutable last_instr : Sil.instr option;
+
+  (** Last node seen *)
+  mutable last_node : Cfg.Node.t;
+
+  (** Last path seen *)
+  mutable last_path : (Paths.Path.t * (Sil.path_pos option)) option;
+
+  (** Last prop,tenv,pdesc seen *)
+  mutable last_prop_tenv_pdesc : (Prop.normal Prop.t * Tenv.t * Cfg.Procdesc.t) option;
+
+  (** Last session seen *)
+  mutable last_session : int;
+
+  (** Map visited nodes to failure statistics *)
+  failure_map : failure_stats NodeHash.t;
+}
+
+let initial () = {
+  const_map = (fun _ _ -> None);
+  diverging_states_node = Paths.PathSet.empty;
+  diverging_states_proc = Paths.PathSet.empty;
+  goto_node = None;
+  last_instr = None;
+  last_node = Cfg.Node.dummy ();
+  last_path = None;
+  last_prop_tenv_pdesc = None;
+  last_session = 0;
+  failure_map = NodeHash.create 1;
+}
+
+(** Global state *)
+let gs = ref (initial ())
+
+(** Return the old state, and revert the current state to the initial one. *)
+let save_state () =
+  let old = !gs in
+  gs := initial ();
+  old
+
+(** Restore the old state. *)
+let restore_state st =
+  gs := st
+
+let reset_diverging_states_goto_node () =
+  !gs.diverging_states_node <- Paths.PathSet.empty;
+  !gs.goto_node <- None
+
+let reset () =
+  gs := initial ()
 
 let get_failure_stats node =
-  try NodeHash.find failure_map node
+  try NodeHash.find !gs.failure_map node
   with Not_found ->
     let fs = { instr_fail = 0; instr_ok = 0; node_fail = 0; node_ok = 0; first_failure = None } in
-    NodeHash.add failure_map node fs;
+    NodeHash.add !gs.failure_map node fs;
     fs
 
 let add_diverging_states pset =
-  diverging_states_proc := Paths.PathSet.union pset !diverging_states_proc;
-  diverging_states_node := Paths.PathSet.union pset !diverging_states_node
+  !gs.diverging_states_proc <- Paths.PathSet.union pset !gs.diverging_states_proc;
+  !gs.diverging_states_node <- Paths.PathSet.union pset !gs.diverging_states_node
 
 let get_diverging_states_node () =
-  !diverging_states_node
+  !gs.diverging_states_node
 
 let get_diverging_states_proc () =
-  !diverging_states_proc
+  !gs.diverging_states_proc
 
 let set_goto_node node_id =
-  goto_node := Some node_id
+  !gs.goto_node <- Some node_id
 
 let get_goto_node () =
-  !goto_node
+  !gs.goto_node
 
 let get_instr () =
-  !last_instr
+  !gs.last_instr
 
-let get_loc () = match !last_instr with
+let get_loc () = match !gs.last_instr with
   | Some instr -> Sil.instr_get_loc instr
-  | None -> Cfg.Node.get_loc !last_node
+  | None -> Cfg.Node.get_loc !gs.last_node
 
 let get_node () =
-  !last_node
+  !gs.last_node
 
 (** simple key for a node: just look at the instructions *)
 let node_simple_key node =
@@ -151,7 +184,7 @@ let mk_find_duplicate_nodes proc_desc : (Cfg.Node.t -> Cfg.NodeSet.t) =
   let module S = (* set of nodes with normalized insructions *)
     Set.Make(struct
       type t = Cfg.Node.t * Sil.instr list
-      let compare (n1, instrs1) (n2, instrs2) =
+      let compare (n1, _) (n2, _) =
         Cfg.Node.compare n1 n2
     end) in
 
@@ -188,7 +221,7 @@ let mk_find_duplicate_nodes proc_desc : (Cfg.Node.t -> Cfg.NodeSet.t) =
     try
       let s = M.find (get_key node) map in
       let elements = S.elements s in
-      let (_, node_normalized_instrs), others =
+      let (_, node_normalized_instrs), _ =
         let filter (node', _) = Cfg.Node.equal node node' in
         match IList.partition filter elements with
         | [this], others -> this, others
@@ -205,17 +238,17 @@ let mk_find_duplicate_nodes proc_desc : (Cfg.Node.t -> Cfg.NodeSet.t) =
   find_duplicate_nodes
 
 let get_node_id () =
-  Cfg.Node.get_id !last_node
+  Cfg.Node.get_id !gs.last_node
 
 let get_node_id_key () =
-  (Cfg.Node.get_id !last_node, node_key !last_node)
+  (Cfg.Node.get_id !gs.last_node, node_key !gs.last_node)
 
 let get_inst_update pos =
   let loc = get_loc () in
   Sil.inst_update loc pos
 
-let get_path () = match !last_path with
-  | None -> Paths.Path.start !last_node, None
+let get_path () = match !gs.last_path with
+  | None -> Paths.Path.start !gs.last_node, None
   | Some (path, pos_opt) -> path, pos_opt
 
 let get_loc_trace () : Errlog.loc_trace =
@@ -223,7 +256,7 @@ let get_loc_trace () : Errlog.loc_trace =
   Paths.Path.create_loc_trace path pos_opt
 
 let get_prop_tenv_pdesc () =
-  !last_prop_tenv_pdesc
+  !gs.last_prop_tenv_pdesc
 
 (** extract the footprint of the prop, and turn it into a normalized precondition using spec variables *)
 let extract_pre p tenv pdesc abstract_fun =
@@ -239,14 +272,15 @@ let extract_pre p tenv pdesc abstract_fun =
 
 (** return the normalized precondition extracted form the last prop seen, if any
     the abstraction function is a parameter to get around module dependencies *)
-let get_normalized_pre (abstract_fun : Sil.tenv -> Prop.normal Prop.t -> Prop.normal Prop.t) : Prop.normal Prop.t option =
+let get_normalized_pre (abstract_fun : Tenv.t -> Prop.normal Prop.t -> Prop.normal Prop.t)
+  : Prop.normal Prop.t option =
   match get_prop_tenv_pdesc () with
   | None -> None
   | Some (prop, tenv, pdesc) ->
       Some (extract_pre prop tenv pdesc abstract_fun)
 
 let get_session () =
-  !last_session
+  !gs.last_session
 
 let get_path_pos () =
   let pname = match get_prop_tenv_pdesc () with
@@ -292,45 +326,36 @@ type log_issue =
   unit
 
 let process_execution_failures (log_issue : log_issue) pname =
-  let do_failure node fs =
+  let do_failure _ fs =
     (* L.err "Node:%a node_ok:%d node_fail:%d@." Cfg.Node.pp node fs.node_ok fs.node_fail; *)
     match fs.node_ok, fs.first_failure with
-    | 0, Some (loc, key, session, loc_trace, pre_opt, exn) ->
-        let ex_name, desc, mloco, _, _, _, _ = Exceptions.recognize_exception exn in
+    | 0, Some (loc, key, _, loc_trace, pre_opt, exn) ->
+        let ex_name, _, ml_loc_opt, _, _, _, _ = Exceptions.recognize_exception exn in
         let desc' = Localise.verbatim_desc ("exception: " ^ Localise.to_string ex_name) in
-        let exn' = Exceptions.Analysis_stops (desc', mloco) in
+        let exn' = Exceptions.Analysis_stops (desc', ml_loc_opt) in
         log_issue
           pname ~loc: (Some loc) ~node_id: (Some key) ~ltr: (Some loc_trace) ~pre: pre_opt exn'
     | _ -> () in
-  NodeHash.iter do_failure failure_map
+  NodeHash.iter do_failure !gs.failure_map
 
 let set_instr (instr: Sil.instr) =
-  last_instr := Some instr
-
-let reset_diverging_states_goto_node () =
-  diverging_states_node := Paths.PathSet.empty;
-  goto_node := None
-
-let reset () =
-  diverging_states_proc := Paths.PathSet.empty;
-  reset_diverging_states_goto_node ();
-  NodeHash.clear failure_map
+  !gs.last_instr <- Some instr
 
 let set_path path pos_opt =
-  last_path := Some (path, pos_opt)
+  !gs.last_path <- Some (path, pos_opt)
 
 let set_prop_tenv_pdesc prop tenv pdesc =
-  last_prop_tenv_pdesc := Some (prop, tenv, pdesc)
+  !gs.last_prop_tenv_pdesc <- Some (prop, tenv, pdesc)
 
 let set_node (node: Cfg.node) =
-  last_instr := None;
-  last_node := node
+  !gs.last_instr <- None;
+  !gs.last_node <- node
 
 let set_session (session: int) =
-  last_session := session
+  !gs.last_session <- session
 
 let get_const_map () =
-  !const_map
+  !gs.const_map
 
 let set_const_map const_map' =
-  const_map := const_map'
+  !gs.const_map <- const_map'

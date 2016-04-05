@@ -8,36 +8,53 @@
  */
 
 typedef struct Point {
-    int x;
-    int y;
+  int x;
+  int y;
 } Point;
 
-int foo() {
-    return 5;
+int foo() { return 5; }
+
+int main() { struct Point p = {1, foo() + 3}; }
+
+int point_coords_set_correctly(Point* p) {
+  *p = (Point){4, 5};
+  return 1 / (p->x - 4);
 }
 
-int main() {
-    struct Point p = {1, foo() + 3};
+struct Employee {
+  int ssn;
+  float salary;
+  struct date {
+    int date;
+    int month;
+    int year;
+  } doj;
+} emp1;
+
+int field_set_correctly() {
+  struct Employee e = {12, 3000.50, 12, 12, 2010};
+  return 1 / (e.ssn - 12);
 }
 
-int test(Point *p) {
-    *p = (Point){4, 5};
-    return 0;
-}
+struct dotdot {
+  int a;
+  int b;
+};
 
-struct Employee
-{
-    int ssn;
-    float salary;
-    struct date
-    {
-        int date;
-        int month;
-        int year;
-    }doj;
-}emp1;
+struct dot {
+  struct dotdot x;
+  int y;
+};
+struct rect {
+  struct dot origin;
+  int z;
+  int size;
+};
 
-int main2() {
-    struct Employee e = {12, 3000.50, 12, 12, 2010};
-    return e.ssn;
+typedef struct rect rect;
+
+int implicit_expr_set_correctly() {
+  rect imageDrawRect;
+  imageDrawRect = (rect){.size = 5};
+  return 1 / imageDrawRect.origin.x.a;
 }

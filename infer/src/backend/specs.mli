@@ -10,8 +10,6 @@
 
 (** Specifications and spec table *)
 
-open Utils
-
 (** {2 Spec Tables} *)
 
 (** Module for joined props: the result of joining together propositions repeatedly *)
@@ -108,7 +106,6 @@ type stats =
     mutable nodes_visited_fp : IntSet.t; (** Nodes visited during the footprint phase *)
     mutable nodes_visited_re : IntSet.t; (** Nodes visited during the re-execution phase *)
     call_stats : CallStats.t;
-    cyclomatic : int;
   }
 
 type status = ACTIVE | INACTIVE | STALE
@@ -117,12 +114,21 @@ type phase = FOOTPRINT | RE_EXECUTION
 
 type dependency_map_t = int Procname.Map.t
 
+(** Type for calls consiting in the name of the callee and the location of the call *)
+type call = Procname.t * Location.t
+
+(** Collection of first step calls toward expensive call stacks or call stack allocating memory *)
+type call_summary = {
+  expensive_calls: call list;
+  allocations: call list
+}
+
 (** Payload: results of some analysis *)
 type payload =
   {
     preposts : NormSpec.t list option; (** list of specs *)
     typestate : unit TypeState.t option; (** final typestate *)
-    calls:  CallTree.t list option; (** list of call tree *)
+    calls:  call_summary option; (** list of calls of the form (call, loc) *)
   }
 
 (** Procedure summary *)
@@ -147,9 +153,6 @@ type origin =
 (** Add the summary to the table for the given function *)
 val add_summary : Procname.t -> summary -> unit
 
-(** Check if a summary for a given procedure exists in the results directory *)
-val summary_exists : Procname.t -> bool
-
 (** Check if a summary for a given procedure exists in the models directory *)
 val summary_exists_in_models : Procname.t -> bool
 
@@ -173,9 +176,6 @@ val get_formals : summary -> (Mangled.t * Sil.typ) list
 
 (** Get the flag with the given key for the procedure, if any *)
 val get_flag : Procname.t -> string -> string option
-
-(** Get the iterations associated to the procedure if any, or the default timeout from the command line *)
-val get_iterations : Procname.t -> int
 
 (** Return the current phase for the proc *)
 val get_phase : Procname.t -> phase
@@ -220,7 +220,6 @@ val init_summary :
    int list * (** nodes *)
    proc_flags * (** procedure flags *)
    (Procname.t * Location.t) list * (** calls *)
-   int * (** cyclomatic *)
    (Cg.in_out_calls option) * (** in and out calls *)
    ProcAttributes.t) (** attributes of the procedure *)
   -> unit

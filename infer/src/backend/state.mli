@@ -10,7 +10,8 @@
 
 (** State of symbolic execution *)
 
-open Utils
+(**  Internal state *)
+type t
 
 (** Add diverging states *)
 val add_diverging_states : Paths.PathSet.t -> unit
@@ -52,7 +53,8 @@ val get_node_id_key : unit -> int * int
 
 (** return the normalized precondition extracted form the last prop seen, if any
     the abstraction function is a parameter to get around module dependencies *)
-val get_normalized_pre : (Sil.tenv -> Prop.normal Prop.t -> Prop.normal Prop.t) -> Prop.normal Prop.t option
+val get_normalized_pre :
+  (Tenv.t -> Prop.normal Prop.t -> Prop.normal Prop.t) -> Prop.normal Prop.t option
 
 (** Get last path seen in symbolic execution *)
 val get_path : unit -> Paths.Path.t * (Sil.path_pos option)
@@ -61,7 +63,7 @@ val get_path : unit -> Paths.Path.t * (Sil.path_pos option)
 val get_path_pos : unit -> Sil.path_pos
 
 (** Get last last prop,tenv,pdesc seen in symbolic execution *)
-val get_prop_tenv_pdesc : unit -> (Prop.normal Prop.t * Sil.tenv * Cfg.Procdesc.t) option
+val get_prop_tenv_pdesc : unit -> (Prop.normal Prop.t * Tenv.t * Cfg.Procdesc.t) option
 
 (** Get last session seen in symbolic execution *)
 val get_session : unit -> int
@@ -96,11 +98,17 @@ type log_issue =
 (** Process the failures during symbolic execution of a procedure *)
 val process_execution_failures : log_issue -> Procname.t -> unit
 
-(** Reset all the global data in the module: diverging states and failure stats *)
+(** Reset all the global data. *)
 val reset : unit -> unit
 
 (** Reset the diverging states and goto information for the node *)
 val reset_diverging_states_goto_node : unit -> unit
+
+(** Restore the old state. *)
+val restore_state : t -> unit
+
+(** Return the old state, and revert the current state to the initial one. *)
+val save_state : unit -> t
 
 (** Set the constant map for the current procedure. *)
 val set_const_map : const_map -> unit
@@ -118,7 +126,7 @@ val set_node : Cfg.node -> unit
 val set_path : Paths.Path.t -> Sil.path_pos option -> unit
 
 (** Set last prop,tenv,pdesc seen in symbolic execution *)
-val set_prop_tenv_pdesc : Prop.normal Prop.t -> Sil.tenv -> Cfg.Procdesc.t -> unit
+val set_prop_tenv_pdesc : Prop.normal Prop.t -> Tenv.t -> Cfg.Procdesc.t -> unit
 
 (** Set last session seen in symbolic execution *)
 val set_session : int -> unit

@@ -9,19 +9,10 @@
  *)
 
 open Javalib_pack
-open Sawja_pack
-open Utils
 
 module L = Logging
 
 let models_specs_filenames = ref StringSet.empty
-
-let arg_classpath = ref ""
-
-let arg_jarfile = ref ""
-
-let set_jarfile file =
-  arg_jarfile := file
 
 let javac_verbose_out = ref ""
 
@@ -31,7 +22,7 @@ let set_verbose_out path =
 let models_jar = ref ""
 
 
-let models_tenv = ref (Sil.create_tenv ())
+let models_tenv = ref (Tenv.create ())
 
 
 let load_models_tenv zip_channel =
@@ -45,7 +36,7 @@ let load_models_tenv zip_channel =
   let models_tenv =
     try
       Zip.copy_entry_to_file zip_channel entry temp_tenv_file;
-      match Sil.load_tenv_from_file temp_tenv_filename with
+      match Tenv.load_from_file temp_tenv_filename with
       | None -> failwith "Models tenv file could not be loaded"
       | Some tenv -> tenv
     with
@@ -265,15 +256,11 @@ let collect_classes classmap jar_filename =
   let classpath = Javalib.class_path jar_filename in
   let collect classmap cn =
     JBasics.ClassMap.add cn (Javalib.get_class classpath cn) classmap in
-  let classes = IList.fold_left collect classmap (extract_classnames [] jar_filename) in
-  Javalib.close_class_path classpath;
-  classes
-
-
-let classmap_of_classpath classpath =
-  let jar_filenames =
-    IList.filter (fun p -> not (Sys.is_directory p)) (split_classpath classpath) in
-  IList.fold_left collect_classes JBasics.ClassMap.empty jar_filenames
+  try
+    let classes = IList.fold_left collect classmap (extract_classnames [] jar_filename) in
+    Javalib.close_class_path classpath;
+    classes
+  with JBasics.Class_structure_error _ -> classmap
 
 
 let load_program classpath classes =
@@ -291,3 +278,10 @@ let load_program classpath classes =
     classes;
   JUtils.log "done@.";
   program
+
+(*
+let classmap_of_classpath classpath =
+  let jar_filenames =
+    IList.filter (fun p -> not (Sys.is_directory p)) (split_classpath classpath) in
+  IList.fold_left collect_classes JBasics.ClassMap.empty jar_filenames
+*)

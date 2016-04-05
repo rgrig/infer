@@ -9,7 +9,6 @@
 
 (** Utility module to retrieve fields of structs of classes *)
 
-open Utils
 open CFrontend_utils
 
 module L = Logging
@@ -18,20 +17,19 @@ type field_type = Ident.fieldname * Sil.typ * (Sil.annotation * bool) list
 
 let rec get_fields_super_classes tenv super_class =
   Printing.log_out "   ... Getting fields of superclass '%s'\n" (Typename.to_string super_class);
-  match Sil.tenv_lookup tenv super_class with
+  match Tenv.lookup tenv super_class with
   | None -> []
-  | Some Sil.Tstruct (fields, _, _, _, super_class :: _, _, _) ->
+  | Some { Sil.instance_fields; superclasses = super_class :: _ } ->
       let sc_fields = get_fields_super_classes tenv super_class in
-      General_utils.append_no_duplicates_fields fields sc_fields
-  | Some Sil.Tstruct (fields, _, _, _, _, _, _) -> fields
-  | Some _ -> []
+      General_utils.append_no_duplicates_fields instance_fields sc_fields
+  | Some { Sil.instance_fields } -> instance_fields
 
-let fields_superclass tenv interface_decl_info =
+let fields_superclass tenv interface_decl_info ck =
   match interface_decl_info.Clang_ast_t.otdi_super with
   | Some dr ->
       (match dr.Clang_ast_t.dr_name with
        | Some sc ->
-           let classname = CTypes.mk_classname (Ast_utils.get_qualified_name sc) in
+           let classname = CTypes.mk_classname (Ast_utils.get_qualified_name sc) ck in
            get_fields_super_classes tenv classname
        | _ -> [])
   | _ -> []
@@ -61,7 +59,7 @@ let rec get_fields type_ptr_to_sil_type tenv curr_class decl_list =
     General_utils.append_no_duplicates_fields [field_tuple] fields in
   match decl_list with
   | [] -> []
-  | ObjCPropertyDecl (_, named_decl_info, obj_c_property_decl_info) :: decl_list' ->
+  | ObjCPropertyDecl (_, _, obj_c_property_decl_info) :: decl_list' ->
       (let ivar_decl_ref = obj_c_property_decl_info.Clang_ast_t.opdi_ivar_decl in
        match Ast_utils.get_decl_opt_with_decl_ref ivar_decl_ref with
        | Some (ObjCIvarDecl (_, name_info, type_ptr, _, _)) ->
@@ -70,24 +68,27 @@ let rec get_fields type_ptr_to_sil_type tenv curr_class decl_list =
        | _ -> get_fields type_ptr_to_sil_type tenv curr_class decl_list')
   | ObjCIvarDecl (_, name_info, type_ptr, _, _) :: decl_list' ->
       add_field name_info type_ptr [] decl_list'
-  | decl :: decl_list' ->
+  | _ :: decl_list' ->
       get_fields type_ptr_to_sil_type tenv curr_class decl_list'
 
 (* Add potential extra fields defined only in the implementation of the class *)
 (* to the info given in the interface. Update the tenv accordingly. *)
-let add_missing_fields tenv class_name fields =
+let add_missing_fields tenv class_name ck fields =
   let mang_name = Mangled.from_string class_name in
-  let class_tn_name = Typename.TN_csu (Csu.Class, mang_name) in
-  match Sil.tenv_lookup tenv class_tn_name with
-  | Some Sil.Tstruct(intf_fields, _, _, _, superclass, methods, annotation) ->
-      let new_fields = General_utils.append_no_duplicates_fields fields intf_fields in
-      let new_fields = CFrontend_utils.General_utils.sort_fields new_fields in
+  let class_tn_name = Typename.TN_csu (Csu.Class ck, mang_name) in
+  match Tenv.lookup tenv class_tn_name with
+  | Some ({ Sil.instance_fields } as struct_typ) ->
+      let new_fields = General_utils.append_no_duplicates_fields instance_fields fields in
       let class_type_info =
-        Sil.Tstruct (
-          new_fields, [], Csu.Class, Some mang_name, superclass, methods, annotation
-        ) in
+        {
+          struct_typ with
+          Sil.instance_fields = new_fields;
+          static_fields = [];
+          csu = Csu.Class ck;
+          struct_name = Some mang_name;
+        } in
       Printing.log_out " Updating info for class '%s' in tenv\n" class_name;
-      Sil.tenv_add tenv class_tn_name class_type_info
+      Tenv.add tenv class_tn_name class_type_info
   | _ -> ()
 
 (* checks if ivar is defined among a set of fields and if it is atomic *)
@@ -107,10 +108,10 @@ let is_ivar_atomic ivar fields =
 let get_property_corresponding_ivar tenv type_ptr_to_sil_type class_name property_decl =
   let open Clang_ast_t in
   match property_decl with
-  | ObjCPropertyDecl (decl_info, named_decl_info, obj_c_property_decl_info) ->
+  | ObjCPropertyDecl (_, named_decl_info, obj_c_property_decl_info) ->
       (let ivar_decl_ref = obj_c_property_decl_info.Clang_ast_t.opdi_ivar_decl in
        match Ast_utils.get_decl_opt_with_decl_ref ivar_decl_ref with
-       | Some ObjCIvarDecl (decl_info, named_decl_info, type_ptr, _, _) ->
+       | Some ObjCIvarDecl (_, named_decl_info, _, _, _) ->
            General_utils.mk_class_field_name named_decl_info
        | _ -> (* Ivar is not known, so add a default one to the tenv *)
            let type_ptr = obj_c_property_decl_info.Clang_ast_t.opdi_type_ptr in
@@ -118,6 +119,6 @@ let get_property_corresponding_ivar tenv type_ptr_to_sil_type class_name propert
            let prop_attributes = obj_c_property_decl_info.Clang_ast_t.opdi_property_attributes in
            let field_name, typ, attr = build_sil_field type_ptr_to_sil_type tenv
                field_name_str type_ptr prop_attributes in
-           ignore (add_missing_fields tenv class_name [(field_name, typ, attr)]);
+           ignore (add_missing_fields tenv class_name Csu.Objc [(field_name, typ, attr)]);
            field_name)
   | _ -> assert false

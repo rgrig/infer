@@ -58,4 +58,22 @@ public class MethodsTest {
       throws InterruptedException, IOException, InferException {
     frontendTest("static.cpp");
   }
+
+  @Test
+  public void testReturnStructDotFilesMatch()
+      throws InterruptedException, IOException, InferException {
+    frontendTest("return_struct.cpp");
+  }
+
+  @Test
+  public void testConversionOperatorDotFilesMatch()
+      throws InterruptedException, IOException, InferException {
+    frontendTest("conversion_operator.cpp");
+  }
+
+  @Test
+  public void testVirtualMethodsDotFilesMatch()
+      throws InterruptedException, IOException, InferException {
+    frontendTest("virtual_methods.cpp");
+  }
 }

@@ -39,11 +39,15 @@ val no_translate_libs : bool ref
 
 val testing_mode : bool ref
 
+val cxx_experimental : bool ref
+
 (** constants *)
 
 val json : string ref
 
 val pointer_decl_index : Clang_ast_t.decl Clang_ast_main.PointerMap.t ref
+
+val pointer_stmt_index : Clang_ast_t.stmt Clang_ast_main.PointerMap.t ref
 
 val objc_object : string
 
@@ -52,6 +56,8 @@ val id_cl : string
 val self : string
 
 val this : string
+
+val return_param : string
 
 val nsstring_cl : string
 
@@ -62,6 +68,8 @@ val next_object : string
 val nsautorelease_pool_cl : string
 
 val string_with_utf8_m : string
+
+val is_kind_of_class : string
 
 val alloc : string
 
@@ -159,3 +167,7 @@ val infer : string
 val block : string
 
 val atomic_att : string
+
+val infer_skip_gcc_ast_stmt : string
+
+val infer_skip_fun : string

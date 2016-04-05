@@ -11,11 +11,9 @@
 
 val add_pointer_to_typ : Sil.typ -> Sil.typ
 
-val search_enum_type_by_name : Sil.tenv -> string -> Sil.const option
-
 val classname_of_type : Sil.typ -> string
 
-val mk_classname : string -> Typename.t
+val mk_classname : string -> Csu.class_kind -> Typename.t
 
 val mk_structname : string -> Typename.t
 
@@ -33,6 +31,6 @@ val is_block_type : Clang_ast_t.type_ptr -> bool
 
 val is_reference_type : Clang_ast_t.type_ptr -> bool
 
-val expand_structured_type : Sil.tenv -> Sil.typ -> Sil.typ
+val expand_structured_type : Tenv.t -> Sil.typ -> Sil.typ
 
 val get_name_from_type_pointer : string -> string * string

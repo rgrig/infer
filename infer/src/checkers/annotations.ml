@@ -9,7 +9,6 @@
 
 module F = Format
 module L = Logging
-open Utils
 
 (** Annotations. *)
 
@@ -31,22 +30,22 @@ let equal as1 as2 =
   IList.for_all2 param_equal as1.params as2.params
 
 let visibleForTesting = "com.google.common.annotations.VisibleForTesting"
-let javaxNullable = "javax.annotation.Nullable"
-let javaxNonnull = "javax.annotation.Nonnull"
 let suppressLint = "android.annotation.SuppressLint"
 
 
 let get_field_type_and_annotation fn = function
-  | Sil.Tptr (Sil.Tstruct (ftal, sftal, _, _, _, _, _), _)
-  | Sil.Tstruct (ftal, sftal, _, _, _, _, _) ->
+  | Sil.Tptr (Sil.Tstruct struct_typ, _)
+  | Sil.Tstruct struct_typ ->
       (try
-         let (_, t, a) = IList.find (fun (f, t, a) -> Sil.fld_equal f fn) (ftal @ sftal) in
+         let (_, t, a) = IList.find (fun (f, _, _) ->
+             Sil.fld_equal f fn)
+             (struct_typ.Sil.instance_fields @ struct_typ.Sil.static_fields) in
          Some (t, a)
        with Not_found -> None)
   | _ -> None
 
 let ia_iter f =
-  let ann_iter (a, b) = f a in
+  let ann_iter (a, _) = f a in
   IList.iter ann_iter
 
 let ma_iter f ((ia, ial) : Sil.method_annotation) =
@@ -99,6 +98,11 @@ let initializer_ = "Initializer"
 let inject = "Inject"
 let inject_view = "InjectView"
 let bind = "Bind"
+let bind_array = "BindArray"
+let bind_bitmap = "BindBitmap"
+let bind_drawable = "BindDrawable"
+let bind_string = "BindString"
+let suppress_view_nullability = "SuppressViewNullability"
 let false_on_null = "FalseOnNull"
 let mutable_ = "Mutable"
 let nullable = "Nullable"
@@ -111,6 +115,9 @@ let true_on_null = "TrueOnNull"
 let verify_annotation = "com.facebook.infer.annotation.Verify"
 let expensive = "Expensive"
 let performance_critical = "PerformanceCritical"
+let no_allocation = "NoAllocation"
+let ignore_allocations = "IgnoreAllocations"
+let suppress_warnings = "SuppressWarnings"
 
 let ia_is_nullable ia =
   ia_ends_with ia nullable
@@ -132,13 +139,35 @@ let ia_is_true_on_null ia =
 let ia_is_initializer ia =
   ia_ends_with ia initializer_
 
-let ia_is_inject ia =
+let field_injector_readwrite_list =
+  [
+    inject_view;
+    bind;
+    bind_array;
+    bind_bitmap;
+    bind_drawable;
+    bind_string;
+    suppress_view_nullability;
+  ]
+
+let field_injector_readonly_list =
+  inject
+  ::
+  field_injector_readwrite_list
+
+(** Annotations for readonly injectors.
+    The injector framework initializes the field but does not write null into it. *)
+let ia_is_field_injector_readonly ia =
   IList.exists
     (ia_ends_with ia)
-    [inject; inject_view; bind]
+    field_injector_readonly_list
 
-let ia_is_inject_view ia =
-  ia_ends_with ia inject_view
+(** Annotations for read-write injectors.
+    The injector framework initializes the field and can write null into it. *)
+let ia_is_field_injector_readwrite ia =
+  IList.exists
+    (ia_ends_with ia)
+    field_injector_readwrite_list
 
 let ia_is_mutable ia =
   ia_ends_with ia mutable_
@@ -154,6 +183,16 @@ let ia_is_expensive ia =
 
 let ia_is_performance_critical ia =
   ia_ends_with ia performance_critical
+
+let ia_is_no_allocation ia =
+  ia_ends_with ia no_allocation
+
+let ia_is_ignore_allocations ia =
+  ia_ends_with ia ignore_allocations
+
+let ia_is_suppress_warnings ia =
+  ia_ends_with ia suppress_warnings
+
 
 type annotation =
   | Nullable
@@ -219,7 +258,7 @@ let annotated_signature_is_anonymous_inner_class_wrapper ann_sig proc_name =
 let param_is_nullable pvar ann_sig =
   IList.exists
     (fun (param, annot, _) ->
-       Mangled.equal param (Sil.pvar_get_name pvar) && ia_is_nullable annot)
+       Mangled.equal param (Pvar.get_name pvar) && ia_is_nullable annot)
     ann_sig.params
 
 (** Pretty print a method signature with annotations. *)

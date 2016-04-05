@@ -12,7 +12,6 @@
 
 module L = Logging
 module F = Format
-open Utils
 
 (* =============== START of support for spec tables =============== *)
 
@@ -38,10 +37,6 @@ module Jprop = struct
         Prop.prop_fav_add_dfs fav p;
         fav_add_dfs fav jp1;
         fav_add_dfs fav jp2
-
-  let rec jprop_sub sub = function
-    | Prop (n, p) -> Prop (n, Prop.prop_sub sub p)
-    | Joined (n, p, jp1, jp2) -> Joined (n, Prop.prop_sub sub p, jprop_sub sub jp1, jprop_sub sub jp2)
 
   let rec normalize = function
     | Prop (n, p) -> Prop (n, Prop.normalize p)
@@ -118,12 +113,12 @@ module Jprop = struct
   let filter (f: 'a t -> 'b option) jpl =
     let rec do_filter acc = function
       | [] -> acc
-      | (Prop (_, p) as jp) :: jpl ->
+      | (Prop _ as jp) :: jpl ->
           (match f jp with
            | Some x ->
                do_filter (x:: acc) jpl
            | None -> do_filter acc jpl)
-      | (Joined (_, p, jp1, jp2) as jp) :: jpl ->
+      | (Joined (_, _, jp1, jp2) as jp) :: jpl ->
           (match f jp with
            | Some x ->
                do_filter (x:: acc) jpl
@@ -134,19 +129,26 @@ module Jprop = struct
   let rec map (f : 'a Prop.t -> 'b Prop.t) = function
     | Prop (n, p) -> Prop (n, f p)
     | Joined (n, p, jp1, jp2) -> Joined (n, f p, map f jp1, map f jp2)
+
+(*
+  let rec jprop_sub sub = function
+    | Prop (n, p) -> Prop (n, Prop.prop_sub sub p)
+    | Joined (n, p, jp1, jp2) ->
+        Joined (n, Prop.prop_sub sub p, jprop_sub sub jp1, jprop_sub sub jp2)
+*)
 end
 (***** End of module Jprop *****)
 
 module Visitedset =
   Set.Make (struct
     type t = int * int list
-    let compare (node_id1, line1) (node_id2, line2) = int_compare node_id1 node_id2
+    let compare (node_id1, _) (node_id2, _) = int_compare node_id1 node_id2
   end)
 
 let visited_str vis =
   let s = ref "" in
   let lines = ref IntSet.empty in
-  let do_one (node, ns) =
+  let do_one (_, ns) =
     (* if IList.length ns > 1 then
        begin
        let ss = ref "" in
@@ -167,21 +169,18 @@ type 'a spec = { pre: 'a Jprop.t; posts: ('a Prop.t * Paths.Path.t) list; visite
 module NormSpec : sig (* encapsulate type for normalized specs *)
   type t
   val normalize : Prop.normal spec -> t
-  val tospec : t -> Prop.normal spec
   val tospecs : t list -> Prop.normal spec list
   val compact : Sil.sharing_env -> t -> t (** Return a compact representation of the spec *)
   val erase_join_info_pre : t -> t (** Erase join info from pre of spec *)
 end = struct
   type t = Prop.normal spec
 
-  let tospec spec = spec
-
   let tospecs specs = specs
 
   let spec_fav (spec: Prop.normal spec) : Sil.fav =
     let fav = Sil.fav_new () in
     Jprop.fav_add_dfs fav spec.pre;
-    IList.iter (fun (p, path) -> Prop.prop_fav_add_dfs fav p) spec.posts;
+    IList.iter (fun (p, _) -> Prop.prop_fav_add_dfs fav p) spec.posts;
     fav
 
   let spec_sub sub spec =
@@ -208,8 +207,6 @@ end = struct
     let spec' = { spec with pre = Jprop.Prop (1, Jprop.to_prop spec.pre) } in
     normalize spec'
 end
-
-type norm_spec = NormSpec.t
 
 (** Convert spec into normal form w.r.t. variable renaming *)
 let spec_normalize =
@@ -264,7 +261,10 @@ module CallStats = struct (** module for tracing stats of function calls *)
     let s2 = if in_footprint then "FP" else "RE" in
     s1 ^ ":" ^ s2
 
-  let pp_trace fmt tr = Utils.pp_seq (fun fmt x -> F.fprintf fmt "%s" (tr_elem_str x)) fmt (IList.rev tr)
+  let pp_trace fmt tr =
+    pp_seq
+      (fun fmt x -> F.fprintf fmt "%s" (tr_elem_str x))
+      fmt (IList.rev tr)
 
   let iter f t =
     let elems = ref [] in
@@ -276,10 +276,12 @@ module CallStats = struct (** module for tracing stats of function calls *)
       IList.sort compare !elems in
     IList.iter (fun (x, tr) -> f x tr) sorted_elems
 
+(*
   let pp fmt t =
     let do_call (pname, loc) tr =
       F.fprintf fmt "%a %a: %a@\n" Procname.pp pname Location.pp loc pp_trace tr in
     iter do_call t
+*)
 end
 
 (** stats of the calls performed during the analysis *)
@@ -294,7 +296,6 @@ type stats =
     mutable nodes_visited_fp : IntSet.t; (** Nodes visited during the footprint phase *)
     mutable nodes_visited_re : IntSet.t; (** Nodes visited during the re-execution phase *)
     call_stats : call_stats;
-    cyclomatic : int;
   }
 
 type status = ACTIVE | INACTIVE | STALE
@@ -303,14 +304,19 @@ type phase = FOOTPRINT | RE_EXECUTION
 
 type dependency_map_t = int Procname.Map.t
 
-type is_library = Source | Library
+type call = Procname.t * Location.t
+
+type call_summary = {
+  expensive_calls: call list;
+  allocations: call list
+}
 
 (** Payload: results of some analysis *)
 type payload =
   {
     preposts : NormSpec.t list option; (** list of specs *)
     typestate : unit TypeState.t option; (** final typestate *)
-    calls:  CallTree.t list option;
+    calls: call_summary option;
   }
 
 type summary =
@@ -429,7 +435,7 @@ let pp_summary_no_stats_specs fmt summary =
   F.fprintf fmt "%a@\n" pp_pair (describe_phase summary);
   F.fprintf fmt "Dependency_map: @[%a@]@\n" pp_dependency_map summary.dependency_map
 
-let pp_stats_html err_log fmt stats =
+let pp_stats_html err_log fmt =
   Errlog.pp_html [] fmt err_log
 
 let get_specs_from_payload summary =
@@ -449,7 +455,7 @@ let pp_summary pe whole_seconds fmt summary =
       Io_infer.Html.pp_start_color fmt Black;
       F.fprintf fmt "@\n%a" pp_summary_no_stats_specs summary;
       Io_infer.Html.pp_end_color fmt ();
-      pp_stats_html err_log fmt summary.stats;
+      pp_stats_html err_log fmt;
       Io_infer.Html.pp_hline fmt ();
       F.fprintf fmt "<LISTING>@\n";
       pp_specs pe fmt (get_specs_from_payload summary);
@@ -463,9 +469,11 @@ let pp_summary pe whole_seconds fmt summary =
 
 (** Print the spec table *)
 let pp_spec_table pe whole_seconds fmt () =
-  Procname.Hash.iter (fun proc_name (summ, orig) -> F.fprintf fmt "PROC %a@\n%a@\n" Procname.pp proc_name (pp_summary pe whole_seconds) summ) spec_tbl
+  Procname.Hash.iter (fun proc_name (summ, _) ->
+      F.fprintf fmt "PROC %a@\n%a@\n" Procname.pp proc_name (pp_summary pe whole_seconds) summ
+    ) spec_tbl
 
-let empty_stats calls cyclomatic in_out_calls_opt =
+let empty_stats calls in_out_calls_opt =
   { stats_time = 0.0;
     stats_failure = None;
     stats_calls =
@@ -476,16 +484,7 @@ let empty_stats calls cyclomatic in_out_calls_opt =
     nodes_visited_fp = IntSet.empty;
     nodes_visited_re = IntSet.empty;
     call_stats = CallStats.init calls;
-    cyclomatic = cyclomatic;
   }
-
-let rec post_equal pl1 pl2 = match pl1, pl2 with
-  | [],[] -> true
-  | [], _:: _ -> false
-  | _:: _,[] -> false
-  | p1:: pl1', p2:: pl2' ->
-      if Prop.prop_equal p1 p2 then post_equal pl1' pl2'
-      else false
 
 let payload_compact sh payload =
   match payload.preposts with
@@ -518,9 +517,6 @@ let specs_filename pname =
 (** path to the .specs file for the given procedure in the current results directory *)
 let res_dir_specs_filename pname =
   DB.Results_dir.path_to_filename DB.Results_dir.Abs_root [Config.specs_dir_name; specs_filename pname]
-
-let summary_exists pname =
-  Sys.file_exists (DB.filename_to_string (res_dir_specs_filename pname))
 
 (** paths to the .specs file for the given procedure in the current spec libraries *)
 let specs_library_filenames pname =
@@ -730,19 +726,6 @@ let get_flag proc_name key =
         Some (Hashtbl.find proc_flags key)
       with Not_found -> None
 
-(** Get the iterations associated to the procedure if any, or the default timeout from the
-    command line *)
-let get_iterations proc_name =
-  match get_summary proc_name with
-  | None ->
-      raise (Failure ("Specs.get_iterations: " ^ (Procname.to_string proc_name) ^ "Not_found"))
-  | Some summary ->
-      let proc_flags = summary.attributes.ProcAttributes.proc_flags in
-      try
-        let time_str = Hashtbl.find proc_flags proc_flag_iterations in
-        Pervasives.int_of_string time_str
-      with exn when exn_not_failure exn -> !iterations_cmdline
-
 (** Return the specs and parameters for the proc in the spec table *)
 let get_specs_formals proc_name =
   match get_summary proc_name with
@@ -761,7 +744,7 @@ let get_specs proc_name =
 let get_phase proc_name =
   match get_summary_origin proc_name with
   | None -> raise (Failure ("Specs.get_phase: " ^ (Procname.to_string proc_name) ^ " Not_found"))
-  | Some (summary, origin) -> summary.phase
+  | Some (summary, _) -> summary.phase
 
 (** Set the current status for the proc *)
 let set_status proc_name status =
@@ -775,7 +758,7 @@ let mk_initial_dependency_map proc_list : dependency_map_t =
 
 (** Re-initialize a dependency map *)
 let re_initialize_dependency_map dependency_map =
-  Procname.Map.map (fun dep_proc -> - 1) dependency_map
+  Procname.Map.map (fun _ -> - 1) dependency_map
 
 (** Update the dependency map of [proc_name] with the current
     timestamps of the dependents *)
@@ -787,7 +770,7 @@ let update_dependency_map proc_name =
   | Some (summary, origin) ->
       let current_dependency_map =
         Procname.Map.mapi
-          (fun dep_proc old_stamp -> get_timestamp summary)
+          (fun _ _ -> get_timestamp summary)
           summary.dependency_map in
       set_summary_origin proc_name { summary with dependency_map = current_dependency_map } origin
 
@@ -799,11 +782,11 @@ let empty_payload =
   }
 
 (** [init_summary (depend_list, nodes,
-    proc_flags, calls, cyclomatic, in_out_calls_opt, proc_attributes)]
+    proc_flags, calls, in_out_calls_opt, proc_attributes)]
     initializes the summary for [proc_name] given dependent procs in list [depend_list]. *)
 let init_summary
     (depend_list, nodes,
-     proc_flags, calls, cyclomatic, in_out_calls_opt,
+     proc_flags, calls, in_out_calls_opt,
      proc_attributes) =
   let dependency_map = mk_initial_dependency_map depend_list in
   let summary =
@@ -813,7 +796,7 @@ let init_summary
       phase = FOOTPRINT;
       sessions = ref 0;
       payload = empty_payload;
-      stats = empty_stats calls cyclomatic in_out_calls_opt;
+      stats = empty_stats calls in_out_calls_opt;
       status = INACTIVE;
       timestamp = 0;
       attributes =
@@ -835,9 +818,18 @@ let reset_summary call_graph proc_name attributes_opt =
     [],
     proc_flags_empty (),
     [],
-    0,
     Some (Cg.get_calls call_graph proc_name),
     proc_attributes
   )
 
 (* =============== END of support for spec tables =============== *)
+
+(*
+let rec post_equal pl1 pl2 = match pl1, pl2 with
+  | [],[] -> true
+  | [], _:: _ -> false
+  | _:: _,[] -> false
+  | p1:: pl1', p2:: pl2' ->
+      if Prop.prop_equal p1 p2 then post_equal pl1' pl2'
+      else false
+*)

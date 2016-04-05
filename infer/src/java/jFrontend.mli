@@ -9,7 +9,6 @@
  *)
 
 open Javalib_pack
-open Sawja_pack
 
 (** [path_of_cached_classname cn] returns the path of a cached classname *)
 val path_of_cached_classname : JBasics.class_name -> string
@@ -26,7 +25,7 @@ val compute_source_icfg :
   Printer.LineReader.t ->
   JBasics.ClassSet.t ->
   JClasspath.program ->
-  Sil.tenv ->
+  Tenv.t ->
   string ->
   string option ->
   Cg.t * Cfg.cfg
@@ -36,7 +35,6 @@ val compute_class_icfg :
   Inferconfig.NeverReturnNull.matcher ->
   Printer.LineReader.t ->
   JClasspath.program ->
-  Sil.tenv ->
+  Tenv.t ->
   JCode.jcode Javalib.interface_or_class ->
-  DB.source_file ->
   Cg.t * Cfg.cfg

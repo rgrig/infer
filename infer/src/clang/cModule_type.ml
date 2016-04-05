@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-type block_data = CContext.t * Clang_ast_t.type_ptr * Procname.t * (Sil.pvar * Sil.typ) list
+type block_data = CContext.t * Clang_ast_t.type_ptr * Procname.t * (Pvar.t * Sil.typ) list
 
 type instr_type = [
   | `ClangStmt of Clang_ast_t.stmt
@@ -16,13 +16,14 @@ type instr_type = [
 
 module type CTranslation =
 sig
-  val instructions_trans : CContext.t -> Clang_ast_t.stmt list -> instr_type list ->
+  val instructions_trans : CContext.t -> Clang_ast_t.stmt -> instr_type list ->
     Cfg.Node.t -> Cfg.Node.t list
 end
 
-module type CMethod_declaration =
-sig
-  val function_decl : Sil.tenv -> Cfg.cfg -> Cg.t -> Clang_ast_t.decl ->
+module type CFrontend = sig
+  val function_decl : Tenv.t -> Cfg.cfg -> Cg.t -> Clang_ast_t.decl ->
     block_data option -> unit
 
+  val translate_one_declaration : Tenv.t -> Cg.t -> Cfg.cfg ->
+    Clang_ast_t.decl -> Clang_ast_t.decl -> unit
 end

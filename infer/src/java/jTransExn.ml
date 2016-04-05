@@ -21,7 +21,7 @@ let create_handler_table impl =
       Hashtbl.replace handler_tb pc (exn_handler:: handlers)
     with Not_found ->
       Hashtbl.add handler_tb pc [exn_handler] in
-  List.iter collect (JBir.exception_edges impl);
+  IList.iter collect (JBir.exception_edges impl);
   handler_tb
 
 let translate_exceptions context exit_nodes get_body_nodes handler_table =
@@ -39,10 +39,10 @@ let translate_exceptions context exit_nodes get_body_nodes handler_table =
     let id_deactivate = Ident.create_fresh Ident.knormal in
     let instr_deactivate_exn = Sil.Set (Sil.Lvar ret_var, ret_type, Sil.Var id_deactivate, loc) in
     let instr_unwrap_ret_val =
-      let unwrap_builtin = Sil.Const (Sil.Cfun SymExec.ModelBuiltins.__unwrap_exception) in
+      let unwrap_builtin = Sil.Const (Sil.Cfun ModelBuiltins.__unwrap_exception) in
       Sil.Call([id_exn_val], unwrap_builtin, [(Sil.Var id_ret_val, ret_type)], loc, Sil.cf_default) in
     create_node loc Cfg.Node.exn_handler_kind [instr_get_ret_val; instr_deactivate_exn; instr_unwrap_ret_val] [id_ret_val; id_deactivate] in
-  let create_entry_block pc handler_list =
+  let create_entry_block handler_list =
     try
       ignore (Hashtbl.find catch_block_table handler_list)
     with Not_found ->
@@ -61,7 +61,7 @@ let translate_exceptions context exit_nodes get_body_nodes handler_table =
           | _ -> assert false in
         let id_instanceof = Ident.create_fresh Ident.knormal in
         let instr_call_instanceof =
-          let instanceof_builtin = Sil.Const (Sil.Cfun SymExec.ModelBuiltins.__instanceof) in
+          let instanceof_builtin = Sil.Const (Sil.Cfun ModelBuiltins.__instanceof) in
           let args = [(Sil.Var id_exn_val, Sil.Tptr(exn_type, Sil.Pk_pointer)); (Sil.Sizeof (exn_type, Sil.Subtype.exact), Sil.Tvoid)] in
           Sil.Call ([id_instanceof], instanceof_builtin, args, loc, Sil.cf_default) in
         let if_kind = Sil.Ik_switch in
@@ -95,19 +95,20 @@ let translate_exceptions context exit_nodes get_body_nodes handler_table =
         is_last_handler := false;
         collect succ_nodes remove_temps rethrow_exception handler in
 
-      let nodes_first_handler = List.fold_left process_handler exit_nodes (List.rev handler_list) in
+      let nodes_first_handler =
+        IList.fold_left process_handler exit_nodes (IList.rev handler_list) in
       let loc = match nodes_first_handler with
         | n:: _ -> Cfg.Node.get_loc n
         | [] -> Location.dummy in
       let entry_node = create_entry_node loc in
       Cfg.Node.set_succs_exn entry_node nodes_first_handler exit_nodes;
       Hashtbl.add catch_block_table handler_list [entry_node] in
-  Hashtbl.iter (fun pc handler_list -> create_entry_block pc handler_list) handler_table;
+  Hashtbl.iter (fun _ handler_list -> create_entry_block handler_list) handler_table;
   catch_block_table
 
 let create_exception_handlers context exit_nodes get_body_nodes impl =
   match JBir.exc_tbl impl with
-  | [] -> fun pc -> exit_nodes
+  | [] -> fun _ -> exit_nodes
   | _ ->
       let handler_table = create_handler_table impl in
       let catch_block_table = translate_exceptions context exit_nodes get_body_nodes handler_table in

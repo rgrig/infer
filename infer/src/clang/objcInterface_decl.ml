@@ -14,29 +14,17 @@
 (* ObjectiveC doesn't have a notion of static or class fields. *)
 (* So, in this module we translate a class into a sil srtuct with an empty list of static fields.*)
 
-open Utils
 open CFrontend_utils
 
 module L = Logging
 
-let objc_class_str = "ObjC-Class"
-
-let objc_class_annotation =
-  [({ Sil.class_name = objc_class_str; Sil.parameters =[]}, true)]
-
-let is_objc_class_annotation a =
-  match a with
-  | [({ Sil.class_name = n; Sil.parameters =[]}, true)] when n = objc_class_str -> true
-  | _ -> false
-
 let is_pointer_to_objc_class tenv typ =
   match typ with
-  | Sil.Tptr (Sil.Tvar (Typename.TN_csu (Csu.Class, cname)), _) ->
-      (match Sil.tenv_lookup tenv (Typename.TN_csu (Csu.Class, cname)) with
-       | Some Sil.Tstruct(_, _, Csu.Class, _, _, _, a) when is_objc_class_annotation a -> true
+  | Sil.Tptr (Sil.Tvar (Typename.TN_csu (Csu.Class Csu.Objc, cname)), _) ->
+      (match Tenv.lookup tenv (Typename.TN_csu (Csu.Class Csu.Objc, cname)) with
+       | Some struct_typ when Sil.is_objc_class (Sil.Tstruct struct_typ) -> true
        | _ -> false)
-  | Sil.Tptr (Sil.Tstruct(_, _, Csu.Class, _, _, _, a), _) when
-      is_objc_class_annotation a -> true
+  | Sil.Tptr (typ, _) when Sil.is_objc_class typ -> true
   | _ -> false
 
 let get_super_interface_decl otdi_super =
@@ -92,14 +80,14 @@ let get_interface_superclasses super_opt protocols =
   let super_class =
     match super_opt with
     | None -> []
-    | Some super -> [Typename.TN_csu (Csu.Class, Mangled.from_string super)] in
+    | Some super -> [Typename.TN_csu (Csu.Class Csu.Objc, Mangled.from_string super)] in
   let protocol_names = IList.map (
       fun name -> Typename.TN_csu (Csu.Protocol, Mangled.from_string name)
     ) protocols in
   let super_classes = super_class@protocol_names in
   super_classes
 
-let create_superclasses_fields type_ptr_to_sil_type tenv curr_class decl_list class_name
+let create_superclasses_fields type_ptr_to_sil_type tenv curr_class decl_list
     otdi_super otdi_protocols =
   let super = get_super_interface_decl otdi_super in
   let protocols = get_protocols otdi_protocols in
@@ -110,57 +98,67 @@ let create_superclasses_fields type_ptr_to_sil_type tenv curr_class decl_list cl
 (* Adds pairs (interface name, interface_type_info) to the global environment. *)
 let add_class_to_tenv type_ptr_to_sil_type tenv curr_class decl_info class_name decl_list ocidi =
   Printing.log_out "ADDING: ObjCInterfaceDecl for '%s'\n" class_name;
-  let interface_name = CTypes.mk_classname class_name in
+  let interface_name = CTypes.mk_classname class_name Csu.Objc in
   let decl_key = `DeclPtr decl_info.Clang_ast_t.di_pointer in
   Ast_utils.update_sil_types_map decl_key (Sil.Tvar interface_name);
   let superclasses, fields =
-    create_superclasses_fields type_ptr_to_sil_type tenv curr_class decl_list class_name
+    create_superclasses_fields type_ptr_to_sil_type tenv curr_class decl_list
       ocidi.Clang_ast_t.otdi_super
       ocidi.Clang_ast_t.otdi_protocols in
   let methods = ObjcProperty_decl.get_methods curr_class decl_list in
-  let fields_sc = CField_decl.fields_superclass tenv ocidi in
+  let fields_sc = CField_decl.fields_superclass tenv ocidi Csu.Objc in
   IList.iter (fun (fn, ft, _) ->
       Printing.log_out "----->SuperClass field: '%s' " (Ident.fieldname_to_string fn);
       Printing.log_out "type: '%s'\n" (Sil.typ_to_string ft)) fields_sc;
   (*In case we found categories, or partial definition of this class earlier and they are already in the tenv *)
   let fields, (superclasses : Typename.t list), methods =
-    match Sil.tenv_lookup tenv interface_name with
-    | Some (Sil.Tstruct (saved_fields, _, _, _, saved_superclasses, saved_methods, _)) ->
-        General_utils.append_no_duplicates_fields fields saved_fields,
-        General_utils.append_no_duplicates_csu superclasses saved_superclasses,
-        General_utils.append_no_duplicates_methods methods saved_methods
+    match Tenv.lookup tenv interface_name with
+    | Some ({ Sil.instance_fields; superclasses; def_methods }) ->
+        General_utils.append_no_duplicates_fields fields instance_fields,
+        General_utils.append_no_duplicates_csu superclasses superclasses,
+        General_utils.append_no_duplicates_methods methods def_methods
     | _ -> fields, superclasses, methods in
   let fields = General_utils.append_no_duplicates_fields fields fields_sc in
   (* We add the special hidden counter_field for implementing reference counting *)
   let fields = General_utils.append_no_duplicates_fields [Sil.objc_ref_counter_field] fields in
-  let fields = General_utils.sort_fields fields in
   Printing.log_out "Class %s field:\n" class_name;
-  IList.iter (fun (fn, ft, _) ->
+  IList.iter (fun (fn, _, _) ->
       Printing.log_out "-----> field: '%s'\n" (Ident.fieldname_to_string fn)) fields;
   let interface_type_info =
-    Sil.Tstruct(fields, [], Csu.Class, Some (Mangled.from_string class_name),
-                superclasses, methods, objc_class_annotation) in
-  Sil.tenv_add tenv interface_name interface_type_info;
+    {
+      Sil.instance_fields = fields;
+      static_fields = [];
+      csu = Csu.Class Csu.Objc;
+      struct_name = Some (Mangled.from_string class_name);
+      superclasses;
+      def_methods = methods;
+      struct_annotations = Sil.objc_class_annotation;
+    } in
+  Tenv.add tenv interface_name interface_type_info;
   Printing.log_out
     "  >>>Verifying that Typename '%s' is in tenv\n" (Typename.to_string interface_name);
-  (match Sil.tenv_lookup tenv interface_name with
-   | Some t -> Printing.log_out "  >>>OK. Found typ='%s'\n" (Sil.typ_to_string t)
+  (match Tenv.lookup tenv interface_name with
+   | Some st -> Printing.log_out "  >>>OK. Found typ='%s'\n" (Sil.typ_to_string (Sil.Tstruct st))
    | None -> Printing.log_out "  >>>NOT Found!!\n");
   Sil.Tvar interface_name
 
-let add_missing_methods tenv class_name decl_info decl_list curr_class =
+let add_missing_methods tenv class_name ck decl_info decl_list curr_class =
   let methods = ObjcProperty_decl.get_methods curr_class decl_list in
-  let class_tn_name = Typename.TN_csu (Csu.Class, (Mangled.from_string class_name)) in
+  let class_tn_name = Typename.TN_csu (Csu.Class ck, (Mangled.from_string class_name)) in
   let decl_key = `DeclPtr decl_info.Clang_ast_t.di_pointer in
   Ast_utils.update_sil_types_map decl_key (Sil.Tvar class_tn_name);
-  (match Sil.tenv_lookup tenv class_tn_name with
-   | Some Sil.Tstruct (fields, [], Csu.Class, Some name,
-                       superclass, existing_methods, annotation) ->
-       let methods = General_utils.append_no_duplicates_methods existing_methods methods in
-       let typ =
-         Sil.Tstruct (fields, [], Csu.Class, Some name, superclass, methods, annotation) in
-       Sil.tenv_add tenv class_tn_name typ
-   | _ -> ());
+  begin
+    match Tenv.lookup tenv class_tn_name with
+    | Some ({ Sil.static_fields = [];
+              csu = Csu.Class _;
+              struct_name = Some _;
+              def_methods;
+            } as struct_typ) ->
+        let methods = General_utils.append_no_duplicates_methods def_methods methods in
+        let struct_typ' = { struct_typ with Sil.def_methods = methods; } in
+        Tenv.add tenv class_tn_name struct_typ'
+    | _ -> ()
+  end;
   Sil.Tvar class_tn_name
 
 (* Interface_type_info has the name of instance variables and the name of methods. *)
@@ -184,13 +182,13 @@ let interface_declaration type_ptr_to_sil_type tenv decl =
 let interface_impl_declaration type_ptr_to_sil_type tenv decl =
   let open Clang_ast_t in
   match decl with
-  | ObjCImplementationDecl (decl_info, name_info, decl_list, decl_context_info, idi) ->
+  | ObjCImplementationDecl (decl_info, name_info, decl_list, _, idi) ->
       let class_name = Ast_utils.get_qualified_name name_info in
       Printing.log_out "ADDING: ObjCImplementationDecl for class '%s'\n" class_name;
       let _ = add_class_decl type_ptr_to_sil_type tenv idi in
       let curr_class = get_curr_class_impl idi in
       let fields = CField_decl.get_fields type_ptr_to_sil_type tenv curr_class decl_list in
-      CField_decl.add_missing_fields tenv class_name fields;
-      let typ = add_missing_methods tenv class_name decl_info decl_list curr_class in
+      CField_decl.add_missing_fields tenv class_name Csu.Objc fields;
+      let typ = add_missing_methods tenv class_name Csu.Objc decl_info decl_list curr_class in
       typ
   | _ -> assert false

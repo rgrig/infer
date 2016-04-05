@@ -11,7 +11,6 @@
 
 module L = Logging
 module F = Format
-open Utils
 open Dataflow
 
 (* ERADICATE CHECKER. TODOS:*)
@@ -23,7 +22,8 @@ let verbose = Config.from_env_variable "ERADICATE_TYPINGS"
 (* print step-by-step tracing information *)
 let trace = Config.from_env_variable "ERADICATE_TRACE"
 
-let check_field_initialization = true (* check that nonnullable fields are initialized in constructors *)
+(* check that nonnullable fields are initialized in constructors *)
+let check_field_initialization = true
 
 type parameters = TypeState.parameters
 
@@ -31,10 +31,7 @@ type parameters = TypeState.parameters
 (** Type for a module that provides a main callback function *)
 module type CallBackT =
 sig
-  val callback :
-    TypeCheck.checks -> Procname.t list -> TypeCheck.get_proc_desc ->
-    Idenv.t -> Sil.tenv -> Procname.t ->
-    Cfg.Procdesc.t -> unit
+  val callback : TypeCheck.checks -> Callbacks.proc_callback_args -> unit
 end (* CallBackT *)
 
 (** Extension to the type checker. *)
@@ -73,16 +70,16 @@ struct
     | None -> ()
 
   let callback1
-      find_canonical_duplicate calls_this checks get_proc_desc idenv tenv curr_pname
+      tenv find_canonical_duplicate calls_this checks get_proc_desc idenv curr_pname
       curr_pdesc annotated_signature linereader proc_loc
     : bool * Extension.extension TypeState.t option =
-    let mk_pvar s = Sil.mk_pvar s curr_pname in
+    let mk s = Pvar.mk s curr_pname in
     let add_formal typestate (s, ia, typ) =
-      let pvar = mk_pvar s in
+      let pvar = mk s in
       let ta =
         let origin = TypeOrigin.Formal s in
         TypeAnnotation.from_item_annotation ia origin in
-      TypeState.add_pvar pvar (typ, ta, []) typestate in
+      TypeState.add pvar (typ, ta, []) typestate in
     let get_initial_typestate () =
       let typestate_empty = TypeState.empty Extension.ext in
       IList.fold_left add_formal typestate_empty annotated_signature.Annotations.params in
@@ -104,7 +101,7 @@ struct
           checks.TypeCheck.check_ret_type;
       if checks.TypeCheck.eradicate then
         EradicateChecks.check_return_annotation
-          find_canonical_duplicate curr_pname curr_pdesc exit_node ret_range
+          find_canonical_duplicate curr_pname exit_node ret_range
           ret_ia ret_implicitly_nullable loc in
 
     let do_before_dataflow initial_typestate =
@@ -119,14 +116,13 @@ struct
 
     let module DFTypeCheck = MakeDF(struct
         type t = Extension.extension TypeState.t
-        let initial = TypeState.empty Extension.ext
         let equal = TypeState.equal
         let join = TypeState.join Extension.ext
-        let do_node node typestate =
+        let do_node tenv node typestate =
           State.set_node node;
           let typestates_succ, typestates_exn =
             TypeCheck.typecheck_node
-              Extension.ext calls_this checks idenv get_proc_desc curr_pname curr_pdesc
+              tenv Extension.ext calls_this checks idenv get_proc_desc curr_pname curr_pdesc
               find_canonical_duplicate annotated_signature typestate node linereader in
           if trace then
             IList.iter (fun typestate_succ ->
@@ -136,11 +132,11 @@ struct
                   (TypeState.pp Extension.ext) typestate_succ)
               typestates_succ;
           typestates_succ, typestates_exn
-        let proc_throws pn = DontKnow
+        let proc_throws _ = DontKnow
       end) in
     let initial_typestate = get_initial_typestate () in
     do_before_dataflow initial_typestate;
-    let transitions = DFTypeCheck.run curr_pdesc initial_typestate in
+    let transitions = DFTypeCheck.run tenv curr_pdesc initial_typestate in
     match transitions (Cfg.Procdesc.get_exit_node curr_pdesc) with
     | DFTypeCheck.Transition (final_typestate, _, _) ->
         do_after_dataflow find_canonical_duplicate final_typestate;
@@ -149,8 +145,16 @@ struct
         !calls_this, None
 
   let callback2
-      calls_this checks all_procs get_proc_desc idenv tenv curr_pname
-      curr_pdesc annotated_signature linereader proc_loc : unit =
+      calls_this checks
+      {
+        Callbacks.proc_desc = curr_pdesc;
+        proc_name = curr_pname;
+        get_proc_desc;
+        idenv;
+        tenv;
+        get_procs_in_file;
+      }
+      annotated_signature linereader proc_loc : unit =
 
     let find_duplicate_nodes = State.mk_find_duplicate_nodes curr_pdesc in
     let find_canonical_duplicate node =
@@ -177,8 +181,8 @@ struct
             check_ret_type = [];
           }, ref false in
       callback1
-        find_canonical_duplicate calls_this' checks' get_proc_desc idenv_pn
-        tenv pname pdesc ann_sig linereader loc in
+        tenv find_canonical_duplicate calls_this' checks' get_proc_desc idenv_pn
+        pname pdesc ann_sig linereader loc in
 
     let module Initializers = struct
       type init = Procname.t * Cfg.Procdesc.t
@@ -192,14 +196,16 @@ struct
               let is_private =
                 callee_attributes.ProcAttributes.access = Sil.Private in
               let same_class =
-                let get_class_opt pn =
-                  if Procname.is_java pn then Some (Procname.java_get_class pn)
-                  else None in
+                let get_class_opt pn = match pn with
+                  | Procname.Java pn_java ->
+                      Some (Procname.java_get_class_name pn_java)
+                  | _ ->
+                      None in
                 get_class_opt init_pn = get_class_opt callee_pn in
               is_private && same_class in
             let private_called = PatternMatch.proc_calls
-                Specs.proc_resolve_attributes init_pn init_pd filter in
-            let do_called (callee_pn, callee_attributes) =
+                Specs.proc_resolve_attributes init_pd filter in
+            let do_called (callee_pn, _) =
               match get_proc_desc callee_pn with
               | Some callee_pd ->
                   res := (callee_pn, callee_pd) :: !res
@@ -251,13 +257,19 @@ struct
             | Some pdesc ->
                 res := (pname, pdesc) :: !res
             | None -> () in
-        IList.iter do_proc all_procs;
+        IList.iter do_proc (get_procs_in_file curr_pname);
         IList.rev !res
+
+      let get_class pn = match pn with
+        | Procname.Java pn_java ->
+            Some (Procname.java_get_class_name pn_java)
+        | _ ->
+            None
 
       (** Typestates after the current procedure and all initializer procedures. *)
       let final_initializer_typestates_lazy = lazy
         begin
-          let is_initializer pname proc_attributes =
+          let is_initializer proc_attributes =
             PatternMatch.method_is_initializer tenv proc_attributes ||
             let ia, _ =
               (Models.get_modelled_annotated_signature proc_attributes).Annotations.ret in
@@ -265,8 +277,8 @@ struct
           let initializers_current_class =
             pname_and_pdescs_with
               (function (pname, proc_attributes) ->
-                is_initializer pname proc_attributes &&
-                Procname.java_get_class pname = Procname.java_get_class curr_pname) in
+                is_initializer proc_attributes &&
+                get_class pname = get_class curr_pname) in
           final_typestates
             ((curr_pname, curr_pdesc) :: initializers_current_class)
         end
@@ -276,9 +288,9 @@ struct
         begin
           let constructors_current_class =
             pname_and_pdescs_with
-              (fun (pname, proc_attributes) ->
+              (fun (pname, _) ->
                  Procname.is_constructor pname &&
-                 Procname.java_get_class pname = Procname.java_get_class curr_pname) in
+                 get_class pname = get_class curr_pname) in
           final_typestates constructors_current_class
         end
 
@@ -314,7 +326,7 @@ struct
     do_final_typestate final_typestate_opt calls_this;
     if checks.TypeCheck.eradicate then
       EradicateChecks.check_overridden_annotations
-        find_canonical_duplicate get_proc_desc
+        find_canonical_duplicate
         tenv curr_pname curr_pdesc
         annotated_signature;
 
@@ -322,7 +334,7 @@ struct
     update_summary curr_pname curr_pdesc final_typestate_opt
 
   (** Entry point for the eradicate-based checker infrastructure. *)
-  let callback checks all_procs get_proc_desc idenv tenv proc_name proc_desc =
+  let callback checks ({ Callbacks.proc_desc; proc_name } as callback_args) =
     let calls_this = ref false in
 
     let filter_special_cases () =
@@ -346,8 +358,7 @@ struct
             annotated_signature;
 
         callback2
-          calls_this checks all_procs get_proc_desc idenv tenv
-          proc_name proc_desc annotated_signature linereader loc
+          calls_this checks callback_args annotated_signature linereader loc
 
 end (* MkCallback *)
 
@@ -365,9 +376,9 @@ struct
   type extension = unit
   let ext =
     let empty = () in
-    let check_instr get_proc_desc proc_name proc_desc node ext instr param = ext in
+    let check_instr _ _ _ _ ext _ _ = ext in
     let join () () = () in
-    let pp fmt () = () in
+    let pp _ () = () in
     {
       TypeState.empty = empty;
       check_instr = check_instr;
@@ -383,7 +394,8 @@ module Main =
   Build(EmptyExtension)
 
 (** Eradicate checker for Java @Nullable annotations. *)
-let callback_eradicate all_procs get_proc_desc idenv tenv proc_name proc_desc =
+let callback_eradicate
+    ({ Callbacks.get_proc_desc; idenv; proc_name } as callback_args) =
   let checks =
     {
       TypeCheck.eradicate = true;
@@ -391,30 +403,32 @@ let callback_eradicate all_procs get_proc_desc idenv tenv proc_name proc_desc =
       check_ret_type = [];
     } in
   let callbacks =
-    let analyze_ondemand pname =
-      match get_proc_desc pname with
-      | None -> ()
-      | Some pdesc ->
-          let idenv_pname = Idenv.create_from_idenv idenv pdesc in
-          Main.callback checks all_procs get_proc_desc idenv_pname tenv pname pdesc in
-    { Ondemand.analyze_ondemand; get_proc_desc; } in
+    let analyze_ondemand pdesc =
+      let idenv_pname = Idenv.create_from_idenv idenv pdesc in
+      Main.callback checks
+        { callback_args with
+          Callbacks.idenv = idenv_pname;
+          proc_name = (Cfg.Procdesc.get_proc_name pdesc);
+          proc_desc = pdesc; } in
+    {
+      Ondemand.analyze_ondemand;
+      get_proc_desc;
+    } in
 
-  if not !Config.ondemand_enabled ||
-     Ondemand.procedure_should_be_analyzed proc_desc proc_name
+  if Ondemand.procedure_should_be_analyzed proc_name
   then
     begin
       Ondemand.set_callbacks callbacks;
-      Main.callback checks all_procs get_proc_desc idenv tenv proc_name proc_desc;
+      Main.callback checks callback_args;
       Ondemand.unset_callbacks ()
     end
 
 (** Call the given check_return_type at the end of every procedure. *)
-let callback_check_return_type check_return_type all_procs
-    get_proc_desc idenv tenv proc_name proc_desc =
+let callback_check_return_type check_return_type callback_args =
   let checks =
     {
       TypeCheck.eradicate = false;
       check_extension = false;
       check_ret_type = [check_return_type];
     } in
-  Main.callback checks all_procs get_proc_desc idenv tenv proc_name proc_desc
+  Main.callback checks callback_args

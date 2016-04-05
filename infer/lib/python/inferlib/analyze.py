@@ -23,12 +23,12 @@ import subprocess
 import sys
 import time
 
-from . import config, issues, jwlib, utils
+from . import config, issues, utils
 
 # Increase the limit of the CSV parser to sys.maxlimit
 csv.field_size_limit(sys.maxsize)
 
-INFER_ANALYZE_BINARY = "InferAnalyze"
+INFER_ANALYZE_BINARY = 'InferAnalyze'
 
 
 def get_infer_version():
@@ -36,8 +36,8 @@ def get_infer_version():
         return subprocess.check_output([
             utils.get_cmd_in_bin_dir(INFER_ANALYZE_BINARY), '-version'])
     except:
-        print("Failed to run {0} binary, exiting".
-              format(INFER_ANALYZE_BINARY))
+        utils.stdout('Failed to run {0} binary, exiting'
+                     .format(INFER_ANALYZE_BINARY))
         sys.exit(os.EX_UNAVAILABLE)
 
 
@@ -52,15 +52,6 @@ class VersionAction(argparse._VersionAction):
                                             option_string)
 
 
-class ConfirmIncrementalAction(argparse._StoreTrueAction):
-    def __call__(self, parser, namespace, values, option_string=None):
-        if not getattr(namespace, 'incremental'):
-            parser.error('-ic/--changed-only should only be used with -i')
-        super(ConfirmIncrementalAction, self).__call__(parser,
-                                                       namespace,
-                                                       values,
-                                                       option_string)
-
 
 base_parser = argparse.ArgumentParser(add_help=False)
 base_group = base_parser.add_argument_group('global arguments')
@@ -68,13 +59,22 @@ base_group.add_argument('-o', '--out', metavar='<directory>',
                         default=config.DEFAULT_INFER_OUT, dest='infer_out',
                         action=utils.AbsolutePathAction,
                         help='Set the Infer results directory')
-base_group.add_argument('-i', '--incremental', action='store_true',
-                        help='''Analyze only changed procedures and their
-                        dependencies''')
+base_group.add_argument('-i', '--incremental',
+                        dest='reactive', action='store_true',
+                        help='''DEPRECATED: use --reactive.''')
 base_group.add_argument('-ic', '--changed-only',
-                        action=ConfirmIncrementalAction,
-                        help='''Same as -i, but does not analyze
-                        dependencies of changed procedures.''')
+                        dest='reactive', action='store_true',
+                        help='''DEPRECATED: use --reactive.''')
+base_group.add_argument('-r', '--reactive', action='store_true',
+                        help='''Analyze in reactive propagation mode
+                        starting from changed files.''')
+base_group.add_argument('-m', '--merge', action='store_true',
+                        help='''merge the captured results directories specified
+                        in the dependency file.''')
+base_group.add_argument('-c', '--continue', action='store_true',
+                        dest='continue_capture',
+                        help='''Continue the capture for the reactive
+                        analysis, increasing the changed files/procedures.''')
 base_group.add_argument('--debug-exceptions', action='store_true',
                         help='''Generate lightweight debugging information:
                         just print the internal exceptions during analysis''')
@@ -101,12 +101,13 @@ base_group.add_argument('-l', '--llvm', action='store_true',
                         help='''[experimental] Analyze C or C++ file using the
                         experimental LLVM frontend''')
 
-base_group.add_argument('--log_to_stderr', action='store_true',
-                        help='''When set, all logging will go to stderr instead
-                        of the log file''')
 base_parser.add_argument('-v', '--version',
                          help='''Print the version of Infer and exit''',
                          action=VersionAction)
+
+base_group.add_argument('--pmd-xml',
+                        action='store_true',
+                        help='''Output issues in (PMD) XML format.''')
 
 
 infer_parser = argparse.ArgumentParser(parents=[base_parser])
@@ -118,7 +119,7 @@ infer_group.add_argument('-j', '--multicore', metavar='n', type=int,
 infer_group.add_argument('-x', '--project', metavar='<projectname>',
                            help='Project name, for recording purposes only')
 
-infer_group.add_argument('-r', '--revision', metavar='<githash>',
+infer_group.add_argument('--revision', metavar='<githash>',
                            help='The githash, for recording purposes only')
 
 infer_group.add_argument('--buck', action='store_true', dest='buck',
@@ -161,33 +162,6 @@ infer_group.add_argument('--specs-dir-list-file',
                               'in <file> to the list of directories to be '
                               'searched for spec files')
 
-def detect_javac(args):
-    for index, arg in enumerate(args):
-        if arg == 'javac':
-            return index
-
-
-def get_infer_args(args):
-    index = detect_javac(args)
-    if index is None:
-        cmd_args = args
-    else:
-        cmd_args = args[:index]
-    return infer_parser.parse_args(cmd_args)
-
-
-def get_javac_args(args):
-    javac_args = args[detect_javac(args) + 1:]
-    if len(javac_args) == 0:
-        return None
-    else:
-        # replace any -g:.* flag with -g to preserve debugging symbols
-        args = map(lambda arg: '-g' if '-g:' in arg else arg, javac_args)
-        # skip -Werror
-        args = filter(lambda arg: arg != '-Werror', args)
-        return args
-
-
 def remove_infer_out(infer_out):
     # it is safe to ignore errors here because recreating the infer_out
     # directory will fail later
@@ -201,8 +175,17 @@ def create_results_dir(results_dir):
     utils.mkdir_if_not_exists(os.path.join(results_dir, 'sources'))
 
 
+def reset_start_file(results_dir, touch_if_present=False):
+    start_path = os.path.join(results_dir, '.start')
+    if (not os.path.exists(start_path)) or touch_if_present:
+        # create new empty file - this will update modified timestamp
+        open(start_path, 'w').close()
+
 def clean(infer_out):
-    directories = ['multicore', 'classnames', 'sources', jwlib.FILELISTS]
+    directories = [
+        'multicore', 'classnames', 'sources',
+        config.JAVAC_FILELISTS_FILENAME,
+    ]
     extensions = ['.cfg', '.cg']
 
     for root, dirs, files in os.walk(infer_out):
@@ -218,14 +201,14 @@ def clean(infer_out):
 
 
 def help_exit(message):
-    print(message)
+    utils.stdout(message)
     infer_parser.print_usage()
     exit(1)
 
 
 def run_command(cmd, debug_mode, javac_arguments, step, analyzer):
     if debug_mode:
-        print('\n{0}\n'.format(' '.join(cmd)))
+        utils.stdout('\n{0}\n'.format(' '.join(cmd)))
     try:
         return subprocess.check_call(cmd)
     except subprocess.CalledProcessError as e:
@@ -239,39 +222,26 @@ def run_command(cmd, debug_mode, javac_arguments, step, analyzer):
         raise e
 
 
-class Infer:
+class AnalyzerWrapper(object):
 
-    def __init__(self, args, javac, javac_args):
+    javac = None
+
+    def __init__(self, args):
         self.args = args
         if self.args.analyzer not in config.ANALYZERS:
             help_exit('Unknown analysis mode \"{0}\"'
                       .format(self.args.analyzer))
 
-        utils.configure_logging(self.args.debug)
+        if self.args.infer_out is None:
+            help_exit('Expect Infer results directory')
+        try:
+            os.mkdir(self.args.infer_out)
+        except OSError as e:
+            if not os.path.isdir(self.args.infer_out):
+                raise e
 
-        self.javac = jwlib.CompilerCall(javac, javac_args)
-
-        if not self.javac.args.version:
-            if javac_args is None:
-                help_exit('No javac command detected')
-
-            if self.args.infer_out is None:
-                help_exit('Expect Infer results directory')
-
-            if self.args.buck:
-                self.args.infer_out = os.path.join(
-                    self.javac.args.classes_out,
-                    config.BUCK_INFER_OUT)
-                self.args.infer_out = os.path.abspath(self.args.infer_out)
-
-            try:
-                os.mkdir(self.args.infer_out)
-            except OSError as e:
-                if not os.path.isdir(self.args.infer_out):
-                    raise e
-
-            self.stats = {'int': {}}
-            self.timing = {}
+        self.stats = {'int': {}}
+        self.timing = {}
 
         if self.args.specs_dirs:
             # Each dir passed in input is prepended by '-lib'.
@@ -291,78 +261,35 @@ class Infer:
                 ['-specs-dir-list-file',
                  os.path.abspath(self.args.specs_dir_list_file)]
 
-
     def clean_exit(self):
         if os.path.isdir(self.args.infer_out):
-            print('removing', self.args.infer_out)
+            utils.stdout('removing {}'.format(self.args.infer_out))
             shutil.rmtree(self.args.infer_out)
         exit(os.EX_OK)
 
-    # create a classpath to pass to the frontend
-    def create_frontend_classpath(self):
-        classes_out = '.'
-        if self.javac.args.classes_out is not None:
-            classes_out = self.javac.args.classes_out
-        classes_out = os.path.abspath(classes_out)
-        original_classpath = []
-        if self.javac.args.bootclasspath is not None:
-            original_classpath = self.javac.args.bootclasspath.split(':')
-        if self.javac.args.classpath is not None:
-            original_classpath += self.javac.args.classpath.split(':')
-        if len(original_classpath) > 0:
-            # add classes_out, unless it's already in the classpath
-            classpath = [os.path.abspath(p) for p in original_classpath]
-            if not classes_out in classpath:
-                classpath = [classes_out] + classpath
-                # remove models.jar; it's added by the frontend
-                models_jar = os.path.abspath(config.MODELS_JAR)
-                if models_jar in classpath:
-                    classpath.remove(models_jar)
-            return ':'.join(classpath)
-        return classes_out
+        if self.args.specs_dirs:
+            # Each dir passed in input is prepended by '-lib'.
+            # Convert each path to absolute because when running from
+            # cluster Makefiles (multicore mode) InferAnalyze creates the wrong
+            # absolute path from within the multicore folder
+            self.args.specs_dirs = [item
+                                    for argument in
+                                    (['-lib', os.path.abspath(path)] for path in
+                                     self.args.specs_dirs)
+                                    for item in argument]
+        if self.args.specs_dir_list_file:
+            # Convert the path to the file list to an absolute path, because
+            # the analyzer will run from different paths and may not find the
+            # file otherwise.
+            self.args.specs_dir_list_file = \
+                ['-specs-dir-list-file',
+                 os.path.abspath(self.args.specs_dir_list_file)]
 
-
-    def run_infer_frontend(self):
-
-        infer_cmd = [utils.get_cmd_in_bin_dir('InferJava')]
-        infer_cmd += ['-classpath', self.create_frontend_classpath()]
-        infer_cmd += ['-class_source_map', self.javac.class_source_map]
-
-        if not self.args.absolute_paths:
-            infer_cmd += ['-project_root', self.args.project_root]
-
-        infer_cmd += [
-            '-results_dir', self.args.infer_out,
-            '-verbose_out', self.javac.verbose_out,
-        ]
-
-        if os.path.isfile(config.MODELS_JAR):
-            infer_cmd += ['-models', config.MODELS_JAR]
-
-        infer_cmd.append('-no-static_final')
-
-        if self.args.debug:
-            infer_cmd.append('-debug')
-        if self.args.analyzer == config.ANALYZER_TRACING:
-            infer_cmd.append('-tracing')
-        if self.args.android_harness:
-            infer_cmd.append('-harness')
-
-        if (self.args.android_harness
-            or self.args.analyzer in [config.ANALYZER_CHECKERS,
-                                      config.ANALYZER_ERADICATE]):
-                os.environ['INFER_CREATE_CALLEE_PDESC'] = 'Y'
-
-        return run_command(
-            infer_cmd,
-            self.args.debug,
-            self.javac.original_arguments,
-            'frontend',
-            self.args.analyzer
-        )
-
-    def compile(self):
-        return self.javac.run()
+    def clean_exit(self):
+        if os.path.isdir(self.args.infer_out):
+            utils.stdout('removing {}'.format(self.args.infer_out))
+            shutil.rmtree(self.args.infer_out)
+        exit(os.EX_OK)
 
     def analyze(self):
         logging.info('Starting analysis')
@@ -377,8 +304,10 @@ class Infer:
         # to be reported
         infer_options += ['-allow_specs_cleanup']
 
+        infer_options += ['-inferconfig_home', os.getcwd()]
+
         if self.args.analyzer == config.ANALYZER_ERADICATE:
-            infer_options += ['-checkers', '-eradicate']
+            infer_options += ['-eradicate']
         elif self.args.analyzer == config.ANALYZER_CHECKERS:
             infer_options += ['-checkers']
         else:
@@ -410,13 +339,17 @@ class Infer:
 
         elif self.args.debug_exceptions:
             infer_options.append('-developer_mode')
+            infer_options.append('-print_buckets')
             self.args.no_filtering = True
 
-        if self.args.incremental:
-            if self.args.changed_only:
-                infer_options.append('-incremental_changed_only')
-            else:
-                infer_options.append('-incremental')
+        if self.args.reactive:
+            infer_options.append('-reactive')
+
+        if self.args.continue_capture:
+            infer_options.append('-continue')
+
+        if self.args.merge:
+            infer_options.append('-merge')
 
         if self.args.specs_dirs:
             infer_options += self.args.specs_dirs
@@ -426,7 +359,7 @@ class Infer:
 
         exit_status = os.EX_OK
 
-        if self.args.buck:
+        if self.javac is not None and self.args.buck:
             infer_options += ['-project_root', os.getcwd(), '-java']
             if self.javac.args.classpath is not None:
                 for path in self.javac.args.classpath.split(os.pathsep):
@@ -435,13 +368,25 @@ class Infer:
         elif self.args.project_root:
             infer_options += ['-project_root', self.args.project_root]
 
+        if self.args.analyzer in [config.ANALYZER_CHECKERS,
+                                  config.ANALYZER_TRACING]:
+            os.environ['INFER_ONDEMAND'] = 'Y'
+
+        os.environ['INFER_OPTIONS'] = ' '.join(infer_options)
+
+        javac_original_arguments = \
+            self.javac.original_arguments if self.javac is not None else []
+
+        if self.args.analyzer == config.ANALYZER_TRACING:
+            os.environ['INFER_LAZY_DYNAMIC_DISPATCH'] = 'Y'
+
         if self.args.multicore == 1:
             analysis_start_time = time.time()
             analyze_cmd = infer_analyze + infer_options
             exit_status = run_command(
                 analyze_cmd,
                 self.args.debug,
-                self.javac.original_arguments,
+                javac_original_arguments,
                 'analysis',
                 self.args.analyzer
             )
@@ -450,13 +395,6 @@ class Infer:
             self.timing['makefile_generation'] = 0
 
         else:
-            if self.args.analyzer == config.ANALYZER_ERADICATE:
-                infer_analyze.append('-intraprocedural')
-            if self.args.analyzer == config.ANALYZER_CHECKERS:
-                os.environ['INFER_ONDEMAND'] = 'Y'
-
-            os.environ['INFER_OPTIONS'] = ' '.join(infer_options)
-
             multicore_dir = os.path.join(self.args.infer_out, 'multicore')
             pwd = os.getcwd()
             if os.path.isdir(multicore_dir):
@@ -469,7 +407,7 @@ class Infer:
             makefile_status = run_command(
                 analyze_cmd,
                 self.args.debug,
-                self.javac.original_arguments,
+                javac_original_arguments,
                 'create_makefile',
                 self.args.analyzer
             )
@@ -484,7 +422,7 @@ class Infer:
                 make_status = run_command(
                     make_cmd,
                     self.args.debug,
-                    self.javac.original_arguments,
+                    javac_original_arguments,
                     'run_makefile',
                     self.args.analyzer
                 )
@@ -525,9 +463,8 @@ class Infer:
             '-procs', procs_report,
             '-analyzer', self.args.analyzer
         ]
-        if self.javac.annotations_out is not None:
-            infer_print_options += [
-                '-local_config', self.javac.annotations_out]
+        if self.args.debug or self.args.debug_exceptions:
+            infer_print_options.append('-with_infer_src_loc')
         exit_status = subprocess.check_call(
             infer_print_cmd + infer_print_options
         )
@@ -568,11 +505,6 @@ class Infer:
         stats_path = os.path.join(self.args.infer_out, config.STATS_FILENAME)
         utils.dump_json_to_path(self.stats, stats_path)
 
-
-    def close(self):
-        os.remove(self.javac.verbose_out)
-        os.remove(self.javac.annotations_out)
-
     def analyze_and_report(self):
         should_print_errors = False
         if self.args.analyzer not in [config.ANALYZER_COMPILE,
@@ -589,37 +521,14 @@ class Infer:
                                                config.JSON_REPORT_FILENAME)
                     bugs_out = os.path.join(self.args.infer_out,
                                             config.BUGS_FILENAME)
-                    issues.print_and_save_errors(json_report, bugs_out)
+                    xml_out = None
+                    if self.args.pmd_xml:
+                        xml_out = os.path.join(self.args.infer_out,
+                                               config.PMD_XML_FILENAME)
+                    issues.print_and_save_errors(json_report,
+                                                 bugs_out, xml_out)
 
     def print_analysis_stats(self):
-        procs_total = self.stats['int']['procedures']
         files_total = self.stats['int']['files']
-        procs_str = utils.get_plural('procedure', procs_total)
         files_str = utils.get_plural('file', files_total)
-        print('Analyzed %s in %s' % (procs_str, files_str))
-
-    def start(self):
-        if self.javac.args.version:
-            if self.args.buck:
-                key = self.args.analyzer
-                print(utils.infer_key(key), file=sys.stderr)
-            else:
-                return self.javac.run()
-        else:
-            start_time = time.time()
-
-            self.compile()
-            if self.args.analyzer == config.ANALYZER_COMPILE:
-                return os.EX_OK
-
-            self.run_infer_frontend()
-            self.timing['capture'] = utils.elapsed_time(start_time)
-            if self.args.analyzer == config.ANALYZER_CAPTURE:
-                return os.EX_OK
-
-            self.analyze_and_report()
-            self.close()
-            self.timing['total'] = utils.elapsed_time(start_time)
-            self.save_stats()
-
-            return self.stats
+        print('Analyzed {}'.format(files_str))

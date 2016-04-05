@@ -12,9 +12,6 @@
 
 module L = Logging
 module F = Format
-open Utils
-
-let (++) = Sil.Int.add
 
 let list_product l1 l2 =
   let l1' = IList.rev l1 in
@@ -28,17 +25,12 @@ let rec list_rev_and_concat l1 l2 =
   | [] -> l2
   | x1:: l1' -> list_rev_and_concat l1' (x1:: l2)
 
-let pp_off fmt off =
-  IList.iter (fun n -> match n with
-      | Sil.Off_fld (f, t) -> F.fprintf fmt "%a " Ident.pp_fieldname f
-      | Sil.Off_index e -> F.fprintf fmt "%a " (Sil.pp_exp pe_text) e) off
-
 (** Check whether the index is out of bounds.
     If the size is - 1, no check is performed.
     If the index is provably out of bound, a bound error is given.
     If the size is a constant and the index is not provably in bound, a warning is given.
 *)
-let check_bad_index pname tenv p size index loc =
+let check_bad_index pname p size index loc =
   let size_is_constant = match size with
     | Sil.Const _ -> true
     | _ -> false in
@@ -65,28 +57,30 @@ let check_bad_index pname tenv p size index loc =
       let index_const_opt = get_const_opt index in
       if index_provably_out_of_bound () then
         let deref_str = Localise.deref_str_array_bound size_const_opt index_const_opt in
-        let exn = Exceptions.Array_out_of_bounds_l1 (Errdesc.explain_array_access deref_str p loc, try assert false with Assert_failure x -> x) in
+        let exn =
+          Exceptions.Array_out_of_bounds_l1
+            (Errdesc.explain_array_access deref_str p loc, __POS__) in
         let pre_opt = State.get_normalized_pre (Abs.abstract_no_symop pname) in
         Reporting.log_warning pname ~pre: pre_opt exn
       else if size_is_constant then
         let deref_str = Localise.deref_str_array_bound size_const_opt index_const_opt in
         let desc = Errdesc.explain_array_access deref_str p loc in
         let exn = if index_has_bounds ()
-          then Exceptions.Array_out_of_bounds_l2 (desc, try assert false with Assert_failure x -> x)
-          else Exceptions.Array_out_of_bounds_l3 (desc, try assert false with Assert_failure x -> x) in
+          then Exceptions.Array_out_of_bounds_l2 (desc, __POS__)
+          else Exceptions.Array_out_of_bounds_l3 (desc, __POS__) in
         let pre_opt = State.get_normalized_pre (Abs.abstract_no_symop pname) in
         Reporting.log_warning pname ~pre: pre_opt exn
     end
 
 (** Perform bounds checking *)
-let bounds_check pname tenv prop size e =
+let bounds_check pname prop size e =
   if !Config.trace_rearrange then
     begin
       L.d_str "Bounds check index:"; Sil.d_exp e;
       L.d_str " size: "; Sil.d_exp size;
       L.d_ln()
     end;
-  check_bad_index pname tenv prop size e
+  check_bad_index pname prop size e
 
 let rec create_struct_values pname tenv orig_prop footprint_part kind max_stamp t
     (off: Sil.offset list) inst : Sil.atom list * Sil.strexp * Sil.typ =
@@ -102,22 +96,24 @@ let rec create_struct_values pname tenv orig_prop footprint_part kind max_stamp 
     Ident.create kind !max_stamp in
   let res =
     match t, off with
-    | Sil.Tstruct (ftal, sftal, _, _, _, _, _),[] ->
+    | Sil.Tstruct _, [] ->
         ([], Sil.Estruct ([], inst), t)
-    | Sil.Tstruct (ftal, sftal, csu, nameo, supers, def_mthds, iann),
+    | Sil.Tstruct ({ Sil.instance_fields; static_fields } as struct_typ ),
       (Sil.Off_fld (f, _)):: off' ->
         let _, t', _ =
           try
-            IList.find (fun (f', _, _) -> Ident.fieldname_equal f f') (ftal @ sftal)
+            IList.find (fun (f', _, _) -> Ident.fieldname_equal f f')
+              (instance_fields @ static_fields)
           with Not_found ->
-            raise (Exceptions.Bad_footprint (try assert false with Assert_failure x -> x)) in
+            raise (Exceptions.Bad_footprint __POS__) in
         let atoms', se', res_t' =
           create_struct_values
             pname tenv orig_prop footprint_part kind max_stamp t' off' inst in
         let se = Sil.Estruct ([(f, se')], inst) in
         let replace_typ_of_f (f', t', a') = if Ident.fieldname_equal f f' then (f, res_t', a') else (f', t', a') in
-        let ftal' = IList.sort Sil.fld_typ_ann_compare (IList.map replace_typ_of_f ftal) in
-        (atoms', se, Sil.Tstruct (ftal', sftal, csu, nameo, supers, def_mthds, iann))
+        let instance_fields' =
+          IList.sort Sil.fld_typ_ann_compare (IList.map replace_typ_of_f instance_fields) in
+        (atoms', se, Sil.Tstruct { struct_typ with Sil.instance_fields = instance_fields'})
     | Sil.Tstruct _, (Sil.Off_index e):: off' ->
         let atoms', se', res_t' =
           create_struct_values
@@ -130,7 +126,7 @@ let rec create_struct_values pname tenv orig_prop footprint_part kind max_stamp 
     | Sil.Tarray(_, size),[] ->
         ([], Sil.Earray(size, [], inst), t)
     | Sil.Tarray(t', size'), (Sil.Off_index e) :: off' ->
-        bounds_check pname tenv orig_prop size' e (State.get_loc ());
+        bounds_check pname orig_prop size' e (State.get_loc ());
 
         let atoms', se', res_t' =
           create_struct_values
@@ -163,9 +159,9 @@ let rec create_struct_values pname tenv orig_prop footprint_part kind max_stamp 
         (Sil.Aeq(e, e'):: atoms', se, res_t)
     | Sil.Tint _, _ | Sil.Tfloat _, _ | Sil.Tvoid, _ | Sil.Tfun _, _ | Sil.Tptr _, _ ->
         L.d_str "create_struct_values type:"; Sil.d_typ_full t; L.d_str " off: "; Sil.d_offset_list off; L.d_ln();
-        raise (Exceptions.Bad_footprint (try assert false with Assert_failure x -> x))
+        raise (Exceptions.Bad_footprint __POS__)
 
-    | Sil.Tvar _, _ | Sil.Tenum _, _ ->
+    | Sil.Tvar _, _ ->
         L.d_str "create_struct_values type:"; Sil.d_typ_full t; L.d_str " off: "; Sil.d_offset_list off; L.d_ln();
         assert false in
 
@@ -195,18 +191,19 @@ let rec _strexp_extend_values
       let off_new = Sil.Off_index(Sil.exp_zero):: off in
       _strexp_extend_values
         pname tenv orig_prop footprint_part kind max_stamp se typ off_new inst
-  | (Sil.Off_fld (f, _)):: _, Sil.Earray _, Sil.Tarray _ ->
+  | (Sil.Off_fld _):: _, Sil.Earray _, Sil.Tarray _ ->
       let off_new = Sil.Off_index(Sil.exp_zero):: off in
       _strexp_extend_values
         pname tenv orig_prop footprint_part kind max_stamp se typ off_new inst
   | (Sil.Off_fld (f, _)):: off', Sil.Estruct (fsel, inst'),
-    Sil.Tstruct (ftal, sftal, csu, nameo, supers, def_mthds, iann) ->
+    Sil.Tstruct ({ Sil.instance_fields; static_fields } as struct_typ) ->
       let replace_fv new_v fv = if Ident.fieldname_equal (fst fv) f then (f, new_v) else fv in
       let _, typ', _ =
         try
-          IList.find (fun (f', t', a') -> Ident.fieldname_equal f f') (ftal @ sftal)
+          IList.find (fun (f', _, _) -> Ident.fieldname_equal f f')
+            (instance_fields @ static_fields)
         with Not_found ->
-          raise (Exceptions.Missing_fld (f, try assert false with Assert_failure x -> x)) in
+          raise (Exceptions.Missing_fld (f, __POS__)) in
       begin
         try
           let _, se' = IList.find (fun (f', _) -> Ident.fieldname_equal f f') fsel in
@@ -217,9 +214,10 @@ let rec _strexp_extend_values
             let replace_fse = replace_fv res_se' in
             let res_fsel' = IList.sort Sil.fld_strexp_compare (IList.map replace_fse fsel) in
             let replace_fta (f, t, a) = let f', t' = replace_fv res_typ' (f, t) in (f', t', a) in
-            let res_ftl' = IList.sort Sil.fld_typ_ann_compare (IList.map replace_fta ftal) in
+            let instance_fields' =
+              IList.sort Sil.fld_typ_ann_compare (IList.map replace_fta instance_fields) in
             let struct_typ =
-              Sil.Tstruct (res_ftl', sftal, csu, nameo, supers, def_mthds, iann) in
+              Sil.Tstruct { struct_typ with Sil.instance_fields = instance_fields' } in
             (res_atoms', Sil.Estruct (res_fsel', inst'), struct_typ) :: acc in
           IList.fold_left replace [] atoms_se_typ_list'
         with Not_found ->
@@ -228,12 +226,13 @@ let rec _strexp_extend_values
               pname tenv orig_prop footprint_part kind max_stamp typ' off' inst in
           let res_fsel' = IList.sort Sil.fld_strexp_compare ((f, se'):: fsel) in
           let replace_fta (f', t', a') = if Ident.fieldname_equal f' f then (f, res_typ', a') else (f', t', a') in
-          let res_ftl' = IList.sort Sil.fld_typ_ann_compare (IList.map replace_fta ftal) in
-          let struct_typ = Sil.Tstruct (res_ftl', sftal, csu, nameo, supers, def_mthds, iann) in
+          let instance_fields' =
+            IList.sort Sil.fld_typ_ann_compare (IList.map replace_fta instance_fields) in
+          let struct_typ = Sil.Tstruct { struct_typ with Sil.instance_fields = instance_fields' } in
           [(atoms', Sil.Estruct (res_fsel', inst'), struct_typ)]
       end
-  | (Sil.Off_fld (f, _)):: off', _, _ ->
-      raise (Exceptions.Bad_footprint (try assert false with Assert_failure x -> x))
+  | (Sil.Off_fld (_, _)):: _, _, _ ->
+      raise (Exceptions.Bad_footprint __POS__)
 
   | (Sil.Off_index _):: _, Sil.Eexp _, Sil.Tint _
   | (Sil.Off_index _):: _, Sil.Eexp _, Sil.Tfloat _
@@ -253,7 +252,7 @@ let rec _strexp_extend_values
       _strexp_extend_values
         pname tenv orig_prop footprint_part kind max_stamp se_new typ_new off inst
   | (Sil.Off_index e):: off', Sil.Earray(size, esel, inst_arr), Sil.Tarray(typ', size_for_typ') ->
-      bounds_check pname tenv orig_prop size e (State.get_loc ());
+      bounds_check pname orig_prop size e (State.get_loc ());
       begin
         try
           let _, se' = IList.find (fun (e', _) -> Sil.exp_equal e e') esel in
@@ -265,7 +264,7 @@ let rec _strexp_extend_values
             let res_esel' = IList.map replace_ise esel in
             if (Sil.typ_equal res_typ' typ') || (IList.length res_esel' = 1)
             then (res_atoms', Sil.Earray(size, res_esel', inst_arr), Sil.Tarray(res_typ', size_for_typ')) :: acc
-            else raise (Exceptions.Bad_footprint (try assert false with Assert_failure x -> x)) in
+            else raise (Exceptions.Bad_footprint __POS__) in
           IList.fold_left replace [] atoms_se_typ_list'
         with Not_found ->
           array_case_analysis_index pname tenv orig_prop
@@ -275,7 +274,7 @@ let rec _strexp_extend_values
             e off' inst_arr inst
       end
   | _, _, _ ->
-      raise (Exceptions.Bad_footprint (try assert false with Assert_failure x -> x))
+      raise (Exceptions.Bad_footprint __POS__)
 
 and array_case_analysis_index pname tenv orig_prop
     footprint_part kind max_stamp
@@ -285,7 +284,7 @@ and array_case_analysis_index pname tenv orig_prop
   =
   let check_sound t' =
     if not (Sil.typ_equal typ_cont t' || array_cont == [])
-    then raise (Exceptions.Bad_footprint (try assert false with Assert_failure x -> x)) in
+    then raise (Exceptions.Bad_footprint __POS__) in
   let index_in_array =
     IList.exists (fun (i, _) -> Prover.check_equal Prop.prop_emp index i) array_cont in
   let array_is_full =
@@ -416,7 +415,7 @@ let mk_ptsto_exp_footprint
           Errdesc.explain_dereference deref_str orig_prop (State.get_loc ()) in
         raise
           (Exceptions.Dangling_pointer_dereference
-             (None, err_desc, try assert false with Assert_failure x -> x))
+             (None, err_desc, __POS__))
       end
   end;
   let off_foot, eqs = laundry_offset_for_footprint max_stamp off in
@@ -425,7 +424,7 @@ let mk_ptsto_exp_footprint
     | Config.Java -> Sil.Subtype.subtypes in
   let create_ptsto footprint_part off0 = match root, off0, typ with
     | Sil.Lvar pvar, [], Sil.Tfun _ ->
-        let fun_name = Procname.from_string_c_fun (Mangled.to_string (Sil.pvar_get_name pvar)) in
+        let fun_name = Procname.from_string_c_fun (Mangled.to_string (Pvar.get_name pvar)) in
         let fun_exp = Sil.Const (Sil.Cfun fun_name) in
         ([], Prop.mk_ptsto root (Sil.Eexp (fun_exp, inst)) (Sil.Sizeof (typ, st)))
     | _, [], Sil.Tfun _ ->
@@ -448,7 +447,7 @@ let mk_ptsto_exp_footprint
     If it exists, return None. Otherwise, return [Some fld] with [fld] the missing field. *)
 let prop_iter_check_fields_ptsto_shallow iter lexp =
   let offset = Sil.exp_get_offsets lexp in
-  let (e, se, t) =
+  let (_, se, _) =
     match Prop.prop_iter_current iter with
     | Sil.Hpointsto (e, se, t), _ -> (e, se, t)
     | _ -> assert false in
@@ -462,7 +461,7 @@ let prop_iter_check_fields_ptsto_shallow iter lexp =
                 check_offset se' off'
               with Not_found -> Some fld)
          | _ -> Some fld)
-    | (Sil.Off_index e):: off' -> None in
+    | (Sil.Off_index _):: _ -> None in
   check_offset se offset
 
 let fav_max_stamp fav =
@@ -513,7 +512,7 @@ let prop_iter_extend_ptsto pname tenv orig_prop iter lexp inst =
     end;
     let extend_kind = match e with (* Determine whether to extend the footprint part or just the normal part *)
       | Sil.Var id when not (Ident.is_footprint id) -> Ident.kprimed
-      | Sil.Lvar pvar when Sil.pvar_is_local pvar -> Ident.kprimed
+      | Sil.Lvar pvar when Pvar.is_local pvar -> Ident.kprimed
       | _ -> Ident.kfootprint in
     let iter_list =
       let atoms_se_te_list =
@@ -529,8 +528,9 @@ let prop_iter_extend_ptsto pname tenv orig_prop iter lexp inst =
           let sigma_pto, sigma_rest =
             IList.partition (function
                 | Sil.Hpointsto(e', _, _) -> Sil.exp_equal e e'
-                | Sil.Hlseg (_, _, e1, e2, _) -> Sil.exp_equal e e1
-                | Sil.Hdllseg (_, _, e_iF, e_oB, e_oF, e_iB, _) -> Sil.exp_equal e e_iF || Sil.exp_equal e e_iB
+                | Sil.Hlseg (_, _, e1, _, _) -> Sil.exp_equal e e1
+                | Sil.Hdllseg (_, _, e_iF, _, _, e_iB, _) ->
+                    Sil.exp_equal e e_iF || Sil.exp_equal e e_iB
               ) footprint_sigma in
           let atoms_sigma_list =
             match sigma_pto with
@@ -613,10 +613,6 @@ let prop_iter_add_hpred_footprint pname tenv orig_prop iter (lexp, typ) inst =
   let offsets_default = Sil.exp_get_offsets lexp in
   Prop.prop_iter_set_state iter' offsets_default
 
-let sort_ftl ftl =
-  let compare (f1, _) (f2, _) = Sil.fld_compare f1 f2 in
-  IList.sort compare ftl
-
 exception ARRAY_ACCESS
 
 let rearrange_arith lexp prop =
@@ -631,14 +627,12 @@ let rearrange_arith lexp prop =
     if Prover.check_allocatedness prop root then
       raise ARRAY_ACCESS
     else
-      raise (Exceptions.Symexec_memory_error (try assert false with Assert_failure x -> x))
+      raise (Exceptions.Symexec_memory_error __POS__)
 
 let pp_rearrangement_error message prop lexp =
   L.d_strln (".... Rearrangement Error .... " ^ message);
   L.d_str "Exp:"; Sil.d_exp lexp; L.d_ln ();
   L.d_str "Prop:"; L.d_ln (); Prop.d_prop prop; L.d_ln (); L.d_ln ()
-
-let name_n = Ident.string_to_name "n"
 
 (** do re-arrangment for an iter whose current element is a pointsto *)
 let iter_rearrange_ptsto pname tenv orig_prop iter lexp inst =
@@ -656,7 +650,7 @@ let iter_rearrange_ptsto pname tenv orig_prop iter lexp inst =
     | Some fld ->
         begin
           pp_rearrangement_error "field splitting check failed" orig_prop lexp;
-          raise (Exceptions.Missing_fld (fld, try assert false with Assert_failure x -> x))
+          raise (Exceptions.Missing_fld (fld, __POS__))
         end in
   let res =
     if !Config.footprint
@@ -801,11 +795,11 @@ let iter_rearrange_pe_dllseg_last recurse_on_iters default_case_iter iter para_d
 let type_at_offset texp off =
   let rec strip_offset off typ = match off, typ with
     | [], _ -> Some typ
-    | (Sil.Off_fld (f, _)):: off', Sil.Tstruct (ftal, sftal, _, _, _, _, _) ->
+    | (Sil.Off_fld (f, _)):: off', Sil.Tstruct { Sil.instance_fields } ->
         (try
            let typ' =
-             (fun (x, y, z) -> y)
-               (IList.find (fun (f', t', a') -> Ident.fieldname_equal f f') ftal) in
+             (fun (_, y, _) -> y)
+               (IList.find (fun (f', _, _) -> Ident.fieldname_equal f f') instance_fields) in
            strip_offset off' typ'
          with Not_found -> None)
     | (Sil.Off_index _):: off', Sil.Tarray (typ', _) ->
@@ -831,8 +825,7 @@ let check_type_size pname prop texp off typ_from_instr =
         let loc = State.get_loc () in
         let exn =
           Exceptions.Pointer_size_mismatch (
-            Errdesc.explain_dereference deref_str prop loc,
-            try assert false with Assert_failure x -> x) in
+            Errdesc.explain_dereference deref_str prop loc, __POS__) in
         let pre_opt = State.get_normalized_pre (Abs.abstract_no_symop pname) in
         Reporting.log_warning pname ~pre: pre_opt exn
       end
@@ -883,7 +876,7 @@ let rec iter_rearrange
     else begin
       pp_rearrangement_error "cannot find predicate with root" prop lexp;
       if not !Config.footprint then Printer.force_delayed_prints ();
-      raise (Exceptions.Symexec_memory_error (try assert false with Assert_failure x -> x))
+      raise (Exceptions.Symexec_memory_error __POS__)
     end in
   let recurse_on_iters iters =
     let f_one_iter iter' =
@@ -952,10 +945,10 @@ let check_dereference_error pdesc (prop : Prop.normal Prop.t) lexp loc =
            when Sil.exp_equal exp deref_exp ->
              let is_nullable = Annotations.param_is_nullable pvar ann_sig in
              if is_nullable then
-               nullable_obj_str := Some (Sil.pvar_to_string pvar);
+               nullable_obj_str := Some (Pvar.to_string pvar);
              (* it's ok for a non-nullable local to point to deref_exp *)
-             is_nullable || Sil.pvar_is_local pvar
-         | Sil.Hpointsto (_, Sil.Estruct (flds, inst), Sil.Sizeof (typ, _)) ->
+             is_nullable || Pvar.is_local pvar
+         | Sil.Hpointsto (_, Sil.Estruct (flds, _), Sil.Sizeof (typ, _)) ->
              let fld_is_nullable fld =
                match Annotations.get_field_type_and_annotation fld typ with
                | Some (_, annot) -> Annotations.ia_is_nullable annot
@@ -1008,31 +1001,31 @@ let check_dereference_error pdesc (prop : Prop.normal Prop.t) lexp loc =
         Errdesc.explain_dereference ~use_buckets: true ~is_nullable: is_deref_of_nullable
           deref_str prop loc in
       if Localise.is_parameter_not_null_checked_desc err_desc then
-        raise (Exceptions.Parameter_not_null_checked (err_desc, try assert false with Assert_failure x -> x))
+        raise (Exceptions.Parameter_not_null_checked (err_desc, __POS__))
       else if Localise.is_field_not_null_checked_desc err_desc then
-        raise (Exceptions.Field_not_null_checked (err_desc, try assert false with Assert_failure x -> x))
-      else raise (Exceptions.Null_dereference (err_desc, try assert false with Assert_failure x -> x))
+        raise (Exceptions.Field_not_null_checked (err_desc, __POS__))
+      else raise (Exceptions.Null_dereference (err_desc, __POS__))
     end;
   match attribute_opt with
   | Some (Sil.Adangling dk) ->
       let deref_str = Localise.deref_str_dangling (Some dk) in
       let err_desc = Errdesc.explain_dereference deref_str prop (State.get_loc ()) in
-      raise (Exceptions.Dangling_pointer_dereference (Some dk, err_desc, try assert false with Assert_failure x -> x))
+      raise (Exceptions.Dangling_pointer_dereference (Some dk, err_desc, __POS__))
   | Some (Sil.Aundef (s, undef_loc, _)) ->
       if !Config.angelic_execution then ()
       else
         let deref_str = Localise.deref_str_undef (s, undef_loc) in
         let err_desc = Errdesc.explain_dereference deref_str prop loc in
-        raise (Exceptions.Skip_pointer_dereference (err_desc, try assert false with Assert_failure x -> x))
+        raise (Exceptions.Skip_pointer_dereference (err_desc, __POS__))
   | Some (Sil.Aresource ({ Sil.ra_kind = Sil.Rrelease } as ra)) ->
       let deref_str = Localise.deref_str_freed ra in
       let err_desc = Errdesc.explain_dereference ~use_buckets: true deref_str prop loc in
-      raise (Exceptions.Use_after_free (err_desc, try assert false with Assert_failure x -> x))
+      raise (Exceptions.Use_after_free (err_desc, __POS__))
   | _ ->
       if Prover.check_equal Prop.prop_emp (Sil.root_of_lexp root) Sil.exp_minus_one then
         let deref_str = Localise.deref_str_dangling None in
         let err_desc = Errdesc.explain_dereference deref_str prop loc in
-        raise (Exceptions.Dangling_pointer_dereference (None, err_desc, try assert false with Assert_failure x -> x))
+        raise (Exceptions.Dangling_pointer_dereference (None, err_desc, __POS__))
 
 (* Check that an expression representin an objc block can be null and raise a [B1] null exception.*)
 (* It's used to check that we don't call possibly null blocks *)
@@ -1054,7 +1047,7 @@ let check_call_to_objc_block_error pdesc prop fun_exp loc =
   let is_fun_exp_captured_var () = (* Called expression is a captured variable of the block *)
     match get_exp_called () with
     | Some (_, Sil.Lvar pvar) -> (* pvar is the block *)
-        let name = Sil.pvar_get_name pvar in
+        let name = Pvar.get_name pvar in
         IList.exists (fun (cn, _) -> (Mangled.to_string name) = (Mangled.to_string cn)) (Cfg.Procdesc.get_captured pdesc)
     | _ -> false in
   let is_field_deref () = (*Called expression is a field *)
@@ -1082,11 +1075,11 @@ let check_call_to_objc_block_error pdesc prop fun_exp loc =
           if is_field_deref then
             raise
               (Exceptions.Field_not_null_checked
-                 (err_desc, try assert false with Assert_failure x -> x))
+                 (err_desc, __POS__))
           else
             raise
               (Exceptions.Parameter_not_null_checked
-                 (err_desc, try assert false with Assert_failure x -> x))
+                 (err_desc, __POS__))
       | _ ->
           (* HP: fun_exp is not a footprint therefore,
              either is a local or it's a modified param *)
@@ -1094,7 +1087,7 @@ let check_call_to_objc_block_error pdesc prop fun_exp loc =
             Localise.error_desc_set_bucket
               err_desc_nobuckets Localise.BucketLevel.b1 !Config.show_buckets in
           raise (Exceptions.Null_dereference
-                   (err_desc, try assert false with Assert_failure x -> x))
+                   (err_desc, __POS__))
     end
 
 (** [rearrange lexp prop] rearranges [prop] into the form [prop' * lexp|->strexp:typ].
@@ -1122,6 +1115,17 @@ let rearrange ?(report_deref_errors=true) pdesc tenv lexp typ prop loc
       else
         begin
           pp_rearrangement_error "sigma is empty" prop nlexp;
-          raise (Exceptions.Symexec_memory_error (try assert false with Assert_failure x -> x))
+          raise (Exceptions.Symexec_memory_error __POS__)
         end
   | Some iter -> iter_rearrange pname tenv nlexp typ prop iter inst
+
+(*
+let pp_off fmt off =
+  IList.iter (fun n -> match n with
+      | Sil.Off_fld (f, t) -> F.fprintf fmt "%a " Ident.pp_fieldname f
+      | Sil.Off_index e -> F.fprintf fmt "%a " (Sil.pp_exp pe_text) e) off
+
+let sort_ftl ftl =
+  let compare (f1, _) (f2, _) = Sil.fld_compare f1 f2 in
+  IList.sort compare ftl
+*)

@@ -7,7 +7,6 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open Utils
 open CFrontend_utils
 
 module L = Logging
@@ -53,15 +52,15 @@ let get_base_class_name_from_category decl =
   let open Clang_ast_t in
   let base_class_pointer_opt =
     match decl with
-    | ObjCCategoryDecl (decl_info, name_info, decl_list, decl_context_info, cdi) ->
+    | ObjCCategoryDecl (_, _, _, _, cdi) ->
         cdi.Clang_ast_t.odi_class_interface
-    | ObjCCategoryImplDecl (decl_info, name_info, decl_list, decl_context_info, cii) ->
+    | ObjCCategoryImplDecl (_, _, _, _, cii) ->
         cii.Clang_ast_t.ocidi_class_interface
     | _ -> None in
   match base_class_pointer_opt with
   | Some decl_ref ->
       (match Ast_utils.get_decl decl_ref.Clang_ast_t.dr_decl_pointer with
-       | Some ObjCInterfaceDecl (decl_info, name_info, decl_list, _, ocidi) ->
+       | Some ObjCInterfaceDecl (_, name_info, _, _, _) ->
            Some (Ast_utils.get_qualified_name name_info)
        | _ -> None)
   | None -> None
@@ -73,27 +72,31 @@ let process_category type_ptr_to_sil_type tenv curr_class decl_info decl_list =
   let methods = ObjcProperty_decl.get_methods curr_class decl_list in
   let class_name = CContext.get_curr_class_name curr_class in
   let mang_name = Mangled.from_string class_name in
-  let class_tn_name = Typename.TN_csu (Csu.Class, mang_name) in
+  let class_tn_name = Typename.TN_csu (Csu.Class Csu.Objc, mang_name) in
   let decl_key = `DeclPtr decl_info.Clang_ast_t.di_pointer in
   Ast_utils.update_sil_types_map decl_key (Sil.Tvar class_tn_name);
-  (match Sil.tenv_lookup tenv class_tn_name with
-   | Some Sil.Tstruct (intf_fields, _, _, _, superclass, intf_methods, annotation) ->
-       let new_fields = General_utils.append_no_duplicates_fields fields intf_fields in
-       let new_fields = CFrontend_utils.General_utils.sort_fields new_fields in
-       let new_methods = General_utils.append_no_duplicates_methods methods intf_methods in
+  (match Tenv.lookup tenv class_tn_name with
+   | Some ({ Sil.instance_fields; def_methods } as struct_typ) ->
+       let new_fields = General_utils.append_no_duplicates_fields fields instance_fields in
+       let new_methods = General_utils.append_no_duplicates_methods methods def_methods in
        let class_type_info =
-         Sil.Tstruct (
-           new_fields, [], Csu.Class, Some mang_name, superclass, new_methods, annotation
-         ) in
+         {
+           struct_typ with
+           Sil.instance_fields = new_fields;
+           static_fields = [];
+           csu = Csu.Class Csu.Objc;
+           struct_name = Some mang_name;
+           def_methods = new_methods;
+         } in
        Printing.log_out " Updating info for class '%s' in tenv\n" class_name;
-       Sil.tenv_add tenv class_tn_name class_type_info
+       Tenv.add tenv class_tn_name class_type_info
    | _ -> ());
   Sil.Tvar class_tn_name
 
 let category_decl type_ptr_to_sil_type tenv decl =
   let open Clang_ast_t in
   match decl with
-  | ObjCCategoryDecl (decl_info, name_info, decl_list, decl_context_info, cdi) ->
+  | ObjCCategoryDecl (decl_info, name_info, decl_list, _, cdi) ->
       let name = Ast_utils.get_qualified_name name_info in
       let curr_class = get_curr_class_from_category_decl name cdi in
       Printing.log_out "ADDING: ObjCCategoryDecl for '%s'\n" name;
@@ -106,7 +109,7 @@ let category_decl type_ptr_to_sil_type tenv decl =
 let category_impl_decl type_ptr_to_sil_type tenv decl =
   let open Clang_ast_t in
   match decl with
-  | ObjCCategoryImplDecl (decl_info, name_info, decl_list, decl_context_info, cii) ->
+  | ObjCCategoryImplDecl (decl_info, name_info, decl_list, _, cii) ->
       let name = Ast_utils.get_qualified_name name_info in
       let curr_class = get_curr_class_from_category_impl name cii in
       Printing.log_out "ADDING: ObjCCategoryImplDecl for '%s'\n" name;

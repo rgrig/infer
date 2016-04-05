@@ -10,7 +10,6 @@
 
 module L = Logging
 module F = Format
-open Utils
 
 (** Generic serializer *)
 type 'a serializer = (string -> 'a option) * (DB.filename -> 'a option) * (DB.filename -> 'a -> unit)
@@ -26,13 +25,6 @@ let tenv_key, summary_key, cfg_key, trace_key, cg_key,
 
 (** version of the binary files, to be incremented for each change *)
 let version = 24
-
-(** Generate random keys, to be used in an ocaml toplevel *)
-let generate_keys () =
-  Random.self_init ();
-  let max_rand_int = 0x3FFFFFFF (* determined by Rand library *) in
-  let gen () = Random.int max_rand_int in
-  gen (), gen (), gen (), gen (), gen (), gen ()
 
 
 (** Retry the function while an exception filtered is thrown,
@@ -64,7 +56,7 @@ let create_serializer (key : key) : 'a serializer =
   let from_string (str : string) : 'a option =
     try
       match_data (Marshal.from_string str 0) "string"
-    with Sys_error s -> None in
+    with Sys_error _ -> None in
   let from_file (_fname : DB.filename) : 'a option =
     let read () =
       try
@@ -74,7 +66,7 @@ let create_serializer (key : key) : 'a serializer =
         close_in inc;
         value_option
       with
-      | Sys_error s -> None in
+      | Sys_error _ -> None in
     let timeout = 1.0 in
     let catch_exn = function
       | End_of_file -> true
@@ -104,3 +96,12 @@ let from_file (serializer : 'a serializer) =
 
 let to_file (serializer : 'a serializer) =
   let (_, _, s) = serializer in s
+
+(*
+(** Generate random keys, to be used in an ocaml toplevel *)
+let generate_keys () =
+  Random.self_init ();
+  let max_rand_int = 0x3FFFFFFF (* determined by Rand library *) in
+  let gen () = Random.int max_rand_int in
+  gen (), gen (), gen (), gen (), gen (), gen ()
+*)

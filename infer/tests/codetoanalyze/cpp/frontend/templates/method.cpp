@@ -20,14 +20,18 @@ struct X3 {
 };
 
 struct Getter {
-  template<class S>
-  int get(S &s) { return s.get(); }
+  template <class S>
+  int get(S& s) {
+    return s.get();
+  }
 };
 
-template<class T>
+template <class T>
 struct GetterTempl {
-  template<class S>
-  int get(T &t, S &s) { return t.get() + s.get(); }
+  template <class S>
+  int get(T& t, S& s) {
+    return t.get() + s.get();
+  }
 };
 
 int div0_getter() {
@@ -50,9 +54,10 @@ int div0_getter_templ() {
 }
 
 int div0_getter_templ2() {
-  X2 x2;
+  X2 x2_1;
+  X2 x2_2;
   GetterTempl<X2> g;
-  return 1 / g.get(x2, x2);
+  return 1 / g.get(x2_1, x2_2);
 }
 
 int div1_getter_templ() {
@@ -63,7 +68,8 @@ int div1_getter_templ() {
 }
 
 int div1_getter_templ2() {
-  X1 x1;
+  X1 x1_1;
+  X1 x1_2;
   GetterTempl<X1> g;
-  return 1 / g.get(x1, x1);
+  return 1 / g.get(x1_1, x1_2);
 }

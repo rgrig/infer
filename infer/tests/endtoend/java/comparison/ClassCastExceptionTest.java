@@ -43,6 +43,7 @@ public class ClassCastExceptionTest {
     String[] methods = {
         "classCastException",
         "classCastExceptionImplementsInterface",
+        "openHttpURLConnection",
     };
     assertThat(
         "Results should contain " + CLASS_CAST_EXCEPTION,
@@ -54,6 +55,5 @@ public class ClassCastExceptionTest {
         )
     );
   }
-
 
 }

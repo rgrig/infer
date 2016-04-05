@@ -39,4 +39,7 @@ done
 # compiler can't elevate them to error level.
 COMMAND+=("-Wno-everything")
 
+COMMAND+=("-include")
+COMMAND+=(${SCRIPT_DIR}/"global_defines.h")
+
 "${COMMAND[@]}"

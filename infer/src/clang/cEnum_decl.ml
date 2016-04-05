@@ -10,7 +10,6 @@
 (** Translate an enumeration declaration by adding it to the tenv and *)
 (** translating the code and adding it to a fake procdesc *)
 
-open Utils
 open CFrontend_utils
 
 (*Check if the constant is in the map, in which case that means that all the *)
@@ -43,7 +42,7 @@ let enum_decl decl =
         ignore (add_enum_constant_to_map_if_needed decl_pointer None)
     | _ -> () in
   match decl with
-  | EnumDecl (decl_info, _, _, type_ptr, decl_list, _, _) ->
+  | EnumDecl (_, _, _, type_ptr, decl_list, _, _) ->
       add_enum_constants_to_map (IList.rev decl_list);
       let sil_type = Sil.Tint Sil.IInt in
       Ast_utils.update_sil_types_map type_ptr sil_type;

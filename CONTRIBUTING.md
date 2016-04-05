@@ -17,4 +17,8 @@ us a line at cla@fb.com. Thanks!
 * If relevant, add a test for your change. Tests are located at
   `infer/tests/codetoanalyze/` and
   `infer/tests/{endtoend,frontend}/`. To run the all tests, execute
-  `./scripts/test.sh`.
+  `make test`.
+
+## Hacking
+
+* Be aware that the build system implicitly opens the Utils module.

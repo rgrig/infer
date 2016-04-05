@@ -46,6 +46,13 @@ let proc_stats_filename = "proc_stats.json"
 
 let global_tenv_filename = "global.tenv"
 
+(** Name of the infer configuration file *)
+let inferconfig_file = ".inferconfig"
+
+let inferconfig_home : string option ref = ref None
+
+let suppress_warnings_annotations : string option ref = ref None
+
 (** List of paths to the directories containing specs for library functions. *)
 let specs_library = ref []
 
@@ -55,6 +62,9 @@ let models_dir =
   let lib_dir = Filename.concat (Filename.concat bin_dir Filename.parent_dir_name) "lib" in
   let lib_specs_dir = Filename.concat lib_dir specs_dir_name in
   lib_specs_dir
+
+let string_crc_hex32 s =
+  Digest.to_hex (Digest.string s)
 
 module JarCache =
 struct
@@ -80,7 +90,7 @@ struct
     match !infer_cache with
     | Some cache_dir ->
         let basename = Filename.basename jarfile in
-        let key = basename ^ CRC.crc16 jarfile in
+        let key = basename ^ string_crc_hex32 jarfile in
         let key_dir = Filename.concat cache_dir key in
 
         if (mkdir key_dir)
@@ -131,7 +141,12 @@ let abs_struct = ref 1
     1 = evaluate all expressions abstractly.
     2 = 1 + abstract constant integer values during join.
 *)
-let abs_val = ref 2
+let abs_val_default = 2
+let abs_val =
+  ref abs_val_default
+
+let reset_abs_val () =
+  abs_val := abs_val_default
 
 (** if true, completely ignore the possibility that errors can be caused by unknown procedures
  * during the symbolic execution phase *)
@@ -176,8 +191,16 @@ let eradicate = ref false
 (** should the checkers be run? *)
 let checkers_enabled () = not !eradicate
 
-(** flag to activate ondemand mode. *)
-let ondemand_enabled = ref false
+(** flag for reactive mode:
+    the analysis starts from the files captured since the "infer" command started *)
+let reactive_mode = ref false
+
+(** Continue the capture for reactive mode:
+    If a procedure was changed beforehand, keep the changed marking. *)
+let continue_capture = ref false
+
+(** Merge the captured results directories specified in the dependency file *)
+let merge = ref false
 
 (** Flag for footprint discovery mode *)
 let footprint = ref true
@@ -190,9 +213,6 @@ let idempotent_getters = ref true
 
 (** if true, changes to code are checked at the procedure level; if false, at the file level *)
 let incremental_procs = ref true
-
-(** Flag to activate intraprocedural-only analysis *)
-let intraprocedural = ref false
 
 (** if active, join  x+j and x+k for constants j and k *)
 let join_plus = ref true
@@ -214,9 +234,6 @@ let long_static_proc_names = ref false
 (** Number of lines of code in original file *)
 let nLOC = ref 0
 
-(** max number of procedures in each cluster *)
-let max_cluster_size = ref 2000
-
 (** Maximum level of recursion during the analysis, after which a timeout is generated *)
 let max_recursion = ref 5
 
@@ -236,17 +253,8 @@ let nelseg = ref false
 (** Flag to activate nonstop mode: the analysis continues after in encounters errors *)
 let nonstop = ref false
 
-(** Flag for the on-the-fly predicate discovery *)
-let on_the_fly = ref true
-
 (** if true, skip the re-execution phase *)
 let only_footprint = ref false
-
-(** flag: only analyze procedures which were analyzed before but have no specs *)
-let only_nospecs = ref false
-
-(** flag: only analyze procedures dependent on previous skips which now have a .specs file *)
-let only_skips = ref false
 
 (** if true, user simple pretty printing *)
 let pp_simple = ref true
@@ -259,9 +267,6 @@ let print_using_diff = ref true
 
 (** path of the project results directory *)
 let results_dir = ref default_results_dir
-
-(** If not "", only consider functions recursively called by function [!slice_fun] *)
-let slice_fun = ref ""
 
 (** Flag to tune the level of abstracting the postconditions of specs discovered
     by the footprint analysis.
@@ -299,9 +304,6 @@ let smt_output = ref false
 
 (** flag: if true performs taint analysis *)
 let taint_analysis = ref true
-
-(** set to true to printing tracing information for the analysis *)
-let trace_anal = ref false
 
 (** Flag for turning on the optimization based on locality
     0 = no
@@ -360,11 +362,16 @@ let default_failure_name = "ASSERTION_FAILURE"
 
 let analyze_models = from_env_variable "INFER_ANALYZE_MODELS"
 
+(** experimental: dynamic dispatch for interface calls only in Java. off by default because of the
+    cost *)
+let sound_dynamic_dispatch = from_env_variable "INFER_SOUND_DYNAMIC_DISPATCH"
+
+(** experimental: handle dynamic dispatch by following the JVM semantics and creating
+    during the symbolic excution procedure descriptions using the types information
+    found in the abstract state *)
+let lazy_dynamic_dispatch = from_env_variable "INFER_LAZY_DYNAMIC_DISPATCH"
 
 module Experiment = struct
-
-  (** if true, activate the subtyping routines in C++ as well, not just in Java *)
-  let activate_subtyping_in_cpp = ref false
 
   (** if true, a precondition with e.g. index 3 in an array does not require the caller to have index 3 too
       this mimics what happens with direct access to the array without a procedure call, where the index is simply materialized if not there *)
@@ -391,6 +398,8 @@ let unsafe_unret = "<\"Unsafe_unretained\">"
 let weak = "<\"Weak\">"
 
 let assign = "<\"Assign\">"
+
+let start_filename = ".start"
 
 (** Programming language. *)
 type language = C_CPP | Java

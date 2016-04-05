@@ -10,7 +10,6 @@
 (** Module for function to retrieve the location (file, line, etc) of instructions *)
 
 open CFrontend_utils
-open Utils
 
 (* Inside the json there may be code or type definitions from other files *)
 (* than the one passed as an argument. That current file in the translation is saved*)
@@ -75,25 +74,43 @@ let clang_to_sil_location clang_loc procdesc_opt =
         | None -> !curr_file, !Config.nLOC in
   Location.{line; col; file; nLOC}
 
+(* We translate by default the instructions in the current file.*)
+(* In C++ development, we also translate the headers that are part *)
+(* of the project. However, in testing mode, we don't want to translate *)
+(* the headers because the dot files in the frontend tests should contain nothing *)
+(* else than the source file to avoid conflicts between different versions of the *)
+(* libraries in the CI *)
 let should_translate (loc_start, loc_end) =
-  let map_file_of pred loc =
+  let map_path_of pred loc =
     match loc.Clang_ast_t.sl_file with
-    | Some f -> pred (source_file_from_path f)
+    | Some f -> pred f
     | None -> false
+  in
+  let map_file_of pred loc =
+    let path_pred path = pred (source_file_from_path path) in
+    map_path_of path_pred loc
   in
   let equal_current_source file =
     DB.source_file_equal file !DB.current_source
   in
+  let file_in_project file = match !Config.project_root with
+    | Some root -> string_is_prefix root file
+    | None -> false
+  in
+  let file_in_project = map_path_of file_in_project loc_end
+                        || map_path_of file_in_project loc_start in
+  let file_in_models file = Str.string_match (Str.regexp "^.*/infer/models/cpp/include/") file 0 in
+  let file_in_models = map_path_of file_in_models loc_end
+                       || map_path_of file_in_models loc_start in
   equal_current_source !curr_file
   || map_file_of equal_current_source loc_end
   || map_file_of equal_current_source loc_start
+  || file_in_models
+  || (!CFrontend_config.cxx_experimental && file_in_project
+      && not (!CFrontend_config.testing_mode))
 
 let should_translate_lib source_range =
   not !CFrontend_config.no_translate_libs
-  || should_translate source_range
-
-let should_translate_enum source_range =
-  not !CFrontend_config.testing_mode
   || should_translate source_range
 
 let get_sil_location_from_range source_range prefer_first =

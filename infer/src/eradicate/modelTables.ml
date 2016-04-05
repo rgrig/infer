@@ -12,8 +12,6 @@
  * @nolint
  *)
 
-open Utils
-
 (* in strict mode cannot insert null in containers *)
 let strict_containers = false
 
@@ -50,7 +48,7 @@ let check_not_null_parameter_list, check_not_null_list =
       1, (o, [n]), "com.facebook.infer.annotation.Assertions.assumeNotNull(java.lang.Object):java.lang.Object";
       1, (o, [n; o]), "com.facebook.infer.annotation.Assertions.assumeNotNull(java.lang.Object,java.lang.String):java.lang.Object";
     ] in
-  IList.map (fun (x, y, z) -> (x, z)) list, IList.map (fun (x, y, z) -> (y, z)) list
+  IList.map (fun (x, _, z) -> (x, z)) list, IList.map (fun (_, y, z) -> (y, z)) list
 
 let check_state_list =
   [
@@ -234,8 +232,7 @@ let mk_table list =
   IList.iter (function (v, pn_id) -> Hashtbl.replace map pn_id v) list;
   map
 
-let ml_location =
-  try assert false with Assert_failure x -> x
+let this_file = __FILE__
 
 let annotated_table_nullable = mk_table annotated_list_nullable
 let annotated_table_present = mk_table annotated_list_present

@@ -1,5 +1,10 @@
 #!/usr/bin/env python2.7
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
+
 import argparse
 import imp
 import json
@@ -10,7 +15,7 @@ import sys
 
 import inferlib
 from inferlib import analyze, config, utils
-
+from inferlib.capture import make
 
 CAPTURE_PACKAGE = 'capture'
 
@@ -27,13 +32,10 @@ MODULE_TO_COMMAND = {
     'buck': ['buck'],
     'gradle': ['gradle', 'gradlew'],
     'javac': ['javac', 'topljavac'],
-    'make': ['make', 'clang', 'clang++', 'cc', 'gcc', 'g++'],
+    'make': make.SUPPORTED_COMMANDS,
     'xcodebuild': ['xcodebuild'],
     'mvn': ['mvn']
 }
-
-FORMAT = '[%(levelname)s] %(message)s'
-LOG_FILE = 'toplevel.log'
 
 def get_commands():
     """Return all commands that are supported."""
@@ -69,8 +71,8 @@ def split_args_to_parse():
     dd_index = \
         sys.argv.index(CMD_MARKER) if CMD_MARKER in sys.argv else len(sys.argv)
     cmd_raw = sys.argv[dd_index + 1:]
-    return (sys.argv[1:dd_index],
-            [arg.decode(config.LOCALE) for arg in cmd_raw])
+    return (map(utils.decode, sys.argv[1:dd_index]),
+            map(utils.decode, cmd_raw))
 
 
 def create_argparser(parents=[]):
@@ -95,16 +97,6 @@ def create_argparser(parents=[]):
     return parser
 
 
-def configure_logging(infer_dir, log_to_stderr):
-    if log_to_stderr:
-        logging.basicConfig(level=logging.INFO, format=FORMAT)
-    else:
-        logging.basicConfig(level=logging.INFO,
-                            format=FORMAT,
-                            filename=os.path.join(infer_dir, LOG_FILE),
-                            filemode='w')
-
-
 def main():
     to_parse, cmd = split_args_to_parse()
     # get the module name (if any), then load it
@@ -125,14 +117,19 @@ def main():
 
     args = global_argparser.parse_args(to_parse)
 
-    if (imported_module and not args.incremental and
-            capture_module_name != 'analyze'):
+    remove_infer_out = (imported_module
+                        and not args.reactive
+                        and capture_module_name != 'analyze'
+                        and not args.buck)
+    if remove_infer_out:
         analyze.remove_infer_out(args.infer_out)
 
     if imported_module:
         analyze.create_results_dir(args.infer_out)
+        analyze.reset_start_file(args.infer_out,
+                                 touch_if_present=not args.continue_capture)
 
-        configure_logging(args.infer_out, args.log_to_stderr)
+        utils.configure_logging(args)
         logging.info('Running command %s', ' '.join(sys.argv))
         logging.info('Path to infer script %s (%s)', __file__,
                  os.path.realpath(__file__))
@@ -149,8 +146,9 @@ def main():
         logging.info('Capture phase was successful')
     elif capture_module_name is not None:
         # There was a command, but it's not supported
-        print('Command "{cmd}" not recognised'.format(
-            cmd='' if capture_module_name is None else capture_module_name))
+        utils.stdout('Command "{cmd}" not recognised'
+                     .format(cmd='' if capture_module_name is None
+                             else capture_module_name))
         global_argparser.print_help()
         sys.exit(1)
     else:
@@ -162,7 +160,7 @@ def main():
         if not os.path.exists(os.path.join(args.infer_out, 'captured')):
             print('There was nothing to analyze, exiting')
             exit(os.EX_USAGE)
-        analysis = analyze.Infer(args, [])
+        analysis = analyze.AnalyzerWrapper(args)
         analysis.analyze_and_report()
         analysis.save_stats()
 

@@ -10,13 +10,11 @@
 
 (** Join and Meet Operators *)
 
-open Utils
-
 (** {2 Join Operators} *)
 
 (** Join two pathsets *)
 val pathset_join :
-  Procname.t -> Sil.tenv -> Paths.PathSet.t -> Paths.PathSet.t -> Paths.PathSet.t * Paths.PathSet.t
+  Procname.t -> Tenv.t -> Paths.PathSet.t -> Paths.PathSet.t -> Paths.PathSet.t * Paths.PathSet.t
 
 val join_time : float ref
 
@@ -25,7 +23,7 @@ val proplist_collapse_pre : Prop.normal Prop.t list -> Prop.normal Specs.Jprop.t
 val pathset_collapse : Paths.PathSet.t -> Paths.PathSet.t
 
 (** reduce the pathset only based on implication checking. *)
-val pathset_collapse_impl : Procname.t -> Sil.tenv -> Paths.PathSet.t -> Paths.PathSet.t
+val pathset_collapse_impl : Procname.t -> Tenv.t -> Paths.PathSet.t -> Paths.PathSet.t
 
 (** {2 Meet Operators} *)
 

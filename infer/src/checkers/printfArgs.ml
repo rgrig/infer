@@ -9,7 +9,6 @@
 
 module L = Logging
 module F = Format
-open Utils
 
 type printf_signature = {
   unique_id: string;
@@ -17,15 +16,6 @@ type printf_signature = {
   fixed_pos: int list;
   vararg_pos: int option
 }
-
-let printf_signature_to_string
-    (printf: printf_signature): string =
-  Printf.sprintf
-    "{%s; %d [%s] %s}"
-    printf.unique_id
-    printf.format_pos
-    (String.concat "," (IList.map string_of_int printf.fixed_pos))
-    (match printf.vararg_pos with | Some i -> string_of_int i | _ -> "-")
 
 let printf_like_functions =
   ref
@@ -168,16 +158,16 @@ let check_printf_args_ok
     match instrs, nvar with
     | Sil.Letderef (id, Sil.Lvar iv, _, _):: _, Sil.Var nid
       when Ident.equal id nid -> iv
-    | i:: is, _ -> array_ivar is nvar
+    | _:: is, _ -> array_ivar is nvar
     | _ -> raise Not_found in
 
   let rec fixed_nvar_type_name instrs nvar =
     match nvar with
     | Sil.Var nid -> (
         match instrs with
-        | Sil.Letderef (id, Sil.Lvar iv, t, _):: _
+        | Sil.Letderef (id, Sil.Lvar _, t, _):: _
           when Ident.equal id nid -> PatternMatch.get_type_name t
-        | i:: is -> fixed_nvar_type_name is nvar
+        | _:: is -> fixed_nvar_type_name is nvar
         | _ -> raise Not_found)
     | Sil.Const c -> PatternMatch.java_get_const_type_name c
     | _ -> raise (Failure "Could not resolve fixed type name") in
@@ -219,12 +209,16 @@ let check_printf_args_ok
       | None -> ())
   | _ -> ()
 
-let callback_printf_args
-    (all_procs : Procname.t list)
-    (get_proc_desc: Procname.t -> Cfg.Procdesc.t option)
-    (idenv: Idenv.t)
-    (tenv: Sil.tenv)
-    (proc_name: Procname.t)
-    (proc_desc : Cfg.Procdesc.t) : unit =
+let callback_printf_args { Callbacks.proc_desc; proc_name } : unit =
   Cfg.Procdesc.iter_instrs (fun n i -> check_printf_args_ok n i proc_name proc_desc) proc_desc
 
+(*
+let printf_signature_to_string
+    (printf: printf_signature): string =
+  Printf.sprintf
+    "{%s; %d [%s] %s}"
+    printf.unique_id
+    printf.format_pos
+    (String.concat "," (IList.map string_of_int printf.fixed_pos))
+    (match printf.vararg_pos with | Some i -> string_of_int i | _ -> "-")
+*)

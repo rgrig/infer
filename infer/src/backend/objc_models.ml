@@ -9,8 +9,6 @@
 
 (** This module handles C or Objective-C types for which there are special rules for memory management *)
 
-open Utils
-
 (** This module models special c struct types from the Apple's Core Foundation libraries
     for which there are particular rules for memory management. *)
 
@@ -209,7 +207,7 @@ struct
     | Sil.Tptr (styp, _ ) ->
         is_core_lib lib styp
     | Sil.Tvar (Typename.TN_csu (_, name) )
-    | Sil.Tstruct (_, _, _, (Some name), _, _, _) ->
+    | Sil.Tstruct { Sil.struct_name = Some name } ->
         let core_lib_types = core_lib_to_type_list lib in
         IList.mem (=) (Mangled.to_string name) core_lib_types
     | _ -> false
@@ -232,10 +230,6 @@ struct
   let function_arg_is_cftype typ =
     (string_contains cf_type typ)
 
-  let function_arg_is_core_pgraphics typ =
-    let res = (string_contains cf_type typ) in
-    res
-
   let is_core_lib_retain typ funct =
     function_arg_is_cftype typ && funct = cf_retain
 
@@ -249,6 +243,11 @@ struct
       (string_contains (cg_typ^ref) typ)
     with Not_found -> false
 
+(*
+  let function_arg_is_core_pgraphics typ =
+    let res = (string_contains cf_type typ) in
+    res
+*)
 end
 
 let is_core_lib_type typ =

@@ -12,7 +12,12 @@
 @implementation NSArray
 
 + (instancetype)array {
-    return [NSArray alloc];
+  return [NSArray alloc];
+}
+
++ (instancetype)arrayWithObject:(char*)anObject {
+  char _ = *anObject;
+  return [NSArray alloc];
 }
 
 @end

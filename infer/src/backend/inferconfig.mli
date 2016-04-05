@@ -7,10 +7,6 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-val inferconfig_home : string option ref
-
-val local_config : string option ref
-
 (** get the path to the .inferconfig file *)
 val inferconfig : unit -> string
 
@@ -34,15 +30,21 @@ type filters =
 val do_not_filter : filters
 
 (** Create filters based on the config file *)
-val create_filters : Utils.analyzer -> filters
+val create_filters : analyzer -> filters
 
-module NeverReturnNull : sig
+module type Matcher = sig
   type matcher = DB.source_file -> Procname.t -> bool
   val load_matcher : string -> matcher
 end
 
-module SkipTranslationMatcher : sig
-  type matcher = DB.source_file -> Procname.t -> bool
+module NeverReturnNull : Matcher
+
+module SkipTranslationMatcher : Matcher
+
+module SuppressWarningsMatcher : Matcher
+
+module ModeledExpensiveMatcher : sig
+  type matcher = (string -> bool) -> Procname.t -> bool
   val load_matcher : string -> matcher
 end
 

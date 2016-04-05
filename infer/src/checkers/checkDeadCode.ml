@@ -9,7 +9,6 @@
 
 module L = Logging
 module F = Format
-open Utils
 open Dataflow
 
 (** Simple check for dead code. *)
@@ -51,7 +50,7 @@ module State = struct
     Cfg.NodeSet.cardinal t.visited
 end
 
-let do_node node (s : State.t) : (State.t list) * (State.t list) =
+let do_node _ node (s : State.t) : (State.t list) * (State.t list) =
   let s' = State.add_visited node s in
   if verbose then L.stderr "  N:%a (#visited: %a)@."
       Cfg.Node.pp node
@@ -66,7 +65,7 @@ let report_error description pn pd loc =
 
 
 (** Check the final state at the end of the analysis. *)
-let check_final_state proc_name proc_desc exit_node final_s =
+let check_final_state proc_name proc_desc final_s =
   let proc_nodes = Cfg.Procdesc.get_nodes proc_desc in
   let tot_nodes = IList.length proc_nodes in
   let tot_visited = State.num_visited final_s in
@@ -88,31 +87,25 @@ let check_final_state proc_name proc_desc exit_node final_s =
     end
 
 (** Simple check for dead code. *)
-let callback_check_dead_code
-    (all_procs : Procname.t list)
-    (get_proc_desc: Procname.t -> Cfg.Procdesc.t option)
-    (idenv: Idenv.t)
-    (tenv: Sil.tenv)
-    (proc_name: Procname.t)
-    (proc_desc : Cfg.Procdesc.t) : unit =
+let callback_check_dead_code { Callbacks.proc_desc; proc_name; tenv } =
 
   let module DFDead = MakeDF(struct
       type t = State.t
       let equal = State.equal
       let join = State.join
       let do_node = do_node
-      let proc_throws pn = DontKnow
+      let proc_throws _ = DontKnow
     end) in
 
   let do_check () =
     begin
       if verbose then L.stderr "@.--@.PROC: %a@." Procname.pp proc_name;
-      let transitions = DFDead.run proc_desc State.initial in
+      let transitions = DFDead.run tenv proc_desc State.initial in
       let exit_node = Cfg.Procdesc.get_exit_node proc_desc in
       match transitions exit_node with
       | DFDead.Transition (pre_final_s, _, _) ->
           let final_s = State.add_visited exit_node pre_final_s in
-          check_final_state proc_name proc_desc exit_node final_s
+          check_final_state proc_name proc_desc final_s
       | DFDead.Dead_state -> ()
     end in
 

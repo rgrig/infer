@@ -112,13 +112,13 @@ type printenv = {
 }
 
 (** Create a colormap of a given color *)
-let colormap_from_color color (o: Obj.t) = color
+let colormap_from_color color (_: Obj.t) = color
 
 (** standard colormap: black *)
-let colormap_black (o: Obj.t) = Black
+let colormap_black (_: Obj.t) = Black
 
 (** red colormap *)
-let colormap_red (o: Obj.t) = Red
+let colormap_red (_: Obj.t) = Red
 
 (** Default text print environment *)
 let pe_text =
@@ -237,25 +237,21 @@ let pp_elapsed_time fmt () =
   let elapsed = Unix.gettimeofday () -. initial_timeofday in
   Format.fprintf fmt "%f" elapsed
 
-(** Type of location in ml source: file,line,column *)
-type ml_location = string * int * int
+(** Type of location in ml source: __POS__ *)
+type ml_loc = string * int * int * int
 
-(** String describing the file of an ml location *)
-let ml_location_file_string ((file: string), (line: int), (column: int)) =
-  "file " ^ file
-
-(** Turn an ml location into a string *)
-let ml_location_string ((file: string), (line: int), (column: int)) =
-  "file " ^ file ^ " line " ^ string_of_int line ^ " column " ^ string_of_int column
+(** Convert a ml location to a string *)
+let ml_loc_to_string (file, lnum, cnum, enum) =
+  Printf.sprintf "%s:%d:%d-%d:" file lnum cnum enum
 
 (** Pretty print a location of ml source *)
-let pp_ml_location fmt mloc =
-  F.fprintf fmt "%s" (ml_location_string mloc)
+let pp_ml_loc fmt ml_loc =
+  F.fprintf fmt "%s" (ml_loc_to_string ml_loc)
 
-let pp_ml_location_opt fmt mloco =
-  if !Config.developer_mode then match mloco with
+let pp_ml_loc_opt fmt ml_loc_opt =
+  if !Config.developer_mode then match ml_loc_opt with
     | None -> ()
-    | Some mloc -> F.fprintf fmt "(%a)" pp_ml_location mloc
+    | Some ml_loc -> F.fprintf fmt "(%a)" pp_ml_loc ml_loc
 
 (** {2 SymOp and Failures: units of symbolic execution} *)
 
@@ -281,9 +277,9 @@ let pp_failure_kind fmt = function
 let symops_timeout, seconds_timeout =
   (* default timeout and long timeout are the same for now, but this will change shortly *)
   let default_symops_timeout = 333 in
-  let default_seconds_timeout = 10 in
+  let default_seconds_timeout = 10.0 in
   let long_symops_timeout = 1000 in
-  let long_seconds_timeout = 30 in
+  let long_seconds_timeout = 30.0 in
   if Config.analyze_models then
     (* use longer timeouts when analyzing models *)
     long_symops_timeout, long_seconds_timeout
@@ -296,9 +292,6 @@ let symops_per_iteration = ref symops_timeout
 (** number of seconds to multiply by the number of iterations, after which there is a timeout *)
 let seconds_per_iteration = ref seconds_timeout
 
-(** timeout value from the -iterations command line option *)
-let iterations_cmdline = ref 1
-
 (** Timeout in seconds for each function *)
 let timeout_seconds = ref !seconds_per_iteration
 
@@ -308,23 +301,59 @@ let timeout_symops = ref !symops_per_iteration
 (** Set the timeout values in seconds and symops, computed as a multiple of the integer parameter *)
 let set_iterations n =
   timeout_symops := !symops_per_iteration * n;
-  timeout_seconds := !seconds_per_iteration * n
+  timeout_seconds := !seconds_per_iteration *. (float_of_int n)
 
 let get_timeout_seconds () = !timeout_seconds
 
 (** Count the number of symbolic operations *)
 module SymOp = struct
-  (** Number of symop's *)
-  let symop_count = ref 0
 
-  (** Total number of symop's since the beginning *)
-  let symop_total = ref 0
+  (** Internal state of the module *)
+  type t =
+    {
+      (** Only throw timeout exception when alarm is active *)
+      mutable alarm_active : bool;
 
-  (** Only throw timeout exception when alarm is active *)
-  let alarm_active = ref false
+      (** last wallclock set by an alarm, if any *)
+      mutable last_wallclock : float option;
 
-  (** last wallclock set by an alarm, if any *)
-  let last_wallclock = ref None
+      (** Number of symop's *)
+      mutable symop_count : int;
+
+      (** Counter for the total number of symop's.
+          The new state created when save_state is called shares this counter
+          if keep_symop_total is true. Otherwise, a new counter is created. *)
+      symop_total : int ref;
+    }
+
+  let initial () : t =
+    {
+      alarm_active = false;
+      last_wallclock = None;
+      symop_count = 0;
+      symop_total = ref 0;
+    }
+
+  (** Global State *)
+  let gs : t ref = ref (initial ())
+
+  (** Restore the old state. *)
+  let restore_state state =
+    gs := state
+
+  (** Return the old state, and revert the current state to the initial one.
+      If keep_symop_total is true, share the total counter. *)
+  let save_state ~keep_symop_total =
+    let old_state = !gs in
+    let new_state =
+      let st = initial () in
+      if keep_symop_total
+      then
+        { st with symop_total = old_state.symop_total }
+      else
+        st in
+    gs := new_state;
+    old_state
 
   (** handler for the wallclock timeout *)
   let wallclock_timeout_handler = ref None
@@ -335,65 +364,57 @@ module SymOp = struct
 
   (** Set the wallclock alarm checked at every pay() *)
   let set_wallclock_alarm nsecs =
-    last_wallclock := Some (Unix.gettimeofday () +. float_of_int nsecs)
+    !gs.last_wallclock <- Some (Unix.gettimeofday () +. nsecs)
 
   (** Unset the wallclock alarm checked at every pay() *)
   let unset_wallclock_alarm () =
-    last_wallclock := None
+    !gs.last_wallclock <- None
 
   (** if the wallclock alarm has expired, raise a timeout exception *)
   let check_wallclock_alarm () =
-    match !last_wallclock, !wallclock_timeout_handler with
+    match !gs.last_wallclock, !wallclock_timeout_handler with
     | Some alarm_time, Some handler when Unix.gettimeofday () >= alarm_time ->
         unset_wallclock_alarm ();
         handler ()
     | _ -> ()
 
+  (** Return the time remaining before the wallclock alarm expires *)
+  let get_remaining_wallclock_time () =
+    match !gs.last_wallclock with
+    | Some alarm_time ->
+        max 0.0 (alarm_time -. Unix.gettimeofday ())
+    | None ->
+        0.0
+
   (** Return the total number of symop's since the beginning *)
-  let get_total () = !symop_total
+  let get_total () =
+    !(!gs.symop_total)
 
   (** Reset the total number of symop's *)
-  let reset_total () = symop_total := 0
-
-  (** timer at load time *)
-  let initial_time = Unix.gettimeofday ()
-
-  (** Time in the beginning *)
-  let timer = ref initial_time
+  let reset_total () =
+    !gs.symop_total := 0
 
   (** Count one symop *)
   let pay () =
-    incr symop_count; incr symop_total;
-    if !symop_count > !timeout_symops && !alarm_active
-    then raise (Analysis_failure_exe (FKsymops_timeout !symop_count));
+    !gs.symop_count <- !gs.symop_count + 1;
+    !gs.symop_total := !(!gs.symop_total) + 1;
+    if !gs.symop_count > !timeout_symops &&
+       !gs.alarm_active
+    then raise (Analysis_failure_exe (FKsymops_timeout !gs.symop_count));
     check_wallclock_alarm ()
 
-  (** Reset the counters *)
-  let reset () =
-    symop_count := 0;
-    timer := Unix.gettimeofday ()
+  (** Reset the counter *)
+  let reset_count () =
+    !gs.symop_count <- 0
 
   (** Reset the counter and activate the alarm *)
   let set_alarm () =
-    reset ();
-    alarm_active := true
+    reset_count ();
+    !gs.alarm_active <- true
 
   (** De-activate the alarm *)
   let unset_alarm () =
-    alarm_active := false
-
-  let report_stats f symops elapsed =
-    F.fprintf f "SymOp stats -- symops:%d time:%f symops/sec:%f" symops elapsed ((float_of_int symops) /. elapsed)
-
-  (** Report the stats since the last reset *)
-  let report f () =
-    let elapsed = Unix.gettimeofday () -. !timer in
-    report_stats f !symop_count elapsed
-
-  (** Report the stats since the loading of this module *)
-  let report_total f () =
-    let elapsed = Unix.gettimeofday () -. initial_time in
-    report_stats f !symop_total elapsed
+    !gs.alarm_active <- false
 end
 
 (** Check if the lhs is a substring of the rhs. *)
@@ -556,9 +577,9 @@ module FileNormalize = struct
   let rec normalize done_l todo_l = match done_l, todo_l with
     | _, y :: tl when y = Filename.current_dir_name -> (* path/. --> path *)
         normalize done_l tl
-    | [root], y :: tl when y = Filename.parent_dir_name -> (* /.. --> / *)
+    | [_], y :: tl when y = Filename.parent_dir_name -> (* /.. --> / *)
         normalize done_l tl
-    | x :: dl, y :: tl when y = Filename.parent_dir_name -> (* path/x/.. --> path *)
+    | _ :: dl, y :: tl when y = Filename.parent_dir_name -> (* path/x/.. --> path *)
         normalize dl tl
     | _, y :: tl -> normalize (y :: done_l) tl
     | _, [] -> IList.rev done_l
@@ -646,62 +667,158 @@ let base_arg_desc =
     Arg.String (fun s -> Config.results_dir := s),
     Some "dir",
     "set the project results directory (default dir=" ^ Config.default_results_dir ^ ")";
+
     "-coverage",
     Arg.Unit (fun () -> Config.worklist_mode:= 2),
     None,
     "analysis mode to maximize coverage (can take longer)";
+
     "-lib",
     Arg.String (fun s -> Config.specs_library := filename_to_absolute s :: !Config.specs_library),
     Some "dir",
     "add dir to the list of directories to be searched for spec files";
+
     "-specs-dir-list-file",
     Arg.String (fun s -> Config.specs_library := (read_specs_dir_list_file s) @ !Config.specs_library),
     Some "file",
     "add the newline-separated directories listed in <file> to the list of directories to \
      be searched for spec files";
+
     "-models",
     Arg.String (fun s -> Config.add_models (filename_to_absolute s)),
     Some "zip file",
     "add a zip file containing the models";
+
     "-ziplib",
     Arg.String (fun s -> Config.add_zip_library (filename_to_absolute s)),
     Some "zip file",
     "add a zip file containing library spec files";
+
     "-project_root",
     Arg.String (fun s -> Config.project_root := Some (filename_to_absolute s)),
     Some "dir",
     "root directory of the project";
+
     "-infer_cache",
     Arg.String (fun s -> Config.JarCache.infer_cache := Some (filename_to_absolute s)),
     Some "dir",
     "Select a directory to contain the infer cache";
+
+    "-inferconfig_home",
+    Arg.String (fun s -> Config.inferconfig_home := Some s),
+    Some "dir",
+    "Path to the .inferconfig file";
   ]
 
 let reserved_arg_desc =
   [
-    "-absstruct", Arg.Set_int Config.abs_struct, Some "n", "abstraction level for fields of structs (default n = 1)";
-    "-absval", Arg.Set_int Config.abs_val, Some "n", "abstraction level for expressions (default n = 2)";
-    "-arraylevel", Arg.Set_int Config.array_level, Some "n", "the level of treating the array indexing and pointer arithmetic (default n = 0)";
-    "-developer_mode", Arg.Set Config.developer_mode, None, "reserved";
-    "-dotty", Arg.Set Config.write_dotty, None, "produce dotty files in the results directory";
-    "-exit_node_bias", Arg.Unit (fun () -> Config.worklist_mode:= 1), None, "nodes nearest the exit node are analyzed first";
-    "-html", Arg.Set Config.write_html, None, "produce hmtl output in the results directory";
-    "-join_cond", Arg.Set_int Config.join_cond, Some "n", "set the strength of the final information-loss check used by the join (default n=1)";
-    "-leak", Arg.Set Config.allowleak, None, "forget leaks during abstraction";
-    "-monitor_prop_size", Arg.Set Config.monitor_prop_size, None, "monitor size of props";
-    "-nelseg", Arg.Set Config.nelseg, None, "use only nonempty lsegs";
-    "-noliveness", Arg.Clear Config.liveness, None, "turn the dead program variable elimination off";
-    "-noprintdiff", Arg.Clear Config.print_using_diff, None, "turn off highlighting diff w.r.t. previous prop in printing";
-    "-notest", Arg.Clear Config.test, None, "turn test mode off";
-    "-only_footprint", Arg.Set Config.only_footprint, None, "skip the re-execution phase";
-    "-print_types", Arg.Set Config.print_types, None, "print types in symbolic heaps";
-    "-set_pp_margin", Arg.Int (fun i -> F.set_margin i), Some "n", "set right margin for the pretty printing functions";
-    "-slice_fun", Arg.Set_string Config.slice_fun, None, "analyze only functions recursively called by function given as argument";
-    "-spec_abs_level", Arg.Set_int Config.spec_abs_level, Some "n", "set the level of abstracting the postconditions of discovered specs (default n=1)";
-    "-trace_error", Arg.Set Config.trace_error, None, "turn on tracing of error explanation";
-    "-trace_join", Arg.Set Config.trace_join, None, "turn on tracing of join";
-    "-trace_rearrange", Arg.Set Config.trace_rearrange, None, "turn on tracing of rearrangement";
-    "-visits_bias", Arg.Unit (fun () -> Config.worklist_mode:= 2), None, "nodes visited fewer times are analyzed first";
+    "-absstruct",
+    Arg.Set_int Config.abs_struct,
+    Some "n",
+    "abstraction level for fields of structs (default n = 1)"
+    ;
+    "-absval",
+    Arg.Set_int Config.abs_val,
+    Some "n",
+    "abstraction level for expressions (default n = 2)";
+    "-arraylevel",
+    Arg.Set_int Config.array_level,
+    Some "n",
+    "the level of treating the array indexing and pointer arithmetic (default n = 0)"
+    ;
+    "-developer_mode",
+    Arg.Set Config.developer_mode,
+    None,
+    "reserved"
+    ;
+    "-dotty",
+    Arg.Set Config.write_dotty,
+    None,
+    "produce dotty files in the results directory";
+    "-exit_node_bias",
+    Arg.Unit (fun () -> Config.worklist_mode:= 1),
+    None,
+    "nodes nearest the exit node are analyzed first";
+    "-html",
+    Arg.Set Config.write_html,
+    None,
+    "produce hmtl output in the results directory"
+    ;
+    "-join_cond",
+    Arg.Set_int Config.join_cond,
+    Some "n",
+    "set the strength of the final information-loss check used by the join (default n=1)"
+    ;
+    "-leak",
+    Arg.Set Config.allowleak,
+    None,
+    "forget leaks during abstraction"
+    ;
+    "-monitor_prop_size",
+    Arg.Set Config.monitor_prop_size,
+    None,
+    "monitor size of props"
+    ;
+    "-nelseg",
+    Arg.Set Config.nelseg,
+    None,
+    "use only nonempty lsegs"
+    ;
+    "-noliveness",
+    Arg.Clear Config.liveness,
+    None,
+    "turn the dead program variable elimination off"
+    ;
+    "-noprintdiff",
+    Arg.Clear Config.print_using_diff,
+    None,
+    "turn off highlighting diff w.r.t. previous prop in printing"
+    ;
+    "-notest",
+    Arg.Clear Config.test,
+    None,
+    "turn test mode off"
+    ;
+    "-only_footprint",
+    Arg.Set Config.only_footprint,
+    None,
+    "skip the re-execution phase"
+    ;
+    "-print_types",
+    Arg.Set Config.print_types,
+    None,
+    "print types in symbolic heaps"
+    ;
+    "-set_pp_margin",
+    Arg.Int (fun i -> F.set_margin i),
+    Some "n",
+    "set right margin for the pretty printing functions"
+    ;
+    "-spec_abs_level",
+    Arg.Set_int Config.spec_abs_level,
+    Some "n",
+    "set the level of abstracting the postconditions of discovered specs (default n=1)"
+    ;
+    "-trace_error",
+    Arg.Set Config.trace_error,
+    None,
+    "turn on tracing of error explanation"
+    ;
+    "-trace_join",
+    Arg.Set Config.trace_join,
+    None,
+    "turn on tracing of join"
+    ;
+    "-trace_rearrange",
+    Arg.Set Config.trace_rearrange,
+    None,
+    "turn on tracing of rearrangement"
+    ;
+    "-visits_bias",
+    Arg.Unit (fun () -> Config.worklist_mode:= 2),
+    None,
+    "nodes visited fewer times are analyzed first"
+    ;
   ]
 
 
@@ -740,66 +857,30 @@ module Arg = struct
       ("", Arg.Unit (fun () -> ()), " \n  " ^ title ^ "\n") ::
       IList.sort (fun (x, _, _) (y, _, _) -> Pervasives.compare x y) unsorted_desc' in
     align dlist
+
+  let env_to_argv env =
+    Str.split (Str.regexp ":") env
+
+  let prepend_to_argv args =
+    let cl_args = match Array.to_list Sys.argv with _ :: tl -> tl | [] -> [] in
+    Sys.executable_name :: args @ cl_args
+
+  let parse env_var spec anon usage =
+    let env_args = env_to_argv (try Unix.getenv env_var with Not_found -> "") in
+    let env_cl_args = prepend_to_argv env_args in
+    try
+      Arg.parse_argv (Array.of_list env_cl_args) spec anon usage
+    with
+    | Bad usage -> Pervasives.prerr_string usage; exit 2;
+    | Help usage -> Pervasives.print_string usage; exit 0;
+
 end
-
-
-(** Escape a string for use in a CSV or XML file: replace reserved characters with escape sequences *)
-module Escape = struct
-  (** apply a map function for escape sequences *)
-  let escape_map map_fun s =
-    let len = String.length s in
-    let buf = Buffer.create len in
-    for i = 0 to len - 1 do
-      let c = String.unsafe_get s i in
-      match map_fun c with
-      | None -> Buffer.add_char buf c
-      | Some s' -> Buffer.add_string buf s'
-    done;
-    Buffer.contents buf
-
-  let escape_csv s =
-    let map = function
-      | '"' -> Some "\"\""
-      | c when Char.code c > 127 -> Some "?" (* non-ascii character: escape *)
-      | _ -> None in
-    escape_map map s
-
-  let escape_xml s =
-    let map = function
-      | '"' -> (* on next line to avoid bad indentation *)
-          Some "&quot;"
-      | '>' -> Some "&gt;"
-      | '<' -> Some "&lt;"
-      | '&' -> Some "&amp;"
-      | '%' -> Some "&#37;"
-      | c when Char.code c > 127 -> (* non-ascii character: escape *)
-          Some ("&#" ^ string_of_int (Char.code c) ^ ";")
-      | _ -> None in
-    escape_map map s
-
-  let escape_dotty s =
-    let map = function
-      | '"' -> Some "\\\""
-      | '\\' -> Some "\\\\"
-      | _ -> None in
-    escape_map map s
-
-  let escape_path s =
-    let map_csv = function
-      | c ->
-          if (Char.escaped c) = Filename.dir_sep
-          then Some "_"
-          else None in
-    escape_map map_csv s
-end
-
 
 (** flags for a procedure *)
 type proc_flags = (string, string) Hashtbl.t
 
 let proc_flags_empty () : proc_flags = Hashtbl.create 1
 
-let proc_flag_iterations = "iterations"
 let proc_flag_skip = "skip"
 let proc_flag_ignore_return = "ignore_return"
 
@@ -882,3 +963,46 @@ let analyzer_of_string = function
   | "checkers" -> Checkers
   | "tracing" -> Tracing
   | _ -> raise Unknown_analyzer
+
+
+let string_crc_hex32 =
+  Config.string_crc_hex32 (* implemented in Config to avoid circularities *)
+
+let string_append_crc_cutoff ?(cutoff=100) ?(key="") name =
+  let name_up_to_cutoff =
+    if String.length name <= cutoff
+    then name
+    else String.sub name 0 cutoff in
+  let crc_str =
+    let name_for_crc = name ^ key in
+    string_crc_hex32 name_for_crc in
+  name_up_to_cutoff ^ "." ^ crc_str
+
+let set_reference_and_call_function reference value f x =
+  let saved = !reference in
+  let restore () =
+    reference := saved in
+  try
+    reference := value;
+    let res = f x in
+    restore ();
+    res
+  with
+  | exn ->
+      restore ();
+      raise exn
+
+let run_in_re_execution_mode f x =
+  set_reference_and_call_function Config.footprint false f x
+
+let run_in_footprint_mode f x =
+  set_reference_and_call_function Config.footprint true f x
+
+let run_with_abs_val_equal_zero f x =
+  set_reference_and_call_function Config.abs_val 0 f x
+
+let assert_false ((file, lnum, cnum, _) as ml_loc) =
+  Printf.eprintf "\nASSERT FALSE %s\nCALL STACK\n%s\n%!"
+    (ml_loc_to_string ml_loc)
+    (Printexc.raw_backtrace_to_string (Printexc.get_callstack 1000));
+  raise (Assert_failure (file, lnum, cnum))

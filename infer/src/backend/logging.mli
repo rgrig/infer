@@ -8,8 +8,6 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open Utils
-
 (** log messages at different levels of verbosity *)
 
 (** type of printable elements *)
@@ -65,6 +63,9 @@ val add_print_action : print_action -> unit
 (** return the delayed print actions *)
 val get_delayed_prints : unit -> print_action list
 
+(** set the delayed print actions *)
+val set_delayed_prints : print_action list -> unit
+
 (** reset the delayed print actions *)
 val reset_delayed_prints : unit -> unit
 
@@ -94,7 +95,7 @@ val flush_streams : unit -> unit
 
 (** print a warning with information of the position in the ml source where it oririnated.
     use as: warning_position "description" (try assert false with Assert_failure x -> x); *)
-val warning_position: string -> ml_location -> unit
+val warning_position: string -> ml_loc -> unit
 
 (** dump a string *)
 val d_str : string -> unit
@@ -129,6 +130,11 @@ val d_increase_indent : int -> unit
 (** dump command to decrease the indentation level *)
 val d_decrease_indent : int -> unit
 
-val log_progress : string -> int ref -> int -> unit
+(** Progress bar: start of the analysis of a file. *)
+val log_progress_file : unit -> unit
 
-val log_progress_simple : string -> unit
+(** Progress bar: start of the analysis of a procedure. *)
+val log_progress_procedure : unit -> unit
+
+(** Progress bar: log a timeout event if in developer mode. *)
+val log_progress_timeout_event : failure_kind -> unit

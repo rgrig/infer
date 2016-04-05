@@ -13,11 +13,15 @@ let no_translate_libs = ref true
 
 let testing_mode = ref false
 
+let cxx_experimental = ref false
+
 let array_with_objects_count_m = "arrayWithObjects:count:"
 
 let object_at_indexed_subscript_m = "objectAtIndexedSubscript:"
 
 let string_with_utf8_m = "stringWithUTF8String:"
+
+let is_kind_of_class = "isKindOfClass:"
 
 let nsstring_cl = "NSString"
 
@@ -32,6 +36,8 @@ let id_cl = "id"
 let self = "self"
 
 let this = "this"
+
+let return_param = "__return_param"
 
 let alloc = "alloc"
 
@@ -48,6 +54,8 @@ let ast_file : string option ref = ref None
 let json = ref ""
 
 let pointer_decl_index = ref Clang_ast_main.PointerMap.empty
+
+let pointer_stmt_index = ref Clang_ast_main.PointerMap.empty
 
 let debug_mode = ref false
 
@@ -164,3 +172,7 @@ let infer = "infer"
 let block = "block"
 
 let atomic_att = "<\"Atomic\">"
+
+let infer_skip_gcc_ast_stmt = "__infer_skip_gcc_ast_stmt"
+
+let infer_skip_fun = "__infer_skip_function"

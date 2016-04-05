@@ -11,7 +11,6 @@
 
 module L = Logging
 module F = Format
-open Utils
 
 type str_frame = {
   class_str : string;
@@ -36,18 +35,18 @@ type stack_frame =
 type stack_trace = stack_frame list
 
 (** given [str_frame], try to resolve its components in [exe_env] *)
-let try_resolve_frame str_frame exe_env tenv =
+let try_resolve_frame (str_frame : str_frame) exe_env tenv =
   try
     let class_name = Mangled.from_string str_frame.class_str in
     (* find the class name in the tenv and get the procedure(s) whose names match the procedure name
      * in the stack trace. Note that the stack trace does not have any type or argument information;
      * the name is all that we have to go on *)
-    match Sil.tenv_lookup tenv (Typename.TN_csu (Csu.Class, class_name)) with
-    | Some Sil.Tstruct (_, _, Csu.Class, _, _, decl_procs, _) ->
+    match Tenv.lookup tenv (Typename.TN_csu (Csu.Class Csu.Java, class_name)) with
+    | Some Sil.Tstruct { Sil.csu = Csu.Class _; def_methods } ->
         let possible_calls =
           IList.filter
             (fun proc -> Procname.java_get_method proc = str_frame.method_str)
-            decl_procs in
+            def_methods in
         if IList.length possible_calls > 0 then
           (* using IList.hd here assumes that all of the possible calls are declared in the
            * same file, which will be true in Java but not necessarily in other languages *)
@@ -89,6 +88,8 @@ let pp_str_frame fmt = function
   | Unresolved f ->
       F.fprintf fmt "UNRESOLVED: %s %s %s %d" f.class_str f.method_str f.file_str f.line_num
 
+(*
 let rec pp_str_stack_trace fmt = function
   | [] -> ()
   | frame :: rest -> F.fprintf fmt "%a;@\n%a" pp_str_frame frame pp_str_stack_trace rest
+*)

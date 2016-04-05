@@ -10,7 +10,6 @@
 module L = Logging
 module F = Format
 module P = Printf
-open Utils
 
 (** Module for typestates: maps from expressions to annotated types, with extensions. *)
 
@@ -24,8 +23,8 @@ type 'a ext =
   {
     empty : 'a; (** empty extension *)
     check_instr : (** check the extension for an instruction *)
-      get_proc_desc -> Procname.t -> Cfg.Procdesc.t -> Cfg.Node.t
-      -> 'a -> Sil.instr -> parameters -> 'a;
+      Tenv.t -> get_proc_desc -> Procname.t ->
+      Cfg.Procdesc.t -> 'a -> Sil.instr -> parameters -> 'a;
     join : 'a -> 'a -> 'a; (** join two extensions *)
     pp : Format.formatter -> 'a -> unit (** pretty print an extension *)
   }
@@ -73,8 +72,6 @@ let pp ext fmt typestate =
   pp_map typestate.map;
   ext.pp fmt typestate.extension
 
-exception JoinFail
-
 let type_join typ1 typ2 =
   if PatternMatch.type_is_object typ1 then typ2 else typ1
 let locs_join locs1 locs2 =
@@ -117,12 +114,11 @@ let map_join m1 m2 =
         (t1, ta1', locs1) in
       tjoined := M.add exp1 range1' !tjoined in
   if m1 == m2 then m1
-  else
-    try
-      M.iter extend_lhs m2;
-      M.iter missing_rhs m1;
-      !tjoined
-    with JoinFail -> m1
+  else (
+    M.iter extend_lhs m2;
+    M.iter missing_rhs m1;
+    !tjoined
+  )
 
 let join ext t1 t2 =
   {
@@ -143,7 +139,7 @@ let add_id id range typestate =
   if map' == typestate.map then typestate
   else { typestate with map = map' }
 
-let add_pvar pvar range typestate =
+let add pvar range typestate =
   let map' = M.add (Sil.Lvar pvar) range typestate.map in
   if map' == typestate.map then typestate
   else { typestate with map = map' }

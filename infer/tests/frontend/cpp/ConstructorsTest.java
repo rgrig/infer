@@ -40,4 +40,46 @@ public class ConstructorsTest {
       throws InterruptedException, IOException, InferException {
     frontendTest("constructor_default_arg.cpp");
   }
+
+  @Test
+  public void testTempObjectDotFilesMatch()
+      throws InterruptedException, IOException, InferException {
+    frontendTest("temp_object.cpp");
+  }
+
+  @Test
+  public void testConstructorInitDotFilesMatch()
+      throws InterruptedException, IOException, InferException {
+    frontendTest("constructor_init.cpp");
+  }
+
+  @Test
+  public void testCopyMoveConstructorDotFilesMatch()
+      throws InterruptedException, IOException, InferException {
+    frontendTest("copy_move_constructor.cpp");
+  }
+
+  @Test
+  public void testDefaultFieldInitDotFilesMatch()
+      throws InterruptedException, IOException, InferException {
+    frontendTest("default_field_init.cpp");
+  }
+
+  @Test
+  public void testConstructorInitListDotFilesMatch()
+      throws InterruptedException, IOException, InferException {
+    frontendTest("constructor_struct_init_list.cpp");
+  }
+
+  @Test
+  public void testStdInitListDotFilesMatch()
+      throws InterruptedException, IOException, InferException {
+    frontendTest("std_init_list.cpp");
+  }
+
+  @Test
+  public void testConstructorNewFilesMatch()
+      throws InterruptedException, IOException, InferException {
+    frontendTest("constructor_new.cpp");
+  }
 }

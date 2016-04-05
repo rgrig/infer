@@ -9,7 +9,6 @@
 
 module L = Logging
 module F = Format
-open Utils
 
 let checkers_repeated_calls_name = "CHECKERS_REPEATED_CALLS"
 
@@ -24,7 +23,7 @@ struct
     Set.Make(struct
       type t = Sil.instr
       let compare i1 i2 = match i1, i2 with
-        | Sil.Call (ret1, e1, etl1, loc1, cf1), Sil.Call (ret2, e2, etl2, loc2, cf2) ->
+        | Sil.Call (_, e1, etl1, _, cf1), Sil.Call (_, e2, etl2, _, cf2) ->
             (* ignore return ids and call flags *)
             let n = Sil.exp_compare e1 e2 in
             if n <> 0 then n else let n = IList.compare Sil.exp_typ_compare etl1 etl2 in
@@ -63,13 +62,13 @@ struct
   (** Check if the procedure performs an allocation operation.
       If [paths] is AllPaths, check if an allocation happens on all paths.
       If [paths] is SomePath, check if a path with an allocation exists. *)
-  let proc_performs_allocation pdesc paths : Location.t option =
+  let proc_performs_allocation tenv pdesc paths : Location.t option =
 
     let node_allocates node : Location.t option =
       let found = ref None in
       let proc_is_new pn =
-        Procname.equal pn SymExec.ModelBuiltins.__new ||
-        Procname.equal pn SymExec.ModelBuiltins.__new_array in
+        Procname.equal pn ModelBuiltins.__new ||
+        Procname.equal pn ModelBuiltins.__new_array in
       let do_instr instr =
         match instr with
         | Sil.Call (_, Sil.Const (Sil.Cfun pn), _, loc, _) when proc_is_new pn ->
@@ -88,28 +87,28 @@ struct
           | Some loc, None
           | None, Some loc ->
               if _paths = AllPaths then None else Some loc
-          | Some loc1, Some loc2 ->
+          | Some loc1, Some _ ->
               Some loc1 (* left priority *)
         let join = _join paths
-        let do_node node lo1 =
+        let do_node _ node lo1 =
           let lo2 = node_allocates node in
           let lo' = (* use left priority join to implement transfer function *)
             _join SomePath lo1 lo2 in
           [lo'], [lo']
-        let proc_throws pn = Dataflow.DontKnow
+        let proc_throws _ = Dataflow.DontKnow
       end) in
 
-    let transitions = DFAllocCheck.run pdesc None in
+    let transitions = DFAllocCheck.run tenv pdesc None in
     match transitions (Cfg.Procdesc.get_exit_node pdesc) with
     | DFAllocCheck.Transition (loc, _, _) -> loc
     | DFAllocCheck.Dead_state -> None
 
   (** Check repeated calls to the same procedure. *)
-  let check_instr get_proc_desc curr_pname curr_pdesc node extension instr normalized_etl =
+  let check_instr tenv get_proc_desc curr_pname curr_pdesc extension instr normalized_etl =
 
     (** Arguments are not temporary variables. *)
     let arguments_not_temp args =
-      let filter_arg (e, t) = match e with
+      let filter_arg (e, _) = match e with
         | Sil.Lvar pvar ->
             (* same temporary variable does not imply same value *)
             not (Errdesc.pvar_is_frontend_tmp pvar)
@@ -129,7 +128,7 @@ struct
           match get_old_call instr_normalized_args extension with
           | Some (Sil.Call (_, _, _, loc_old, _)) ->
               begin
-                match proc_performs_allocation proc_desc AllPaths with
+                match proc_performs_allocation tenv proc_desc AllPaths with
                 | Some alloc_loc ->
                     let description =
                       Printf.sprintf "call to %s seen before on line %d (may allocate at %s:%n)"
@@ -159,17 +158,17 @@ struct
       pp = pp;
     }
 
-  let update_payload typestate payload = payload
+  let update_payload _ payload = payload
 end (* CheckRepeatedCalls *)
 
 module MainRepeatedCalls =
   Eradicate.Build(RepeatedCallsExtension)
 
-let callback_check_repeated_calls all_procs get_proc_desc idenv tenv proc_name proc_desc =
+let callback_check_repeated_calls callback_args =
   let checks =
     {
       TypeCheck.eradicate = false;
       check_extension = checkers_repeated_calls;
       check_ret_type = [];
     } in
-  MainRepeatedCalls.callback checks all_procs get_proc_desc idenv tenv proc_name proc_desc
+  MainRepeatedCalls.callback checks callback_args

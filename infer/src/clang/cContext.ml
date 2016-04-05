@@ -10,9 +10,6 @@
 (** Contains current class and current method to be translated as well as local variables, *)
 (** and the cg, cfg, and tenv corresponding to the current file. *)
 
-open Utils
-open CFrontend_utils
-
 module L = Logging
 
 type curr_class =
@@ -24,23 +21,25 @@ type curr_class =
 
 type t =
   {
-    tenv : Sil.tenv;
+    tenv : Tenv.t;
     cg : Cg.t;
     cfg : Cfg.cfg;
     procdesc : Cfg.Procdesc.t;
     is_objc_method : bool;
     curr_class: curr_class;
+    return_param_typ : Sil.typ option;
     is_callee_expression : bool;
     outer_context : t option; (* in case of objc blocks, the context of the method containing the block *)
-    mutable blocks_static_vars : ((Sil.pvar * Sil.typ) list) Procname.Map.t;
+    mutable blocks_static_vars : ((Pvar.t * Sil.typ) list) Procname.Map.t;
   }
 
-let create_context tenv cg cfg procdesc curr_class is_objc_method context_opt =
+let create_context tenv cg cfg procdesc curr_class return_param_typ is_objc_method context_opt =
   { tenv = tenv;
     cg = cg;
     cfg = cfg;
     procdesc = procdesc;
     curr_class = curr_class;
+    return_param_typ = return_param_typ;
     is_callee_expression = false;
     is_objc_method = is_objc_method;
     outer_context = context_opt;
@@ -76,7 +75,7 @@ let rec get_curr_class context =
 let get_curr_class_name curr_class =
   match curr_class with
   | ContextCls (name, _, _) -> name
-  | ContextCategory (name, cls) -> cls
+  | ContextCategory (_, cls) -> cls
   | ContextProtocol name -> name
   | ContextNoCls -> assert false
 
@@ -96,7 +95,7 @@ let curr_class_compare curr_class1 curr_class2 =
   | ContextCls (_, _, _), _ -> -1
   | _, ContextCls (_, _, _) -> 1
   | ContextCategory (name1, cls1), ContextCategory (name2, cls2) ->
-      Utils.pair_compare String.compare String.compare (name1, cls1) (name2, cls2)
+      pair_compare String.compare String.compare (name1, cls1) (name2, cls2)
   | ContextCategory (_, _), _ -> -1
   | _, ContextCategory (_, _) -> 1
   | ContextProtocol name1, ContextProtocol name2 ->
@@ -115,10 +114,10 @@ let curr_class_hash curr_class =
   | ContextProtocol name -> Hashtbl.hash name
   | ContextNoCls -> Hashtbl.hash "no class"
 
-let create_curr_class tenv class_name =
-  let class_tn_name = Typename.TN_csu (Csu.Class, (Mangled.from_string class_name)) in
-  match Sil.tenv_lookup tenv class_tn_name with
-  | Some Sil.Tstruct(intf_fields, _, _, _, superclasses, methods, annotation) ->
+let create_curr_class tenv class_name ck =
+  let class_tn_name = Typename.TN_csu (Csu.Class ck, (Mangled.from_string class_name)) in
+  match Tenv.lookup tenv class_tn_name with
+  | Some { Sil.superclasses } ->
       (let superclasses_names = IList.map Typename.name superclasses in
        match superclasses_names with
        | superclass:: protocols ->
@@ -128,12 +127,12 @@ let create_curr_class tenv class_name =
 
 let add_block_static_var context block_name static_var_typ =
   match context.outer_context, static_var_typ with
-  | Some outer_context, (static_var, typ) when Sil.pvar_is_global static_var ->
+  | Some outer_context, (static_var, _) when Pvar.is_global static_var ->
       (let new_static_vars, duplicate =
          try
            let static_vars = Procname.Map.find block_name outer_context.blocks_static_vars in
            if IList.mem (
-               fun (var1, typ1) (var2, typ2) -> Sil.pvar_equal var1 var2
+               fun (var1, _) (var2, _) -> Pvar.equal var1 var2
              ) static_var_typ static_vars then
              static_vars, true
            else

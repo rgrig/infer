@@ -24,7 +24,7 @@ type meth_kind =
 
 (** data  *)
 type icfg = {
-  tenv : Sil.tenv;
+  tenv : Tenv.t;
   cg : Cg.t;
   cfg : Cfg.cfg;
 }
@@ -33,7 +33,7 @@ type t =
   { icfg : icfg;
     procdesc : Cfg.Procdesc.t;
     impl : JBir.t;
-    mutable var_map : (Sil.pvar * Sil.typ * Sil.typ) JBir.VarMap.t;
+    mutable var_map : (Pvar.t * Sil.typ * Sil.typ) JBir.VarMap.t;
     if_jumps : int NodeTbl.t;
     goto_jumps : (int, jump_kind) Hashtbl.t;
     cn : JBasics.class_name;
@@ -76,31 +76,30 @@ let get_or_set_pvar_type context var typ =
   try
     let (pvar, otyp, _) = (JBir.VarMap.find var var_map) in
     let tenv = get_tenv context in
-    if Prover.check_subtype tenv typ otyp || (Prover.check_subtype tenv otyp typ) then
+    if Prover.Subtyping_check.check_subtype tenv typ otyp ||
+       Prover.Subtyping_check.check_subtype tenv otyp typ then
       set_var_map context (JBir.VarMap.add var (pvar, otyp, typ) var_map)
     else set_var_map context (JBir.VarMap.add var (pvar, typ, typ) var_map);
     (pvar, typ)
   with Not_found ->
     let procname = (Cfg.Procdesc.get_proc_name (get_procdesc context)) in
     let varname = Mangled.from_string (JBir.var_name_g var) in
-    let pvar = Sil.mk_pvar varname procname in
+    let pvar = Pvar.mk varname procname in
     set_var_map context (JBir.VarMap.add var (pvar, typ, typ) var_map);
     (pvar, typ)
-
-let lookup_pvar_type context var typ = (get_or_set_pvar_type context var typ)
 
 let set_pvar context var typ = fst (get_or_set_pvar_type context var typ)
 
 let reset_pvar_type context =
   let var_map = get_var_map context in
   let aux var item =
-    match item with (pvar, otyp, typ) ->
+    match item with (pvar, otyp, _) ->
       set_var_map context (JBir.VarMap.add var (pvar, otyp, otyp) var_map) in
   JBir.VarMap.iter aux var_map
 
 let get_var_type context var =
   try
-    let (_, otyp', otyp) = JBir.VarMap.find var (get_var_map context) in
+    let (_, _, otyp) = JBir.VarMap.find var (get_var_map context) in
     Some otyp
   with Not_found -> None
 
