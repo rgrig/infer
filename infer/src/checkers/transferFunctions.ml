@@ -12,6 +12,6 @@ module type S = sig
   type astate
 
   (* {A} instr {A'}. [caller_pdesc] is the procdesc of the current procedure *)
-  val exec_instr : astate -> Cfg.Procdesc.t -> Sil.instr -> astate
+  val exec_instr : astate -> ProcData.t -> Sil.instr -> astate
 
 end

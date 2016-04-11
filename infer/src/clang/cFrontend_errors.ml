@@ -10,7 +10,8 @@
 open CFrontend_utils
 
 (* List of checkers on properties *)
-let property_checkers_list = [CFrontend_checkers.strong_delegate_warning]
+let property_checkers_list = [CFrontend_checkers.strong_delegate_warning;
+                              CFrontend_checkers.assign_pointer_warning;]
 
 (* Invocation of checker belonging to property_checker_list *)
 let checkers_for_property decl_info pname_info pdi checker =
@@ -122,4 +123,14 @@ let rec run_frontend_checkers_on_decl tenv cg cfg dec =
       let call_ns_checker = checkers_for_ns decl_info decl_list in
       invoke_set_of_checkers call_ns_checker pdesc ns_notification_checker_list;
       IList.iter (run_frontend_checkers_on_decl tenv cg cfg) decl_list
+  | ObjCProtocolDecl (decl_info, name_info, decl_list, _, _) ->
+      if CLocation.should_do_frontend_check decl_info.Clang_ast_t.di_source_range then
+        let name = Ast_utils.get_qualified_name name_info in
+        let curr_class = CContext.ContextProtocol name in
+        let pdesc = pdesc_checker curr_class in
+        check_for_property_errors cfg cg tenv pdesc decl_list;
+        let call_ns_checker = checkers_for_ns decl_info decl_list in
+        invoke_set_of_checkers call_ns_checker pdesc ns_notification_checker_list;
+        IList.iter (run_frontend_checkers_on_decl tenv cg cfg) decl_list
+      else ()
   | _ -> ()

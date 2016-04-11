@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 - present Facebook, Inc.
+ * Copyright (c) 2016 - present Facebook, Inc.
  * All rights reserved.
  *
  * This source code is licensed under the BSD style license found in the
@@ -8,11 +8,9 @@
  */
 
 #import <Foundation/NSObject.h>
-#import <UIKit/UIKit.h>
 
-@interface NullDeref : NSObject
+@interface NSMapTable : NSObject
 
-@property(strong) UIView* backgroundCoveringView;
-@property(strong) UIView* attachmentContainerView;
+- (id)objectForKey:(id)aKey;
 
 @end
