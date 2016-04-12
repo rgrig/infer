@@ -1,7 +1,6 @@
 import java.util.Random;
 
 class G { // global
-  static private Object NULL = null;
   static private Object dirty = null;
   static void get_ret(Object x) {
     if (maybe()) dirty = x;
@@ -10,6 +9,8 @@ class G { // global
     if (dirty == x) dirty = null;
   }
   static void use_call(Object x) {
+    final Object NULL = null;
+    assert (dirty != x);
     if (dirty == x) NULL.hashCode();
   }
   static boolean maybe() {

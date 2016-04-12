@@ -106,7 +106,7 @@ let store_icfg tenv cg cfg program =
     if !JConfig.create_harness then Harness.create_harness cfg cg tenv;
     Preanal.doit ~f_translate_typ:(Some f_translate_typ) cfg cg tenv;
     Cg.store_to_file cg_file cg;
-    Cfg.store_cfg_to_file cfg_file true cfg;
+    Irpp.store_cfg_to_file cfg_file true cfg;
     if !JConfig.debug_mode then
       begin
         Config.write_dotty := true;
