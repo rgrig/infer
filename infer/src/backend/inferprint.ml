@@ -8,6 +8,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! Utils
+
 module L = Logging
 module F = Format
 open Jsonbug_j
@@ -386,7 +388,7 @@ let summary_values top_proc_set summary =
     logscale (c1 * in_calls + c2 * out_calls) in
 
   let pp_failure failure =
-    pp_to_string pp_failure_kind failure in
+    pp_to_string SymOp.pp_failure_kind failure in
 
 
   { vname = Procname.to_string proc_name;

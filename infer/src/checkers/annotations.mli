@@ -7,6 +7,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! Utils
+
 (** Annotations. *)
 
 val suppressLint : string
@@ -54,8 +56,8 @@ val get_annotated_signature : ProcAttributes.t -> annotated_signature
 val get_field_type_and_annotation :
   Ident.fieldname -> Sil.typ -> (Sil.typ * Sil.item_annotation) option
 
-(** Return the annotations on the declaring class of [pname]. Only works for Java *)
-val get_declaring_class_annotations : Procname.t -> Tenv.t -> Sil.item_annotation option
+(** Return the annotations on the declaring class of [java_pname]. *)
+val get_declaring_class_annotations : Procname.java -> Tenv.t -> Sil.item_annotation option
 
 val nullable : string
 

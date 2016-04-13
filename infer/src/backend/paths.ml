@@ -8,6 +8,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! Utils
+
 (** Execution Paths *)
 
 module L = Logging
@@ -316,7 +318,7 @@ end = struct
         | Some node ->
             pos_opt <> None && filter node
         | None -> false
-      with exn when exn_not_failure exn -> false in
+      with exn when SymOp.exn_not_failure exn -> false in
     let position_seen = ref false in
     let inverse_sequence =
       let log = ref [] in

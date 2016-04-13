@@ -8,6 +8,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! Utils
+
 (** log messages at different levels of verbosity *)
 
 (** type of printable elements *)
@@ -149,4 +151,4 @@ val log_progress_file : unit -> unit
 val log_progress_procedure : unit -> unit
 
 (** Progress bar: log a timeout event if in developer mode. *)
-val log_progress_timeout_event : failure_kind -> unit
+val log_progress_timeout_event : SymOp.failure_kind -> unit

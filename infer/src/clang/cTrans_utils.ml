@@ -7,6 +7,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! Utils
+
 (** Utility methods to support the translation of clang ast constructs into sil instructions.  *)
 
 open CFrontend_utils
@@ -82,23 +84,19 @@ struct
 
 end
 
-type str_node_map = (string, Cfg.Node.t) Hashtbl.t
-
 module GotoLabel =
 struct
 
   (* stores goto labels local to a function, with the relative node in the cfg *)
-  let goto_label_node_map : str_node_map = Hashtbl.create 17
-
-  let reset_all_labels () = Hashtbl.reset goto_label_node_map
+  let goto_label_node_map : CContext.str_node_map = Hashtbl.create 17
 
   let find_goto_label context label sil_loc =
     try
-      Hashtbl.find goto_label_node_map label
+      Hashtbl.find context.CContext.label_map label
     with Not_found ->
       let node_name = Format.sprintf "GotoLabel_%s" label in
       let new_node = Nodes.create_node (Cfg.Node.Skip_node node_name) [] [] sil_loc context in
-      Hashtbl.add goto_label_node_map label new_node;
+      Hashtbl.add context.CContext.label_map label new_node;
       new_node
 end
 

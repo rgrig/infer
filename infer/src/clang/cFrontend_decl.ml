@@ -7,6 +7,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! Utils
+
 (** Translate declarations **)
 
 module L = Logging
@@ -61,8 +63,6 @@ struct
         ()
 
   let function_decl tenv cfg cg func_decl block_data_opt =
-    Printing.log_out "\nResetting the goto_labels hashmap...\n";
-    CTrans_utils.GotoLabel.reset_all_labels (); (* C Language Std 6.8.6.1-1 *)
     let captured_vars, outer_context_opt =
       match block_data_opt with
       | Some (outer_context, _, _, captured_vars) -> captured_vars, Some outer_context
