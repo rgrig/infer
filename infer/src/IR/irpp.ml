@@ -91,14 +91,12 @@ let pp_instr oc = function
       fprintf oc "(Declare_locals %a %a)"
         (pp_list (pp_2 pp_pvar pp_typ)) pts
         pp_loc l
-  | Sil.Goto_node (e, l) ->
-      fprintf oc "(Goto_node %a %a)" pp_exp e pp_loc l
 
 let pp_node oc n =
   let cs = N.get_instrs n in
   let ns = N.get_succs n in
   let pp_instr = fprintf oc "    %a\n" pp_instr in
-  let pp_id oc n = pp_int oc (N.get_id n) in
+  let pp_id oc n = pp_int oc (N.get_id n :> int) in
   fprintf oc "  label %a:\n" pp_id n;
   List.iter pp_instr cs;
   (match N.get_kind n with
