@@ -283,6 +283,9 @@ module NodeHash : Hashtbl.S with type key = Node.t
 (** Set of nodes. *)
 module NodeSet : Set.S with type elt = Node.t
 
+(** Map with nodes as keys. *)
+module NodeMap : Map.S with type key = Node.t
+
 val pp_node_list : Format.formatter -> Node.t list -> unit
 
 (** {2 Functions for manipulating an interprocedural CFG} *)

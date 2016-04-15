@@ -25,8 +25,8 @@ let pp_int oc =
 let pp_ident oc i =
   fprintf oc "%s" (Ident.to_string i)
 
-let pp_typ oc = function
-  | _ -> fprintf oc "SOME_TYP"
+let pp_typename oc = function
+  | _ -> fprintf oc "SOME_TYPENAME"
 
 let pp_unop oc = function
   | _ -> fprintf oc "SOME_UNOP"
@@ -34,7 +34,37 @@ let pp_unop oc = function
 let pp_ifkind oc = function
   | _ -> fprintf oc "SOME_IFKIND"
 
-let rec pp_exp oc = function
+let pp_ikind oc = function
+  | _ -> fprintf oc "SOME_IKIND"
+
+let pp_fkind oc = function
+  | _ -> fprintf oc "SOME_FKIND"
+
+let pp_ptr_kind oc = function
+  | _ -> fprintf oc "SOME_PTR_KIND"
+
+let pp_struct_typ oc = function
+  | _ -> fprintf oc "SOME_STRUCT_TYP"
+
+let rec pp_typ oc = function
+  | Sil.Tvar t ->
+      fprintf oc "(Tvar %a)" pp_typename t
+  | Sil.Tint k ->
+      fprintf oc "(Tint %a)" pp_ikind k
+  | Sil.Tfloat k ->
+      fprintf oc "(Tfloat %a)" pp_fkind k
+  | Sil.Tvoid ->
+      fprintf oc "(Tvoid)"
+  | Sil.Tfun b ->
+      fprintf oc "(Tfun %a)" pp_bool b
+  | Sil.Tptr (t, k) ->
+      fprintf oc "(Tptr %a %a)" pp_typ t pp_ptr_kind k
+  | Sil.Tstruct k ->
+      fprintf oc "(Tstruct %a)" pp_struct_typ k
+  | Sil.Tarray (t, e) ->
+      fprintf oc "(Tarray %a %a)" pp_typ t pp_exp e
+
+and pp_exp oc = function
   | Sil.Var x ->
       fprintf oc "(Var %a)" pp_ident x
   | Sil.UnOp (op, e, t) ->
@@ -50,17 +80,14 @@ let rec pp_exp oc = function
 *)
   | _ -> fprintf oc "SOME_EXP"
 
-let pp_typ oc _ =
-  fprintf oc "SOME_TYP"
-
-let pp_loc oc _ =
-  fprintf oc "SOME_LOCATION"
+let pp_loc oc l =
+  fprintf oc "(Location %s)" (Location.to_string l)
 
 let pp_call_flags oc _ =
   fprintf oc "SOME_CALL_FLAGS"
 
-let pp_pvar oc _ =
-  fprintf oc "SOME_PVAR"
+let pp_pvar oc x =
+  fprintf oc "%s" (Pvar.to_string x)
 
 let pp_stackop oc _ =
   fprintf oc "SOME_STACKOP"
@@ -105,15 +132,80 @@ let pp_node oc n =
   | _ ->
       fprintf oc "    (Goto %a)\n\n" (pp_list pp_id) ns)
 
-let sort_nodes ns = ns (* TODO: also, make sure start node comes first  *)
+module NodePriorityQueue : sig
+  type t
+  val empty : t
+  val is_empty : t -> bool
+  val push : int * N.t -> t -> t
+  val pop : t -> N.t * t
+  val decrease : N.t -> t -> t
+end = struct
+  (* NOTE: This implementation is a quick hack. *)
+  module M = Cfg.NodeMap
+  module S = Set.Make (struct
+    type t = int * N.t
+    let compare (p, m) (q, n) =
+      let c = compare p q in
+      if c <> 0 then c else N.compare m n
+  end)
+  type t = int M.t * S.t
+
+  let empty = (M.empty, S.empty)
+
+  let is_empty (m, s) = M.is_empty m && S.is_empty s
+
+  let push (p, x) (m, s) = (M.add x p m, S.add (p, x) s)
+
+  let pop (m, s) =
+    let p, x = S.min_elt s in
+    (x, (M.remove x m, S.remove (p, x) s))
+
+  let decrease x (m, s) =
+    try
+      let p = M.find x m in
+      (M.add x (p - 1) m, S.add (p - 1, x) (S.remove (p, x) s))
+    with Not_found -> (m, s)
+end
+
+
+let sort_nodes_for_readability ns =
+  let module Q = NodePriorityQueue in
+  let rec loop ms q =
+    if Q.is_empty q then List.rev ms else begin
+      let n, q = Q.pop q in
+      let q = List.fold_right Q.decrease (N.get_succs n) q in
+      loop (n :: ms) q
+    end in
+  let pns =
+    let f n = (List.length (N.get_preds n), n) in
+    List.map f ns in
+  let q = List.fold_right Q.push pns Q.empty in
+  loop [] q
+
+(* Puts start nodes first. Prints a warning if the number of start nodes isn't
+exactly 1. May also shuffle the order of other nodes, to match some subjective
+notion of "readability". *)
+let sort_nodes oc ns =
+  let ns = sort_nodes_for_readability ns in
+  let is_start n = match N.get_kind n with
+    | N.Start_node _ -> 1
+    | _ -> 0 in
+  let c = List.fold_left (+) 0 (List.map is_start ns) in
+  if c <> 1 then fprintf oc "; WARNING: procedure with %d start nodes\n" c;
+  let compare m n = compare (is_start n) (is_start m) in
+  List.stable_sort compare ns
 
 let pp_proc oc p =
-  let ns = sort_nodes (P.get_nodes p) in
+  let ns = sort_nodes oc (P.get_nodes p) in
   fprintf oc "procedure %s {\n" (Procname.to_unique_id (P.get_proc_name p));
   List.iter (pp_node oc) ns;
   fprintf oc "}\n\n"
 
-let sort_procs ps = ps (* TODO: by name?  *)
+(* Sort by name, for readability of output. *)
+let sort_procs =
+  let name p = Procname.get_method (P.get_proc_name p) in
+  let compare p q = compare (name p) (name q) in
+  List.stable_sort compare
 
 let pp_cfg_to_file filename cfg =
   let filename = DB.filename_add_suffix filename ".pp" in

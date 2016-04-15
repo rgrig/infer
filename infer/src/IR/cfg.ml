@@ -811,6 +811,7 @@ module NodeHash = Hashtbl.Make(Node)
 
 (** Set of nodes. *)
 module NodeSet = Node.NodeSet
+module NodeMap = Node.NodeMap
 
 let iter_proc_desc = Node.iter_proc_desc
 
