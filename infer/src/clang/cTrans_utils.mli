@@ -41,7 +41,7 @@ type trans_result = {
 
 val empty_res_trans: trans_result
 
-val collect_res_trans : trans_result list -> trans_result
+val collect_res_trans : Cfg.cfg -> trans_result list -> trans_result
 
 val extract_var_exp_or_fail : trans_state -> Sil.exp * Sil.typ
 
@@ -94,9 +94,6 @@ val is_owning_name : string -> bool
 val is_method_call : Clang_ast_t.stmt -> bool
 
 val contains_opaque_value_expr : Clang_ast_t.stmt -> bool
-
-val get_info_from_decl_ref : Clang_ast_t.decl_ref ->
-  Clang_ast_t.named_decl_info * Clang_ast_t.pointer * Clang_ast_t.type_ptr
 
 val get_decl_ref_info : Clang_ast_t.stmt -> Clang_ast_t.decl_ref
 

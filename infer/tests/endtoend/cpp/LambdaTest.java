@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
+ * Copyright (c) 2015 - present Facebook, Inc.
  * All rights reserved.
  *
  * This source code is licensed under the BSD style license found in the
@@ -7,10 +7,11 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
-package endtoend.objc;
+package endtoend.cpp;
 
 import static org.hamcrest.MatcherAssert.assertThat;
-import static utils.matchers.ResultContainsLineNumbers.containsLines;
+import static utils.matchers.ResultContainsNoErrorInMethod.doesNotContain;
+import static utils.matchers.ResultContainsExactly.containsExactly;
 
 import com.google.common.collect.ImmutableList;
 
@@ -25,14 +26,14 @@ import utils.InferException;
 import utils.InferResults;
 import utils.InferRunner;
 
-public class AssignPointerTest {
+public class LambdaTest {
 
   public static final String FILE =
-      "infer/tests/codetoanalyze/objc/warnings/assign_pointer.m";
+      "infer/tests/codetoanalyze/cpp/frontend/lambda/lambda1.cpp";
 
   private static ImmutableList<String> inferCmd;
 
-  public static final String ASSIGN_POINTER_WARNING = "ASSIGN_POINTER_WARNING";
+  public static final String DIVIDE_BY_ZERO = "DIVIDE_BY_ZERO";
 
   @ClassRule
   public static DebuggableTemporaryFolder folder =
@@ -40,26 +41,26 @@ public class AssignPointerTest {
 
   @BeforeClass
   public static void runInfer() throws InterruptedException, IOException {
-    inferCmd = InferRunner.createiOSInferCommandWithMLBuckets(
-      folder,
-      FILE,
-      "cf",
-      true);
-
+    inferCmd = InferRunner.createCPPInferCommand(folder, FILE);
   }
 
   @Test
-  public void matchErrors()
+  public void whenInferRunsOnDiv0FunctionsErrorIsFound()
       throws InterruptedException, IOException, InferException {
-    InferResults inferResults = InferRunner.runInferObjC(inferCmd);
+    String[] procedures = {
+        "bar",
+        "foo",
+    };
+    InferResults inferResults = InferRunner.runInferCPP(inferCmd);
     assertThat(
-        "Results should contain the correct " + ASSIGN_POINTER_WARNING,
+        "Results should contain divide by 0 error",
         inferResults,
-        containsLines(new int[]{
-            18,
-            20,
-            22
-          }));
+        containsExactly(
+            DIVIDE_BY_ZERO,
+            FILE,
+            procedures
+        )
+    );
   }
 
 }

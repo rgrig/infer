@@ -48,7 +48,7 @@ struct
                 (Procname.to_string procname);
               let meth_body_nodes = T.instructions_trans context body extra_instrs exit_node in
               Cfg.Node.add_locals_ret_declaration start_node (Cfg.Procdesc.get_locals procdesc);
-              Cfg.Node.set_succs_exn start_node meth_body_nodes [];
+              Cfg.Node.set_succs_exn cfg start_node meth_body_nodes [];
               Cg.add_defined_node (CContext.get_cg context) (Cfg.Procdesc.get_proc_name procdesc))
        | None -> ())
     with
@@ -131,7 +131,8 @@ struct
     let open Clang_ast_t in
     (* Run the frontend checkers on this declaration *)
     if decl_trans_context = `DeclTraversal then
-      CFrontend_errors.run_frontend_checkers_on_decl tenv cg cfg dec;
+      CFrontend_errors.run_frontend_checkers_on_decl cfg cg dec;
+
     (* each procedure has different scope: start names from id 0 *)
     Ident.NameGenerator.reset ();
 
@@ -194,9 +195,9 @@ struct
        | _ -> ());
     match dec with
     (* Currently C/C++ record decl treated in the same way *)
-    | ClassTemplateSpecializationDecl (decl_info, _, _, _, decl_list, _, _, _)
-    | CXXRecordDecl (decl_info, _, _, _, decl_list, _, _, _)
-    | RecordDecl (decl_info, _, _, _, decl_list, _, _) when not decl_info.di_is_implicit ->
+    | ClassTemplateSpecializationDecl (_, _, _, _, decl_list, _, _, _)
+    | CXXRecordDecl (_, _, _, _, decl_list, _, _, _)
+    | RecordDecl (_, _, _, _, decl_list, _, _) ->
         let is_method_decl decl = match decl with
           | CXXMethodDecl _ | CXXConstructorDecl _ | CXXConversionDecl _
           | CXXDestructorDecl _ | FunctionTemplateDecl _ ->

@@ -58,15 +58,12 @@ module NodeVisitSet =
 (** Table for the results of the join operation on nodes. *)
 module Join_table : sig
   type t
-  type node_id = int
 
-  val add : t -> node_id -> Paths.PathSet.t -> unit
+  val add : t -> Cfg.Node.id -> Paths.PathSet.t -> unit
   val create : unit -> t
-  val find : t -> node_id -> Paths.PathSet.t
+  val find : t -> Cfg.Node.id -> Paths.PathSet.t
 end = struct
-  type t = (int, Paths.PathSet.t) Hashtbl.t
-
-  type node_id = int
+  type t = (Cfg.Node.id, Paths.PathSet.t) Hashtbl.t
 
   let create () : t =
     Hashtbl.create 11
@@ -83,14 +80,12 @@ end
 module Worklist = struct
   module NodeMap = Map.Make(Cfg.Node)
 
-  type node_id = int
-
   type t = {
     join_table : Join_table.t; (** Table of join results *)
-    path_set_todo : (node_id, Paths.PathSet.t) Hashtbl.t; (** Pathset todo *)
-    path_set_visited : (node_id, Paths.PathSet.t) Hashtbl.t; (** Pathset visited *)
+    path_set_todo : (Cfg.Node.id, Paths.PathSet.t) Hashtbl.t; (** Pathset todo *)
+    path_set_visited : (Cfg.Node.id, Paths.PathSet.t) Hashtbl.t; (** Pathset visited *)
     mutable todo_set : NodeVisitSet.t; (** Set of nodes still to do, with visit count *)
-    mutable visit_map : node_id NodeMap.t; (** Map from nodes done to visit count *)
+    mutable visit_map : int NodeMap.t; (** Map from nodes done to visit count *)
   }
 
   let create () = {
@@ -132,7 +127,8 @@ let path_set_create_worklist pdesc =
   Cfg.Procdesc.compute_distance_to_exit_node pdesc;
   Worklist.create ()
 
-let htable_retrieve (htable : (int, Paths.PathSet.t) Hashtbl.t) (key : int) : Paths.PathSet.t =
+let htable_retrieve (htable : (Cfg.Node.id, Paths.PathSet.t) Hashtbl.t) (key : Cfg.Node.id)
+  : Paths.PathSet.t =
   try
     Hashtbl.find htable key
   with Not_found ->
@@ -274,13 +270,9 @@ let propagate
 (** propagate a set of results, including exceptions and divergence *)
 let propagate_nodes_divergence
     tenv (pdesc: Cfg.Procdesc.t) (pset: Paths.PathSet.t)
-    (succ_nodes_: Cfg.node list) (exn_nodes: Cfg.node list) (wl : Worklist.t) =
+    (succ_nodes: Cfg.node list) (exn_nodes: Cfg.node list) (wl : Worklist.t) =
   let pname = Cfg.Procdesc.get_proc_name pdesc in
   let pset_exn, pset_ok = Paths.PathSet.partition (Tabulation.prop_is_exn pname) pset in
-  let succ_nodes = match State.get_goto_node () with (* handle Sil.Goto_node target, if any *)
-    | Some node_id ->
-        IList.filter (fun n -> Cfg.Node.get_id n = node_id) succ_nodes_
-    | None -> succ_nodes_ in
   if !Config.footprint && not (Paths.PathSet.is_empty (State.get_diverging_states_node ())) then
     begin
       Errdesc.warning_err (State.get_loc ()) "Propagating Divergence@.";
@@ -348,7 +340,7 @@ let do_before_node session node =
   State.set_node node;
   State.set_session session;
   L.reset_delayed_prints ();
-  Printer.node_start_session node loc proc_name session
+  Printer.node_start_session node loc proc_name (session :> int)
 
 let do_after_node node =
   Printer.node_finish_session node
@@ -497,9 +489,9 @@ let mark_visited summary node =
   let stats = summary.Specs.stats in
   if !Config.footprint
   then
-    stats.Specs.nodes_visited_fp <- IntSet.add node_id stats.Specs.nodes_visited_fp
+    stats.Specs.nodes_visited_fp <- IntSet.add (node_id :> int) stats.Specs.nodes_visited_fp
   else
-    stats.Specs.nodes_visited_re <- IntSet.add node_id stats.Specs.nodes_visited_re
+    stats.Specs.nodes_visited_re <- IntSet.add (node_id :> int) stats.Specs.nodes_visited_re
 
 let forward_tabulate tenv wl =
   let handled_some_exception = ref false in
@@ -553,7 +545,7 @@ let forward_tabulate tenv wl =
       handled_some_exception := false;
       check_prop_size pathset_todo;
       L.d_strln ("**** " ^ (log_string proc_name) ^ " " ^
-                 "Node: " ^ string_of_int curr_node_id ^ ", " ^
+                 "Node: " ^ string_of_int (curr_node_id :> int) ^ ", " ^
                  "Procedure: " ^ Procname.to_string proc_name ^ ", " ^
                  "Session: " ^ string_of_int session ^ ", " ^
                  "Todo: " ^ string_of_int (Paths.PathSet.size pathset_todo) ^ " ****");
@@ -581,7 +573,7 @@ let forward_tabulate tenv wl =
                  L.d_strln
                    ("Processing prop " ^ string_of_int cnt ^ "/" ^ string_of_int num_paths);
                  L.d_increase_indent 1;
-                 State.reset_diverging_states_goto_node ();
+                 State.reset_diverging_states_node ();
                  let pset =
                    do_symbolic_execution (handle_exn curr_node) tenv curr_node prop path in
                  L.d_decrease_indent 1; L.d_ln();

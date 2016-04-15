@@ -114,14 +114,14 @@ module TransferFunctions = struct
         (* this should never happen *)
         assert false
     | Sil.Set _ | Sil.Prune _ | Sil.Nullify _ | Sil.Abstract _ | Sil.Remove_temps _
-    | Sil.Declare_locals _ | Sil.Goto_node _ | Sil.Stackop _ ->
+    | Sil.Declare_locals _ | Sil.Stackop _ ->
         (* none of these can assign to program vars or logical vars *)
         astate
 end
 
 module Analyzer =
   AbstractInterpreter.Make
-    (ProcCfg.Forward)
+    (ProcCfg.Exceptional)
     (Scheduler.ReversePostorder)
     (Domain)
     (TransferFunctions)
