@@ -37,7 +37,28 @@ let pp_unop oc = function
   | Sil.LNot -> fprintf oc "LNot"
 
 let pp_binop oc = function
-  | _ -> fprintf oc "SOME_BINOP"
+  | Sil.PlusA -> fprintf oc "PlusA"
+  | Sil.PlusPI -> fprintf oc "PlusPI"
+  | Sil.MinusA -> fprintf oc "MinusA"
+  | Sil.MinusPI -> fprintf oc "MinusPI"
+  | Sil.MinusPP -> fprintf oc "MinusPP"
+  | Sil.Mult -> fprintf oc "Mult"
+  | Sil.Div -> fprintf oc "Div"
+  | Sil.Mod -> fprintf oc "Mod"
+  | Sil.Shiftlt -> fprintf oc "Shiftlt"
+  | Sil.Shiftrt -> fprintf oc "Shiftrt"
+  | Sil.Lt -> fprintf oc "Lt"
+  | Sil.Gt -> fprintf oc "Gt"
+  | Sil.Le -> fprintf oc "Le"
+  | Sil.Ge -> fprintf oc "Ge"
+  | Sil.Eq -> fprintf oc "Eq"
+  | Sil.Ne -> fprintf oc "Ne"
+  | Sil.BAnd -> fprintf oc "BAnd"
+  | Sil.BXor -> fprintf oc "BXor"
+  | Sil.BOr -> fprintf oc "BOr"
+  | Sil.LAnd -> fprintf oc "LAnd"
+  | Sil.LOr -> fprintf oc "LOr"
+  | Sil.PtrFld -> fprintf oc "PtrFld"
 
 let pp_ifkind oc = function
   | Sil.Ik_bexp -> fprintf oc "Ik_bexp"
@@ -96,6 +117,9 @@ let pp_pvar oc x =
 let pp_procname oc f =
   fprintf oc "%s" (Procname.to_unique_id f)
 
+let pp_identname oc f =
+  fprintf oc "%s" (Ident.name_to_string f)
+
 let pp_fieldname oc f =
   fprintf oc "%s" (Ident.fieldname_to_string f)
 
@@ -104,6 +128,9 @@ let pp_subtyp oc st =
 
 let pp_string_c oc s =
   fprintf oc "%s" s
+
+let pp_float_c oc =
+  fprintf oc "%g"
 
 let pp_int_t oc x =
   fprintf oc "%s" (Sil.Int.to_string x)
@@ -119,6 +146,9 @@ let pp_annotation oc
 
 let pp_item_annotation oc =
   fprintf oc "%a" (pp_list (pp_2 pp_annotation pp_bool))
+
+let pp_attribute oc _ =
+  fprintf oc "SOME_ATTRIBUTE"
 
 let rec pp_struct_typ oc
   { Sil.instance_fields
@@ -185,16 +215,21 @@ and pp_const oc = function
       fprintf oc "(Cfun %a)" pp_procname f
   | Sil.Cstr s ->
       fprintf oc "(Cstr %a)" pp_string_c s
-(*
-  | Cfloat of float (** float constants *)
-  | Cattribute of attribute (** attribute used in disequalities to annotate a value *)
-  | Cexn of exp (** exception *)
-  | Cclass of Ident.name (** class constant *)
-  | Cptr_to_fld of Ident.fieldname * typ (** pointer to field constant,
-                                             and type of the surrounding Csu.t type *)
-  | Cclosure of closure (** anonymous function *)
-*)
-  | _ -> fprintf oc "SOME_CONST"
+  | Sil.Cfloat f ->
+      fprintf oc "(Cfloat %a)" pp_float_c f
+  | Sil.Cattribute a ->
+      fprintf oc "(Cattribute %a)" pp_attribute a
+  | Sil.Cexn e ->
+      fprintf oc "(Cexn %a)" pp_exp e
+  | Sil.Cclass n ->
+      fprintf oc "(Cclass %a)" pp_identname n
+  | Sil.Cptr_to_fld (n, t) ->
+      fprintf oc "(Cptr_to_fld %a %a)" pp_fieldname n pp_typ t
+  | Sil.Cclosure c ->
+      fprintf oc "(Cclosure %a)" pp_closure c
+
+and pp_closure oc _ =
+  fprintf oc "SOME_CLOSURE"
 
 and pp_struct_fields oc =
   fprintf oc "%a" (pp_list (pp_3 pp_fieldname pp_typ pp_item_annotation))
@@ -202,8 +237,21 @@ and pp_struct_fields oc =
 let pp_loc oc l =
   fprintf oc "(Location %s)" (Location.to_string l)
 
-let pp_call_flags oc _ =
-  fprintf oc "SOME_CALL_FLAGS"
+let pp_call_flags oc
+  { Sil.cf_virtual
+  ; cf_interface
+  ; cf_noreturn
+  ; cf_is_objc_block
+  ; cf_targets }
+=
+  fprintf oc "(call_flags";
+  fprintf oc " (cf_virtual %a)" pp_bool cf_virtual;
+  fprintf oc " (cf_interface %a)" pp_bool cf_interface;
+  fprintf oc " (cf_noreturn %a)" pp_bool cf_noreturn;
+  fprintf oc " (cf_is_objc_block %a)" pp_bool cf_is_objc_block;
+  fprintf oc " (cf_targets %a)" (pp_list pp_procname) cf_targets;
+  fprintf oc ")"
+
 
 let pp_stackop oc _ =
   fprintf oc "SOME_STACKOP"
