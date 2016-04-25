@@ -333,6 +333,7 @@ module ModeledExpensiveMatcher = OverridesMatcher(struct
     let json_key = "modeled_expensive"
   end)
 
+let disabled_checks_by_default = []
 
 let inferconfig () =
   match !Config.inferconfig_home with
@@ -390,6 +391,29 @@ let create_filters analyzer =
     | None -> do_not_filter
     | Some inferconfig -> filters_from_inferconfig inferconfig
 
+(* Decide whether a checker or error type is enabled or disabled based on*)
+(* white/black listing in .inferconfig and the default value *)
+let is_checker_enabled checker_name =
+  let black_listed_checks = lazy (
+    try
+      lookup_string_list "disable_checks"
+        (Yojson.Basic.from_file (inferconfig ()))
+    with _ -> []) in
+  let white_listed_checks = lazy (
+    try
+      lookup_string_list "enable_checks"
+        (Yojson.Basic.from_file (inferconfig ()))
+    with _ -> []) in
+  match IList.mem (=) checker_name (Lazy.force black_listed_checks), IList.mem (=) checker_name (Lazy.force white_listed_checks) with
+  | false, false -> (* if it's not amond white/black listed then we use default value *)
+      not (IList.mem (=) checker_name disabled_checks_by_default)
+  | true, false -> (* if it's blacklisted and not whitelisted then it should be disabled *)
+      false
+  | false, true -> (* if it is not blacklisted and it is whitelisted then it should be enabled *)
+      true
+  | true, true -> (* if it's both blacklisted and whitelisted then we flag error *)
+      failwith ("Inconsistent setting in .inferconfig: checker" ^ checker_name ^ " is both blacklisted and whitelisted.")
+
 (* This function loads and list the path that are being filtered by the analyzer. The results *)
 (* are of the form: path/to/file.java -> {infer, eradicate} meaning that analysis results will *)
 (* be reported on path/to/file.java both for infer and for eradicate *)
@@ -414,3 +438,12 @@ let test () =
              (DB.source_file_to_rel_path source_file)
              matching_s)
     (Sys.getcwd ())
+
+let skip_translation_headers =
+  lazy (
+    match
+      lookup_string_list "skip_translation_headers"
+        (Yojson.Basic.from_file (inferconfig ()))
+    with
+    | exception _ -> []
+    | headers -> headers)

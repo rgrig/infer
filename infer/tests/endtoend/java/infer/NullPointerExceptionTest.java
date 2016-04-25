@@ -62,6 +62,9 @@ public class NullPointerExceptionTest {
         "npeWithDollars",
         "someNPEAfterResourceLeak",
         "derefNullableGetter",
+        "derefNullableRet",
+        // TODO: report on this test
+        // "derefUndefNullableRet
         "testSystemGetPropertyArgument",
         "testSystemGetPropertyReturn",
         "derefNull",
@@ -69,6 +72,8 @@ public class NullPointerExceptionTest {
         "nullTryLock",
         "tryLockThrows",
         "dereferenceAfterLoopOnList",
+        "dereferenceAfterUnlock1",
+        "dereferenceAfterUnlock2",
     };
     assertThat(
         "Results should contain " + NULL_DEREFERENCE,

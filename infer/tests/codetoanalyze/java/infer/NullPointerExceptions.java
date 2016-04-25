@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.lang.System;
+import java.util.concurrent.locks.Lock;
 import java.util.HashMap;
 
 public class NullPointerExceptions {
@@ -396,6 +397,39 @@ public class NullPointerExceptions {
     o.toString();
   }
 
+  public @Nullable Object nullableRet(boolean b) {
+    if (b) {
+      return null;
+    }
+    return new Object();
+  }
+
+  public void derefNullableRet(boolean b) {
+    Object ret = nullableRet(b);
+    ret.toString();
+  }
+
+  public void derefNullableRetOK(boolean b) {
+    Object ret = nullableRet(b);
+    if (ret != null) {
+      ret.toString();
+    }
+  }
+
+  public native @Nullable Object undefNullableRet();
+
+  public void derefUndefNullableRetTODO() { // TODO: should warn here
+    Object ret = undefNullableRet();
+    ret.toString();
+  }
+
+  public void derefUndefNullableRetOK() {
+    Object ret = undefNullableRet();
+    if (ret != null) {
+      ret.toString();
+    }
+  }
+
   public @Nullable String testSystemGetPropertyArgument() {
     String s = System.getProperty(null);
     return s;
@@ -483,6 +517,22 @@ public class NullPointerExceptions {
   void dereferenceAfterLoopOnList(L l) {
     Object obj = returnsNullAfterLoopOnList(l);
     obj.toString();
+  }
+
+  void dereferenceAfterUnlock1(Lock l) {
+    l.unlock();
+    String s = l.toString();
+    s = null;
+    s.toString(); // Expect NPE here
+  }
+
+  void dereferenceAfterUnlock2(Lock l) {
+    synchronized(l){
+      String b = null;
+    }
+    String s = l.toString();
+    s = null;
+    s.toString(); // Expect NPE here
   }
 
 }
