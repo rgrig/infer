@@ -224,30 +224,6 @@ class AnalyzerWrapper(object):
             shutil.rmtree(self.args.infer_out)
         exit(os.EX_OK)
 
-        if self.args.specs_dirs:
-            # Each dir passed in input is prepended by '-lib'.
-            # Convert each path to absolute because when running from
-            # cluster Makefiles (multicore mode) InferAnalyze creates the wrong
-            # absolute path from within the multicore folder
-            self.args.specs_dirs = [item
-                                    for argument in
-                                    (['-lib', os.path.abspath(path)] for path in
-                                     self.args.specs_dirs)
-                                    for item in argument]
-        if self.args.specs_dir_list_file:
-            # Convert the path to the file list to an absolute path, because
-            # the analyzer will run from different paths and may not find the
-            # file otherwise.
-            self.args.specs_dir_list_file = \
-                ['-specs-dir-list-file',
-                 os.path.abspath(self.args.specs_dir_list_file)]
-
-    def clean_exit(self):
-        if os.path.isdir(self.args.infer_out):
-            utils.stdout('removing {}'.format(self.args.infer_out))
-            shutil.rmtree(self.args.infer_out)
-        exit(os.EX_OK)
-
     def analyze(self):
         logging.info('Starting analysis')
         infer_analyze = [
