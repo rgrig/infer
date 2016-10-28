@@ -1,0 +1,456 @@
+/* @generated */
+digraph iCFG {
+"reference_field::val_getI_div07" [label="7:  DeclStmt \n   _fun_reference_field::X_X(&x:class reference_field::X *) [line 139]\n " shape="box"]
+	
+
+	 "reference_field::val_getI_div07" -> "reference_field::val_getI_div06" ;
+"reference_field::val_getI_div06" [label="6:  BinaryOperatorStmt: Assign \n   *&x.f:int =0 [line 140]\n " shape="box"]
+	
+
+	 "reference_field::val_getI_div06" -> "reference_field::val_getI_div05" ;
+"reference_field::val_getI_div05" [label="5:  DeclStmt \n   _fun_reference_field::Val_Val(&r:class reference_field::Val *,&x:class reference_field::X &) [line 141]\n " shape="box"]
+	
+
+	 "reference_field::val_getI_div05" -> "reference_field::val_getI_div04" ;
+"reference_field::val_getI_div04" [label="4:  BinaryOperatorStmt: Assign \n   *&x.f:int =1 [line 142]\n " shape="box"]
+	
+
+	 "reference_field::val_getI_div04" -> "reference_field::val_getI_div03" ;
+"reference_field::val_getI_div03" [label="3:  Return Stmt \n   _=*&r:class reference_field::Val  [line 143]\n  n$1=_fun_reference_field::Val_getI(&r:class reference_field::Val &) [line 143]\n  *&return:int =(1 / n$1) [line 143]\n " shape="box"]
+	
+
+	 "reference_field::val_getI_div03" -> "reference_field::val_getI_div02" ;
+"reference_field::val_getI_div02" [label="2: Exit reference_field::val_getI_div0 \n  " color=yellow style=filled]
+	
+
+"reference_field::val_getI_div01" [label="1: Start reference_field::val_getI_div0\nFormals: \nLocals:  r:class reference_field::Val  x:class reference_field::X  \n   DECLARE_LOCALS(&return,&r,&x); [line 138]\n " color=yellow style=filled]
+	
+
+	 "reference_field::val_getI_div01" -> "reference_field::val_getI_div07" ;
+"reference_field::val_F_div07" [label="7:  DeclStmt \n   _fun_reference_field::X_X(&x:class reference_field::X *) [line 115]\n " shape="box"]
+	
+
+	 "reference_field::val_F_div07" -> "reference_field::val_F_div06" ;
+"reference_field::val_F_div06" [label="6:  BinaryOperatorStmt: Assign \n   *&x.f:int =0 [line 116]\n " shape="box"]
+	
+
+	 "reference_field::val_F_div06" -> "reference_field::val_F_div05" ;
+"reference_field::val_F_div05" [label="5:  DeclStmt \n   _fun_reference_field::Val_Val(&r:class reference_field::Val *,&x:class reference_field::X &) [line 117]\n " shape="box"]
+	
+
+	 "reference_field::val_F_div05" -> "reference_field::val_F_div04" ;
+"reference_field::val_F_div04" [label="4:  BinaryOperatorStmt: Assign \n   *&x.f:int =1 [line 118]\n " shape="box"]
+	
+
+	 "reference_field::val_F_div04" -> "reference_field::val_F_div03" ;
+"reference_field::val_F_div03" [label="3:  Return Stmt \n   n$0=*&r.x.f:int  [line 119]\n  *&return:int =(1 / n$0) [line 119]\n " shape="box"]
+	
+
+	 "reference_field::val_F_div03" -> "reference_field::val_F_div02" ;
+"reference_field::val_F_div02" [label="2: Exit reference_field::val_F_div0 \n  " color=yellow style=filled]
+	
+
+"reference_field::val_F_div01" [label="1: Start reference_field::val_F_div0\nFormals: \nLocals:  r:class reference_field::Val  x:class reference_field::X  \n   DECLARE_LOCALS(&return,&r,&x); [line 114]\n " color=yellow style=filled]
+	
+
+	 "reference_field::val_F_div01" -> "reference_field::val_F_div07" ;
+"reference_field::ref_I_div07" [label="7:  DeclStmt \n   _fun_reference_field::X_X(&x:class reference_field::X *) [line 57]\n " shape="box"]
+	
+
+	 "reference_field::ref_I_div07" -> "reference_field::ref_I_div06" ;
+"reference_field::ref_I_div06" [label="6:  BinaryOperatorStmt: Assign \n   *&x.f:int =1 [line 58]\n " shape="box"]
+	
+
+	 "reference_field::ref_I_div06" -> "reference_field::ref_I_div05" ;
+"reference_field::ref_I_div05" [label="5:  DeclStmt \n   _fun_reference_field::Ref_Ref(&r:class reference_field::Ref *,&x:class reference_field::X &) [line 59]\n " shape="box"]
+	
+
+	 "reference_field::ref_I_div05" -> "reference_field::ref_I_div04" ;
+"reference_field::ref_I_div04" [label="4:  BinaryOperatorStmt: Assign \n   *&x.f:int =0 [line 60]\n " shape="box"]
+	
+
+	 "reference_field::ref_I_div04" -> "reference_field::ref_I_div03" ;
+"reference_field::ref_I_div03" [label="3:  Return Stmt \n   n$0=*&r.i:int & [line 61]\n  n$1=*n$0:int & [line 61]\n  *&return:int =(1 / n$1) [line 61]\n " shape="box"]
+	
+
+	 "reference_field::ref_I_div03" -> "reference_field::ref_I_div02" ;
+"reference_field::ref_I_div02" [label="2: Exit reference_field::ref_I_div0 \n  " color=yellow style=filled]
+	
+
+"reference_field::ref_I_div01" [label="1: Start reference_field::ref_I_div0\nFormals: \nLocals:  r:class reference_field::Ref  x:class reference_field::X  \n   DECLARE_LOCALS(&return,&r,&x); [line 56]\n " color=yellow style=filled]
+	
+
+	 "reference_field::ref_I_div01" -> "reference_field::ref_I_div07" ;
+"reference_field::val_getF_div07" [label="7:  DeclStmt \n   _fun_reference_field::X_X(&x:class reference_field::X *) [line 131]\n " shape="box"]
+	
+
+	 "reference_field::val_getF_div07" -> "reference_field::val_getF_div06" ;
+"reference_field::val_getF_div06" [label="6:  BinaryOperatorStmt: Assign \n   *&x.f:int =0 [line 132]\n " shape="box"]
+	
+
+	 "reference_field::val_getF_div06" -> "reference_field::val_getF_div05" ;
+"reference_field::val_getF_div05" [label="5:  DeclStmt \n   _fun_reference_field::Val_Val(&r:class reference_field::Val *,&x:class reference_field::X &) [line 133]\n " shape="box"]
+	
+
+	 "reference_field::val_getF_div05" -> "reference_field::val_getF_div04" ;
+"reference_field::val_getF_div04" [label="4:  BinaryOperatorStmt: Assign \n   *&x.f:int =1 [line 134]\n " shape="box"]
+	
+
+	 "reference_field::val_getF_div04" -> "reference_field::val_getF_div03" ;
+"reference_field::val_getF_div03" [label="3:  Return Stmt \n   _=*&r:class reference_field::Val  [line 135]\n  n$1=_fun_reference_field::Val_getF(&r:class reference_field::Val &) [line 135]\n  *&return:int =(1 / n$1) [line 135]\n " shape="box"]
+	
+
+	 "reference_field::val_getF_div03" -> "reference_field::val_getF_div02" ;
+"reference_field::val_getF_div02" [label="2: Exit reference_field::val_getF_div0 \n  " color=yellow style=filled]
+	
+
+"reference_field::val_getF_div01" [label="1: Start reference_field::val_getF_div0\nFormals: \nLocals:  r:class reference_field::Val  x:class reference_field::X  \n   DECLARE_LOCALS(&return,&r,&x); [line 130]\n " color=yellow style=filled]
+	
+
+	 "reference_field::val_getF_div01" -> "reference_field::val_getF_div07" ;
+"reference_field::Ptr_getI3" [label="3:  Return Stmt \n   n$0=*&this:class reference_field::Ptr * [line 36]\n  n$1=*n$0.i:int * [line 36]\n  n$2=*n$1:int  [line 36]\n  *&return:int =n$2 [line 36]\n " shape="box"]
+	
+
+	 "reference_field::Ptr_getI3" -> "reference_field::Ptr_getI2" ;
+"reference_field::Ptr_getI2" [label="2: Exit reference_field::Ptr_getI \n  " color=yellow style=filled]
+	
+
+"reference_field::Ptr_getI1" [label="1: Start reference_field::Ptr_getI\nFormals:  this:class reference_field::Ptr *\nLocals:  \n   DECLARE_LOCALS(&return); [line 36]\n " color=yellow style=filled]
+	
+
+	 "reference_field::Ptr_getI1" -> "reference_field::Ptr_getI3" ;
+"reference_field::ptr_I_div07" [label="7:  DeclStmt \n   _fun_reference_field::X_X(&x:class reference_field::X *) [line 90]\n " shape="box"]
+	
+
+	 "reference_field::ptr_I_div07" -> "reference_field::ptr_I_div06" ;
+"reference_field::ptr_I_div06" [label="6:  BinaryOperatorStmt: Assign \n   *&x.f:int =1 [line 91]\n " shape="box"]
+	
+
+	 "reference_field::ptr_I_div06" -> "reference_field::ptr_I_div05" ;
+"reference_field::ptr_I_div05" [label="5:  DeclStmt \n   _fun_reference_field::Ptr_Ptr(&r:class reference_field::Ptr *,&x:class reference_field::X &) [line 92]\n " shape="box"]
+	
+
+	 "reference_field::ptr_I_div05" -> "reference_field::ptr_I_div04" ;
+"reference_field::ptr_I_div04" [label="4:  BinaryOperatorStmt: Assign \n   *&x.f:int =0 [line 93]\n " shape="box"]
+	
+
+	 "reference_field::ptr_I_div04" -> "reference_field::ptr_I_div03" ;
+"reference_field::ptr_I_div03" [label="3:  Return Stmt \n   n$0=*&r.i:int * [line 94]\n  n$1=*n$0:int  [line 94]\n  *&return:int =(1 / n$1) [line 94]\n " shape="box"]
+	
+
+	 "reference_field::ptr_I_div03" -> "reference_field::ptr_I_div02" ;
+"reference_field::ptr_I_div02" [label="2: Exit reference_field::ptr_I_div0 \n  " color=yellow style=filled]
+	
+
+"reference_field::ptr_I_div01" [label="1: Start reference_field::ptr_I_div0\nFormals: \nLocals:  r:class reference_field::Ptr  x:class reference_field::X  \n   DECLARE_LOCALS(&return,&r,&x); [line 89]\n " color=yellow style=filled]
+	
+
+	 "reference_field::ptr_I_div01" -> "reference_field::ptr_I_div07" ;
+"reference_field::ref_F_div07" [label="7:  DeclStmt \n   _fun_reference_field::X_X(&x:class reference_field::X *) [line 49]\n " shape="box"]
+	
+
+	 "reference_field::ref_F_div07" -> "reference_field::ref_F_div06" ;
+"reference_field::ref_F_div06" [label="6:  BinaryOperatorStmt: Assign \n   *&x.f:int =1 [line 50]\n " shape="box"]
+	
+
+	 "reference_field::ref_F_div06" -> "reference_field::ref_F_div05" ;
+"reference_field::ref_F_div05" [label="5:  DeclStmt \n   _fun_reference_field::Ref_Ref(&r:class reference_field::Ref *,&x:class reference_field::X &) [line 51]\n " shape="box"]
+	
+
+	 "reference_field::ref_F_div05" -> "reference_field::ref_F_div04" ;
+"reference_field::ref_F_div04" [label="4:  BinaryOperatorStmt: Assign \n   *&x.f:int =0 [line 52]\n " shape="box"]
+	
+
+	 "reference_field::ref_F_div04" -> "reference_field::ref_F_div03" ;
+"reference_field::ref_F_div03" [label="3:  Return Stmt \n   n$0=*&r.x:class reference_field::X & [line 53]\n  n$1=*n$0.f:int  [line 53]\n  *&return:int =(1 / n$1) [line 53]\n " shape="box"]
+	
+
+	 "reference_field::ref_F_div03" -> "reference_field::ref_F_div02" ;
+"reference_field::ref_F_div02" [label="2: Exit reference_field::ref_F_div0 \n  " color=yellow style=filled]
+	
+
+"reference_field::ref_F_div01" [label="1: Start reference_field::ref_F_div0\nFormals: \nLocals:  r:class reference_field::Ref  x:class reference_field::X  \n   DECLARE_LOCALS(&return,&r,&x); [line 48]\n " color=yellow style=filled]
+	
+
+	 "reference_field::ref_F_div01" -> "reference_field::ref_F_div07" ;
+"reference_field::Val_getF3" [label="3:  Return Stmt \n   n$0=*&this:class reference_field::Val * [line 43]\n  n$1=*n$0.x.f:int  [line 43]\n  *&return:int =n$1 [line 43]\n " shape="box"]
+	
+
+	 "reference_field::Val_getF3" -> "reference_field::Val_getF2" ;
+"reference_field::Val_getF2" [label="2: Exit reference_field::Val_getF \n  " color=yellow style=filled]
+	
+
+"reference_field::Val_getF1" [label="1: Start reference_field::Val_getF\nFormals:  this:class reference_field::Val *\nLocals:  \n   DECLARE_LOCALS(&return); [line 43]\n " color=yellow style=filled]
+	
+
+	 "reference_field::Val_getF1" -> "reference_field::Val_getF3" ;
+"reference_field::Ptr_Ptr4" [label="4:  Constructor Init \n   n$3=*&this:class reference_field::Ptr * [line 34]\n  n$4=*&r_:class reference_field::X & [line 34]\n  *n$3.x:class reference_field::X *=n$4 [line 34]\n " shape="box"]
+	
+
+	 "reference_field::Ptr_Ptr4" -> "reference_field::Ptr_Ptr3" ;
+"reference_field::Ptr_Ptr3" [label="3:  Constructor Init \n   n$0=*&this:class reference_field::Ptr * [line 34]\n  n$1=*&this:class reference_field::Ptr * [line 34]\n  n$2=*n$1.x:class reference_field::X * [line 34]\n  *n$0.i:int *=n$2.f [line 34]\n " shape="box"]
+	
+
+	 "reference_field::Ptr_Ptr3" -> "reference_field::Ptr_Ptr2" ;
+"reference_field::Ptr_Ptr2" [label="2: Exit reference_field::Ptr_Ptr \n  " color=yellow style=filled]
+	
+
+"reference_field::Ptr_Ptr1" [label="1: Start reference_field::Ptr_Ptr\nFormals:  this:class reference_field::Ptr * r_:class reference_field::X &\nLocals:  \n   DECLARE_LOCALS(&return); [line 34]\n " color=yellow style=filled]
+	
+
+	 "reference_field::Ptr_Ptr1" -> "reference_field::Ptr_Ptr4" ;
+"reference_field::Ref_getI3" [label="3:  Return Stmt \n   n$0=*&this:class reference_field::Ref * [line 28]\n  n$1=*n$0.i:int & [line 28]\n  n$2=*n$1:int & [line 28]\n  *&return:int =n$2 [line 28]\n " shape="box"]
+	
+
+	 "reference_field::Ref_getI3" -> "reference_field::Ref_getI2" ;
+"reference_field::Ref_getI2" [label="2: Exit reference_field::Ref_getI \n  " color=yellow style=filled]
+	
+
+"reference_field::Ref_getI1" [label="1: Start reference_field::Ref_getI\nFormals:  this:class reference_field::Ref *\nLocals:  \n   DECLARE_LOCALS(&return); [line 28]\n " color=yellow style=filled]
+	
+
+	 "reference_field::Ref_getI1" -> "reference_field::Ref_getI3" ;
+"reference_field::val_I_div07" [label="7:  DeclStmt \n   _fun_reference_field::X_X(&x:class reference_field::X *) [line 123]\n " shape="box"]
+	
+
+	 "reference_field::val_I_div07" -> "reference_field::val_I_div06" ;
+"reference_field::val_I_div06" [label="6:  BinaryOperatorStmt: Assign \n   *&x.f:int =0 [line 124]\n " shape="box"]
+	
+
+	 "reference_field::val_I_div06" -> "reference_field::val_I_div05" ;
+"reference_field::val_I_div05" [label="5:  DeclStmt \n   _fun_reference_field::Val_Val(&r:class reference_field::Val *,&x:class reference_field::X &) [line 125]\n " shape="box"]
+	
+
+	 "reference_field::val_I_div05" -> "reference_field::val_I_div04" ;
+"reference_field::val_I_div04" [label="4:  BinaryOperatorStmt: Assign \n   *&x.f:int =1 [line 126]\n " shape="box"]
+	
+
+	 "reference_field::val_I_div04" -> "reference_field::val_I_div03" ;
+"reference_field::val_I_div03" [label="3:  Return Stmt \n   n$0=*&r.i:int  [line 127]\n  *&return:int =(1 / n$0) [line 127]\n " shape="box"]
+	
+
+	 "reference_field::val_I_div03" -> "reference_field::val_I_div02" ;
+"reference_field::val_I_div02" [label="2: Exit reference_field::val_I_div0 \n  " color=yellow style=filled]
+	
+
+"reference_field::val_I_div01" [label="1: Start reference_field::val_I_div0\nFormals: \nLocals:  r:class reference_field::Val  x:class reference_field::X  \n   DECLARE_LOCALS(&return,&r,&x); [line 122]\n " color=yellow style=filled]
+	
+
+	 "reference_field::val_I_div01" -> "reference_field::val_I_div07" ;
+"reference_field::Ptr_getF3" [label="3:  Return Stmt \n   n$0=*&this:class reference_field::Ptr * [line 35]\n  n$1=*n$0.x:class reference_field::X * [line 35]\n  n$2=*n$1.f:int  [line 35]\n  *&return:int =n$2 [line 35]\n " shape="box"]
+	
+
+	 "reference_field::Ptr_getF3" -> "reference_field::Ptr_getF2" ;
+"reference_field::Ptr_getF2" [label="2: Exit reference_field::Ptr_getF \n  " color=yellow style=filled]
+	
+
+"reference_field::Ptr_getF1" [label="1: Start reference_field::Ptr_getF\nFormals:  this:class reference_field::Ptr *\nLocals:  \n   DECLARE_LOCALS(&return); [line 35]\n " color=yellow style=filled]
+	
+
+	 "reference_field::Ptr_getF1" -> "reference_field::Ptr_getF3" ;
+"reference_field::Val_getI3" [label="3:  Return Stmt \n   n$0=*&this:class reference_field::Val * [line 44]\n  n$1=*n$0.i:int  [line 44]\n  *&return:int =n$1 [line 44]\n " shape="box"]
+	
+
+	 "reference_field::Val_getI3" -> "reference_field::Val_getI2" ;
+"reference_field::Val_getI2" [label="2: Exit reference_field::Val_getI \n  " color=yellow style=filled]
+	
+
+"reference_field::Val_getI1" [label="1: Start reference_field::Val_getI\nFormals:  this:class reference_field::Val *\nLocals:  \n   DECLARE_LOCALS(&return); [line 44]\n " color=yellow style=filled]
+	
+
+	 "reference_field::Val_getI1" -> "reference_field::Val_getI3" ;
+"reference_field::X_X3" [label="3:  Constructor Init \n   n$0=*&this:class reference_field::X * [line 12]\n  n$1=*&__param_0:class reference_field::X & [line 12]\n  n$2=*n$1.f:int  [line 12]\n  *n$0.f:int =n$2 [line 12]\n " shape="box"]
+	
+
+	 "reference_field::X_X3" -> "reference_field::X_X2" ;
+"reference_field::X_X2" [label="2: Exit reference_field::X_X \n  " color=yellow style=filled]
+	
+
+"reference_field::X_X1" [label="1: Start reference_field::X_X\nFormals:  this:class reference_field::X * __param_0:class reference_field::X &\nLocals:  \n   DECLARE_LOCALS(&return); [line 12]\n " color=yellow style=filled]
+	
+
+	 "reference_field::X_X1" -> "reference_field::X_X3" ;
+"reference_field::Ref_Ref4" [label="4:  Constructor Init \n   n$3=*&this:class reference_field::Ref * [line 26]\n  n$4=*&r_:class reference_field::X & [line 26]\n  *n$3.x:class reference_field::X &=n$4 [line 26]\n " shape="box"]
+	
+
+	 "reference_field::Ref_Ref4" -> "reference_field::Ref_Ref3" ;
+"reference_field::Ref_Ref3" [label="3:  Constructor Init \n   n$0=*&this:class reference_field::Ref * [line 26]\n  n$1=*&this:class reference_field::Ref * [line 26]\n  n$2=*n$1.x:class reference_field::X & [line 26]\n  *n$0.i:int &=n$2.f [line 26]\n " shape="box"]
+	
+
+	 "reference_field::Ref_Ref3" -> "reference_field::Ref_Ref2" ;
+"reference_field::Ref_Ref2" [label="2: Exit reference_field::Ref_Ref \n  " color=yellow style=filled]
+	
+
+"reference_field::Ref_Ref1" [label="1: Start reference_field::Ref_Ref\nFormals:  this:class reference_field::Ref * r_:class reference_field::X &\nLocals:  \n   DECLARE_LOCALS(&return); [line 26]\n " color=yellow style=filled]
+	
+
+	 "reference_field::Ref_Ref1" -> "reference_field::Ref_Ref4" ;
+"reference_field::Val_Val4" [label="4:  Constructor Init \n   n$3=*&this:class reference_field::Val * [line 42]\n  n$4=*&r_:class reference_field::X & [line 42]\n  _fun_reference_field::X_X(n$3.x:class reference_field::X *,n$4:class reference_field::X &) [line 42]\n " shape="box"]
+	
+
+	 "reference_field::Val_Val4" -> "reference_field::Val_Val3" ;
+"reference_field::Val_Val3" [label="3:  Constructor Init \n   n$0=*&this:class reference_field::Val * [line 42]\n  n$1=*&this:class reference_field::Val * [line 42]\n  n$2=*n$1.x.f:int  [line 42]\n  *n$0.i:int =n$2 [line 42]\n " shape="box"]
+	
+
+	 "reference_field::Val_Val3" -> "reference_field::Val_Val2" ;
+"reference_field::Val_Val2" [label="2: Exit reference_field::Val_Val \n  " color=yellow style=filled]
+	
+
+"reference_field::Val_Val1" [label="1: Start reference_field::Val_Val\nFormals:  this:class reference_field::Val * r_:class reference_field::X &\nLocals:  \n   DECLARE_LOCALS(&return); [line 42]\n " color=yellow style=filled]
+	
+
+	 "reference_field::Val_Val1" -> "reference_field::Val_Val4" ;
+"reference_field::Ref_getF3" [label="3:  Return Stmt \n   n$0=*&this:class reference_field::Ref * [line 27]\n  n$1=*n$0.x:class reference_field::X & [line 27]\n  n$2=*n$1.f:int  [line 27]\n  *&return:int =n$2 [line 27]\n " shape="box"]
+	
+
+	 "reference_field::Ref_getF3" -> "reference_field::Ref_getF2" ;
+"reference_field::Ref_getF2" [label="2: Exit reference_field::Ref_getF \n  " color=yellow style=filled]
+	
+
+"reference_field::Ref_getF1" [label="1: Start reference_field::Ref_getF\nFormals:  this:class reference_field::Ref *\nLocals:  \n   DECLARE_LOCALS(&return); [line 27]\n " color=yellow style=filled]
+	
+
+	 "reference_field::Ref_getF1" -> "reference_field::Ref_getF3" ;
+"reference_field::ptr_getI_div07" [label="7:  DeclStmt \n   _fun_reference_field::X_X(&x:class reference_field::X *) [line 106]\n " shape="box"]
+	
+
+	 "reference_field::ptr_getI_div07" -> "reference_field::ptr_getI_div06" ;
+"reference_field::ptr_getI_div06" [label="6:  BinaryOperatorStmt: Assign \n   *&x.f:int =1 [line 107]\n " shape="box"]
+	
+
+	 "reference_field::ptr_getI_div06" -> "reference_field::ptr_getI_div05" ;
+"reference_field::ptr_getI_div05" [label="5:  DeclStmt \n   _fun_reference_field::Ptr_Ptr(&r:class reference_field::Ptr *,&x:class reference_field::X &) [line 108]\n " shape="box"]
+	
+
+	 "reference_field::ptr_getI_div05" -> "reference_field::ptr_getI_div04" ;
+"reference_field::ptr_getI_div04" [label="4:  BinaryOperatorStmt: Assign \n   *&x.f:int =0 [line 109]\n " shape="box"]
+	
+
+	 "reference_field::ptr_getI_div04" -> "reference_field::ptr_getI_div03" ;
+"reference_field::ptr_getI_div03" [label="3:  Return Stmt \n   _=*&r:class reference_field::Ptr  [line 110]\n  n$1=_fun_reference_field::Ptr_getI(&r:class reference_field::Ptr &) [line 110]\n  *&return:int =(1 / n$1) [line 110]\n " shape="box"]
+	
+
+	 "reference_field::ptr_getI_div03" -> "reference_field::ptr_getI_div02" ;
+"reference_field::ptr_getI_div02" [label="2: Exit reference_field::ptr_getI_div0 \n  " color=yellow style=filled]
+	
+
+"reference_field::ptr_getI_div01" [label="1: Start reference_field::ptr_getI_div0\nFormals: \nLocals:  r:class reference_field::Ptr  x:class reference_field::X  \n   DECLARE_LOCALS(&return,&r,&x); [line 105]\n " color=yellow style=filled]
+	
+
+	 "reference_field::ptr_getI_div01" -> "reference_field::ptr_getI_div07" ;
+"reference_field::ptr_F_div07" [label="7:  DeclStmt \n   _fun_reference_field::X_X(&x:class reference_field::X *) [line 82]\n " shape="box"]
+	
+
+	 "reference_field::ptr_F_div07" -> "reference_field::ptr_F_div06" ;
+"reference_field::ptr_F_div06" [label="6:  BinaryOperatorStmt: Assign \n   *&x.f:int =1 [line 83]\n " shape="box"]
+	
+
+	 "reference_field::ptr_F_div06" -> "reference_field::ptr_F_div05" ;
+"reference_field::ptr_F_div05" [label="5:  DeclStmt \n   _fun_reference_field::Ptr_Ptr(&r:class reference_field::Ptr *,&x:class reference_field::X &) [line 84]\n " shape="box"]
+	
+
+	 "reference_field::ptr_F_div05" -> "reference_field::ptr_F_div04" ;
+"reference_field::ptr_F_div04" [label="4:  BinaryOperatorStmt: Assign \n   *&x.f:int =0 [line 85]\n " shape="box"]
+	
+
+	 "reference_field::ptr_F_div04" -> "reference_field::ptr_F_div03" ;
+"reference_field::ptr_F_div03" [label="3:  Return Stmt \n   n$0=*&r.x:class reference_field::X * [line 86]\n  n$1=*n$0.f:int  [line 86]\n  *&return:int =(1 / n$1) [line 86]\n " shape="box"]
+	
+
+	 "reference_field::ptr_F_div03" -> "reference_field::ptr_F_div02" ;
+"reference_field::ptr_F_div02" [label="2: Exit reference_field::ptr_F_div0 \n  " color=yellow style=filled]
+	
+
+"reference_field::ptr_F_div01" [label="1: Start reference_field::ptr_F_div0\nFormals: \nLocals:  r:class reference_field::Ptr  x:class reference_field::X  \n   DECLARE_LOCALS(&return,&r,&x); [line 81]\n " color=yellow style=filled]
+	
+
+	 "reference_field::ptr_F_div01" -> "reference_field::ptr_F_div07" ;
+"reference_field::ref_getI_div07" [label="7:  DeclStmt \n   _fun_reference_field::X_X(&x:class reference_field::X *) [line 73]\n " shape="box"]
+	
+
+	 "reference_field::ref_getI_div07" -> "reference_field::ref_getI_div06" ;
+"reference_field::ref_getI_div06" [label="6:  BinaryOperatorStmt: Assign \n   *&x.f:int =1 [line 74]\n " shape="box"]
+	
+
+	 "reference_field::ref_getI_div06" -> "reference_field::ref_getI_div05" ;
+"reference_field::ref_getI_div05" [label="5:  DeclStmt \n   _fun_reference_field::Ref_Ref(&r:class reference_field::Ref *,&x:class reference_field::X &) [line 75]\n " shape="box"]
+	
+
+	 "reference_field::ref_getI_div05" -> "reference_field::ref_getI_div04" ;
+"reference_field::ref_getI_div04" [label="4:  BinaryOperatorStmt: Assign \n   *&x.f:int =0 [line 76]\n " shape="box"]
+	
+
+	 "reference_field::ref_getI_div04" -> "reference_field::ref_getI_div03" ;
+"reference_field::ref_getI_div03" [label="3:  Return Stmt \n   _=*&r:class reference_field::Ref  [line 77]\n  n$1=_fun_reference_field::Ref_getI(&r:class reference_field::Ref &) [line 77]\n  *&return:int =(1 / n$1) [line 77]\n " shape="box"]
+	
+
+	 "reference_field::ref_getI_div03" -> "reference_field::ref_getI_div02" ;
+"reference_field::ref_getI_div02" [label="2: Exit reference_field::ref_getI_div0 \n  " color=yellow style=filled]
+	
+
+"reference_field::ref_getI_div01" [label="1: Start reference_field::ref_getI_div0\nFormals: \nLocals:  r:class reference_field::Ref  x:class reference_field::X  \n   DECLARE_LOCALS(&return,&r,&x); [line 72]\n " color=yellow style=filled]
+	
+
+	 "reference_field::ref_getI_div01" -> "reference_field::ref_getI_div07" ;
+"reference_field::ref_getF_div07" [label="7:  DeclStmt \n   _fun_reference_field::X_X(&x:class reference_field::X *) [line 65]\n " shape="box"]
+	
+
+	 "reference_field::ref_getF_div07" -> "reference_field::ref_getF_div06" ;
+"reference_field::ref_getF_div06" [label="6:  BinaryOperatorStmt: Assign \n   *&x.f:int =1 [line 66]\n " shape="box"]
+	
+
+	 "reference_field::ref_getF_div06" -> "reference_field::ref_getF_div05" ;
+"reference_field::ref_getF_div05" [label="5:  DeclStmt \n   _fun_reference_field::Ref_Ref(&r:class reference_field::Ref *,&x:class reference_field::X &) [line 67]\n " shape="box"]
+	
+
+	 "reference_field::ref_getF_div05" -> "reference_field::ref_getF_div04" ;
+"reference_field::ref_getF_div04" [label="4:  BinaryOperatorStmt: Assign \n   *&x.f:int =0 [line 68]\n " shape="box"]
+	
+
+	 "reference_field::ref_getF_div04" -> "reference_field::ref_getF_div03" ;
+"reference_field::ref_getF_div03" [label="3:  Return Stmt \n   _=*&r:class reference_field::Ref  [line 69]\n  n$1=_fun_reference_field::Ref_getF(&r:class reference_field::Ref &) [line 69]\n  *&return:int =(1 / n$1) [line 69]\n " shape="box"]
+	
+
+	 "reference_field::ref_getF_div03" -> "reference_field::ref_getF_div02" ;
+"reference_field::ref_getF_div02" [label="2: Exit reference_field::ref_getF_div0 \n  " color=yellow style=filled]
+	
+
+"reference_field::ref_getF_div01" [label="1: Start reference_field::ref_getF_div0\nFormals: \nLocals:  r:class reference_field::Ref  x:class reference_field::X  \n   DECLARE_LOCALS(&return,&r,&x); [line 64]\n " color=yellow style=filled]
+	
+
+	 "reference_field::ref_getF_div01" -> "reference_field::ref_getF_div07" ;
+"reference_field::ptr_getF_div07" [label="7:  DeclStmt \n   _fun_reference_field::X_X(&x:class reference_field::X *) [line 98]\n " shape="box"]
+	
+
+	 "reference_field::ptr_getF_div07" -> "reference_field::ptr_getF_div06" ;
+"reference_field::ptr_getF_div06" [label="6:  BinaryOperatorStmt: Assign \n   *&x.f:int =1 [line 99]\n " shape="box"]
+	
+
+	 "reference_field::ptr_getF_div06" -> "reference_field::ptr_getF_div05" ;
+"reference_field::ptr_getF_div05" [label="5:  DeclStmt \n   _fun_reference_field::Ptr_Ptr(&r:class reference_field::Ptr *,&x:class reference_field::X &) [line 100]\n " shape="box"]
+	
+
+	 "reference_field::ptr_getF_div05" -> "reference_field::ptr_getF_div04" ;
+"reference_field::ptr_getF_div04" [label="4:  BinaryOperatorStmt: Assign \n   *&x.f:int =0 [line 101]\n " shape="box"]
+	
+
+	 "reference_field::ptr_getF_div04" -> "reference_field::ptr_getF_div03" ;
+"reference_field::ptr_getF_div03" [label="3:  Return Stmt \n   _=*&r:class reference_field::Ptr  [line 102]\n  n$1=_fun_reference_field::Ptr_getF(&r:class reference_field::Ptr &) [line 102]\n  *&return:int =(1 / n$1) [line 102]\n " shape="box"]
+	
+
+	 "reference_field::ptr_getF_div03" -> "reference_field::ptr_getF_div02" ;
+"reference_field::ptr_getF_div02" [label="2: Exit reference_field::ptr_getF_div0 \n  " color=yellow style=filled]
+	
+
+"reference_field::ptr_getF_div01" [label="1: Start reference_field::ptr_getF_div0\nFormals: \nLocals:  r:class reference_field::Ptr  x:class reference_field::X  \n   DECLARE_LOCALS(&return,&r,&x); [line 97]\n " color=yellow style=filled]
+	
+
+	 "reference_field::ptr_getF_div01" -> "reference_field::ptr_getF_div07" ;
+"reference_field::X_X2" [label="2: Exit reference_field::X_X \n  " color=yellow style=filled]
+	
+
+"reference_field::X_X1" [label="1: Start reference_field::X_X\nFormals:  this:class reference_field::X *\nLocals:  \n   DECLARE_LOCALS(&return); [line 12]\n " color=yellow style=filled]
+	
+
+	 "reference_field::X_X1" -> "reference_field::X_X2" ;
+}

@@ -1,0 +1,133 @@
+/* @generated */
+digraph iCFG {
+"return_struct::get_method_div13" [label="3:  Return Stmt \n   _fun_return_struct::get(1:int ,&0$?%__sil_tmp__temp_return_n$1:class return_struct::X *) [line 46]\n  n$2=_fun_return_struct::X_div(&0$?%__sil_tmp__temp_return_n$1:class return_struct::X &) [line 46]\n  *&return:int =n$2 [line 46]\n " shape="box"]
+	
+
+	 "return_struct::get_method_div13" -> "return_struct::get_method_div12" ;
+"return_struct::get_method_div12" [label="2: Exit return_struct::get_method_div1 \n  " color=yellow style=filled]
+	
+
+"return_struct::get_method_div11" [label="1: Start return_struct::get_method_div1\nFormals: \nLocals:  0$?%__sil_tmp__temp_return_n$1:class return_struct::X  \n   DECLARE_LOCALS(&return,&0$?%__sil_tmp__temp_return_n$1); [line 46]\n " color=yellow style=filled]
+	
+
+	 "return_struct::get_method_div11" -> "return_struct::get_method_div13" ;
+"return_struct::get_field_div13" [label="3:  Return Stmt \n   _fun_return_struct::get(1:int ,&0$?%__sil_tmp__temp_return_n$1:class return_struct::X *) [line 44]\n  n$2=*&0$?%__sil_tmp__temp_return_n$1.f:int  [line 44]\n  *&return:int =(1 / n$2) [line 44]\n " shape="box"]
+	
+
+	 "return_struct::get_field_div13" -> "return_struct::get_field_div12" ;
+"return_struct::get_field_div12" [label="2: Exit return_struct::get_field_div1 \n  " color=yellow style=filled]
+	
+
+"return_struct::get_field_div11" [label="1: Start return_struct::get_field_div1\nFormals: \nLocals:  0$?%__sil_tmp__temp_return_n$1:class return_struct::X  \n   DECLARE_LOCALS(&return,&0$?%__sil_tmp__temp_return_n$1); [line 44]\n " color=yellow style=filled]
+	
+
+	 "return_struct::get_field_div11" -> "return_struct::get_field_div13" ;
+"return_struct::get5" [label="5:  DeclStmt \n   _fun_return_struct::X_X(&x:class return_struct::X *) [line 22]\n " shape="box"]
+	
+
+	 "return_struct::get5" -> "return_struct::get4" ;
+"return_struct::get4" [label="4:  BinaryOperatorStmt: Assign \n   n$1=*&a:int  [line 23]\n  *&x.f:int =n$1 [line 23]\n " shape="box"]
+	
+
+	 "return_struct::get4" -> "return_struct::get3" ;
+"return_struct::get3" [label="3:  Return Stmt \n   n$0=*&__return_param:class return_struct::X * [line 24]\n  _fun_return_struct::X_X(n$0:class return_struct::X *,&x:class return_struct::X &) [line 24]\n " shape="box"]
+	
+
+	 "return_struct::get3" -> "return_struct::get2" ;
+"return_struct::get2" [label="2: Exit return_struct::get \n  " color=yellow style=filled]
+	
+
+"return_struct::get1" [label="1: Start return_struct::get\nFormals:  a:int  __return_param:class return_struct::X *\nLocals:  x:class return_struct::X  \n   DECLARE_LOCALS(&return,&x); [line 21]\n " color=yellow style=filled]
+	
+
+	 "return_struct::get1" -> "return_struct::get5" ;
+"return_struct::get_field_div04" [label="4:  Call _fun_return_struct::X_skip \n   _fun_return_struct::get(0:int ,&0$?%__sil_tmp__temp_return_n$4:class return_struct::X *) [line 33]\n  n$5=_fun_return_struct::X_skip(&0$?%__sil_tmp__temp_return_n$4:class return_struct::X &) [line 33]\n " shape="box"]
+	
+
+	 "return_struct::get_field_div04" -> "return_struct::get_field_div03" ;
+"return_struct::get_field_div03" [label="3:  Return Stmt \n   _fun_return_struct::get(0:int ,&0$?%__sil_tmp__temp_return_n$1:class return_struct::X *) [line 34]\n  n$2=*&0$?%__sil_tmp__temp_return_n$1.f:int  [line 34]\n  *&return:int =(1 / n$2) [line 34]\n " shape="box"]
+	
+
+	 "return_struct::get_field_div03" -> "return_struct::get_field_div02" ;
+"return_struct::get_field_div02" [label="2: Exit return_struct::get_field_div0 \n  " color=yellow style=filled]
+	
+
+"return_struct::get_field_div01" [label="1: Start return_struct::get_field_div0\nFormals: \nLocals:  0$?%__sil_tmp__temp_return_n$1:class return_struct::X  0$?%__sil_tmp__temp_return_n$4:class return_struct::X  \n   DECLARE_LOCALS(&return,&0$?%__sil_tmp__temp_return_n$1,&0$?%__sil_tmp__temp_return_n$4); [line 32]\n " color=yellow style=filled]
+	
+
+	 "return_struct::get_field_div01" -> "return_struct::get_field_div04" ;
+"return_struct::get_div14" [label="4:  DeclStmt \n   _fun_return_struct::get(1:int ,&0$?%__sil_tmpSIL_materialize_temp__n$1:class return_struct::X *) [line 40]\n  _fun_return_struct::X_X(&x:class return_struct::X *,&0$?%__sil_tmpSIL_materialize_temp__n$1:class return_struct::X &) [line 40]\n " shape="box"]
+	
+
+	 "return_struct::get_div14" -> "return_struct::get_div13" ;
+"return_struct::get_div13" [label="3:  Return Stmt \n   n$0=*&x.f:int  [line 41]\n  *&return:int =(1 / n$0) [line 41]\n " shape="box"]
+	
+
+	 "return_struct::get_div13" -> "return_struct::get_div12" ;
+"return_struct::get_div12" [label="2: Exit return_struct::get_div1 \n  " color=yellow style=filled]
+	
+
+"return_struct::get_div11" [label="1: Start return_struct::get_div1\nFormals: \nLocals:  x:class return_struct::X  0$?%__sil_tmpSIL_materialize_temp__n$1:class return_struct::X  \n   DECLARE_LOCALS(&return,&x,&0$?%__sil_tmpSIL_materialize_temp__n$1); [line 39]\n " color=yellow style=filled]
+	
+
+	 "return_struct::get_div11" -> "return_struct::get_div14" ;
+"return_struct::get_method_div03" [label="3:  Return Stmt \n   _fun_return_struct::get(0:int ,&0$?%__sil_tmp__temp_return_n$1:class return_struct::X *) [line 37]\n  n$2=_fun_return_struct::X_div(&0$?%__sil_tmp__temp_return_n$1:class return_struct::X &) [line 37]\n  *&return:int =n$2 [line 37]\n " shape="box"]
+	
+
+	 "return_struct::get_method_div03" -> "return_struct::get_method_div02" ;
+"return_struct::get_method_div02" [label="2: Exit return_struct::get_method_div0 \n  " color=yellow style=filled]
+	
+
+"return_struct::get_method_div01" [label="1: Start return_struct::get_method_div0\nFormals: \nLocals:  0$?%__sil_tmp__temp_return_n$1:class return_struct::X  \n   DECLARE_LOCALS(&return,&0$?%__sil_tmp__temp_return_n$1); [line 37]\n " color=yellow style=filled]
+	
+
+	 "return_struct::get_method_div01" -> "return_struct::get_method_div03" ;
+"return_struct::X_X3" [label="3:  BinaryOperatorStmt: Assign \n   n$0=*&this:class return_struct::X * [line 15]\n  n$1=*&x:class return_struct::X & [line 15]\n  n$2=*n$1.f:int  [line 15]\n  *n$0.f:int =n$2 [line 15]\n " shape="box"]
+	
+
+	 "return_struct::X_X3" -> "return_struct::X_X2" ;
+"return_struct::X_X2" [label="2: Exit return_struct::X_X \n  " color=yellow style=filled]
+	
+
+"return_struct::X_X1" [label="1: Start return_struct::X_X\nFormals:  this:class return_struct::X * x:class return_struct::X &\nLocals:  \n   DECLARE_LOCALS(&return); [line 15]\n " color=yellow style=filled]
+	
+
+	 "return_struct::X_X1" -> "return_struct::X_X3" ;
+"return_struct::X_div3" [label="3:  Return Stmt \n   n$0=*&this:class return_struct::X * [line 17]\n  n$1=*n$0.f:int  [line 17]\n  *&return:int =(1 / n$1) [line 17]\n " shape="box"]
+	
+
+	 "return_struct::X_div3" -> "return_struct::X_div2" ;
+"return_struct::X_div2" [label="2: Exit return_struct::X_div \n  " color=yellow style=filled]
+	
+
+"return_struct::X_div1" [label="1: Start return_struct::X_div\nFormals:  this:class return_struct::X *\nLocals:  \n   DECLARE_LOCALS(&return); [line 17]\n " color=yellow style=filled]
+	
+
+	 "return_struct::X_div1" -> "return_struct::X_div3" ;
+"return_struct::get_div04" [label="4:  DeclStmt \n   _fun_return_struct::get(0:int ,&0$?%__sil_tmpSIL_materialize_temp__n$1:class return_struct::X *) [line 28]\n  _fun_return_struct::X_X(&x:class return_struct::X *,&0$?%__sil_tmpSIL_materialize_temp__n$1:class return_struct::X &) [line 28]\n " shape="box"]
+	
+
+	 "return_struct::get_div04" -> "return_struct::get_div03" ;
+"return_struct::get_div03" [label="3:  Return Stmt \n   n$0=*&x.f:int  [line 29]\n  *&return:int =(1 / n$0) [line 29]\n " shape="box"]
+	
+
+	 "return_struct::get_div03" -> "return_struct::get_div02" ;
+"return_struct::get_div02" [label="2: Exit return_struct::get_div0 \n  " color=yellow style=filled]
+	
+
+"return_struct::get_div01" [label="1: Start return_struct::get_div0\nFormals: \nLocals:  x:class return_struct::X  0$?%__sil_tmpSIL_materialize_temp__n$1:class return_struct::X  \n   DECLARE_LOCALS(&return,&x,&0$?%__sil_tmpSIL_materialize_temp__n$1); [line 27]\n " color=yellow style=filled]
+	
+
+	 "return_struct::get_div01" -> "return_struct::get_div04" ;
+"return_struct::X_X3" [label="3:  BinaryOperatorStmt: Assign \n   n$0=*&this:class return_struct::X * [line 16]\n  *n$0.f:int =1 [line 16]\n " shape="box"]
+	
+
+	 "return_struct::X_X3" -> "return_struct::X_X2" ;
+"return_struct::X_X2" [label="2: Exit return_struct::X_X \n  " color=yellow style=filled]
+	
+
+"return_struct::X_X1" [label="1: Start return_struct::X_X\nFormals:  this:class return_struct::X *\nLocals:  \n   DECLARE_LOCALS(&return); [line 16]\n " color=yellow style=filled]
+	
+
+	 "return_struct::X_X1" -> "return_struct::X_X3" ;
+}

@@ -1,0 +1,25 @@
+/* @generated */
+digraph iCFG {
+"is_trivial_example3" [label="3:  Return Stmt \n   *&return:int =1 [line 10]\n " shape="box"]
+	
+
+	 "is_trivial_example3" -> "is_trivial_example2" ;
+"is_trivial_example2" [label="2: Exit is_trivial_example \n  " color=yellow style=filled]
+	
+
+"is_trivial_example1" [label="1: Start is_trivial_example\nFormals: \nLocals:  \n   DECLARE_LOCALS(&return); [line 10]\n " color=yellow style=filled]
+	
+
+	 "is_trivial_example1" -> "is_trivial_example3" ;
+"is_pointer_example3" [label="3:  Return Stmt \n   *&return:int =0 [line 12]\n " shape="box"]
+	
+
+	 "is_pointer_example3" -> "is_pointer_example2" ;
+"is_pointer_example2" [label="2: Exit is_pointer_example \n  " color=yellow style=filled]
+	
+
+"is_pointer_example1" [label="1: Start is_pointer_example\nFormals: \nLocals:  \n   DECLARE_LOCALS(&return); [line 12]\n " color=yellow style=filled]
+	
+
+	 "is_pointer_example1" -> "is_pointer_example3" ;
+}
