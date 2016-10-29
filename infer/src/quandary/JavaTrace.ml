@@ -78,7 +78,7 @@ module JavaSource = struct
           | _ ->
               None
         end
-    | pname when Builtin.is_registered pname -> None
+    | pname when BuiltinDecl.is_declared pname -> None
     | pname -> failwithf "Non-Java procname %a in Java analysis@." Procname.pp pname
 
   let compare src1 src2 =
@@ -170,14 +170,14 @@ module JavaSink = struct
               taint_nth 0 Intent site ~report_reachable:true
           | "android.app.Activity", ("startActivityFromChild" | "startActivityFromFragment") ->
               taint_nth 1 Intent site ~report_reachable:true
-          | "android.util.Log", ("d" | "e" | "i" | "println" | "v" | "w" | "wtf") ->
+          | "android.util.Log", ("e" | "println" | "w" | "wtf") ->
               taint_all pname Logging site ~report_reachable:true
           | "com.facebook.infer.builtins.InferTaint", "inferSensitiveSink" ->
               [Sink.make_sink_param (make Other site) 0 ~report_reachable:false]
           | _ ->
               []
         end
-    | pname when Builtin.is_registered pname -> []
+    | pname when BuiltinDecl.is_declared pname -> []
     | pname -> failwithf "Non-Java procname %a in Java analysis@." Procname.pp pname
 
   let to_callee t callee_site =
