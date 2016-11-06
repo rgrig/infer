@@ -9,13 +9,10 @@ class G { // global
     if (dirty == x) dirty = null;
   }
   static void use_call(Object x) {
-    final Object NULL = null;
-    assert (dirty != x);
-    if (dirty == x) NULL.hashCode();
+    while (dirty == x);
   }
   static boolean maybe() {
-    //return random.nextBoolean();
-    return true;
+    return random.nextBoolean();
   }
   static private Random random = new Random();
 }
@@ -41,7 +38,12 @@ public class T1 {
   public static void main(String[] args) {
     O x = O.get();
     G.get_ret(x);
-    if (false) x.clean();
+    O y = O.get();
+    G.get_ret(y);
+    if (false) {
+      G.clean_call(x);
+      x.clean();
+    }
     G.use_call(x);
     x.use();
   }
