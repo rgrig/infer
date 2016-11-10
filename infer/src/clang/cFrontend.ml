@@ -26,7 +26,7 @@ let compute_icfg trans_unit_ctx tenv ast =
       CFrontend_config.global_translation_unit_decls := decl_list;
       Logging.out_debug "@\n Start creating icfg@\n";
       let cg = Cg.create (Some trans_unit_ctx.CFrontend_config.source_file) in
-      let cfg = Cfg.Node.create_cfg () in
+      let cfg = Cfg.create_cfg () in
       IList.iter
         (CFrontend_declImpl.translate_one_declaration trans_unit_ctx tenv cg cfg `DeclTraversal)
         decl_list;
@@ -41,10 +41,9 @@ let init_global_state_capture () =
 
 let do_source_file translation_unit_context ast =
   let tenv = Tenv.create () in
-  CTypes_decl.add_predefined_types tenv;
+  CType_decl.add_predefined_types tenv;
   init_global_state_capture ();
   let source_file = translation_unit_context.CFrontend_config.source_file in
-  Config.nLOC := FileLOC.file_get_loc (DB.source_file_to_string source_file);
   Logging.out_debug "@\n Start building call/cfg graph for '%s'....@\n"
     (DB.source_file_to_string source_file);
   let call_graph, cfg = compute_icfg translation_unit_context tenv ast in

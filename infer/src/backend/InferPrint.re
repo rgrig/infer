@@ -141,7 +141,6 @@ type summary_val = {
   vfile: string,
   vflags: proc_flags,
   vline: int,
-  vloc: int,
   vtop: string,
   vsignature: string,
   vweight: int,
@@ -207,7 +206,6 @@ let summary_values top_proc_set summary => {
     vflags: attributes.ProcAttributes.proc_flags,
     vfile: DB.source_file_to_string attributes.ProcAttributes.loc.Location.file,
     vline: attributes.ProcAttributes.loc.Location.line,
-    vloc: attributes.ProcAttributes.loc.Location.nLOC,
     vtop: if is_top {"Y"} else {"N"},
     vsignature: signature,
     vweight: nodes_nr,
@@ -258,7 +256,6 @@ let module ProcsCsv = {
     pp "%d," sv.verr;
     pp "%s," sv.vfile;
     pp "%d," sv.vline;
-    pp "%d," sv.vloc;
     pp "%s," sv.vtop;
     pp "\"%s\"," (Escape.escape_csv sv.vsignature);
     pp "%d," sv.vweight;
@@ -290,7 +287,6 @@ let module ProcsXml = {
         subtree Io_infer.Xml.tag_err (string_of_int sv.verr),
         subtree Io_infer.Xml.tag_file sv.vfile,
         subtree Io_infer.Xml.tag_line (string_of_int sv.vline),
-        subtree Io_infer.Xml.tag_loc (string_of_int sv.vloc),
         subtree Io_infer.Xml.tag_top sv.vtop,
         subtree Io_infer.Xml.tag_signature (Escape.escape_xml sv.vsignature),
         subtree Io_infer.Xml.tag_weight (string_of_int sv.vweight),
@@ -312,6 +308,99 @@ let module ProcsXml = {
   /** print the closing of the procedures xml file */
   let pp_procs_close fmt () => Io_infer.Xml.pp_close fmt "procedures";
 };
+
+let should_report (issue_kind: Exceptions.err_kind) issue_type error_desc =>
+  if (not Config.filtering) {
+    true
+  } else {
+    let analyzer_is_whitelisted =
+      switch Config.analyzer {
+      | Checkers
+      | Eradicate
+      | Tracing => true
+      | Capture
+      | Compile
+      | Crashcontext
+      | Infer
+      | Linters
+      | Quandary => false
+      };
+    if analyzer_is_whitelisted {
+      true
+    } else {
+      let issue_kind_is_blacklisted =
+        switch issue_kind {
+        | Kinfo => true
+        | Kerror
+        | Kwarning
+        | Kadvice => false
+        };
+      if issue_kind_is_blacklisted {
+        false
+      } else {
+        let issue_type_is_null_deref = {
+          let null_deref_issue_types =
+            Localise.[
+              field_not_null_checked,
+              null_dereference,
+              parameter_not_null_checked,
+              premature_nil_termination
+            ];
+          IList.mem Localise.equal issue_type null_deref_issue_types
+        };
+        if issue_type_is_null_deref {
+          let issue_bucket_is_high = {
+            let issue_bucket = Localise.error_desc_get_bucket error_desc;
+            let high_buckets = Localise.BucketLevel.[b1, b2];
+            let eq o y =>
+              switch (o, y) {
+              | (None, _) => false
+              | (Some x, y) => string_equal x y
+              };
+            IList.mem eq issue_bucket high_buckets
+          };
+          issue_bucket_is_high
+        } else {
+          let issue_type_is_reportable = {
+            let reportable_issue_types =
+              Localise.[
+                Localise.from_string Config.default_failure_name,
+                assign_pointer_warning,
+                bad_pointer_comparison,
+                component_factory_function,
+                component_initializer_with_side_effects,
+                component_with_multiple_factory_methods,
+                component_with_unconventional_superclass,
+                context_leak,
+                cxx_reference_captured_in_objc_block,
+                direct_atomic_property_access,
+                empty_vector_access,
+                global_variable_initialized_with_function_or_method_call,
+                memory_leak,
+                mutable_local_variable_in_component_file,
+                quandary_taint_error,
+                registered_observer_being_deallocated,
+                resource_leak,
+                retain_cycle,
+                static_initialization_order_fiasco,
+                strong_delegate_warning,
+                tainted_value_reaching_sensitive_function,
+                unsafe_guarded_by_access
+              ];
+            IList.mem Localise.equal issue_type reportable_issue_types
+          };
+          issue_type_is_reportable
+        }
+      }
+    }
+  };
+
+let is_file source_file =>
+  switch (Unix.stat (DB.source_file_to_abs_path source_file)) {
+  | {st_kind: S_REG | S_LNK} => true
+  | _ => false
+  | exception Unix.Unix_error _ => false
+  };
 
 let module IssuesCsv = {
   let csv_issues_id = ref 0;
@@ -345,7 +434,11 @@ let module IssuesCsv = {
         | Some proc_loc => proc_loc.Location.file
         | None => loc.Location.file
         };
-      if (in_footprint && error_filter source_file error_desc error_name) {
+      if (
+        in_footprint &&
+        error_filter source_file error_desc error_name &&
+        should_report ekind error_name error_desc && is_file source_file
+      ) {
         let err_desc_string = error_desc_to_csv_string error_desc;
         let err_advice_string = error_advice_to_csv_string error_desc;
         let qualifier_tag_xml = {
@@ -405,18 +498,18 @@ let module IssuesJson = {
     } else {
       file
     };
-  let make_cpp_models_path_relative file =>
-    if (Utils.string_is_prefix Config.cpp_models_dir file) {
+  let make_cpp_models_path_relative file => {
+    let abs_file = DB.source_file_to_abs_path file;
+    if (Utils.string_is_prefix Config.cpp_models_dir abs_file) {
       if (Config.debug_mode || Config.debug_exceptions) {
-        Some (
-          DB.source_file_to_rel_path (DB.rel_source_file_from_abs_path Config.cpp_models_dir file)
-        )
+        Some (DB.rel_source_file_from_abs_path Config.cpp_models_dir abs_file)
       } else {
         None
       }
     } else {
       Some file
-    };
+    }
+  };
 
   /** Write bug report in JSON format */
   let pp_issues_of_error_log fmt error_filter _ proc_loc_opt procname err_log => {
@@ -433,20 +526,21 @@ let module IssuesJson = {
         ltr
         eclass
         visibility => {
-      let source_file =
+      let (source_file, procedure_start_line) =
         switch proc_loc_opt {
-        | Some proc_loc => proc_loc.Location.file
-        | None => loc.Location.file
+        | Some proc_loc => (proc_loc.Location.file, proc_loc.Location.line)
+        | None => (loc.Location.file, 0)
         };
-      let file = DB.source_file_to_string source_file;
-      let file_opt = make_cpp_models_path_relative file;
+      let file_opt = make_cpp_models_path_relative source_file;
       if (
-        in_footprint && error_filter source_file error_desc error_name && Option.is_some file_opt
+        in_footprint &&
+        error_filter source_file error_desc error_name &&
+        Option.is_some file_opt && should_report ekind error_name error_desc && is_file source_file
       ) {
         let kind = Exceptions.err_kind_string ekind;
         let bug_type = Localise.to_string error_name;
         let procedure_id = Procname.to_filename procname;
-        let file = expand_links_under_buck_out (Option.get file_opt);
+        let file = expand_links_under_buck_out (DB.source_file_to_string (Option.get file_opt));
         let json_ml_loc =
           switch ml_loc_opt {
           | Some (file, lnum, cnum, enum) when Config.reports_include_ml_loc =>
@@ -465,6 +559,7 @@ let module IssuesJson = {
           column: loc.Location.col,
           procedure: Procname.to_string procname,
           procedure_id,
+          procedure_start_line,
           file,
           bug_trace: loc_trace_to_jsonbug_record ltr ekind,
           key: node_key,
@@ -485,53 +580,18 @@ let module IssuesJson = {
   };
 };
 
-let module IssuesTests = {
-
-  /** Write bug report in a format suitable for tests on analysis results. */
-  let pp_issues_of_error_log fmt error_filter _ proc_loc_opt proc_name err_log => {
-    let pp_row _ loc _ ekind in_footprint error_name error_desc _ _ _ _ => {
-      let (source_file, line_offset) =
-        switch proc_loc_opt {
-        | Some proc_loc =>
-          let line_offset = loc.Location.line - proc_loc.Location.line;
-          (proc_loc.Location.file, line_offset)
-        | None => (loc.Location.file, loc.Location.line)
-        };
-      let should_report =
-        ekind == Exceptions.Kerror ||
-        IList.exists
-          (Localise.equal error_name)
-          [
-            Localise.assign_pointer_warning,
-            Localise.bad_pointer_comparison,
-            Localise.component_factory_function,
-            Localise.component_initializer_with_side_effects,
-            Localise.component_with_multiple_factory_methods,
-            Localise.component_with_unconventional_superclass,
-            Localise.cxx_reference_captured_in_objc_block,
-            Localise.direct_atomic_property_access,
-            Localise.field_not_null_checked,
-            Localise.global_variable_initialized_with_function_or_method_call,
-            Localise.mutable_local_variable_in_component_file,
-            Localise.parameter_not_null_checked,
-            Localise.registered_observer_being_deallocated,
-            Localise.return_value_ignored,
-            Localise.strong_delegate_warning
-          ];
-      if (in_footprint && should_report && error_filter source_file error_desc error_name) {
-        F.fprintf
-          fmt
-          "%s, %a, %d, %a@."
-          (DB.source_file_to_string source_file)
-          Procname.pp
-          proc_name
-          line_offset
-          Localise.pp
-          error_name
-      }
-    };
-    Errlog.iter pp_row err_log
-  };
+let pp_tests_of_report fmt report => {
+  let pp_row jsonbug =>
+    Jsonbug_t.(
+      F.fprintf
+        fmt
+        "%s, %s, %d, %s@."
+        jsonbug.file
+        jsonbug.procedure
+        (jsonbug.line - jsonbug.procedure_start_line)
+        jsonbug.bug_type
+    );
+  IList.iter pp_row report
 };
 
 let module IssuesTxt = {
@@ -550,6 +610,21 @@ let module IssuesTxt = {
     };
     Errlog.iter pp_row err_log
   };
+};
+
+let pp_text_of_report fmt report => {
+  let pp_row jsonbug =>
+    Jsonbug_t.(
+      F.fprintf
+        fmt
+        "%s:%d: %s: %s %s@\n"
+        jsonbug.file
+        jsonbug.line
+        jsonbug.kind
+        jsonbug.bug_type
+        jsonbug.qualifier
+    );
+  IList.iter pp_row report
 };
 
 let module IssuesXml = {
@@ -645,19 +720,6 @@ let module IssuesXml = {
 
 let module CallsCsv = {
 
-  /** Print the header of the calls csv file, with column names */
-  let pp_header fmt () =>
-    Format.fprintf
-      fmt
-      "%s,%s,%s,%s,%s,%s,%s@\n"
-      Io_infer.Xml.tag_caller
-      Io_infer.Xml.tag_caller_id
-      Io_infer.Xml.tag_callee
-      Io_infer.Xml.tag_callee_id
-      Io_infer.Xml.tag_file
-      Io_infer.Xml.tag_line
-      Io_infer.Xml.tag_call_trace;
-
   /** Write proc summary stats in csv format */
   let pp_calls fmt summary => {
     let pp x => F.fprintf fmt x;
@@ -709,7 +771,6 @@ let module Stats = {
     mutable nerrors: int,
     mutable ninfos: int,
     mutable nadvice: int,
-    mutable nLOC: int,
     mutable nprocs: int,
     mutable nspecs: int,
     mutable ntimeouts: int,
@@ -724,7 +785,6 @@ let module Stats = {
     nerrors: 0,
     ninfos: 0,
     nadvice: 0,
-    nLOC: 0,
     nprocs: 0,
     nspecs: 0,
     ntimeouts: 0,
@@ -734,9 +794,7 @@ let module Stats = {
   };
   let process_loc loc stats =>
     try (Hashtbl.find stats.files loc.Location.file) {
-    | Not_found =>
-      stats.nLOC = stats.nLOC + loc.Location.nLOC;
-      Hashtbl.add stats.files loc.Location.file ()
+    | Not_found => Hashtbl.add stats.files loc.Location.file ()
     };
   let loc_trace_to_string_list linereader indent_num ltr => {
     let res = ref [];
@@ -833,7 +891,6 @@ let module Stats = {
   let num_files stats => Hashtbl.length stats.files;
   let pp fmt stats => {
     F.fprintf fmt "Files: %d@\n" (num_files stats);
-    F.fprintf fmt "LOC: %d@\n" stats.nLOC;
     F.fprintf fmt "Specs: %d@\n" stats.nspecs;
     F.fprintf fmt "Timeouts: %d@\n" stats.ntimeouts;
     F.fprintf fmt "Procedures: %d@\n" stats.nprocs;
@@ -987,13 +1044,11 @@ type bug_format_kind =
   | Xml
   | Latex;
 
-type bug_format = (bug_format_kind, outfile);
-
 let pp_issues_in_format (format_kind, outf) =>
   switch format_kind {
   | Json => IssuesJson.pp_issues_of_error_log outf.fmt
   | Csv => IssuesCsv.pp_issues_of_error_log outf.fmt
-  | Tests => IssuesTests.pp_issues_of_error_log outf.fmt
+  | Tests => failwith "Print issues as tests is not implemented"
   | Text => IssuesTxt.pp_issues_of_error_log outf.fmt
   | Xml => IssuesXml.pp_issues_of_error_log outf.fmt
   | Latex => failwith "Printing issues in latex is not implemented"
@@ -1108,6 +1163,31 @@ let pp_summary_by_report_kind
   IList.iter pp_summary_by_report_kind formats_by_report_kind
 };
 
+let pp_json_report_by_report_kind formats_by_report_kind fname =>
+  switch (read_file fname) {
+  | Some report_lines =>
+    let pp_json_issues format_list report => {
+      let pp_json_issue (format_kind, outf) =>
+        switch format_kind {
+        | Tests => pp_tests_of_report outf.fmt report
+        | Text => pp_text_of_report outf.fmt report
+        | Json => failwith "Printing issues from json does not support json output"
+        | Csv => failwith "Printing issues from json does not support csv output"
+        | Xml => failwith "Printing issues from json does not support xml output"
+        | Latex => failwith "Printing issues from json does not support latex output"
+        };
+      IList.iter pp_json_issue format_list
+    };
+    let report = Jsonbug_j.report_of_string (String.concat "\n" report_lines);
+    let pp_report_by_report_kind (report_kind, format_list) =>
+      switch (report_kind, format_list) {
+      | (Issues, [_, ..._]) => pp_json_issues format_list report
+      | _ => ()
+      };
+    IList.iter pp_report_by_report_kind formats_by_report_kind
+  | None => failwithf "Error reading %s. Does the file exist?" fname
+  };
+
 let pp_lint_issues_by_report_kind formats_by_report_kind error_filter linereader procname error_log => {
   let pp_summary_by_report_kind (report_kind, format_list) =>
     switch (report_kind, format_list) {
@@ -1161,18 +1241,11 @@ let module AnalysisResults = {
       Inferconfig.test ();
       exit 0
     };
-    IList.append
-      (
-        if (Config.anon_args == ["."]) {
-          let arr = Sys.readdir ".";
-          let all_files = Array.to_list arr;
-          IList.filter
-            (fun fname => Filename.check_suffix fname Config.specs_files_suffix) all_files
-        } else {
-          Config.anon_args
-        }
-      )
-      (load_specfiles ())
+    if (Config.anon_args == []) {
+      load_specfiles ()
+    } else {
+      Config.anon_args
+    }
   };
 
   /** apply [f] to [arg] with the gc compaction disabled during the execution */
@@ -1273,11 +1346,12 @@ let register_perf_stats_report () => {
   PerfStats.register_report_at_exit stats_file
 };
 
-let mk_format format_kind out_file => [(format_kind, out_file)];
+let mk_format format_kind fname =>
+  Option.map_default (fun out_file => [(format_kind, out_file)]) [] (create_outfile fname);
 
-let init_issues_format_list () => {
-  let csv_format = Option.map_default (mk_format Csv) [] Config.bugs_csv;
-  let json_format = Option.map_default (mk_format Json) [] Config.bugs_json;
+let init_issues_format_list report_csv report_json => {
+  let csv_format = Option.map_default (mk_format Csv) [] report_csv;
+  let json_format = Option.map_default (mk_format Json) [] report_json;
   let tests_format = Option.map_default (mk_format Tests) [] Config.bugs_tests;
   let txt_format = Option.map_default (mk_format Text) [] Config.bugs_txt;
   let xml_format = Option.map_default (mk_format Xml) [] Config.bugs_xml;
@@ -1348,15 +1422,10 @@ let finalize_and_close_files format_list_by_kind stats pdflatex => {
 };
 
 let pp_summary_and_issues formats_by_report_kind => {
-  init_files formats_by_report_kind;
   let pdflatex fname => ignore (Sys.command ("pdflatex " ^ fname));
   let stats = Stats.create ();
   let linereader = Printer.LineReader.create ();
-  let filters =
-    switch Config.analyzer {
-    | None => Inferconfig.do_not_filter
-    | Some analyzer => Inferconfig.create_filters analyzer
-    };
+  let filters = Inferconfig.create_filters Config.analyzer;
   let iterate_summaries = AnalysisResults.get_summary_iterator ();
   let top_proc = TopProcedures.create ();
   let top_proc_set = TopProcedures.top_set top_proc;
@@ -1375,9 +1444,17 @@ let pp_summary_and_issues formats_by_report_kind => {
   finalize_and_close_files formats_by_report_kind stats pdflatex
 };
 
-let () = {
+let print_issues formats_by_report_kind => {
+  init_files formats_by_report_kind;
+  switch Config.from_json_report {
+  | Some fname => pp_json_report_by_report_kind formats_by_report_kind fname
+  | None => pp_summary_and_issues formats_by_report_kind
+  }
+};
+
+let main report_csv::report_csv report_json::report_json => {
   let formats_by_report_kind = [
-    (Issues, init_issues_format_list ()),
+    (Issues, init_issues_format_list report_csv report_json),
     (Procs, init_procs_format_list ()),
     (Calls, init_calls_format_list ()),
     (Stats, init_stats_format_list ()),
@@ -1385,6 +1462,5 @@ let () = {
   ];
   register_perf_stats_report ();
   handle_source_file_copy_option ();
-  /* print issues */
-  pp_summary_and_issues formats_by_report_kind
+  print_issues formats_by_report_kind
 };

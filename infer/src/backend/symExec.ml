@@ -47,7 +47,7 @@ let unroll_type tenv (typ: Typ.t) (off: Sil.offset) =
 let get_blocks_nullified node =
   let null_blocks = IList.flatten(IList.map (fun i -> match i with
       | Sil.Nullify(pvar, _) when Sil.is_block_pvar pvar -> [pvar]
-      | _ -> []) (Cfg.Node.get_instrs node)) in
+      | _ -> []) (Procdesc.Node.get_instrs node)) in
   null_blocks
 
 (** Given a proposition and an objc block checks whether by existentially quantifying
@@ -83,7 +83,7 @@ let check_block_retain_cycle tenv caller_pname prop block_nullified =
 let rec apply_offlist
     pdesc tenv p fp_root nullify_struct (root_lexp, strexp, typ) offlist
     (f: Exp.t option -> Exp.t) inst lookup_inst =
-  let pname = Cfg.Procdesc.get_proc_name pdesc in
+  let pname = Procdesc.get_proc_name pdesc in
   let pp_error () =
     L.d_strln ".... Invalid Field ....";
     L.d_str "strexp : "; Sil.d_sexp strexp; L.d_ln ();
@@ -375,13 +375,13 @@ let check_inherently_dangerous_function caller_pname callee_pname =
         (Localise.desc_inherently_dangerous_function callee_pname) in
     Reporting.log_warning caller_pname exn
 
-let call_should_be_skipped callee_pname summary =
+let call_should_be_skipped callee_summary =
   (* check skip flag *)
-  Specs.get_flag callee_pname proc_flag_skip <> None
+  Specs.get_flag callee_summary proc_flag_skip <> None
   (* skip abstract methods *)
-  || summary.Specs.attributes.ProcAttributes.is_abstract
+  || callee_summary.Specs.attributes.ProcAttributes.is_abstract
   (* treat calls with no specs as skip functions in angelic mode *)
-  || (Config.angelic_execution && Specs.get_specs_from_payload summary == [])
+  || (Config.angelic_execution && Specs.get_specs_from_payload callee_summary == [])
 
 (** In case of constant string dereference, return the result immediately *)
 let check_constant_string_dereference lexp =
@@ -574,16 +574,18 @@ let resolve_virtual_pname tenv prop actuals callee_pname call_flags : Procname.t
         else resolved_pname :: feasible_targets
       else
         begin
+          let resolved_target = do_resolve callee_pname receiver_exp actual_receiver_typ in
           match call_flags.CallFlags.cf_targets with
           | target :: _ when call_flags.CallFlags.cf_interface &&
-                             receiver_types_equal callee_pname actual_receiver_typ ->
+                             receiver_types_equal callee_pname actual_receiver_typ &&
+                             Procname.equal resolved_target callee_pname ->
               (* "production mode" of dynamic dispatch for Java: unsound, but faster. the handling
                  is restricted to interfaces: if we can't resolve an interface call, we pick the
                  first implementation of the interface and call it *)
               [target]
           | _ ->
               (* default mode for Java virtual calls: resolution only *)
-              [do_resolve callee_pname receiver_exp actual_receiver_typ]
+              [resolved_target]
         end
   | _ -> failwith "A virtual call must have a receiver"
 
@@ -801,7 +803,7 @@ let add_constraints_on_retval tenv pdesc prop ret_exp ~has_nullable_annot typ ca
   if Procname.is_infer_undefined callee_pname then prop
   else
     let is_rec_call pname = (* TODO: (t7147096) extend this to detect mutual recursion *)
-      Procname.equal pname (Cfg.Procdesc.get_proc_name pdesc) in
+      Procname.equal pname (Procdesc.get_proc_name pdesc) in
     let already_has_abduced_retval p abduced_ret_pv =
       IList.exists
         (fun hpred -> match hpred with
@@ -975,7 +977,7 @@ let execute_store ?(report_deref_errors=true) pname pdesc tenv lhs_exp typ rhs_e
 (** Execute [instr] with a symbolic heap [prop].*)
 let rec sym_exec tenv current_pdesc _instr (prop_: Prop.normal Prop.t) path
   : (Prop.normal Prop.t * Paths.Path.t) list =
-  let current_pname = Cfg.Procdesc.get_proc_name current_pdesc in
+  let current_pname = Procdesc.get_proc_name current_pdesc in
   State.set_instr _instr; (* mark instruction last seen *)
   State.set_prop_tenv_pdesc prop_ tenv current_pdesc; (* mark prop,tenv,pdesc last seen *)
   SymOp.pay(); (* pay one symop *)
@@ -1067,20 +1069,20 @@ let rec sym_exec tenv current_pdesc _instr (prop_: Prop.normal Prop.t) path
               let exec_skip_call skipped_pname ret_annots ret_type =
                 skip_call norm_prop path skipped_pname ret_annots loc ret_id
                   (Some ret_type) norm_args in
-              let resolved_pname, summary_opt = resolve_and_analyze tenv current_pdesc
+              let resolved_pname, resolved_summary_opt = resolve_and_analyze tenv current_pdesc
                   norm_prop norm_args callee_pname call_flags in
               begin
-                match summary_opt with
+                match resolved_summary_opt with
                 | None ->
                     let ret_typ = Typ.java_proc_return_typ callee_pname_java in
                     let ret_annots = load_ret_annots callee_pname in
                     exec_skip_call resolved_pname ret_annots ret_typ
-                | Some summary when call_should_be_skipped resolved_pname summary ->
-                    let proc_attrs = summary.Specs.attributes in
+                | Some resolved_summary when call_should_be_skipped resolved_summary ->
+                    let proc_attrs = resolved_summary.Specs.attributes in
                     let ret_annots, _ = proc_attrs.ProcAttributes.method_annotation in
                     exec_skip_call resolved_pname ret_annots proc_attrs.ProcAttributes.ret_type
-                | Some summary ->
-                    proc_call summary (call_args prop_ callee_pname norm_args ret_id loc)
+                | Some resolved_summary ->
+                    proc_call resolved_summary (call_args prop_ callee_pname norm_args ret_id loc)
               end
           | Java callee_pname_java ->
               do_error_checks tenv (Paths.Path.curr_node path) instr current_pname current_pdesc;
@@ -1098,12 +1100,13 @@ let rec sym_exec tenv current_pdesc _instr (prop_: Prop.normal Prop.t) path
                     let ret_typ = Typ.java_proc_return_typ callee_pname_java in
                     let ret_annots = load_ret_annots callee_pname in
                     exec_skip_call ret_annots ret_typ
-                | Some summary when call_should_be_skipped pname summary ->
-                    let proc_attrs = summary.Specs.attributes in
+                | Some callee_summary when call_should_be_skipped callee_summary ->
+                    let proc_attrs = callee_summary.Specs.attributes in
                     let ret_annots, _ = proc_attrs.ProcAttributes.method_annotation in
                     exec_skip_call ret_annots proc_attrs.ProcAttributes.ret_type
-                | Some summary ->
-                    proc_call summary (call_args norm_prop pname url_handled_args ret_id loc) in
+                | Some callee_summary ->
+                    let handled_args = call_args norm_prop pname url_handled_args ret_id loc in
+                    proc_call callee_summary handled_args in
               IList.fold_left (fun acc pname -> exec_one_pname pname @ acc) [] resolved_pnames
           | _ -> (* Generic fun call with known name *)
               let (prop_r, n_actual_params) =
@@ -1115,22 +1118,18 @@ let rec sym_exec tenv current_pdesc _instr (prop_: Prop.normal Prop.t) path
               Ondemand.analyze_proc_name
                 tenv ~propagate_exceptions:true current_pdesc resolved_pname;
               let callee_pdesc_opt = Ondemand.get_proc_desc resolved_pname in
-              let ret_typ_opt = Option.map Cfg.Procdesc.get_ret_type callee_pdesc_opt in
+              let ret_typ_opt = Option.map Procdesc.get_ret_type callee_pdesc_opt in
               let sentinel_result =
                 if !Config.curr_language = Config.Clang then
                   check_variadic_sentinel_if_present
                     (call_args prop_r callee_pname actual_params ret_id loc)
                 else [(prop_r, path)] in
               let do_call (prop, path) =
-                let summary = Specs.get_summary resolved_pname in
-                let should_skip resolved_pname summary =
-                  match summary with
-                  | None -> true
-                  | Some summary -> call_should_be_skipped resolved_pname summary in
-                if should_skip resolved_pname summary then
+                let resolved_summary_opt = Specs.get_summary resolved_pname in
+                if Option.map_default call_should_be_skipped true resolved_summary_opt then
                   (* If it's an ObjC getter or setter, call the builtin rather than skipping *)
                   let attrs_opt =
-                    let attr_opt = Option.map Cfg.Procdesc.get_attributes callee_pdesc_opt in
+                    let attr_opt = Option.map Procdesc.get_attributes callee_pdesc_opt in
                     match attr_opt, resolved_pname with
                     | Some attrs, Procname.ObjC_Cpp _ -> Some attrs
                     | None, Procname.ObjC_Cpp _ -> AttributesTable.load_attributes resolved_pname
@@ -1149,7 +1148,7 @@ let rec sym_exec tenv current_pdesc _instr (prop_: Prop.normal Prop.t) path
                         current_pdesc callee_pname loc path
                         (sym_exec_objc_accessor objc_property_accessor ret_typ)
                   | None ->
-                      let ret_annots = match summary with
+                      let ret_annots = match resolved_summary_opt with
                         | Some summ ->
                             let ret_annots, _ =
                               summ.Specs.attributes.ProcAttributes.method_annotation in
@@ -1163,7 +1162,7 @@ let rec sym_exec tenv current_pdesc _instr (prop_: Prop.normal Prop.t) path
                       skip_call ~is_objc_instance_method prop path resolved_pname ret_annots
                         loc ret_id ret_typ_opt n_actual_params
                 else
-                  proc_call (Option.get summary)
+                  proc_call (Option.get resolved_summary_opt)
                     (call_args prop resolved_pname n_actual_params ret_id loc) in
               IList.flatten (IList.map do_call sentinel_result)
         )
@@ -1427,7 +1426,7 @@ and unknown_or_scan_call ~is_scan ret_type_option ret_annots
       | _ ->
           pre_1 in
     let pre_3 = add_constraints_on_actuals_by_ref tenv pre_2 actuals_by_ref callee_pname loc in
-    let caller_pname = Cfg.Procdesc.get_proc_name pdesc in
+    let caller_pname = Procdesc.get_proc_name pdesc in
     add_tainted_pre pre_3 args caller_pname callee_pname in
   if is_scan (* if scan function, don't mark anything with undef attributes *)
   then [(Tabulation.remove_constant_string_class tenv pre_final, path)]
@@ -1524,13 +1523,13 @@ and sym_exec_objc_accessor property_accesor ret_typ tenv ret_id pdesc _ loc args
     | ProcAttributes.Objc_setter field_name -> sym_exec_objc_setter field_name in
   (* we want to execute in the context of the current procedure, not in the context of callee_pname,
      since this is the procname of the setter/getter method *)
-  let cur_pname = Cfg.Procdesc.get_proc_name pdesc in
+  let cur_pname = Procdesc.get_proc_name pdesc in
   f_accessor ret_typ tenv ret_id pdesc cur_pname loc args prop
   |> IList.map (fun p -> (p, path))
 
 (** Perform symbolic execution for a function call *)
 and proc_call summary {Builtin.pdesc; tenv; prop_= pre; path; ret_id; args= actual_pars; loc; } =
-  let caller_pname = Cfg.Procdesc.get_proc_name pdesc in
+  let caller_pname = Procdesc.get_proc_name pdesc in
   let callee_pname = Specs.get_proc_name summary in
   let ret_typ = Specs.get_ret_type summary in
   let check_return_value_ignored () =
@@ -1540,7 +1539,7 @@ and proc_call summary {Builtin.pdesc; tenv; prop_= pre; path; ret_id; args= actu
       | _, None -> true
       | _, Some (id, _) -> Errdesc.id_is_assigned_then_dead (State.get_node ()) id in
     if is_ignored
-    && Specs.get_flag callee_pname proc_flag_ignore_return = None then
+    && Specs.get_flag summary proc_flag_ignore_return = None then
       let err_desc = Localise.desc_return_value_ignored callee_pname loc in
       let exn = (Exceptions.Return_value_ignored (err_desc, __POS__)) in
       Reporting.log_warning caller_pname exn in
@@ -1589,7 +1588,7 @@ and proc_call summary {Builtin.pdesc; tenv; prop_= pre; path; ret_id; args= actu
 (** perform symbolic execution for a single prop, and check for junk *)
 and sym_exec_wrapper handle_exn tenv pdesc instr ((prop: Prop.normal Prop.t), path)
   : Paths.PathSet.t =
-  let pname = Cfg.Procdesc.get_proc_name pdesc in
+  let pname = Procdesc.get_proc_name pdesc in
   let prop_primed_to_normal p = (* Rename primed vars with fresh normal vars, and return them *)
     let fav = Prop.prop_fav p in
     Sil.fav_filter_ident fav Ident.is_primed;
@@ -1624,10 +1623,10 @@ and sym_exec_wrapper handle_exn tenv pdesc instr ((prop: Prop.normal Prop.t), pa
         let instr_is_abstraction = function
           | Sil.Abstract _ -> true
           | _ -> false in
-        IList.exists instr_is_abstraction (Cfg.Node.get_instrs node) in
+        IList.exists instr_is_abstraction (Procdesc.Node.get_instrs node) in
       let curr_node = State.get_node () in
-      match Cfg.Node.get_kind curr_node with
-      | Cfg.Node.Prune_node _ when not (node_has_abstraction curr_node) ->
+      match Procdesc.Node.get_kind curr_node with
+      | Procdesc.Node.Prune_node _ when not (node_has_abstraction curr_node) ->
           (* don't check for leaks in prune nodes, unless there is abstraction anyway,*)
           (* but force them into either branch *)
           p'
@@ -1657,13 +1656,12 @@ and sym_exec_wrapper handle_exn tenv pdesc instr ((prop: Prop.normal Prop.t), pa
 
 (** {2 Lifted Abstract Transfer Functions} *)
 
-let node handle_exn tenv node (pset : Paths.PathSet.t) : Paths.PathSet.t =
-  let pdesc = Cfg.Node.get_proc_desc node in
-  let pname = Cfg.Procdesc.get_proc_name pdesc in
+let node handle_exn tenv pdesc node (pset : Paths.PathSet.t) : Paths.PathSet.t =
+  let pname = Procdesc.get_proc_name pdesc in
   let exe_instr_prop instr p tr (pset1: Paths.PathSet.t) =
     let pset2 =
       if Tabulation.prop_is_exn pname p && not (Sil.instr_is_auxiliary instr)
-         && Cfg.Node.get_kind node <> Cfg.Node.exn_handler_kind
+         && Procdesc.Node.get_kind node <> Procdesc.Node.exn_handler_kind
          (* skip normal instructions if an exception was thrown,
             unless this is an exception handler node *)
       then
@@ -1675,4 +1673,4 @@ let node handle_exn tenv node (pset : Paths.PathSet.t) : Paths.PathSet.t =
     Paths.PathSet.union pset2 pset1 in
   let exe_instr_pset pset instr =
     Paths.PathSet.fold (exe_instr_prop instr) pset Paths.PathSet.empty in
-  IList.fold_left exe_instr_pset pset (Cfg.Node.get_instrs node)
+  IList.fold_left exe_instr_pset pset (Procdesc.Node.get_instrs node)

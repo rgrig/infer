@@ -30,8 +30,11 @@ let init_loc_map : Location.t JBasics.ClassMap.t ref = ref JBasics.ClassMap.empt
 (** Fix the line associated to a method definition.
     Since Sawja often reports a method off by a few lines, we search
     backwards for a line where the method name is. *)
-let fix_method_definition_line linereader proc_name_java loc =
-  let proc_name = Procname.Java proc_name_java in
+let fix_method_definition_line linereader proc_name loc =
+  let proc_name_java =
+    match proc_name with
+    | Procname.Java p -> p
+    | _ -> assert false in
   let method_name =
     if Procname.is_constructor proc_name then
       let inner_class_name cname = snd (string_split_character cname '$') in
@@ -63,8 +66,7 @@ let get_location source_file impl pc =
     | Some n -> n in
   { Location.line = line_number;
     col = -1;
-    file = source_file;
-    nLOC = !Config.nLOC }
+    file = source_file }
 
 let get_undefined_method_call ovt =
   let get_undefined_method ovt =
@@ -227,116 +229,117 @@ let update_init_loc cn ms loc_start =
     try ignore(JBasics.ClassMap.find cn !init_loc_map)
     with Not_found -> init_loc_map := (JBasics.ClassMap.add cn loc_start !init_loc_map)
 
-(** Creates a procedure description. *)
-let create_procdesc source_file program linereader icfg m : Cfg.Procdesc.t option =
+let trans_access = function
+  | `Default -> PredSymb.Default
+  | `Public -> PredSymb.Public
+  | `Private -> PredSymb.Private
+  | `Protected -> PredSymb.Protected
+
+let create_am_procdesc program icfg am proc_name : Procdesc.t =
   let cfg = icfg.JContext.cfg in
   let tenv = icfg.JContext.tenv in
+  let m = Javalib.AbstractMethod am in
   let cn, ms = JBasics.cms_split (Javalib.get_class_method_signature m) in
-  let proc_name_java = JTransType.get_method_procname cn ms (JTransType.get_method_kind m) in
-  let proc_name = Procname.Java proc_name_java in
-  if JClasspath.is_model proc_name then
-    begin
-      (* do not translate the method if there is a model for it *)
-      L.out_debug "Skipping method with a model: %s@." (Procname.to_string proc_name);
-      None
-    end
-  else
-    let trans_access = function
-      | `Default -> PredSymb.Default
-      | `Public -> PredSymb.Public
-      | `Private -> PredSymb.Private
-      | `Protected -> PredSymb.Protected in
-    try
+  let formals =
+    formals_from_signature program tenv cn ms (JTransType.get_method_kind m) in
+  let method_annotation =
+    JAnnotation.translate_method proc_name am.Javalib.am_annotations in
+  let procdesc =
+    let proc_attributes =
+      { (ProcAttributes.default proc_name Config.Java) with
+        ProcAttributes.access = trans_access am.Javalib.am_access;
+        exceptions = IList.map JBasics.cn_name am.Javalib.am_exceptions;
+        formals;
+        is_abstract = true;
+        is_bridge_method = am.Javalib.am_bridge;
+        is_defined = true;
+        is_synthetic_method = am.Javalib.am_synthetic;
+        method_annotation;
+        ret_type = JTransType.return_type program tenv ms;
+      } in
+    Cfg.create_proc_desc cfg proc_attributes in
+  let start_kind = Procdesc.Node.Start_node proc_name in
+  let start_node = Procdesc.create_node procdesc Location.dummy start_kind [] in
+  let exit_kind = (Procdesc.Node.Exit_node proc_name) in
+  let exit_node = Procdesc.create_node procdesc Location.dummy exit_kind [] in
+  Procdesc.node_set_succs_exn procdesc start_node [exit_node] [exit_node];
+  Procdesc.set_start_node procdesc start_node;
+  Procdesc.set_exit_node procdesc exit_node;
+  procdesc
+
+let create_native_procdesc program icfg cm proc_name =
+  let cfg = icfg.JContext.cfg in
+  let tenv = icfg.JContext.tenv in
+  let m = Javalib.ConcreteMethod cm in
+  let cn, ms = JBasics.cms_split (Javalib.get_class_method_signature m) in
+  let formals =
+    formals_from_signature program tenv cn ms (JTransType.get_method_kind m) in
+  let method_annotation =
+    JAnnotation.translate_method proc_name cm.Javalib.cm_annotations in
+  let proc_attributes =
+    { (ProcAttributes.default proc_name Config.Java) with
+      ProcAttributes.access = trans_access cm.Javalib.cm_access;
+      exceptions = IList.map JBasics.cn_name cm.Javalib.cm_exceptions;
+      formals;
+      is_bridge_method = cm.Javalib.cm_bridge;
+      is_synthetic_method = cm.Javalib.cm_synthetic;
+      method_annotation;
+      ret_type = JTransType.return_type program tenv ms;
+    } in
+  Cfg.create_proc_desc cfg proc_attributes
+
+(** Creates a procedure description. *)
+let create_cm_procdesc source_file program linereader icfg cm proc_name =
+  let cfg = icfg.JContext.cfg in
+  let tenv = icfg.JContext.tenv in
+  let m = Javalib.ConcreteMethod cm in
+  let cn, ms = JBasics.cms_split (Javalib.get_class_method_signature m) in
+  try
+    let impl = get_implementation cm in
+    let procdesc =
+      let locals, formals = locals_formals program tenv cn impl in
+      let loc_start =
+        let loc = get_location source_file impl 0 in
+        fix_method_definition_line linereader proc_name loc in
+      let loc_exit =
+        get_location source_file impl (Array.length (JBir.code impl) - 1) in
+      let method_annotation =
+        JAnnotation.translate_method proc_name cm.Javalib.cm_annotations in
+      update_constr_loc cn ms loc_start;
+      update_init_loc cn ms loc_exit;
+      let proc_attributes =
+        { (ProcAttributes.default proc_name Config.Java) with
+          ProcAttributes.access = trans_access cm.Javalib.cm_access;
+          exceptions = IList.map JBasics.cn_name cm.Javalib.cm_exceptions;
+          formals;
+          is_bridge_method = cm.Javalib.cm_bridge;
+          is_defined = true;
+          is_synthetic_method = cm.Javalib.cm_synthetic;
+          is_java_synchronized_method = cm.Javalib.cm_synchronized;
+          loc = loc_start;
+          locals;
+          method_annotation;
+          ret_type = JTransType.return_type program tenv ms;
+        } in
       let procdesc =
-        match m with
-        | Javalib.AbstractMethod am -> (* create a procdesc with empty body *)
-            let formals =
-              formals_from_signature program tenv cn ms (JTransType.get_method_kind m) in
-            let method_annotation =
-              JAnnotation.translate_method proc_name_java am.Javalib.am_annotations in
-            let procdesc =
-              let proc_attributes =
-                { (ProcAttributes.default proc_name Config.Java) with
-                  ProcAttributes.access = trans_access am.Javalib.am_access;
-                  exceptions = IList.map JBasics.cn_name am.Javalib.am_exceptions;
-                  formals;
-                  is_abstract = true;
-                  is_bridge_method = am.Javalib.am_bridge;
-                  is_defined = true;
-                  is_synthetic_method = am.Javalib.am_synthetic;
-                  method_annotation;
-                  ret_type = JTransType.return_type program tenv ms;
-                } in
-              Cfg.Procdesc.create cfg proc_attributes in
-            let start_kind = Cfg.Node.Start_node proc_name in
-            let start_node = Cfg.Node.create Location.dummy start_kind [] procdesc in
-            let exit_kind = (Cfg.Node.Exit_node proc_name) in
-            let exit_node = Cfg.Node.create Location.dummy exit_kind [] procdesc in
-            Cfg.Node.set_succs_exn start_node [exit_node] [exit_node];
-            Cfg.Procdesc.set_start_node procdesc start_node;
-            Cfg.Procdesc.set_exit_node procdesc exit_node;
-            procdesc
-        | Javalib.ConcreteMethod cm when is_java_native cm ->
-            let formals =
-              formals_from_signature program tenv cn ms (JTransType.get_method_kind m) in
-            let method_annotation =
-              JAnnotation.translate_method proc_name_java cm.Javalib.cm_annotations in
-            let proc_attributes =
-              { (ProcAttributes.default proc_name Config.Java) with
-                ProcAttributes.access = trans_access cm.Javalib.cm_access;
-                exceptions = IList.map JBasics.cn_name cm.Javalib.cm_exceptions;
-                formals;
-                is_bridge_method = cm.Javalib.cm_bridge;
-                is_synthetic_method = cm.Javalib.cm_synthetic;
-                method_annotation;
-                ret_type = JTransType.return_type program tenv ms;
-              } in
-            Cfg.Procdesc.create cfg proc_attributes;
-        | Javalib.ConcreteMethod cm ->
-            let impl = get_implementation cm in
-            let locals, formals = locals_formals program tenv cn impl in
-            let loc_start =
-              let loc = get_location source_file impl 0 in
-              fix_method_definition_line linereader proc_name_java loc in
-            let loc_exit =
-              get_location source_file impl (Array.length (JBir.code impl) - 1) in
-            let method_annotation =
-              JAnnotation.translate_method proc_name_java cm.Javalib.cm_annotations in
-            update_constr_loc cn ms loc_start;
-            update_init_loc cn ms loc_exit;
-            let procdesc =
-              let proc_attributes =
-                { (ProcAttributes.default proc_name Config.Java) with
-                  ProcAttributes.access = trans_access cm.Javalib.cm_access;
-                  exceptions = IList.map JBasics.cn_name cm.Javalib.cm_exceptions;
-                  formals;
-                  is_bridge_method = cm.Javalib.cm_bridge;
-                  is_defined = true;
-                  is_synthetic_method = cm.Javalib.cm_synthetic;
-                  is_java_synchronized_method = cm.Javalib.cm_synchronized;
-                  loc = loc_start;
-                  locals;
-                  method_annotation;
-                  ret_type = JTransType.return_type program tenv ms;
-                } in
-              Cfg.Procdesc.create cfg proc_attributes in
-            let start_kind = Cfg.Node.Start_node proc_name in
-            let start_node = Cfg.Node.create loc_start start_kind [] procdesc in
-            let exit_kind = (Cfg.Node.Exit_node proc_name) in
-            let exit_node = Cfg.Node.create loc_exit exit_kind [] procdesc in
-            let exn_kind = Cfg.Node.exn_sink_kind in
-            let exn_node = Cfg.Node.create loc_exit exn_kind [] procdesc in
-            JContext.add_exn_node proc_name exn_node;
-            Cfg.Procdesc.set_start_node procdesc start_node;
-            Cfg.Procdesc.set_exit_node procdesc exit_node;
-            Cfg.Node.add_locals_ret_declaration start_node locals;
-            procdesc in
-      Some procdesc
-    with JBir.Subroutine | JBasics.Class_structure_error _ ->
-      L.do_err
-        "create_procdesc raised JBir.Subroutine or JBasics.Class_structure_error on %a@."
-        Procname.pp proc_name;
-      None
+        Cfg.create_proc_desc cfg proc_attributes in
+      let start_kind = Procdesc.Node.Start_node proc_name in
+      let start_node = Procdesc.create_node procdesc loc_start start_kind [] in
+      let exit_kind = (Procdesc.Node.Exit_node proc_name) in
+      let exit_node = Procdesc.create_node procdesc loc_exit exit_kind [] in
+      let exn_kind = Procdesc.Node.exn_sink_kind in
+      let exn_node = Procdesc.create_node procdesc loc_exit exn_kind [] in
+      JContext.add_exn_node proc_name exn_node;
+      Procdesc.set_start_node procdesc start_node;
+      Procdesc.set_exit_node procdesc exit_node;
+      Procdesc.Node.add_locals_ret_declaration start_node proc_attributes locals;
+      procdesc in
+    Some (procdesc, impl)
+  with JBir.Subroutine  ->
+    L.do_err
+      "create_procdesc raised JBir.Subroutine on %a@."
+      Procname.pp proc_name;
+    None
 
 let builtin_new =
   Exp.Const (Const.Cfun BuiltinDecl.__new)
@@ -368,7 +371,7 @@ let rec expression (context : JContext.t) pc expr =
         match c with (* We use the constant <field> internally to mean a variable. *)
         | `String s when (JBasics.jstr_pp s) = JConfig.field_cst ->
             let varname = JConfig.field_st in
-            let procname = (Cfg.Procdesc.get_proc_name context.procdesc) in
+            let procname = (Procdesc.get_proc_name context.procdesc) in
             let pvar = Pvar.mk varname procname in
             trans_var pvar
         | _ -> ([], Exp.Const (get_constant c), type_of_expr)
@@ -521,7 +524,7 @@ let method_invocation
     if JBasics.cn_equal cn' (JBasics.make_cn JConfig.infer_builtins_cl) &&
        BuiltinDecl.is_declared proc
     then proc
-    else Procname.Java (JTransType.get_method_procname cn' ms method_kind) in
+    else JTransType.get_method_procname cn' ms method_kind in
   let call_instrs =
     let callee_fun = Exp.Const (Const.Cfun callee_procname) in
     let return_type =
@@ -613,9 +616,9 @@ let detect_loop entry_pc impl =
 
 type translation =
   | Skip
-  | Instr of Cfg.Node.t
-  | Prune of Cfg.Node.t * Cfg.Node.t
-  | Loop of Cfg.Node.t * Cfg.Node.t * Cfg.Node.t
+  | Instr of Procdesc.Node.t
+  | Prune of Procdesc.Node.t * Procdesc.Node.t
+  | Loop of Procdesc.Node.t * Procdesc.Node.t * Procdesc.Node.t
 
 (* TODO: unclear if this corresponds to what JControlFlow.resolve_method'*)
 (* is trying to do. Normally, this implementation below goes deeper into *)
@@ -702,14 +705,14 @@ let rec instruction (context : JContext.t) pc instr : translation =
   let tenv = JContext.get_tenv context in
   let cg = JContext.get_cg context in
   let program = context.program in
-  let proc_name = Cfg.Procdesc.get_proc_name context.procdesc in
+  let proc_name = Procdesc.get_proc_name context.procdesc in
   let ret_var = Pvar.get_ret_pvar proc_name in
-  let ret_type = Cfg.Procdesc.get_ret_type context.procdesc in
+  let ret_type = Procdesc.get_ret_type context.procdesc in
   let loc = get_location context.source_file context.impl pc in
   let file = loc.Location.file in
   let match_never_null = Inferconfig.never_return_null_matcher in
   let create_node node_kind sil_instrs =
-    Cfg.Node.create loc node_kind sil_instrs context.procdesc in
+    Procdesc.create_node context.procdesc loc node_kind sil_instrs in
   let return_not_null () =
     match_never_null loc.Location.file proc_name in
   let trans_monitor_enter_exit context expr pc loc builtin node_desc =
@@ -720,7 +723,7 @@ let rec instruction (context : JContext.t) pc instr : translation =
       | Typ.Tptr (typ, _) -> typ
       | _ -> sil_type in
     let deref_instr = create_sil_deref sil_expr typ_no_ptr loc in
-    let node_kind = Cfg.Node.Stmt_node node_desc in
+    let node_kind = Procdesc.Node.Stmt_node node_desc in
     Instr (create_node node_kind (instrs @ [deref_instr; instr] )) in
   try
     match instr with
@@ -728,11 +731,11 @@ let rec instruction (context : JContext.t) pc instr : translation =
         let (stml, sil_expr, sil_type) = expression context pc expr in
         let pvar = (JContext.set_pvar context var sil_type) in
         let sil_instr = Sil.Store (Exp.Lvar pvar, sil_type, sil_expr, loc) in
-        let node_kind = Cfg.Node.Stmt_node "method_body" in
+        let node_kind = Procdesc.Node.Stmt_node "method_body" in
         let node = create_node node_kind (stml @ [sil_instr]) in
         Instr node
     | JBir.Return expr_option ->
-        let node_kind = Cfg.Node.Stmt_node "method_body" in
+        let node_kind = Procdesc.Node.Stmt_node "method_body" in
         let node =
           match expr_option with
           | None ->
@@ -756,7 +759,7 @@ let rec instruction (context : JContext.t) pc instr : translation =
           Sil.Store (
             Exp.Lindex (sil_expr_array, sil_expr_index), value_typ, sil_expr_value, loc) in
         let final_instrs = instrs_array @ instrs_index @ instrs_value @ [sil_instr] in
-        let node_kind = Cfg.Node.Stmt_node "method_body" in
+        let node_kind = Procdesc.Node.Stmt_node "method_body" in
         let node = create_node node_kind final_instrs in
         Instr node
     | JBir.AffectField (e_lhs, cn, fs, e_rhs) ->
@@ -767,7 +770,7 @@ let rec instruction (context : JContext.t) pc instr : translation =
         let type_of_the_root_of_e_lhs = type_of_the_surrounding_class in
         let expr_off = Exp.Lfield(sil_expr_lhs, field_name, type_of_the_surrounding_class) in
         let sil_instr = Sil.Store (expr_off, type_of_the_root_of_e_lhs, sil_expr_rhs, loc) in
-        let node_kind = Cfg.Node.Stmt_node "method_body" in
+        let node_kind = Procdesc.Node.Stmt_node "method_body" in
         let node = create_node node_kind (stml1 @ stml2 @ [sil_instr]) in
         Instr node
     | JBir.AffectStaticField (cn, fs, e_rhs) ->
@@ -782,7 +785,7 @@ let rec instruction (context : JContext.t) pc instr : translation =
         let type_of_the_root_of_e_lhs = type_of_the_surrounding_class in
         let expr_off = Exp.Lfield(sil_expr_lhs, field_name, type_of_the_surrounding_class) in
         let sil_instr = Sil.Store (expr_off, type_of_the_root_of_e_lhs, sil_expr_rhs, loc) in
-        let node_kind = Cfg.Node.Stmt_node "method_body" in
+        let node_kind = Procdesc.Node.Stmt_node "method_body" in
         let node = create_node node_kind (stml1 @ stml2 @ [sil_instr]) in
         Instr node
     | JBir.Goto goto_pc ->
@@ -798,14 +801,14 @@ let rec instruction (context : JContext.t) pc instr : translation =
         let sil_test_true = Exp.UnOp(Unop.LNot, sil_test_false, None) in
         let sil_instrs_true = Sil.Prune (sil_test_true, loc, true, Sil.Ik_if) in
         let sil_instrs_false = Sil.Prune (sil_test_false, loc, false, Sil.Ik_if) in
-        let node_kind_true = Cfg.Node.Prune_node (true, Sil.Ik_if, "method_body") in
-        let node_kind_false = Cfg.Node.Prune_node (false, Sil.Ik_if, "method_body") in
+        let node_kind_true = Procdesc.Node.Prune_node (true, Sil.Ik_if, "method_body") in
+        let node_kind_false = Procdesc.Node.Prune_node (false, Sil.Ik_if, "method_body") in
         let prune_node_true = create_node node_kind_true (instrs1 @ instrs2 @ [sil_instrs_true])
         and prune_node_false =
           create_node node_kind_false (instrs1 @ instrs2 @ [sil_instrs_false]) in
         JContext.add_if_jump context prune_node_false if_pc;
         if detect_loop pc context.impl then
-          let join_node_kind = Cfg.Node.Join_node in
+          let join_node_kind = Procdesc.Node.Join_node in
           let join_node = create_node join_node_kind [] in
           Loop (join_node, prune_node_true, prune_node_false)
         else
@@ -814,7 +817,7 @@ let rec instruction (context : JContext.t) pc instr : translation =
         let (instrs, sil_expr, _) = expression context pc expr in
         let sil_exn = Exp.Exn sil_expr in
         let sil_instr = Sil.Store (Exp.Lvar ret_var, ret_type, sil_exn, loc) in
-        let node = create_node Cfg.Node.throw_kind (instrs @ [sil_instr]) in
+        let node = create_node Procdesc.Node.throw_kind (instrs @ [sil_instr]) in
         JContext.add_goto_jump context pc JContext.Exit;
         Instr node
     | JBir.New (var, cn, constr_type_list, constr_arg_list) ->
@@ -834,9 +837,9 @@ let rec instruction (context : JContext.t) pc instr : translation =
         let pvar = JContext.set_pvar context var class_type in
         let set_instr = Sil.Store (Exp.Lvar pvar, class_type, Exp.Var ret_id, loc) in
         let instrs = (new_instr :: call_instrs) @ [set_instr] in
-        let node_kind = Cfg.Node.Stmt_node ("Call "^(Procname.to_string constr_procname)) in
+        let node_kind = Procdesc.Node.Stmt_node ("Call "^(Procname.to_string constr_procname)) in
         let node = create_node node_kind instrs in
-        let caller_procname = (Cfg.Procdesc.get_proc_name context.procdesc) in
+        let caller_procname = (Procdesc.get_proc_name context.procdesc) in
         Cg.add_edge cg caller_procname constr_procname;
         Instr node
     | JBir.NewArray (var, vt, expr_list) ->
@@ -851,7 +854,7 @@ let rec instruction (context : JContext.t) pc instr : translation =
           Sil.Call
             (Some (ret_id, array_type), builtin_new_array, call_args, loc, CallFlags.default) in
         let set_instr = Sil.Store (Exp.Lvar array_name, array_type, Exp.Var ret_id, loc) in
-        let node_kind = Cfg.Node.Stmt_node "method_body" in
+        let node_kind = Procdesc.Node.Stmt_node "method_body" in
         let node = create_node node_kind (instrs @ [call_instr; set_instr]) in
         Instr node
     | JBir.InvokeStatic (var_opt, cn, ms, args) ->
@@ -865,20 +868,20 @@ let rec instruction (context : JContext.t) pc instr : translation =
           | _ -> None, args, [] in
         let callee_procname, call_instrs =
           method_invocation context loc pc var_opt cn ms sil_obj_opt args I_Static Procname.Static in
-        let node_kind = Cfg.Node.Stmt_node ("Call "^(Procname.to_string callee_procname)) in
+        let node_kind = Procdesc.Node.Stmt_node ("Call "^(Procname.to_string callee_procname)) in
         let call_node = create_node node_kind (instrs @ call_instrs) in
-        let caller_procname = (Cfg.Procdesc.get_proc_name context.procdesc) in
+        let caller_procname = (Procdesc.get_proc_name context.procdesc) in
         Cg.add_edge cg caller_procname callee_procname;
         Instr call_node
     | JBir.InvokeVirtual (var_opt, obj, call_kind, ms, args) ->
-        let caller_procname = (Cfg.Procdesc.get_proc_name context.procdesc) in
+        let caller_procname = (Procdesc.get_proc_name context.procdesc) in
         let (instrs, sil_obj_expr, sil_obj_type) = expression context pc obj in
         let create_call_node cn invoke_kind =
           let callee_procname, call_instrs =
             let ret_opt = Some (sil_obj_expr, sil_obj_type) in
             method_invocation
               context loc pc var_opt cn ms ret_opt args invoke_kind Procname.Non_Static in
-          let node_kind = Cfg.Node.Stmt_node ("Call "^(Procname.to_string callee_procname)) in
+          let node_kind = Procdesc.Node.Stmt_node ("Call "^(Procname.to_string callee_procname)) in
           let call_node = create_node node_kind (instrs @ call_instrs) in
           Cg.add_edge cg caller_procname callee_procname;
           call_node in
@@ -908,10 +911,10 @@ let rec instruction (context : JContext.t) pc instr : translation =
         let (instrs, sil_obj_expr, sil_obj_type) = expression context pc obj in
         let callee_procname, call_instrs =
           method_invocation context loc pc var_opt cn ms (Some (sil_obj_expr, sil_obj_type)) args I_Special Procname.Non_Static in
-        let node_kind = Cfg.Node.Stmt_node ("Call "^(Procname.to_string callee_procname)) in
+        let node_kind = Procdesc.Node.Stmt_node ("Call "^(Procname.to_string callee_procname)) in
         let call_node = create_node node_kind (instrs @ call_instrs) in
         let procdesc = context.procdesc in
-        let caller_procname = (Cfg.Procdesc.get_proc_name procdesc) in
+        let caller_procname = (Procdesc.get_proc_name procdesc) in
         Cg.add_edge cg caller_procname callee_procname;
         Instr call_node
 
@@ -921,7 +924,7 @@ let rec instruction (context : JContext.t) pc instr : translation =
         let (instrs, sil_expr, _) = expression context pc expr in
         let this_not_null_node =
           create_node
-            (Cfg.Node.Stmt_node "this not null") (instrs @ [assume_not_null loc sil_expr]) in
+            (Procdesc.Node.Stmt_node "this not null") (instrs @ [assume_not_null loc sil_expr]) in
         Instr this_not_null_node
 
     | JBir.Check (JBir.CheckNullPointer expr) when Config.report_runtime_exceptions ->
@@ -929,12 +932,12 @@ let rec instruction (context : JContext.t) pc instr : translation =
         let not_null_node =
           let sil_not_null = Exp.BinOp (Binop.Ne, sil_expr, Exp.null) in
           let sil_prune_not_null = Sil.Prune (sil_not_null, loc, true, Sil.Ik_if)
-          and not_null_kind = Cfg.Node.Prune_node (true, Sil.Ik_if, "Not null") in
+          and not_null_kind = Procdesc.Node.Prune_node (true, Sil.Ik_if, "Not null") in
           create_node not_null_kind (instrs @ [sil_prune_not_null]) in
         let throw_npe_node =
           let sil_is_null = Exp.BinOp (Binop.Eq, sil_expr, Exp.null) in
           let sil_prune_null = Sil.Prune (sil_is_null, loc, true, Sil.Ik_if)
-          and npe_kind = Cfg.Node.Stmt_node "Throw NPE"
+          and npe_kind = Procdesc.Node.Stmt_node "Throw NPE"
           and npe_cn = JBasics.make_cn JConfig.npe_cl in
           let class_type = JTransType.get_class_type program tenv npe_cn
           and class_type_np = JTransType.get_class_type_no_pointer program tenv npe_cn in
@@ -967,7 +970,7 @@ let rec instruction (context : JContext.t) pc instr : translation =
 
         let in_bound_node =
           let in_bound_node_kind =
-            Cfg.Node.Prune_node (true, Sil.Ik_if, "In bound") in
+            Procdesc.Node.Prune_node (true, Sil.Ik_if, "In bound") in
           let sil_assume_in_bound =
             let sil_in_bound =
               let sil_positive_index =
@@ -980,7 +983,7 @@ let rec instruction (context : JContext.t) pc instr : translation =
 
         and throw_out_of_bound_node =
           let out_of_bound_node_kind =
-            Cfg.Node.Stmt_node "Out of bound" in
+            Procdesc.Node.Stmt_node "Out of bound" in
           let sil_assume_out_of_bound =
             let sil_out_of_bound =
               let sil_negative_index =
@@ -1023,12 +1026,12 @@ let rec instruction (context : JContext.t) pc instr : translation =
         let is_instance_node =
           let check_is_false = Exp.BinOp (Binop.Ne, res_ex, Exp.zero) in
           let asssume_instance_of = Sil.Prune (check_is_false, loc, true, Sil.Ik_if)
-          and instance_of_kind = Cfg.Node.Prune_node (true, Sil.Ik_if, "Is instance") in
+          and instance_of_kind = Procdesc.Node.Prune_node (true, Sil.Ik_if, "Is instance") in
           create_node instance_of_kind (instrs @ [call; asssume_instance_of])
         and throw_cast_exception_node =
           let check_is_true = Exp.BinOp (Binop.Ne, res_ex, Exp.one) in
           let asssume_not_instance_of = Sil.Prune (check_is_true, loc, true, Sil.Ik_if)
-          and throw_cast_exception_kind = Cfg.Node.Stmt_node "Class cast exception"
+          and throw_cast_exception_kind = Procdesc.Node.Stmt_node "Class cast exception"
           and cce_cn = JBasics.make_cn JConfig.cce_cl in
           let class_type = JTransType.get_class_type program tenv cce_cn
           and class_type_np = JTransType.get_class_type_no_pointer program tenv cce_cn in

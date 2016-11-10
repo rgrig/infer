@@ -18,9 +18,6 @@ module type Spec = sig
 
   (** should a flow originating at source and entering sink be reported? *)
   val should_report : Source.t -> Sink.t -> bool
-
-  (** get a loggable exception reporting a flow from source -> sink *)
-  val get_reportable_exn : Source.t -> Sink.t -> Passthrough.Set.t -> exn
 end
 
 module type S = sig
@@ -32,6 +29,11 @@ module type S = sig
   module Sources = Source.Set
   module Sinks = Sink.Set
   module Passthroughs = Passthrough.Set
+
+  (** path from a source to a sink with passthroughs at each step in the call stack. the first set
+      of passthroughs are the ones in the "reporting" procedure that calls the first function in
+      both the source and sink stack *)
+  type path = Passthroughs.t * (Source.t * Passthroughs.t) list * (Sink.t * Passthroughs.t) list
 
   (** get the sources of the trace. *)
   val sources : t -> Sources.t
@@ -45,8 +47,8 @@ module type S = sig
   (** get the reportable source-sink flows in this trace *)
   val get_reports : t -> (Source.t * Sink.t * Passthroughs.t) list
 
-  (** get logging-ready exceptions for the reportable source-sink flows in this trace *)
-  val get_reportable_exns : t -> exn list
+  (** get a path for each of the reportable source -> sink flows in this trace *)
+  val get_reportable_paths : t -> trace_of_pname:(Procname.t -> t) -> path list
 
   (** create a trace from a source *)
   val of_source : Source.t -> t
@@ -56,6 +58,9 @@ module type S = sig
 
   (** add a sink to the current trace. *)
   val add_sink : Sink.t -> t -> t
+
+  (** remove the given sinks from the current trace *)
+  val filter_sinks : t -> Sink.t list -> t
 
   (** append the trace for given call site to the current caller trace *)
   val append : t -> t -> CallSite.t -> t
@@ -68,6 +73,9 @@ module type S = sig
   val equal : t -> t -> bool
 
   val pp : F.formatter -> t -> unit
+
+  (** pretty-print a path in the context of the given procname *)
+  val pp_path : Procname.t -> F.formatter -> path -> unit
 end
 
 module Make (Spec : Spec) : S with module Source = Spec.Source and module Sink = Spec.Sink

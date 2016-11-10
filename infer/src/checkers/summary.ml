@@ -15,7 +15,7 @@ module type Helper = sig
   (* update the specs payload with [summary] *)
   val update_payload : summary -> Specs.payload -> Specs.payload
   (* extract [summmary] from the specs payload *)
-  val read_from_payload : Specs.payload -> summary
+  val read_from_payload : Specs.payload -> summary option
 end
 
 module type S = sig
@@ -25,7 +25,7 @@ module type S = sig
   val write_summary : Procname.t -> summary -> unit
   (* read and return the summary for [callee_pname] called from [caller_pdesc]. does the analysis to
      create the summary if needed *)
-  val read_summary : Tenv.t -> Cfg.Procdesc.t -> Procname.t -> summary option
+  val read_summary : Tenv.t -> Procdesc.t -> Procname.t -> summary option
 end
 
 module Make (H : Helper) = struct
@@ -44,5 +44,5 @@ module Make (H : Helper) = struct
     Ondemand.analyze_proc_name tenv ~propagate_exceptions:false caller_pdesc callee_pname;
     match Specs.get_summary callee_pname with
     | None -> None
-    | Some summary -> Some (H.read_from_payload summary.Specs.payload)
+    | Some summary -> H.read_from_payload summary.Specs.payload
 end

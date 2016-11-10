@@ -11,11 +11,12 @@
 
 open! Utils
 
-type exe = Analyze | BuckCompilationDatabase | Clang | Interactive | Java | Print | StatsAggregator
-         | Toplevel
+type exe = Analyze | Clang | Interactive | Java | Print | Toplevel
 
 (** Association list of executable (base)names to their [exe]s. *)
 val exes : (string * exe) list
+
+val exe_name : exe -> string
 
 val frontend_exes: exe list
 
@@ -55,17 +56,19 @@ val mk_option :
     either "Activates:" or "Deactivates:", so should be phrased accordingly. *)
 val mk_bool : ?deprecated_no:string list ->  ?default:bool -> ?f:(bool -> bool) -> bool ref t
 
-(** [mk_bool_group children] behaves as [mk_bool] with the addition that all the [children] are also
-    set. A child can be unset by including "--no-child" later in the arguments. *)
-val mk_bool_group : ?deprecated_no:string list -> ?default:bool -> (bool ref list -> bool ref) t
+(** [mk_bool_group children not_children] behaves as [mk_bool] with the addition that all the
+    [children] are also set and the [no_children] are unset. A child can be unset by including
+    "--no-child" later in the arguments. *)
+val mk_bool_group :
+  ?deprecated_no:string list -> ?default:bool -> (bool ref list -> bool ref list -> bool ref) t
 
 val mk_int : default:int -> int ref t
 
 val mk_float : default:float -> float ref t
 
-val mk_string : default:string -> ?f:(string -> string) -> string ref t
+val mk_float_opt : ?default:float -> float option ref t
 
-val mk_path : default:string -> string ref t
+val mk_string : default:string -> ?f:(string -> string) -> string ref t
 
 val mk_string_opt : ?default:string -> ?f:(string -> string) -> string option ref t
 
@@ -74,6 +77,16 @@ val mk_string_opt : ?default:string -> ?f:(string -> string) -> string option re
     final value will be in the reverse order they appeared on the command line. *)
 val mk_string_list :
   ?default:string list -> ?f:(string -> string) -> string list ref t
+
+(** like [mk_string] but will resolve the string into an absolute path so that children processes
+    agree on the absolute path that the option represents *)
+val mk_path : default:string -> string ref t
+
+(** analogous of [mk_string_opt] with the extra feature of [mk_path] *)
+val mk_path_opt : ?default:string -> string option ref t
+
+(** analogous of [mk_string_list] with the extra feature of [mk_path] *)
+val mk_path_list : ?default:string list -> string list ref t
 
 (** [mk_symbol long symbols] defines a command line flag [--long <symbol>] where [(<symbol>,_)] is
     an element of [symbols]. *)

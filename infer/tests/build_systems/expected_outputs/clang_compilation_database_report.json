@@ -1,7 +1,7 @@
 [
   {
     "bug_type": "NULL_DEREFERENCE",
-    "file": "hello.c",
+    "file": "hello.cpp",
     "procedure": "test"
   }
 ]

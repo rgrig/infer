@@ -46,13 +46,6 @@ type pattern =
   | Source_contains of language * string
 
 
-type zip_library = {
-  zip_filename : string;
-  zip_channel : Zip.in_file Lazy.t;
-  models : bool;
-}
-
-
 (** Constant configuration values *)
 
 val allow_missing_index_in_proc_call : bool
@@ -67,7 +60,6 @@ val buck_generated_folder : string
 val buck_infer_deps_file_name : string
 val captured_dir_name : string
 val checks_disabled_by_default : string list
-val clang_build_output_dir_name : string
 val clang_initializer_prefix : string
 val cpp_models_dir : string
 val csl_analysis : bool
@@ -88,7 +80,7 @@ val ivar_attributes : string
 val lib_dir : string
 val lint_dotty_dir_name : string
 val lint_issues_dir_name : string
-val load_average : float
+val load_average : float option
 val log_analysis_crash : string
 val log_analysis_file : string
 val log_analysis_procedure : string
@@ -99,6 +91,7 @@ val log_dir_name : string
 val max_recursion : int
 val meet_level : int
 val models_dir : string
+val models_jar : string
 val ncpu : int
 val nsnotification_center_checker_backend : bool
 val os_type : os_type
@@ -125,6 +118,8 @@ val taint_analysis : bool
 val trace_absarray : bool
 val undo_join : bool
 val unsafe_unret : string
+val use_jar_cache : bool
+val version_string : string
 val weak : string
 val whitelisted_cpp_methods : string list list
 val wrappers_dir : string
@@ -135,14 +130,13 @@ val wrappers_dir : string
 val anon_args : string list
 val rest : string list
 val abs_struct : int
-val absolute_paths : bool
 val allow_specs_cleanup : bool
 val analysis_path_regex_whitelist : analyzer -> string list
 val analysis_path_regex_blacklist : analyzer -> string list
 val analysis_blacklist_files_containing : analyzer -> string list
 val analysis_stops : bool
 val analysis_suppress_errors : analyzer -> string list
-val analyzer : analyzer option
+val analyzer : analyzer
 val angelic_execution : bool
 val array_level : int
 val ast_file : string option
@@ -150,19 +144,18 @@ val blacklist : string option
 val buck : bool
 val buck_build_args : string list
 val buck_out : string option
-val bugs_csv : outfile option
-val bugs_json : outfile option
-val bugs_tests : outfile option
-val bugs_txt : outfile option
-val bugs_xml : outfile option
+val bugs_csv : string option
+val bugs_json : string option
+val bugs_tests : string option
+val bugs_txt : string option
+val bugs_xml : string option
 val changed_files_index : string option
-val calls_csv : outfile option
+val calls_csv : string option
 val check_duplicate_symbols : bool
 val checkers : bool
 val checkers_enabled : bool
 val checkers_repeated_calls : bool
 val clang_biniou_file : string option
-val clang_compilation_database : string option
 val clang_frontend_action_string : string
 val clang_frontend_do_capture : bool
 val clang_frontend_do_lint : bool
@@ -199,6 +192,7 @@ val fcp_syntax_only : bool
 val filter_paths : bool
 val filtering : bool
 val flavors : bool
+val from_json_report : string option
 val frontend_debug : bool
 val frontend_tests : bool
 val frontend_stats : bool
@@ -210,14 +204,13 @@ val java_jar_compiler : string option
 val javac_verbose_out : string
 val jobs : int
 val join_cond : int
-val latex : outfile option
+val latex : string option
 val linters_def_file : string option
 val load_analysis_results : string option
 val makefile_cmdline : string
 val merge : bool
 val ml_buckets :
   [ `MLeak_all | `MLeak_arc | `MLeak_cf | `MLeak_cpp | `MLeak_no_arc | `MLeak_unknown ] list
-val models_file : string option
 val models_mode : bool
 val modified_targets : string option
 val monitor_prop_size : bool
@@ -232,13 +225,14 @@ val precondition_stats : bool
 val print_builtins : bool
 val print_types : bool
 val print_using_diff : bool
-val procs_csv : outfile option
-val procs_xml : outfile option
-val project_root : string option
+val procs_csv : string option
+val procs_xml : string option
+val project_root : string
+val project_root_realpath : string
 val quandary : bool
 val quiet : bool
 val reactive_mode : bool
-val report : outfile option
+val report : string option
 val report_runtime_exceptions : bool
 val reports_include_ml_loc : bool
 val results_dir : string
@@ -275,13 +269,17 @@ val write_dotty : bool
 val write_html : bool
 val xcode_developer_dir : string option
 val xml_specs : bool
-val zip_libraries : zip_library list
+
 
 (** Global variables *)
 
 (** [set_reference_and_call_function ref val f x] calls f x with ref set to val.
     Restore the initial value also in case of exception. *)
 val set_reference_and_call_function : 'a ref -> 'a -> ('b -> 'c) -> 'b -> 'c
+
+val arc_mode : bool ref
+
+val curr_language : language ref
 
 val footprint : bool ref
 
@@ -294,9 +292,7 @@ val run_in_footprint_mode : ('a -> 'b) -> 'a -> 'b
 val run_in_re_execution_mode : ('a -> 'b) -> 'a -> 'b
 
 val forcing_delayed_prints : bool ref
-val nLOC : int ref
 val pp_simple : bool ref
-
 
 
 (** Global variables with initial values specified by command-line options *)
@@ -310,9 +306,6 @@ val reset_abs_val : unit -> unit
 val run_with_abs_val_equal_zero : ('a -> 'b) -> 'a -> 'b
 
 val allow_leak : bool ref
-val arc_mode : bool ref
-val curr_language : language ref
-
 
 (** Command Line Interface Documentation *)
 

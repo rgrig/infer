@@ -11,10 +11,6 @@ open! Utils;
 let module CLOpt = CommandLineOption;
 
 
-/** this fails the execution of clang if the frontend fails */
-let report_frontend_failure = not Config.failures_allowed;
-
-
 /** enable debug mode (to get more data saved to disk for future inspections) */
 let debug_mode = Config.debug_mode || Config.frontend_stats;
 
@@ -51,46 +47,71 @@ let init_global_state_for_capture_and_linters source_file => {
     CommandLineOption.Clang (Some (Filename.basename (DB.source_file_to_string source_file)));
   register_perf_stats_report source_file;
   Config.curr_language := Config.Clang;
-  CLocation.curr_file := source_file;
   DB.Results_dir.init source_file;
   Clang_ast_main.reset_cache ();
   CFrontend_config.reset_global_state ()
 };
 
-let run_clang_frontend trans_unit_ctx ast_source => {
+let run_clang_frontend ast_source => {
   let init_time = Unix.gettimeofday ();
   let print_elapsed () => {
     let elapsed = Unix.gettimeofday () -. init_time;
     Logging.out "Elapsed: %07.3f seconds.@\n" elapsed
   };
-  let (ast_filename, ast_decl) =
+  let ast_decl =
     switch ast_source {
-    | `File path => (path, validate_decl_from_file path)
-    | `Pipe chan => (
-        "stdin of " ^ DB.source_file_to_string trans_unit_ctx.CFrontend_config.source_file,
-        validate_decl_from_channel chan
-      )
+    | `File path => validate_decl_from_file path
+    | `Pipe chan => validate_decl_from_channel chan
+    };
+  let trans_unit_ctx =
+    switch ast_decl {
+    | Clang_ast_t.TranslationUnitDecl (_, _, _, info) =>
+      Config.arc_mode := info.Clang_ast_t.tudi_arc_enabled;
+      let source_file = CLocation.source_file_from_path info.Clang_ast_t.tudi_input_path;
+      init_global_state_for_capture_and_linters source_file;
+      let lang =
+        switch info.Clang_ast_t.tudi_input_kind {
+        | `IK_C => CFrontend_config.C
+        | `IK_CXX => CFrontend_config.CPP
+        | `IK_ObjC => CFrontend_config.ObjC
+        | `IK_ObjCXX => CFrontend_config.ObjCPP
+        | _ => assert false
+        };
+      {CFrontend_config.source_file: source_file, lang}
+    | _ => assert false
+    };
+  let ast_filename =
+    switch ast_source {
+    | `File path => path
+    | `Pipe _ => "stdin of " ^ DB.source_file_to_string trans_unit_ctx.CFrontend_config.source_file
     };
   let (decl_index, stmt_index, type_index, ivar_to_property_index) = Clang_ast_main.index_node_pointers ast_decl;
   CFrontend_config.pointer_decl_index := decl_index;
   CFrontend_config.pointer_stmt_index := stmt_index;
   CFrontend_config.pointer_type_index := type_index;
   CFrontend_config.ivar_to_property_index := ivar_to_property_index;
-  CFrontend_config.json := ast_filename;
   Logging.out "Clang frontend action is  %s@\n" Config.clang_frontend_action_string;
-  Logging.out
-    "Start %s of AST from %s@\n" Config.clang_frontend_action_string !CFrontend_config.json;
+  Logging.out "Start %s of AST from %s@\n" Config.clang_frontend_action_string ast_filename;
   if Config.clang_frontend_do_lint {
     CFrontend_checkers_main.do_frontend_checks trans_unit_ctx ast_decl
   };
   if Config.clang_frontend_do_capture {
     CFrontend.do_source_file trans_unit_ctx ast_decl
   };
-  Logging.out "End translation AST file %s... OK!@\n" !CFrontend_config.json;
+  Logging.out "End translation AST file %s... OK!@\n" ast_filename;
   print_elapsed ()
 };
 
+let run_and_validate_clang_frontend ast_source =>
+  try (run_clang_frontend ast_source) {
+  | exc =>
+    if (not Config.failures_allowed) {
+      raise exc
+    }
+  };
+
 let run_clang clang_command read =>
+  /* NOTE: exceptions will propagate through without exiting here */
   switch (with_process_in clang_command read) {
   | (res, Unix.WEXITED 0) => res
   | (_, Unix.WEXITED n) =>
@@ -140,50 +161,40 @@ let run_plugin_and_frontend frontend clang_args => {
   run_clang clang_command frontend
 };
 
-let capture clang_args => {
+let cc1_capture clang_cmd => {
   let source_path = {
-    let orig_argv = ClangCommand.get_orig_argv clang_args;
+    let orig_argv = ClangCommand.get_orig_argv clang_cmd;
     /* the source file is always the last argument of the original -cc1 clang command */
     filename_to_absolute orig_argv.(Array.length orig_argv - 1)
   };
   Logging.out "@\n*** Beginning capture of file %s ***@\n" source_path;
-  if (Config.analyzer == Some Config.Compile || CLocation.is_file_blacklisted source_path) {
+  if (Config.analyzer == Config.Compile || CLocation.is_file_blacklisted source_path) {
     Logging.out "@\n Skip the analysis of source file %s@\n@\n" source_path;
     /* We still need to run clang, but we don't have to attach the plugin. */
-    run_clang (ClangCommand.command_to_run clang_args) consume_in
+    run_clang (ClangCommand.command_to_run clang_cmd) consume_in
   } else {
-    let source_file = CLocation.source_file_from_path source_path;
-    init_global_state_for_capture_and_linters source_file;
-    let trans_unit_ctx = {
-      let clang_langs =
-        CFrontend_config.[
-          ("c", C),
-          ("objective-c", ObjC),
-          ("c++", CPP),
-          ("objective-c++", ObjCPP)
-        ];
-      let lang =
-        switch (ClangCommand.value_of_option clang_args "-x") {
-        | Some lang_opt when IList.mem_assoc string_equal lang_opt clang_langs =>
-          IList.assoc string_equal lang_opt clang_langs
-        | _ => assert false
-        };
-      {CFrontend_config.source_file: source_file, lang}
+    switch Config.clang_biniou_file {
+    | Some fname => run_and_validate_clang_frontend (`File fname)
+    | None =>
+      run_plugin_and_frontend
+        (fun chan_in => run_and_validate_clang_frontend (`Pipe chan_in)) clang_cmd
     };
-    Config.arc_mode := ClangCommand.has_flag clang_args "-fobjc-arc";
-    try (
-      switch Config.clang_biniou_file {
-      | Some fname => run_clang_frontend trans_unit_ctx (`File fname)
-      | None =>
-        run_plugin_and_frontend
-          (fun chan_in => run_clang_frontend trans_unit_ctx (`Pipe chan_in)) clang_args
-      }
-    ) {
-    | exc =>
-      if report_frontend_failure {
-        raise exc
-      }
-    };
+    /* reset logging to stop capturing log output into the source file's log */
+    Logging.set_log_file_identifier CommandLineOption.Clang None;
     ()
   }
 };
+
+let capture clang_cmd =>
+  if (ClangCommand.can_attach_ast_exporter clang_cmd) {
+    /* this command compiles some code; replace the invocation of clang with our own clang and
+       plugin */
+    cc1_capture clang_cmd
+  } else {
+    /* Non-compilation (eg, linking) command. Run the command as-is. It will not get captured
+       further since `clang -### ...` will only output commands that invoke binaries using their
+       absolute paths. */
+    let command_to_run = ClangCommand.command_to_run clang_cmd;
+    Logging.out "Running non-cc command without capture: %s@\n" command_to_run;
+    run_clang command_to_run consume_in
+  };

@@ -273,6 +273,16 @@ class AnalyzerWithFrontendWrapper(analyze.AnalyzerWrapper):
             if self.args.analyzer == config.ANALYZER_CAPTURE:
                 return os.EX_OK
 
+            if self.args.buck:
+                if self.javac.args.classpath is not None:
+                    infer_args = utils.read_env()['INFER_ARGS']
+                    # 'INFER_ARGS' must be CommandLineOption.args_env_var
+                    for path in self.javac.args.classpath.split(os.pathsep):
+                        if os.path.isfile(path):
+                            infer_args += '^--specs-library^' + os.path.abspath(path)
+                            # '^' must be CommandLineOption.env_var_sep
+                    os.environ['INFER_ARGS'] = utils.encode(infer_args)
+
             self.analyze_and_report()
             self._close()
             self.timing['total'] = utils.elapsed_time(start_time)
@@ -307,17 +317,11 @@ class AnalyzerWithFrontendWrapper(analyze.AnalyzerWrapper):
         infer_cmd = [utils.get_cmd_in_bin_dir('InferJava')]
         infer_cmd += ['-classpath', self._create_frontend_classpath()]
 
-        if not self.args.absolute_paths:
-            infer_cmd += ['-project_root', self.args.project_root]
-
         infer_cmd += [
             '-results_dir', self.args.infer_out,
             '-verbose_out', self.javac.verbose_out,
             '-suppress_warnings_out', self.javac.suppress_warnings_out,
         ]
-
-        if os.path.isfile(config.MODELS_JAR):
-            infer_cmd += ['-models', config.MODELS_JAR]
 
         if self.args.debug:
             infer_cmd.append('-debug')

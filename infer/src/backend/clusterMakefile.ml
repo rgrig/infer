@@ -11,6 +11,7 @@ open! Utils
 
 module L = Logging
 module F = Format
+module CLOpt = CommandLineOption
 
 (** Module to create a makefile with dependencies between clusters *)
 
@@ -49,8 +50,8 @@ let cluster_should_be_analyzed cluster =
 
 
 let pp_prolog fmt clusters =
-  F.fprintf fmt "INFERANALYZE= %s $(INFER_OPTIONS) -results_dir '%s'\n@."
-    Sys.executable_name
+  F.fprintf fmt "INFERANALYZE= %s -results_dir '%s'\n@."
+    (Config.bin_dir // (CLOpt.exe_name Analyze))
     (Escape.escape_map
        (fun c -> if c = '#' then Some "\\#" else None)
        Config.results_dir);
@@ -64,7 +65,7 @@ let pp_prolog fmt clusters =
 
   F.fprintf fmt "@.@.default: test@.@.all: test@.@.";
   F.fprintf fmt "test: $(CLUSTERS)@.";
-  if Config.show_progress_bar then F.fprintf fmt "\techo \"\"@."
+  if Config.show_progress_bar then F.fprintf fmt "\t@@echo@\n@."
 
 let pp_epilog fmt () =
   F.fprintf fmt "@.clean:@.\trm -f $(CLUSTERS)@."

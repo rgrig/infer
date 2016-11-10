@@ -20,18 +20,22 @@ ATDGEN_SUFFIXES = _t.ml _t.mli _j.ml _j.mli
 
 OCAML_FATAL_WARNINGS = +5+6+8+10+11+12+18+19+20+23+26+29+27+32+33+34+35+37+38+39+50
 
+# options for ocamlbuild
+# Notice that use-ocamlfind is used here to avoid a linker bug in ocamlbuild when using -tag thread
 OCAMLBUILD_OPTIONS = \
-                     -r \
-										 -use-menhir -menhir 'menhir --explain --strict' \
-                     -cflags -g -lflags -g \
-                     -cflags -short-paths \
-                     -cflags -safe-string \
-                     -cflags -principal \
-                     -cflags -strict-formats \
-                     -cflags -strict-sequence \
-                     -cflags -w,$(OCAML_FATAL_WARNINGS)-4-9-40-41-42-45-48 \
-                     -tag-line "<*{clang/clang_ast_*,backend/jsonbug_*,checkers/stacktree_*}>: warn(-27-32-35-39)" \
-                     -pkgs atdgen,extlib,oUnit,str,unix,yojson,zip
+  -r \
+  -use-menhir -menhir 'menhir --explain --strict'\
+  -use-ocamlfind \
+  -cflags -g -lflags -g \
+  -cflags -short-paths \
+  -cflags -safe-string \
+  -cflags -principal \
+  -cflags -strict-formats \
+  -cflags -strict-sequence \
+  -cflags -w,$(OCAML_FATAL_WARNINGS)-4-9-40-41-42-45-48 \
+  -tag-line "<*{clang/clang_ast_*,backend/jsonbug_*,checkers/stacktree_*}>: warn(-27-32-35-39)" \
+  -tag thread \
+  -pkgs atdgen,core,extlib,oUnit,str,unix,yojson,zip
 
 ifeq ($(ENABLE_OCAML_ANNOT),yes)
 OCAMLBUILD_OPTIONS += -cflags -annot
@@ -59,7 +63,7 @@ C_STUBS_OBJ = $(C_STUBS_SOURCE:.c=.o)
 #### Backend declarations ####
 
 INFER_MAIN = backend/infer
-INFERANALYZE_MAIN = backend/InferAnalyze
+INFERANALYZE_MAIN = backend/InferAnalyzeExe
 
 #### Checkers declarations ####
 
@@ -73,18 +77,13 @@ INFERPRINT_ATDGEN_STUB_BASE = backend/jsonbug
 INFERPRINT_ATDGEN_STUB_ATD = $(INFERPRINT_ATDGEN_STUB_BASE).atd
 INFERPRINT_ATDGEN_STUBS = $(addprefix $(INFERPRINT_ATDGEN_STUB_BASE), $(ATDGEN_SUFFIXES))
 
-INFERPRINT_MAIN = backend/InferPrint
+INFERPRINT_MAIN = backend/InferPrintExe
 
 ### InferUnit declarations ###
 
 UNIT_SOURCES = unit
 
 INFERUNIT_MAIN = $(UNIT_SOURCES)/inferunit
-
-#### Infer integration declarations ####
-INTEGRATION_SOURCES = integration
-
-BUCK_COMPILATION_DATABASE_MAIN = $(INTEGRATION_SOURCES)/BuckCompilationDatabase
 
 #### Java declarations ####
 
@@ -126,9 +125,6 @@ SCRIPT_SOURCES = scripts
 CHECKCOPYRIGHT_BIN = $(SCRIPT_DIR)/checkCopyright
 CHECKCOPYRIGHT_MAIN = $(SCRIPT_SOURCES)/checkCopyright
 
-STATSAGGREGATOR_BIN = $(BIN_DIR)/InferStatsAggregator
-STATSAGGREGATOR_MAIN = $(SCRIPT_SOURCES)/StatsAggregator
-
 #### End of declarations ####
 
 ifeq ($(IS_FACEBOOK_TREE),yes)
@@ -137,7 +133,7 @@ else
 EXTRA_DEPS = opensource
 endif
 
-DEPENDENCIES = IR backend base checkers eradicate harness quandary $(EXTRA_DEPS)
+DEPENDENCIES = IR backend base checkers eradicate harness integration quandary $(EXTRA_DEPS)
 
 # ocamlbuild command with options common to all build targets
 OCAMLBUILD_BASE = rebuild $(OCAMLBUILD_OPTIONS) -j $(NCPU) $(addprefix -I , $(DEPENDENCIES))
@@ -155,15 +151,11 @@ INFER_BASE_TARGETS = \
   $(INFER_MAIN).native \
   $(INFERANALYZE_MAIN).native \
   $(INFERPRINT_MAIN).native \
-  $(INFERUNIT_MAIN).native \
-  $(CHECKCOPYRIGHT_MAIN).native \
-  $(STATSAGGREGATOR_MAIN).native \
   $(INFERUNIT_MAIN).native
 
 INFER_ALL_TARGETS = $(INFER_BASE_TARGETS) \
   $(INFERJAVA_MAIN).native \
   $(INFERCLANG_MAIN).native \
-  $(BUCK_COMPILATION_DATABASE_MAIN).native
 
 # configure-aware ocamlbuild commands and targets
 OCAMLBUILD_CONFIG = $(OCAMLBUILD_BASE)
@@ -176,7 +168,6 @@ DEPENDENCIES += java
 endif
 ifeq ($(BUILD_C_ANALYZERS),yes)
 INFER_CONFIG_TARGETS += $(INFERCLANG_MAIN).native
-INFER_CONFIG_TARGETS += $(BUCK_COMPILATION_DATABASE_MAIN).native
 DEPENDENCIES += clang
 endif
 
@@ -190,8 +181,6 @@ infer: init $(STACKTREE_ATDGEN_STUBS) $(INFERPRINT_ATDGEN_STUBS)
 	$(COPY) $(INFER_BUILD_DIR)/$(INFER_MAIN).native $(INFER_BIN)
 	$(COPY) $(INFER_BUILD_DIR)/$(INFERANALYZE_MAIN).native $(INFERANALYZE_BIN)
 	$(COPY) $(INFER_BUILD_DIR)/$(INFERPRINT_MAIN).native $(INFERPRINT_BIN)
-	$(COPY) $(INFER_BUILD_DIR)/$(CHECKCOPYRIGHT_MAIN).native $(CHECKCOPYRIGHT_BIN)
-	$(COPY) $(INFER_BUILD_DIR)/$(STATSAGGREGATOR_MAIN).native $(STATSAGGREGATOR_BIN)
 	$(COPY) $(INFER_BUILD_DIR)/$(INFERUNIT_MAIN).native $(INFERUNIT_BIN)
 ifeq ($(BUILD_JAVA_ANALYZERS),yes)
 	$(COPY) $(INFER_BUILD_DIR)/$(INFERJAVA_MAIN).native $(INFERJAVA_BIN)
@@ -199,7 +188,6 @@ endif
 ifeq ($(BUILD_C_ANALYZERS),yes)
 	$(COPY) $(INFER_BUILD_DIR)/$(INFERCLANG_MAIN).native $(INFERCLANG_BIN)
 	cd $(INFER_BUILD_DIR) && $(LN_S) -f InferClang InferClang++ && cd -
-	$(COPY) $(INFER_BUILD_DIR)/$(BUCK_COMPILATION_DATABASE_MAIN).native $(INFER_BUCK_COMPILATION_DATABASE_BIN)
 endif
 ifeq ($(ENABLE_OCAML_ANNOT),yes)
 	rsync -a --include '*/' --include '*.annot' --exclude '*' $(INFER_BUILD_DIR)/ $(ANNOT_DIR)/
@@ -248,7 +236,7 @@ rei:
 %.rei : %.mli
 	refmt -assume-explicit-arity -heuristics-file unary.txt -parse ml -print re $< > $*.rei
 
-roots:=Infer InferAnalyze InferClang JMain InferPrint BuckCompilationDatabase
+roots:=Infer InferAnalyzeExe InferClang JMain InferPrintExe StatsAggregator
 clusters:=base clang java IR
 
 src_dirs:=$(shell find * -type d)
@@ -291,6 +279,13 @@ toplevel: init $(STACKTREE_ATDGEN_STUBS) $(INFERPRINT_ATDGEN_STUBS) $(CLANG_ATDG
 	| awk 'BEGIN { FS = "/"; OFS = "/" } ; {$$NF=toupper(substr($$NF,1,1))substr($$NF,2); print $$0}' \
 	| grep -v $(roots_grep_regex) > toplevel.mlpack
 	$(OCAMLBUILD_ALL) -I stubs/ml -build-dir $(INFER_BUILD_DIR) toplevel.cmo
+
+.PHONY: checkCopyright
+checkCopyright: $(CHECKCOPYRIGHT_BIN)
+
+$(CHECKCOPYRIGHT_BIN): sanitize $(BUILD_DIR) $(CHECKCOPYRIGHT_MAIN).ml
+	rebuild -quiet -r -j $(NCPU) -build-dir $(INFER_BUILD_DIR) -pkgs core_extended,str -tag thread -use-ocamlfind $(CHECKCOPYRIGHT_MAIN).native
+	$(COPY) $(INFER_BUILD_DIR)/$(CHECKCOPYRIGHT_MAIN).native $(CHECKCOPYRIGHT_BIN)
 
 define gen_atdgen_rules
 # generate files using atdgen
@@ -380,9 +375,9 @@ endif
 	$(REMOVE) base/Version.ml.tmp.*
 	$(REMOVE) backend/jsonbug_{j,t}.ml{,i}
 	$(REMOVE) checkers/stacktree_{j,t}.ml{,i}
-	$(REMOVE) $(INFER_BIN) $(INFERANALYZE_BIN) $(INFERPRINT_BIN) $(STATSAGGREGATOR_BIN)
+	$(REMOVE) $(INFER_BIN) $(INFERANALYZE_BIN) $(INFERPRINT_BIN)
 	$(REMOVE) $(INFERJAVA_BIN) $(INFERCLANG_BIN)
-	$(REMOVE) $(INFERUNIT_BIN) $(CHECKCOPYRIGHT_BIN) $(INFER_BUCK_COMPILATION_DATABASE_BIN)
+	$(REMOVE) $(INFERUNIT_BIN) $(CHECKCOPYRIGHT_BIN)
 	$(REMOVE) $(CLANG_ATDGEN_STUBS)
 	$(REMOVE) $(INFER_CLANG_FCP_MIRRORED_FILES)
 	$(REMOVE) mod_dep.dot

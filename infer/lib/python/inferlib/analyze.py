@@ -49,23 +49,6 @@ class VersionAction(argparse._VersionAction):
                                             option_string)
 
 
-def get_pwd():
-    pwd = os.getenv('PWD')
-    if pwd is not None:
-        try:
-            # Compare whether 'PWD' and '.' point to same place
-            # Approach is borrowed from llvm implementation of
-            # llvm::sys::fs::current_path (implemented in Path.inc file)
-            pwd_stat = os.stat(pwd)
-            dot_stat = os.stat('.')
-            if pwd_stat.st_dev == dot_stat.st_dev and \
-               pwd_stat.st_ino == dot_stat.st_ino:
-                return pwd
-        except OSError:
-            # fallthrough to default case
-            pass
-    return os.getcwd()
-
 base_parser = argparse.ArgumentParser(add_help=False)
 base_group = base_parser.add_argument_group('global arguments')
 base_group.add_argument('-o', '--out', metavar='<directory>',
@@ -110,6 +93,10 @@ base_group.add_argument('--pmd-xml',
 
 infer_parser = argparse.ArgumentParser(parents=[base_parser])
 infer_group = infer_parser.add_argument_group('backend arguments')
+infer_group.add_argument('-pr', '--project-root',
+                         dest='project_root',
+                         help='Location of the project root '
+                         '(default is current directory)')
 infer_group.add_argument('-j', '--multicore', metavar='n', type=int,
                            default=multiprocessing.cpu_count(),
                            dest='multicore', help='Set the number of cores to '
@@ -121,17 +108,6 @@ infer_group.add_argument('-l', '--load-average', metavar='<float>', type=float,
 
 infer_group.add_argument('--buck', action='store_true', dest='buck',
                            help='To use when run with buck')
-
-infer_group.add_argument('-pr', '--project_root',
-                         dest='project_root',
-                         default=get_pwd(),
-                         help='Location of the project root '
-                         '(default is current directory)')
-
-infer_group.add_argument('--absolute-paths',
-                          action='store_true',
-                          default=False,
-                          help='Report errors with absolute paths')
 
 infer_group.add_argument('--java-jar-compiler',
                          metavar='<file>')
@@ -231,67 +207,14 @@ class AnalyzerWrapper(object):
             '-results_dir',
             self.args.infer_out
         ]
-        infer_options = []
-
-        # remove specs if possible so that old issues are less likely
-        # to be reported
-        infer_options += ['-allow_specs_cleanup']
-
-        infer_options += ['-inferconfig_home', utils.decode(os.getcwd())]
-
-        if self.args.analyzer == config.ANALYZER_ERADICATE:
-            infer_options += ['-eradicate']
-        elif self.args.analyzer == config.ANALYZER_CRASHCONTEXT:
-            infer_options += ['-crashcontext']
-        elif self.args.analyzer == config.ANALYZER_CHECKERS:
-            infer_options += ['-checkers']
-        elif self.args.analyzer == config.ANALYZER_QUANDARY:
-            infer_options += ['-quandary']
-        else:
-            if self.args.analyzer == config.ANALYZER_TRACING:
-                infer_options.append('-tracing')
-            if os.path.isfile(config.MODELS_JAR):
-                infer_options += ['-models', config.MODELS_JAR]
-
-        if self.args.debug:
-            infer_options += [
-                '-developer_mode',
-                '-html',
-                '-dotty',
-                '-print_types',
-                '-trace_error',
-                '-print_buckets',
-                '-notest'
-            ]
-            self.args.no_filtering = True
-
-        elif self.args.debug_exceptions:
-            infer_options.append('-developer_mode')
-            infer_options.append('-print_buckets')
-            self.args.no_filtering = True
-
         exit_status = os.EX_OK
-
-        if self.javac is not None and self.args.buck:
-            infer_options += ['-project_root', utils.decode(os.getcwd()),
-                              '-java']
-            if self.javac.args.classpath is not None:
-                for path in self.javac.args.classpath.split(os.pathsep):
-                    if os.path.isfile(path):
-                        infer_options += ['-ziplib', os.path.abspath(path)]
-        elif self.args.project_root:
-            infer_options += ['-project_root', self.args.project_root]
-
-        infer_options = map(utils.decode_or_not, infer_options)
-        infer_options_str = ' '.join(infer_options)
-        os.environ['INFER_OPTIONS'] = utils.encode(infer_options_str)
 
         javac_original_arguments = \
             self.javac.original_arguments if self.javac is not None else []
 
         if self.args.multicore == 1:
             analysis_start_time = time.time()
-            analyze_cmd = infer_analyze + infer_options
+            analyze_cmd = infer_analyze
             exit_status = run_command(
                 analyze_cmd,
                 self.args.debug,
@@ -311,7 +234,6 @@ class AnalyzerWrapper(object):
             os.mkdir(multicore_dir)
             os.chdir(multicore_dir)
             analyze_cmd = infer_analyze + ['-makefile', 'Makefile']
-            analyze_cmd += infer_options
             makefile_generation_start_time = time.time()
             makefile_status = run_command(
                 analyze_cmd,
@@ -385,8 +307,6 @@ class AnalyzerWrapper(object):
                 'Error with InferPrint with the command: {}'.format(
                     infer_print_cmd))
         else:
-            issues.clean_csv(self.args, csv_report)
-            issues.clean_json(self.args, json_report)
             self.update_stats_with_warnings(csv_report)
 
         return exit_status
@@ -436,7 +356,7 @@ class AnalyzerWrapper(object):
             if self.args.pmd_xml:
                 xml_out = os.path.join(self.args.infer_out,
                                        config.PMD_XML_FILENAME)
-            issues.print_and_save_errors(json_report,
+            issues.print_and_save_errors(self.args.project_root, json_report,
                                          bugs_out, xml_out)
 
     def analyze_and_report(self):

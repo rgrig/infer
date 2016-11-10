@@ -48,7 +48,8 @@ let add_edges
     if super_call then (fun _ -> exit_nodes)
     else JTransExn.create_exception_handlers context [exn_node] get_body_nodes impl in
   let connect node pc =
-    Cfg.Node.set_succs_exn node (get_succ_nodes node pc) (get_exn_nodes pc) in
+    Procdesc.node_set_succs_exn
+      context.procdesc node (get_succ_nodes node pc) (get_exn_nodes pc) in
   let connect_nodes pc translated_instruction =
     match translated_instruction with
     | JTrans.Skip -> ()
@@ -57,7 +58,7 @@ let add_edges
         connect node_true pc;
         connect node_false pc
     | JTrans.Loop (join_node, node_true, node_false) ->
-        Cfg.Node.set_succs_exn join_node [node_true; node_false] [];
+        Procdesc.node_set_succs_exn context.procdesc join_node [node_true; node_false] [];
         connect node_true pc;
         connect node_false pc in
   let first_nodes =
@@ -65,50 +66,32 @@ let add_edges
     direct_successors (-1) in
 
   (* the exceptions edges here are going directly to the exit node *)
-  Cfg.Node.set_succs_exn start_node first_nodes exit_nodes;
+  Procdesc.node_set_succs_exn context.procdesc start_node first_nodes exit_nodes;
 
   if not super_call then
     (* the exceptions node is just before the exit node *)
-    Cfg.Node.set_succs_exn exn_node exit_nodes exit_nodes;
+    Procdesc.node_set_succs_exn context.procdesc exn_node exit_nodes exit_nodes;
   Array.iteri connect_nodes method_body_nodes
 
 
 (** Add a concrete method. *)
-let add_cmethod source_file program linereader icfg cm method_kind =
-  let cn, ms = JBasics.cms_split cm.Javalib.cm_class_method_signature in
-  let proc_name_java = JTransType.get_method_procname cn ms method_kind in
-  let proc_name = Procname.Java proc_name_java in
-  let jmethod = (Javalib.ConcreteMethod cm) in
-  match JTrans.create_procdesc source_file program linereader icfg jmethod with
+let add_cmethod source_file program linereader icfg cm proc_name =
+  let cn, _ = JBasics.cms_split cm.Javalib.cm_class_method_signature in
+  match JTrans.create_cm_procdesc source_file program linereader icfg cm proc_name with
   | None -> ()
-  | Some _ when JTrans.is_java_native cm -> ()
-  | Some procdesc ->
-      let start_node = Cfg.Procdesc.get_start_node procdesc in
-      let exit_node = Cfg.Procdesc.get_exit_node procdesc in
+  | Some (procdesc, impl) ->
+      let start_node = Procdesc.get_start_node procdesc in
+      let exit_node = Procdesc.get_exit_node procdesc in
       let exn_node =
         match JContext.get_exn_node procdesc with
         | Some node -> node
         | None ->
             failwithf "No exn node found for %s" (Procname.to_string proc_name) in
-      let impl = JTrans.get_implementation cm in
       let instrs = JBir.code impl in
       let context =
         JContext.create_context icfg procdesc impl cn source_file program in
       let method_body_nodes = Array.mapi (JTrans.instruction context) instrs in
-      add_edges context start_node exn_node [exit_node] method_body_nodes impl false;
-      Cg.add_defined_node icfg.JContext.cg proc_name
-
-
-(** Add an abstract method. *)
-let add_amethod source_file program linereader icfg am method_kind =
-  let cn, ms = JBasics.cms_split am.Javalib.am_class_method_signature in
-  let proc_name_java = JTransType.get_method_procname cn ms method_kind in
-  let proc_name = Procname.Java proc_name_java in
-  let jmethod = (Javalib.AbstractMethod am) in
-  match JTrans.create_procdesc source_file program linereader icfg jmethod with
-  | None -> ()
-  | Some _ ->
-      Cg.add_defined_node icfg.JContext.cg proc_name
+      add_edges context start_node exn_node [exit_node] method_body_nodes impl false
 
 
 let path_of_cached_classname cn =
@@ -150,14 +133,28 @@ let create_icfg source_file linereader program icfg cn node =
   if Config.dependency_mode && not (is_classname_cached cn) then
     cache_classname cn;
   let translate m =
-    (* each procedure has different scope: start names from id 0 *)
-    Ident.NameGenerator.reset ();
-    let method_kind = JTransType.get_method_kind m in
-    match m with
-    | Javalib.ConcreteMethod cm ->
-        add_cmethod source_file program linereader icfg cm method_kind
-    | Javalib.AbstractMethod am ->
-        add_amethod source_file program linereader icfg am method_kind in
+    let proc_name = JTransType.translate_method_name m in
+    if JClasspath.is_model proc_name then
+      (* do not translate the method if there is a model for it *)
+      L.out_debug "Skipping method with a model: %s@." (Procname.to_string proc_name)
+    else
+      try
+        (* each procedure has different scope: start names from id 0 *)
+        Ident.NameGenerator.reset ();
+        begin
+          match m with
+          | Javalib.AbstractMethod am ->
+              ignore (JTrans.create_am_procdesc program icfg am proc_name)
+          | Javalib.ConcreteMethod cm when JTrans.is_java_native cm ->
+              ignore (JTrans.create_native_procdesc program icfg cm proc_name)
+          | Javalib.ConcreteMethod cm ->
+              add_cmethod source_file program linereader icfg cm proc_name
+        end;
+        Cg.add_defined_node icfg.JContext.cg proc_name
+      with JBasics.Class_structure_error _ ->
+        L.do_err
+          "create_icfg raised JBasics.Class_structure_error on %a@."
+          Procname.pp proc_name in
   Javalib.m_iter translate node
 
 
@@ -192,7 +189,7 @@ let compute_source_icfg
     source_basename package_opt source_file =
   let icfg =
     { JContext.cg = Cg.create (Some source_file);
-      JContext.cfg = Cfg.Node.create_cfg ();
+      JContext.cfg = Cfg.create_cfg ();
       JContext.tenv = tenv } in
   let select test procedure cn node =
     if test node then
@@ -212,7 +209,7 @@ let compute_source_icfg
 let compute_class_icfg source_file linereader program tenv node =
   let icfg =
     { JContext.cg = Cg.create (Some source_file);
-      JContext.cfg = Cfg.Node.create_cfg ();
+      JContext.cfg = Cfg.create_cfg ();
       JContext.tenv = tenv } in
   begin
     try

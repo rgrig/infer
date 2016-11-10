@@ -65,6 +65,7 @@ val pointer_size_mismatch : t
 val precondition_not_found : t
 val precondition_not_met : t
 val premature_nil_termination : t
+val quandary_taint_error : t
 val registered_observer_being_deallocated : t
 val retain_cycle : t
 val resource_leak : t
@@ -72,6 +73,7 @@ val return_value_ignored : t
 val return_expression_required : t
 val return_statement_missing : t
 val stack_variable_address_escape : t
+val static_initialization_order_fiasco : t
 val strong_delegate_warning : t
 val unary_minus_applied_to_unsigned_expression : t
 val uninitialized_value : t

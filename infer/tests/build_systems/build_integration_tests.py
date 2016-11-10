@@ -42,6 +42,7 @@ from inferlib import config, issues, utils
 ROOT_DIR = os.path.join(SCRIPT_DIR, os.pardir, os.pardir, os.pardir)
 
 INFER_BIN = os.path.join(ROOT_DIR, 'infer', 'bin', 'infer')
+INFERPRINT_BIN = os.path.join(ROOT_DIR, 'infer', 'bin', 'InferPrint')
 
 CLANG_BIN = os.path.join(ROOT_DIR, 'facebook-clang-plugins', 'clang',
                          'install', 'bin', 'clang')
@@ -60,9 +61,8 @@ CODETOANALYZE_DIR = os.path.join(SCRIPT_DIR, 'codetoanalyze')
 EXPECTED_OUTPUTS_DIR = os.path.join(SCRIPT_DIR, 'expected_outputs')
 
 ALL_TESTS = [
-    'ant',
     'buck',
-    'cc1',
+    'clang_compilation_database',
     'cmake',
     'componentkit',
     'delete',
@@ -149,6 +149,24 @@ def run_analysis(clean_cmds, build_cmds, extra_check, should_fail, env=None):
             except subprocess.CalledProcessError, exn:
                 if exn.returncode != should_fail:
                     raise
+
+        # Set this to True to create an issues.exp file using the
+        # results of the test. This is a temporary hack to aid
+        # migrating the tests from this file to Makefiles. It can be
+        # useful to compare the result of your migrated test with the
+        # issues.exp that this gives you.
+        if False:
+            inferprint_cmd = [INFERPRINT_BIN, '-q', '--issues-tests',
+                              '-o', temp_out_dir] + extra_args
+            with tempfile.TemporaryFile(
+                    mode='w',
+                    suffix='.out',
+                    prefix='issues.exp') as analysis_output:
+                try:
+                    subprocess.check_call(inferprint_cmd, env=env)
+                except subprocess.CalledProcessError, exn:
+                    if exn.returncode != should_fail:
+                        raise
 
     json_path = os.path.join(temp_out_dir, REPORT_JSON)
     found_errors = utils.load_json_from_path(json_path)
@@ -310,13 +328,6 @@ def test(name,
 
 class BuildIntegrationTest(unittest.TestCase):
 
-    def test_ant_integration(self):
-        test('ant', 'Ant',
-             os.path.join(SCRIPT_DIR, os.pardir),
-             [{'compile': ['ant', 'compile']}],
-             clean_commands=[['ant', 'clean']],
-             available=lambda: is_tool_available(['ant', '-version']))
-
     def test_javac_integration(
             self,
             enabled=None,
@@ -424,6 +435,26 @@ class BuildIntegrationTest(unittest.TestCase):
             # remove build/ directory
             shutil.rmtree(build_root)
 
+    def test_clang_compilation_database_integration(
+            self,
+            enabled=None,
+            root=os.path.join(CODETOANALYZE_DIR, 'clang_compilation_database'),
+            report_fname='clang_compilation_database_report.json'):
+        build_root = os.path.join(root, 'build')
+        if test('clang_compilation_database', 'clang compilation database test',
+                build_root,
+                [{'compile': ['cmake', '-DCMAKE_EXPORT_COMPILE_COMMANDS=1', '..']},
+                 {'compile': ['clang-compilation-database', 'compile_commands.json']}],
+                available=lambda: is_tool_available(['cmake', '--version']),
+                enabled=enabled,
+                # remove build/ directory just in case
+                preprocess=lambda: shutil.rmtree(build_root, True),
+                # cmake produces absolute paths using the real path
+                postprocess=(lambda errors:
+                             make_paths_relative_in_report(
+                                 os.path.realpath(root), errors))):
+            # remove build/ directory
+            shutil.rmtree(build_root)
 
     def test_utf8_in_pwd_integration(self):
         if not 'utf8_in_pwd' in to_test:
@@ -475,26 +506,6 @@ class BuildIntegrationTest(unittest.TestCase):
               {'compile': ['clang', '-c', 'hello2.c'],
                'infer_args': reactive_args},
               {'compile': ['analyze']}])
-
-    def test_clang_cc1(self):
-        def preprocess():
-            hashhashhash = subprocess.check_output(
-                [CLANG_BIN, '-###', '-c', 'hello.c'],
-                # `clang -### -c hello.c` prints on stderr
-                stderr=subprocess.STDOUT)
-            # pick the line containing the compilation command, which
-            # should be the only one to include "-cc1"
-            cc1_line = filter(lambda s: s.find('"-cc1"') != -1,
-                              hashhashhash.splitlines())[0]
-            # [cc1_line] usually looks like ' "/foo/clang" "bar" "baz"'.
-            # return ['clang', 'bar', 'baz']
-            cmd = [s.strip('"') for s in cc1_line.strip().split('" "')]
-            cmd[0] = 'clang'
-            return [{'compile': cmd}]
-        test('cc1', 'clang -cc1',
-             CODETOANALYZE_DIR,
-             [],
-             preprocess=preprocess)
 
     def test_clang_component_kit_imports(self):
         test('componentkit', 'component quality analyzer  skips imports',

@@ -17,21 +17,23 @@ module YBU = Yojson.Basic.Util
 
 (** Each command line option may appear in the --help list of any executable, these tags are used to
     specify which executables for which an option will be documented. *)
-type exe = Analyze | BuckCompilationDatabase | Clang | Interactive | Java | Print | StatsAggregator
-         | Toplevel
+type exe = Analyze | Clang | Interactive | Java | Print | Toplevel
 
 
 (** Association list of executable (base)names to their [exe]s. *)
 let exes = [
-  ("InferBuckCompilationDatabase", BuckCompilationDatabase);
   ("InferAnalyze", Analyze);
   ("InferClang", Clang);
   ("InferJava", Java);
   ("InferPrint", Print);
-  ("InferStatsAggregator", StatsAggregator);
   ("infer", Toplevel);
   ("interactive", Interactive);
 ]
+
+let exe_name =
+  let exe_to_name = IList.map (fun (n,a) -> (a,n)) exes in
+  fun exe -> IList.assoc (=) exe exe_to_name
+
 
 let frontend_exes = [Clang; Java]
 
@@ -295,9 +297,10 @@ let mk_bool ?(deprecated_no=[]) ?(default=false) ?(f=fun b -> b)
   var
 
 let mk_bool_group ?(deprecated_no=[]) ?(default=false)
-    ?(deprecated=[]) ~long ?short ?exes ?(meta="") doc children =
+    ?(deprecated=[]) ~long ?short ?exes ?(meta="") doc children no_children =
   let f b =
     IList.iter (fun child -> child := b) children ;
+    IList.iter (fun child -> child := not b) no_children ;
     b
   in
   mk_bool ~deprecated ~deprecated_no ~default ~long ?short ~f ?exes ~meta doc
@@ -316,27 +319,15 @@ let mk_float ~default ?(deprecated=[]) ~long ?short ?exes ?(meta="") doc =
     ~decode_json:(string_json_decoder ~long)
     ~mk_spec:(fun set -> Arg.String set)
 
+let mk_float_opt ?default ?(deprecated=[]) ~long ?short ?exes ?(meta="") doc =
+  let default_to_string = function Some f -> string_of_float f | None -> "" in
+  let f s = Some (float_of_string s) in
+  mk_option ~deprecated ~long ?short ~default ~default_to_string ~f ?exes ~meta doc
+
 let mk_string ~default ?(f=fun s -> s) ?(deprecated=[]) ~long ?short ?exes ?(meta="") doc =
   mk ~deprecated ~long ?short ~default ?exes ~meta doc
     ~default_to_string:(fun s -> s)
     ~mk_setter:(fun var str -> var := f str)
-    ~decode_json:(string_json_decoder ~long)
-    ~mk_spec:(fun set -> Arg.String set)
-
-let mk_path ~default ?(deprecated=[]) ~long ?short ?exes ?(meta="") doc =
-  mk ~deprecated ~long ?short ~default ?exes ~meta doc
-    ~default_to_string:(fun s -> s)
-    ~mk_setter:(fun var str ->
-        if Filename.is_relative str then (
-          (* Replace relative paths with absolute ones on the fly in the args being parsed. This
-             assumes that [!arg_being_parsed] points at the option name position in
-             [!args_to_parse], as is the case e.g. when calling [Arg.parse_argv_dynamic
-             ~current:arg_being_parsed !args_to_parse ...]. *)
-          let abs_path = Sys.getcwd () // str in
-          var := abs_path;
-          (!args_to_parse).(!arg_being_parsed + 1) <- abs_path;
-        ) else
-          var := str)
     ~decode_json:(string_json_decoder ~long)
     ~mk_spec:(fun set -> Arg.String set)
 
@@ -352,6 +343,43 @@ let mk_string_list ?(default=[]) ?(f=fun s -> s)
     ~mk_setter:(fun var str -> var := (f str) :: !var)
     ~decode_json:(list_json_decoder (string_json_decoder ~long))
     ~mk_spec:(fun set -> Arg.String set)
+
+let mk_path_helper ~setter ~default_to_string
+    ~default ~deprecated ~long ~short ~exes ~meta doc =
+  let normalize_path_in_args_being_parsed str =
+    if Filename.is_relative str then (
+      (* Replace relative paths with absolute ones on the fly in the args being parsed. This assumes
+         that [!arg_being_parsed] points at the option name position in [!args_to_parse], as is the
+         case e.g. when calling
+         [Arg.parse_argv_dynamic ~current:arg_being_parsed !args_to_parse ...]. *)
+      let abs_path = filename_to_absolute str in
+      (!args_to_parse).(!arg_being_parsed + 1) <- abs_path;
+      abs_path
+    ) else
+      str in
+  mk ~deprecated ~long ?short ~default ?exes ~meta doc
+    ~default_to_string
+    ~mk_setter:(fun var str ->
+        let abs_path = normalize_path_in_args_being_parsed str in
+        setter var abs_path)
+    ~decode_json:(string_json_decoder ~long)
+    ~mk_spec:(fun set -> Arg.String set)
+
+let mk_path ~default ?(deprecated=[]) ~long ?short ?exes ?(meta="path") =
+  mk_path_helper ~setter:(fun var x -> var := x) ~default_to_string:(fun s -> s)
+    ~default ~deprecated ~long ~short ~exes ~meta
+
+let mk_path_opt ?default ?(deprecated=[]) ~long ?short ?exes ?(meta="path") =
+  mk_path_helper
+    ~setter:(fun var x -> var := Some x)
+    ~default_to_string:(function Some s -> s | None -> "")
+    ~default ~deprecated ~long ~short ~exes ~meta
+
+let mk_path_list ?(default=[]) ?(deprecated=[]) ~long ?short ?exes ?(meta="path") =
+  mk_path_helper
+    ~setter:(fun var x -> var := x :: !var)
+    ~default_to_string:(String.concat ", ")
+    ~default ~deprecated ~long ~short ~exes ~meta
 
 let mk_symbol ~default ~symbols ?(deprecated=[]) ~long ?short ?exes ?(meta="") doc =
   let strings = IList.map fst symbols in
@@ -575,7 +603,7 @@ let parse ?(incomplete=false) ?(accept_unknown=false) ?config_file current_exe e
   let exe_name = Sys.executable_name in
   let should_parse_cl_args = match current_exe with
     | Clang | Interactive -> false
-    | Analyze | BuckCompilationDatabase | Java | Print | StatsAggregator | Toplevel -> true in
+    | Analyze | Java | Print | Toplevel -> true in
   let env_cl_args =
     if should_parse_cl_args then prepend_to_argv env_args
     else env_args in

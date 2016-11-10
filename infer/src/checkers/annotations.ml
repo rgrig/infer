@@ -92,7 +92,7 @@ let ma_contains ma ann_names =
   !found
 
 let pdesc_has_annot pdesc annot =
-  ma_contains (Cfg.Procdesc.get_attributes pdesc).ProcAttributes.method_annotation [annot]
+  ma_contains (Procdesc.get_attributes pdesc).ProcAttributes.method_annotation [annot]
 
 let initializer_ = "Initializer"
 let inject = "Inject"
@@ -121,6 +121,7 @@ let no_allocation = "NoAllocation"
 let ignore_allocations = "IgnoreAllocations"
 
 let suppress_warnings = "SuppressWarnings"
+let suppress_lint = "SuppressLint"
 let privacy_source = "PrivacySource"
 let privacy_sink = "PrivacySink"
 let integrity_source = "IntegritySource"

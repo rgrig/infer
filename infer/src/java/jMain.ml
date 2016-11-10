@@ -15,15 +15,15 @@ open Javalib_pack
 module L = Logging
 
 let () =
-  match Config.models_file with
-  | None when Config.models_mode ->
+  match Config.models_mode, Sys.file_exists Config.models_jar with
+  | true, false ->
       ()
-  | None ->
+  | false, false ->
       failwith "Java model file is required"
-  | Some _ when Config.models_mode ->
-      failwith "Not expecting model file when analyzing the models";
-  | Some file ->
-      JClasspath.add_models file
+  | true, true ->
+      failwith "Not expecting model file when analyzing the models"
+  | false, true ->
+      JClasspath.add_models Config.models_jar
 
 
 let register_perf_stats_report source_file =
@@ -40,9 +40,7 @@ let init_global_state source_file =
   Config.curr_language := Config.Java;
   DB.Results_dir.init source_file;
   Ident.NameGenerator.reset ();
-  JContext.reset_exn_node_table ();
-  let nLOC = FileLOC.file_get_loc (DB.source_file_to_string source_file) in
-  Config.nLOC := nLOC
+  JContext.reset_exn_node_table ()
 
 
 let store_icfg source_file tenv cg cfg =

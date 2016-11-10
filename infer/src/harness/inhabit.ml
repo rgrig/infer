@@ -41,7 +41,7 @@ let procdesc_from_name cfg pname =
 
 let formals_from_name cfg pname =
   match procdesc_from_name cfg pname with
-  | Some pdesc -> Cfg.Procdesc.get_formals pdesc
+  | Some pdesc -> Procdesc.get_formals pdesc
   | None -> []
 
 (** add an instruction to the env, update tmp_vars, and bump the pc *)
@@ -172,7 +172,7 @@ and inhabit_constructor tenv constr_name (allocated_obj, obj_type) cfg env =
 
 let inhabit_call_with_args procname procdesc args env =
   let retval =
-    let ret_typ = Cfg.Procdesc.get_ret_type procdesc in
+    let ret_typ = Procdesc.get_ret_type procdesc in
     let is_void = ret_typ = Typ.Tvoid in
     if is_void then None else Some (Ident.create_fresh Ident.knormal, ret_typ) in
   let call_instr =
@@ -188,7 +188,7 @@ let inhabit_call tenv (procname, receiver) cfg env =
     match procdesc_from_name cfg procname with
     | Some procdesc ->
         (* swap the type of the 'this' formal with the receiver type, if there is one *)
-        let formals = match (Cfg.Procdesc.get_formals procdesc, receiver) with
+        let formals = match (Procdesc.get_formals procdesc, receiver) with
           | ((name, _) :: formals, Some receiver) -> (name, receiver) :: formals
           | (formals, None) -> formals
           | ([], Some _) ->
@@ -230,7 +230,7 @@ let add_harness_to_cg harness_name harness_node cg =
   Cg.add_defined_node cg (Procname.Java harness_name);
   IList.iter
     (fun p -> Cg.add_edge cg (Procname.Java harness_name) p)
-    (Cfg.Node.get_callees harness_node)
+    (Procdesc.Node.get_callees harness_node)
 
 (** create and fill the appropriate nodes and add them to the harness cfg. also add the harness
  * proc to the cg *)
@@ -238,28 +238,28 @@ let setup_harness_cfg harness_name env cg cfg =
   (* each procedure has different scope: start names from id 0 *)
   Ident.NameGenerator.reset ();
   let procname = Procname.Java harness_name in
+  let proc_attributes =
+    { (ProcAttributes.default procname Config.Java) with
+      ProcAttributes.is_defined = true;
+      loc = env.pc;
+    } in
   let procdesc =
-    let proc_attributes =
-      { (ProcAttributes.default procname Config.Java) with
-        ProcAttributes.is_defined = true;
-        loc = env.pc;
-      } in
-    Cfg.Procdesc.create cfg proc_attributes in
+    Cfg.create_proc_desc cfg proc_attributes in
   let harness_node =
     (* important to reverse the list or there will be scoping issues! *)
     let instrs = (IList.rev env.instrs) in
-    let nodekind = Cfg.Node.Stmt_node "method_body" in
-    Cfg.Node.create env.pc nodekind instrs procdesc in
+    let nodekind = Procdesc.Node.Stmt_node "method_body" in
+    Procdesc.create_node procdesc env.pc nodekind instrs in
   let (start_node, exit_node) =
-    let create_node kind = Cfg.Node.create env.pc kind [] procdesc in
-    let start_kind = Cfg.Node.Start_node procname in
-    let exit_kind = Cfg.Node.Exit_node procname in
+    let create_node kind = Procdesc.create_node procdesc env.pc kind [] in
+    let start_kind = Procdesc.Node.Start_node procname in
+    let exit_kind = Procdesc.Node.Exit_node procname in
     (create_node start_kind, create_node exit_kind) in
-  Cfg.Procdesc.set_start_node procdesc start_node;
-  Cfg.Procdesc.set_exit_node procdesc exit_node;
-  Cfg.Node.add_locals_ret_declaration start_node [];
-  Cfg.Node.set_succs_exn start_node [harness_node] [exit_node];
-  Cfg.Node.set_succs_exn harness_node [exit_node] [exit_node];
+  Procdesc.set_start_node procdesc start_node;
+  Procdesc.set_exit_node procdesc exit_node;
+  Procdesc.Node.add_locals_ret_declaration start_node proc_attributes [];
+  Procdesc.node_set_succs_exn procdesc start_node [harness_node] [exit_node];
+  Procdesc.node_set_succs_exn procdesc harness_node [exit_node] [exit_node];
   add_harness_to_cg harness_name harness_node cg
 
 (** create a procedure named harness_name that calls each of the methods in trace in the specified
@@ -268,9 +268,9 @@ let inhabit_trace tenv trace harness_name cg cfg =
   if IList.length trace > 0 then
     let source_file = Cg.get_source cg in
     let harness_file = create_dummy_harness_file harness_name in
-    let start_line = (Cg.get_nLOC cg) + 1 in
+    let start_line = 1 in
     let empty_env =
-      let pc = { Location.line = start_line; col = 1; file = source_file; nLOC = 0; } in
+      let pc = { Location.line = start_line; col = 1; file = source_file; } in
       { instrs = [];
         cache = TypMap.empty;
         pc = pc;

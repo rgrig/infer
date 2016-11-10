@@ -392,21 +392,6 @@ let copy_file fname_from fname_to =
       cleanup();
       None
 
-(** count lines of code of files and keep processed results in a cache *)
-module FileLOC = struct
-  let include_loc_hash = Hashtbl.create 1
-
-  let reset () = Hashtbl.clear include_loc_hash
-
-  let file_get_loc fname =
-    try Hashtbl.find include_loc_hash fname with Not_found ->
-      let loc = match read_file fname with
-        | None -> 0
-        | Some l -> IList.length l in
-      Hashtbl.add include_loc_hash fname loc;
-      loc
-end
-
 (** type for files used for printing *)
 type outfile =
   { fname : string; (** name of the file *)
@@ -677,27 +662,3 @@ let rec create_path path =
   | Unix.Unix_error (Unix.ENOENT, _, _) ->
       create_path (Filename.dirname path);
       create_dir path
-
-let real_path path =
-  (* Splits a path into its parts. For example:
-     - (split "path/to/file") is [".", "path"; "to"; "file"]
-     - (split "/path/to/file") is ["/", "path"; "to"; "file"] *)
-  let split path =
-    let rec loop accu p =
-      match Filename.dirname p with
-      | d when d = p -> d :: accu
-      | d -> loop ((Filename.basename p) :: accu) d in
-    loop [] path in
-  let rec resolve p =
-    match Unix.readlink p with
-    | link when Filename.is_relative link ->
-        (* [p] is a relative symbolic link *)
-        resolve ((Filename.dirname p) // link)
-    | link ->
-        (* [p] is an absolute symbolic link *)
-        resolve link
-    | exception Unix.Unix_error(Unix.EINVAL, _, _) ->
-        (* [p] is not a symbolic link *)
-        p in
-  IList.fold_left
-    (fun resolved_path p -> resolve (resolved_path // p)) "" (split path)

@@ -143,8 +143,8 @@ end
 
 module Visitedset =
   Set.Make (struct
-    type t = Cfg.Node.id * int list
-    let compare (node_id1, _) (node_id2, _) = Cfg.Node.id_compare node_id1 node_id2
+    type t = Procdesc.Node.id * int list
+    let compare (node_id1, _) (node_id2, _) = Procdesc.Node.id_compare node_id1 node_id2
   end)
 
 let visited_str vis =
@@ -331,7 +331,7 @@ type payload =
 
 type summary =
   { dependency_map: dependency_map_t;  (** maps children procs to timestamp as last seen at the start of an analysys phase for this proc *)
-    nodes: Cfg.Node.id list; (** ids of cfg nodes of the procedure *)
+    nodes: Procdesc.Node.id list; (** ids of cfg nodes of the procedure *)
     phase: phase; (** in FOOTPRINT phase or in RE_EXECUTION PHASE *)
     payload: payload;  (** payload containing the result of some analysis *)
     sessions: int ref; (** Session number: how many nodes went trough symbolic execution *)
@@ -339,7 +339,7 @@ type summary =
     status: status; (** ACTIVE when the proc is being analyzed *)
     timestamp: int; (** Timestamp of the specs, >= 0, increased every time the specs change *)
     attributes : ProcAttributes.t; (** Attributes of the procedure *)
-    proc_desc_option : Cfg.Procdesc.t option;
+    proc_desc_option : Procdesc.t option;
   }
 
 type spec_tbl = (summary * DB.origin) Procname.Hash.t
@@ -573,6 +573,7 @@ let store_summary tenv pname (summ: summary) =
     else
       { summ2 with
         stats = { summ1.stats with stats_time = 0.0} } in
+  add_summary pname summ3 (* Make sure the summary in memory is identical to the saved one *);
   Serialization.to_file summary_serializer (res_dir_specs_filename pname) summ3
 
 (** Load procedure summary from the given file *)
@@ -627,8 +628,7 @@ let get_summary proc_name =
 let get_summary_unsafe s proc_name =
   match get_summary proc_name with
   | None ->
-      raise (Failure (
-          "[" ^ s ^ "] Specs.get_summary_unsafe: " ^ (Procname.to_string proc_name) ^ "Not_found"))
+      failwithf "[%s] Specs.get_summary_unsafe: %a Not found" s Procname.pp proc_name
   | Some summary -> summary
 
 (** Check if the procedure is from a library:
@@ -668,7 +668,7 @@ let proc_resolve_attributes proc_name =
 
 (** Like proc_resolve_attributes but start from a proc_desc. *)
 let pdesc_resolve_attributes proc_desc =
-  let proc_name = Cfg.Procdesc.get_proc_name proc_desc in
+  let proc_name = Procdesc.get_proc_name proc_desc in
   match proc_resolve_attributes proc_name with
   | Some proc_attributes ->
       proc_attributes
@@ -676,10 +676,10 @@ let pdesc_resolve_attributes proc_desc =
       (* this should not happen *)
       assert false
 
-let get_origin proc_name =
+let is_model proc_name =
   match get_summary_origin proc_name with
-  | Some (_, origin) -> origin
-  | None -> DB.Res_dir
+  | None -> false
+  | Some (_, origin) -> origin = DB.Models
 
 let summary_exists proc_name =
   match get_summary proc_name with
@@ -689,11 +689,8 @@ let summary_exists proc_name =
 let get_status summary =
   summary.status
 
-let is_active proc_name =
-  get_status (get_summary_unsafe "is_active" proc_name) = ACTIVE
-
-let is_inactive proc_name =
-  get_status (get_summary_unsafe "is_active" proc_name) = INACTIVE
+let is_active summary =
+  get_status summary = ACTIVE
 
 let get_timestamp summary =
   summary.timestamp
@@ -711,15 +708,11 @@ let get_attributes summary =
   summary.attributes
 
 (** Get the flag with the given key for the procedure, if any *)
-(* TODO get_flag should get a summary as parameter *)
-let get_flag proc_name key =
-  match get_summary proc_name with
-  | None -> None
-  | Some summary ->
-      let proc_flags = summary.attributes.ProcAttributes.proc_flags in
-      try
-        Some (Hashtbl.find proc_flags key)
-      with Not_found -> None
+let get_flag summary key =
+  let proc_flags = summary.attributes.ProcAttributes.proc_flags in
+  try
+    Some (Hashtbl.find proc_flags key)
+  with Not_found -> None
 
 (** Return the specs and parameters for the proc in the spec table *)
 let get_specs_formals proc_name =
@@ -736,10 +729,8 @@ let get_specs proc_name =
   fst (get_specs_formals proc_name)
 
 (** Return the current phase for the proc *)
-let get_phase proc_name =
-  match get_summary_origin proc_name with
-  | None -> raise (Failure ("Specs.get_phase: " ^ (Procname.to_string proc_name) ^ " Not_found"))
-  | Some (summary, _) -> summary.phase
+let get_phase summary =
+  summary.phase
 
 (** Set the current status for the proc *)
 let set_status proc_name status =

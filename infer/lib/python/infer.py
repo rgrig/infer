@@ -25,7 +25,6 @@ from inferlib import analyze, config, utils
 from inferlib.capture import make
 
 CAPTURE_PACKAGE = 'capture'
-TOP_LEVEL_ENVVAR = 'TOP_LEVEL_INFER_INSTANCE_ALREADY_RUNNING'
 
 # token that identifies the end of the options for infer and the beginning
 # of the compilation command
@@ -126,12 +125,6 @@ def create_argparser(parents=[]):
 
 
 def main():
-    toplevel_envvar_value = os.environ.get(TOP_LEVEL_ENVVAR, None)
-    is_toplevel_instance = False
-    if toplevel_envvar_value is None:
-        os.environ[TOP_LEVEL_ENVVAR] = '1'
-        is_toplevel_instance = True
-
     to_parse, cmd = split_args_to_parse()
     # get the module name (if any), then load it
     capture_module_name = os.path.basename(cmd[0]) if len(cmd) > 0 else None
@@ -172,10 +165,6 @@ def main():
                      ' '.join(map(utils.decode, sys.argv)))
         logging.info('Path to infer script %s (%s)', utils.decode(__file__),
                      os.path.realpath(utils.decode(__file__)))
-        if not args.buck:
-            # Should not print the Infer version when Infer is run by Buck.
-            # Buck reads the whole stderr output to compute the target key
-            logging.info(analyze.get_infer_version())
         logging.info('Platform: %s', utils.decode(platform.platform()))
 
         def log_getenv(k):
@@ -211,25 +200,9 @@ def main():
     if not (buck_not_in_compilation_database_mode or
             mod_name == 'javac' or
             mod_name == 'java'):
-        # Something should be already captured, otherwise analysis would fail
-        if not os.path.exists(os.path.join(args.infer_out, 'captured')):
-            print('There was nothing to analyze, exiting')
-            exit(os.EX_USAGE)
         analysis = analyze.AnalyzerWrapper(args)
         analysis.analyze_and_report()
         analysis.save_stats()
-
-    if is_toplevel_instance is True:
-        buck_out_for_stats_aggregator = None
-        if (mod_name == 'buck' and
-            os.path.isfile(
-                os.path.join(args.infer_out,
-                             config.INFER_BUCK_DEPS_FILENAME))):
-            buck_out_for_stats_aggregator = 'buck-out'
-        logging.info('Aggregating stats')
-        output = utils.run_infer_stats_aggregator(
-            args.infer_out, buck_out_for_stats_aggregator)
-        logging.info(output)
 
 if __name__ == '__main__':
     main()

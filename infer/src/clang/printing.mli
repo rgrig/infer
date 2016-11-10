@@ -9,15 +9,13 @@
 
 open! Utils
 
-val print_failure_info : string -> unit
-
 val print_tenv : Tenv.t -> unit
 
 val print_tenv_struct_unions : Tenv.t -> unit
 
 val print_procedures : Cfg.cfg -> unit
 
-val print_nodes : Cfg.Node.t list -> unit
+val print_nodes : Procdesc.Node.t list -> unit
 
 val instrs_to_string : Sil.instr list -> string
 

@@ -13,12 +13,10 @@ module L = Logging
 module F = Format
 
 module MockTraceElem = struct
-  type kind =
+  type t =
     | Kind1
     | Kind2
     | Footprint
-
-  type t = kind
 
   let call_site _ = CallSite.dummy
 
@@ -39,12 +37,16 @@ module MockTraceElem = struct
   let equal t1 t2 =
     compare t1 t2 = 0
 
-  let pp_kind fmt = function
+  let pp fmt = function
     | Kind1 -> F.fprintf fmt "Kind1"
     | Kind2 -> F.fprintf fmt "Kind2"
     | Footprint -> F.fprintf fmt "Footprint"
 
-  let pp = pp_kind
+  module Kind = struct
+    type nonrec t = t
+    let compare = compare
+    let pp = pp
+  end
 
   module Set = PrettyPrintable.MakePPSet(struct
       type nonrec t = t
@@ -52,7 +54,7 @@ module MockTraceElem = struct
       let pp_element = pp
     end)
 
-  let to_callee _ _ = assert false
+  let to_callee t _ = t
 end
 
 module MockSource = struct
@@ -83,8 +85,6 @@ module MockTrace = Trace.Make(struct
 
     let should_report source sink =
       Source.kind source = Sink.kind sink
-
-    let get_reportable_exn _ _ _ = assert false
   end)
 
 let tests =
@@ -133,9 +133,9 @@ let tests =
         "Appended trace should contain source and sink"
         (MockTrace.equal (MockTrace.append source_trace footprint_trace call_site) expected_trace);
 
-      let appended_trace = MockTrace.append MockTrace.initial source_trace call_site in
+      let appended_trace = MockTrace.append source_trace source_trace call_site in
       assert_bool
-        "Appending a trace without a sink should add a passthrough"
+        "Appending a trace that doesn't add a new source/sink should add a passthrough"
         (MockTrace.Passthroughs.mem
            (Passthrough.make call_site) (MockTrace.passthroughs appended_trace)) in
     "append">::append_ in

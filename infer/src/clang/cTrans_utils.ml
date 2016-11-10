@@ -35,26 +35,26 @@ let extract_exp_from_list el warning_string =
 module Nodes =
 struct
 
-  let prune_kind b = Cfg.Node.Prune_node(b, Sil.Ik_bexp , ((string_of_bool b)^" Branch"))
+  let prune_kind b = Procdesc.Node.Prune_node(b, Sil.Ik_bexp , ((string_of_bool b)^" Branch"))
 
   let is_join_node n =
-    match Cfg.Node.get_kind n with
-    | Cfg.Node.Join_node -> true
+    match Procdesc.Node.get_kind n with
+    | Procdesc.Node.Join_node -> true
     | _ -> false
 
   let is_prune_node n =
-    match Cfg.Node.get_kind n with
-    | Cfg.Node.Prune_node _ -> true
+    match Procdesc.Node.get_kind n with
+    | Procdesc.Node.Prune_node _ -> true
     | _ -> false
 
   let is_true_prune_node n =
-    match Cfg.Node.get_kind n with
-    | Cfg.Node.Prune_node(true, _, _) -> true
+    match Procdesc.Node.get_kind n with
+    | Procdesc.Node.Prune_node(true, _, _) -> true
     | _ -> false
 
   let create_node node_kind instrs loc context =
     let procdesc = CContext.get_procdesc context in
-    Cfg.Node.create loc node_kind instrs procdesc
+    Procdesc.create_node procdesc loc node_kind instrs
 
   let create_prune_node branch e_cond instrs_cond loc ik context =
     let (e_cond', _) = extract_exp_from_list e_cond
@@ -92,14 +92,14 @@ struct
       Hashtbl.find context.CContext.label_map label
     with Not_found ->
       let node_name = Format.sprintf "GotoLabel_%s" label in
-      let new_node = Nodes.create_node (Cfg.Node.Skip_node node_name) [] sil_loc context in
+      let new_node = Nodes.create_node (Procdesc.Node.Skip_node node_name) [] sil_loc context in
       Hashtbl.add context.CContext.label_map label new_node;
       new_node
 end
 
 type continuation = {
-  break: Cfg.Node.t list;
-  continue: Cfg.Node.t list;
+  break: Procdesc.Node.t list;
+  continue: Procdesc.Node.t list;
   return_temp : bool; (* true if temps should not be removed in the node but returned to ancestors *)
 }
 
@@ -127,7 +127,7 @@ type priority_node =
 (* it need to carry on the tranlsation. *)
 type trans_state = {
   context: CContext.t; (* current context of the translation *)
-  succ_nodes: Cfg.Node.t list; (* successor nodes in the cfg *)
+  succ_nodes: Procdesc.Node.t list; (* successor nodes in the cfg *)
   continuation: continuation option; (* current continuation *)
   priority: priority_node;
   var_exp_typ: (Exp.t * Typ.t) option;
@@ -137,8 +137,8 @@ type trans_state = {
 
 (* A translation result. It is returned by the translation function. *)
 type trans_result = {
-  root_nodes: Cfg.Node.t list; (* Top cfg nodes (root) created by the translation *)
-  leaf_nodes: Cfg.Node.t list; (* Bottom cfg nodes (leaf) created by the translate *)
+  root_nodes: Procdesc.Node.t list; (* Top cfg nodes (root) created by the translation *)
+  leaf_nodes: Procdesc.Node.t list; (* Bottom cfg nodes (leaf) created by the translate *)
   instrs: Sil.instr list; (* list of SIL instruction that need to be placed in cfg nodes of the parent*)
   exps: (Exp.t * Typ.t) list; (* SIL expressions resulting from translation of clang stmt *)
   initd_exps: Exp.t list;
@@ -158,7 +158,7 @@ let empty_res_trans = {
 let undefined_expression () = Exp.Var (Ident.create_fresh Ident.knormal)
 
 (** Collect the results of translating a list of instructions, and link up the nodes created. *)
-let collect_res_trans l =
+let collect_res_trans pdesc l =
   let rec collect l rt =
     match l with
     | [] -> rt
@@ -170,7 +170,9 @@ let collect_res_trans l =
           if rt'.leaf_nodes <> [] then rt'.leaf_nodes
           else rt.leaf_nodes in
         if rt'.root_nodes <> [] then
-          IList.iter (fun n -> Cfg.Node.set_succs_exn n rt'.root_nodes []) rt.leaf_nodes;
+          IList.iter
+            (fun n -> Procdesc.node_set_succs_exn pdesc n rt'.root_nodes [])
+            rt.leaf_nodes;
         collect l'
           { root_nodes = root_nodes;
             leaf_nodes = leaf_nodes;
@@ -238,14 +240,16 @@ struct
   (* deals with creating or not a cfg node depending of owning the *)
   (* priority_node. It returns nodes, ids, instrs that should be passed to parent *)
   let compute_results_to_parent trans_state loc nd_name stmt_info res_states_children =
-    let res_state = collect_res_trans res_states_children in
+    let res_state = collect_res_trans trans_state.context.procdesc res_states_children in
     let create_node = own_priority_node trans_state.priority stmt_info && res_state.instrs <> [] in
     if create_node then
       (* We need to create a node *)
-      let node_kind = Cfg.Node.Stmt_node (nd_name) in
+      let node_kind = Procdesc.Node.Stmt_node (nd_name) in
       let node = Nodes.create_node node_kind res_state.instrs loc trans_state.context in
-      Cfg.Node.set_succs_exn node trans_state.succ_nodes [];
-      IList.iter (fun leaf -> Cfg.Node.set_succs_exn leaf [node] []) res_state.leaf_nodes;
+      Procdesc.node_set_succs_exn trans_state.context.procdesc node trans_state.succ_nodes [];
+      IList.iter
+        (fun leaf -> Procdesc.node_set_succs_exn trans_state.context.procdesc leaf [node] [])
+        res_state.leaf_nodes;
       (* Invariant: if root_nodes is empty then the params have not created a node.*)
       let root_nodes = (if res_state.root_nodes <> [] then res_state.root_nodes
                         else [node]) in
@@ -348,11 +352,11 @@ let objc_new_trans trans_state loc stmt_info cls_name function_type =
 
 let new_or_alloc_trans trans_state loc stmt_info type_ptr class_name_opt selector =
   let tenv = trans_state.context.CContext.tenv in
-  let function_type = CTypes_decl.type_ptr_to_sil_type tenv type_ptr in
+  let function_type = CType_decl.type_ptr_to_sil_type tenv type_ptr in
   let class_name =
     match class_name_opt with
     | Some class_name -> class_name
-    | None -> CTypes.classname_of_type function_type in
+    | None -> CType.classname_of_type function_type in
   if selector = CFrontend_config.alloc then
     alloc_trans trans_state loc stmt_info function_type true None
   else if selector = CFrontend_config.new_str then
@@ -371,7 +375,7 @@ let cpp_new_trans sil_loc function_type size_exp_opt =
 let create_cast_instrs exp cast_from_typ cast_to_typ sil_loc =
   let ret_id = Ident.create_fresh Ident.knormal in
   let ret_id_typ = Some (ret_id, cast_to_typ) in
-  let typ = CTypes.remove_pointer_to_typ cast_to_typ in
+  let typ = CType.remove_pointer_to_typ cast_to_typ in
   let sizeof_exp = Exp.Sizeof (typ, None, Subtype.exact) in
   let pname = BuiltinDecl.__objc_cast in
   let args = [(exp, cast_from_typ); (sizeof_exp, Typ.Tint Typ.IULong)] in
@@ -438,20 +442,20 @@ let cast_operation trans_state cast_kind exps cast_typ sil_loc is_objc_bridged =
         (Clang_ast_j.string_of_cast_kind cast_kind);
       ([], (exp, cast_typ))
 
-let trans_assertion_failure sil_loc context =
+let trans_assertion_failure sil_loc (context : CContext.t) =
   let assert_fail_builtin = Exp.Const (Const.Cfun BuiltinDecl.__infer_fail) in
   let args = [Exp.Const (Const.Cstr Config.default_failure_name), Typ.Tvoid] in
   let call_instr = Sil.Call (None, assert_fail_builtin, args, sil_loc, CallFlags.default) in
-  let exit_node = Cfg.Procdesc.get_exit_node (CContext.get_procdesc context)
+  let exit_node = Procdesc.get_exit_node (CContext.get_procdesc context)
   and failure_node =
-    Nodes.create_node (Cfg.Node.Stmt_node "Assertion failure") [call_instr] sil_loc context in
-  Cfg.Node.set_succs_exn failure_node [exit_node] [];
+    Nodes.create_node (Procdesc.Node.Stmt_node "Assertion failure") [call_instr] sil_loc context in
+  Procdesc.node_set_succs_exn context.procdesc failure_node [exit_node] [];
   { empty_res_trans with root_nodes = [failure_node]; }
 
-let trans_assume_false sil_loc context succ_nodes =
+let trans_assume_false sil_loc (context : CContext.t) succ_nodes =
   let instrs_cond = [Sil.Prune (Exp.zero, sil_loc, true, Sil.Ik_land_lor)] in
   let prune_node = Nodes.create_node (Nodes.prune_kind true) instrs_cond sil_loc context in
-  Cfg.Node.set_succs_exn prune_node succ_nodes [];
+  Procdesc.node_set_succs_exn context.procdesc prune_node succ_nodes [];
   { empty_res_trans with root_nodes = [prune_node]; leaf_nodes = [prune_node] }
 
 let trans_assertion trans_state sil_loc =
@@ -571,7 +575,6 @@ let rec get_type_from_exp_stmt stmt =
   | DeclRefExpr(_, _, _, info) -> do_decl_ref_exp info
   | _ ->
       Logging.err_debug "Failing with: %s@\n%!" (Clang_ast_j.string_of_stmt stmt);
-      Printing.print_failure_info "";
       assert false
 
 module Self =
@@ -583,8 +586,8 @@ struct
     if is_superinstance mei then
       let typ, self_expr, ins =
         let t' =
-          CTypes.add_pointer_to_typ
-            (CTypes_decl.get_type_curr_class_objc context.CContext.curr_class) in
+          CType.add_pointer_to_typ
+            (CType_decl.get_type_curr_class_objc context.CContext.curr_class) in
         let e = Exp.Lvar (Pvar.mk (Mangled.from_string CFrontend_config.self) procname) in
         let id = Ident.create_fresh Ident.knormal in
         t', Exp.Var id, [Sil.Load (id, e, t', loc)] in
@@ -661,7 +664,7 @@ let rec contains_opaque_value_expr s =
 
 (* checks if a unary operator is a logic negation applied to integers*)
 let is_logical_negation_of_int tenv ei uoi =
-  match CTypes_decl.type_ptr_to_sil_type tenv ei.Clang_ast_t.ei_type_ptr, uoi.Clang_ast_t.uoi_kind with
+  match CType_decl.type_ptr_to_sil_type tenv ei.Clang_ast_t.ei_type_ptr, uoi.Clang_ast_t.uoi_kind with
   | Typ.Tint _,`LNot -> true
   | _, _ -> false
 
@@ -671,7 +674,7 @@ let rec is_block_stmt stmt =
   | BlockExpr _ -> true
   | DeclRefExpr (_, _, expr_info, _) ->
       let tp = expr_info.Clang_ast_t.ei_type_ptr in
-      CTypes.is_block_type tp
+      CType.is_block_type tp
   | _ -> (match snd (Clang_ast_proj.get_stmt_tuple stmt) with
       | [sub_stmt] -> is_block_stmt sub_stmt
       | _ -> false)

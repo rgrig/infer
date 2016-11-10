@@ -32,7 +32,7 @@ class Interprocedural {
   }
 
   public static Object returnSourceIndirect() {
-    return InferTaint.inferSecretSource();
+    return returnSourceDirect();
   }
 
   public static void returnSourceDirectBad() {
@@ -195,6 +195,13 @@ class Interprocedural {
     getGlobalThenCallSink();
   }
 
+  // this should report two alarms, not three
+  public void callSinkNoTripleReportBad() {
+    Object source = InferTaint.inferSecretSource();
+    callSinkParam1(source, null);
+    callSinkParam2(null, source);
+  }
+
   /** passthrough tests */
 
   public static void singlePassthroughBad() {
@@ -264,6 +271,47 @@ class Interprocedural {
   // empty.
   public void FN_callSinkThenDivergeBad() {
     callSinkThenDiverge(InferTaint.inferSecretSource());
+  }
+
+  public static void assignSourceToParam(Object o) {
+    o = InferTaint.inferSecretSource();
+  }
+
+  // Java is call-by-value; this is fine
+  public static void assignSourceToParamOk() {
+    Object o = null;
+    assignSourceToParam(o);
+    InferTaint.inferSensitiveSink(o);
+  }
+
+  public static void swapParams(Object o1, Object o2) {
+    o1 = o2;
+  }
+
+  public static void swapParamsOk() {
+    Object notASource = null;
+    Object source = InferTaint.inferSecretSource();
+    swapParams(notASource, source);
+    InferTaint.inferSensitiveSink(notASource);
+  }
+
+  static void sourceAndSink(Obj o) {
+    InferTaint.inferSensitiveSink(o.f);
+    o.f = InferTaint.inferSecretSource();
+  }
+
+  static void callSourceAndSinkOk(Obj o) {
+    sourceAndSink(o);
+  }
+
+  static void callSourceAndSinkBad1(Obj o) {
+    sourceAndSink(o);
+    InferTaint.inferSensitiveSink(InferTaint.inferSecretSource());
+  }
+
+  static void callSourceAndSinkBad2(Obj o) {
+    o.f = InferTaint.inferSecretSource();
+    sourceAndSink(o);
   }
 
 }

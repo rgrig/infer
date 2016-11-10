@@ -6,13 +6,14 @@
 # of patent rights can be found in the PATENTS file in the same directory.
 
 ROOT_DIR = .
--include $(ROOT_DIR)/Makefile.config
+include $(ROOT_DIR)/Makefile.config
 
 ifeq ($(IS_FACEBOOK_TREE),yes)
-# With this makefile, all targets will default to have right env variables
-# pointing to the sandbox
-	-include $(ROOT_DIR)/facebook//Makefile.env
+# With this makefile, all targets will default to have right env variables pointing to the sandbox
+  include $(ROOT_DIR)/facebook//Makefile.env
 endif
+
+BUILD_SYSTEMS_TESTS = ant assembly project_root_rel
 
 DIRECT_TESTS=
 ifeq ($(BUILD_C_ANALYZERS),yes)
@@ -104,10 +105,6 @@ endif
 
 .PHONY: test_oss_build
 test_oss_build: clang_plugin
-# make sure we don't break the opensource build
-ifeq ($(IS_FACEBOOK_TREE),yes)
-	$(MAKE) -C facebook clean
-endif
 	$(MAKE) -C $(SRC_DIR) EXTRA_DEPS=opensource TEST_BUILD_DIR=$(BUILD_DIR)/opensource test_build
 
 .PHONY: test_build
@@ -127,10 +124,14 @@ frontend_replace: $(DIRECT_TESTS_REPLACE)
 
 define gen_direct_test_rule
 .PHONY: $(1)
-$(1):
-	$(MAKE) -C \
-	  infer/tests/codetoanalyze/$(shell printf $(1) | cut -f 1 -d _)/$(shell printf $(1) | cut -f 2 -d _) \
-	  $(shell printf $(1) | cut -f 3 -d _)
+$(1): infer
+	($(MAKE) -C \
+	  $(INFER_DIR)/tests/codetoanalyze/$(shell printf $(1) | cut -f 1 -d _)/$(shell printf $(1) | cut -f 2 -d _) \
+	  $(shell printf $(1) | cut -f 3 -d _) \
+	3>&1 1>&2- 2>&3- ) \
+	| grep -v "warning: ignoring old commands for target" \
+	| grep -v "warning: overriding commands for target" \
+	; exit $$$${PIPESTATUS[0]}
 endef
 
 $(foreach test,$(DIRECT_TESTS) $(DIRECT_TESTS_REPLACE),\
@@ -138,19 +139,22 @@ $(foreach test,$(DIRECT_TESTS) $(DIRECT_TESTS_REPLACE),\
         $(call gen_direct_test_rule,$(test))))
 
 .PHONY: direct_tests
-direct_tests:
-	$(MAKE) -j $(NCPU) -l $(NCPU) $(DIRECT_TESTS)
+direct_tests: $(DIRECT_TESTS)
+
+define gen_build_system_test_rule
+.PHONY: $(1)_test
+build_$(1)_test: infer
+	$(MAKE) -C $(INFER_DIR)/tests/build_systems/$(1) test
+endef
+
+$(foreach test,$(BUILD_SYSTEMS_TESTS), $(eval $(call gen_build_system_test_rule,$(test))))
+
+.PHONY: build_systems_tests
+build_systems_tests: infer $(foreach test,$(BUILD_SYSTEMS_TESTS),build_$(test)_test)
+	NO_BUCKD=1 $(INFER_DIR)/tests/build_systems/build_integration_tests.py
 
 .PHONY: buck_test
-buck_test: infer
-	$(MAKE) direct_tests
-	NO_BUCKD=1 ./infer/tests/build_systems/build_integration_tests.py
-
-.PHONY: buck_test_xml
-buck_test_xml: infer
-	$(MAKE) direct_tests
-	buck test --xml test.xml # TODO: generate test.xml with test results
-	NO_BUCKD=1 ./infer/tests/build_systems/build_integration_tests.py
+buck_test: direct_tests build_systems_tests
 
 .PHONY: inferTraceBugs_test
 inferTraceBugs_test: infer
@@ -170,7 +174,7 @@ inferTraceBugs_test: infer
 
 .PHONY: check_missing_mli
 check_missing_mli:
-	@for x in $$(find infer/src -name "*.ml" -or -name "*.re"); do \
+	@for x in $$(find $(INFER_DIR)/src -name "*.ml" -or -name "*.re"); do \
 	    test -f "$$x"i || echo Missing "$$x"i; done
 
 .PHONY: toplevel
@@ -179,23 +183,36 @@ toplevel: infer
 
 .PHONY: inferScriptMode_test
 inferScriptMode_test: toplevel
-	INFER_REPL_BINARY=ocaml ./scripts/infer_repl ./infer/tests/repl/infer_batch_script.ml
+	$(call silent_on_success,\
+	 INFER_REPL_BINARY=ocaml $(SCRIPT_DIR)/infer_repl $(INFER_DIR)/tests/repl/infer_batch_script.ml)
+
+.PHONY: checkCopyright
+checkCopyright:
+	$(MAKE) -C $(SRC_DIR) checkCopyright
+
+.PHONY: run-test
+run-test: test_build ocaml_unit_test buck_test inferTraceBugs_test inferScriptMode_test checkCopyright
+	$(MAKE) -C $(SRC_DIR) mod_dep.dot
 
 .PHONY: test
-test: test_build ocaml_unit_test buck_test inferTraceBugs_test inferScriptMode_test
-	$(MAKE) -C $(SRC_DIR) mod_dep.dot
-
-.PHONY: test_xml
-test_xml: test_build ocaml_unit_test buck_test_xml inferTraceBugs_test
-	$(MAKE) -C $(SRC_DIR) mod_dep.dot
+test:
+ifeq (,$(findstring s,$(MAKEFLAGS)))
+	@$(MAKE) run-test && echo "ALL TESTS PASSED"
+else
+	@$(MAKE) run-test
+endif
 
 .PHONY: quick-test
 quick-test: test_this_build ocaml_unit_test
 
 .PHONY: test-replace
 test-replace:
-	@for file in $$(find infer/tests -name "*.exp.test"); do \
+	@for file in $$(find $(INFER_DIR)/tests -name "*.exp.test"); do \
 	    mv -f $$file $$(dirname $$file)/$$(basename -s .exp.test $$file).exp; done
+	@for file in $$(find $(INFER_DIR)/tests -name "*.test.dot"); do \
+	    mv -f $$file $$(dirname $$file)/$$(basename -s .test.dot $$file).dot; done
+	INFER_RECORD_INTEGRATION_TESTS=1 NO_BUCKD=1 \
+	  $(INFER_DIR)/tests/build_systems/build_integration_tests.py
 
 .PHONY: uninstall
 uninstall:
@@ -270,7 +287,6 @@ ifeq ($(BUILD_C_ANALYZERS),yes)
 	$(INSTALL_PROGRAM) -C $(INFERCLANG_BIN) $(DESTDIR)$(libdir)/infer/infer/bin/
 	(cd $(DESTDIR)$(libdir)/infer/infer/bin/ && \
 	 $(LN_S) -f $(INFERCLANG_BIN) $(INFERCLANG_BIN)++)
-	$(INSTALL_PROGRAM) -C $(INFER_BUCK_COMPILATION_DATABASE_BIN) $(DESTDIR)$(libdir)/infer/infer/bin/
 endif
 ifneq ($(XCODE_SELECT),no)
 	@for i in $$(find infer/lib/xcode_wrappers/*); do \
@@ -297,7 +313,6 @@ endif
 	$(INSTALL_PROGRAM) -C $(INFER_BIN) $(DESTDIR)$(libdir)/infer/infer/bin/
 	$(INSTALL_PROGRAM) -C $(INFERANALYZE_BIN) $(DESTDIR)$(libdir)/infer/infer/bin/
 	$(INSTALL_PROGRAM) -C $(INFERPRINT_BIN) $(DESTDIR)$(libdir)/infer/infer/bin/
-	$(INSTALL_PROGRAM) -C $(INFERSTATS_BIN) $(DESTDIR)$(libdir)/infer/infer/bin/
 	(cd $(DESTDIR)$(bindir)/ && \
 	 $(REMOVE) infer && \
 	 $(LN_S) $(libdir)/infer/infer/bin/infer infer)
@@ -311,7 +326,6 @@ endif
 
 .PHONY: clean
 clean:
-	$(REMOVE) test.xml
 ifeq ($(IS_RELEASE_TREE),no)
 ifeq ($(BUILD_C_ANALYZERS),yes)
 	$(MAKE) -C $(FCP_DIR) clean
@@ -327,12 +341,12 @@ ifeq ($(IS_FACEBOOK_TREE),yes)
 	$(MAKE) -C facebook clean
 endif
 	$(MAKE) -C $(DEPENDENCIES_DIR)/ocamldot clean
-	find infer/tests -name '*.o' -or -name '*.o.sh' -delete
+	find $(INFER_DIR)/tests -name '*.o' -or -name '*.o.sh' -delete
 
 .PHONY: conf-clean
 conf-clean: clean
-	$(REMOVE) infer/lib/python/inferlib/*.pyc
-	$(REMOVE) infer/lib/python/inferlib/*/*.pyc
+	$(REMOVE) $(PYTHON_DIR)/inferlib/*.pyc
+	$(REMOVE) $(PYTHON_DIR)/inferlib/*/*.pyc
 	$(REMOVE) .buckversion
 	$(REMOVE) Makefile.config
 	$(REMOVE) acinclude.m4
@@ -341,10 +355,10 @@ conf-clean: clean
 	$(REMOVE) config.log
 	$(REMOVE) config.status
 	$(REMOVE) configure
-	$(REMOVE_DIR) infer/models/c/out/
-	$(REMOVE_DIR) infer/models/cpp/out/
-	$(REMOVE_DIR) infer/models/java/infer-out/
-	$(REMOVE_DIR) infer/models/objc/out/
+	$(REMOVE_DIR) $(MODELS_DIR)/c/out/
+	$(REMOVE_DIR) $(MODELS_DIR)/cpp/out/
+	$(REMOVE_DIR) $(MODELS_DIR)/java/infer-out/
+	$(REMOVE_DIR) $(MODELS_DIR)/objc/out/
 
 # print any variable for Makefile debugging
 print-%:

@@ -26,21 +26,23 @@ struct
     Logging.out_debug
       "@\n@\n>>---------- ADDING METHOD: '%s' ---------<<@\n@." (Procname.to_string procname);
     try
-      (match Cfg.Procdesc.find_from_name cfg procname with
+      (match Cfg.find_proc_desc_from_name cfg procname with
        | Some procdesc ->
-           if (Cfg.Procdesc.is_defined procdesc && not (model_exists procname)) then
+           if (Procdesc.is_defined procdesc && not (model_exists procname)) then
              (let context =
                 CContext.create_context trans_unit_ctx tenv cg cfg procdesc class_decl_opt
                   has_return_param is_objc_method outer_context_opt in
-              let start_node = Cfg.Procdesc.get_start_node procdesc in
-              let exit_node = Cfg.Procdesc.get_exit_node procdesc in
+              let start_node = Procdesc.get_start_node procdesc in
+              let exit_node = Procdesc.get_exit_node procdesc in
               Logging.out_debug
                 "\n\n>>---------- Start translating body of function: '%s' ---------<<\n@."
                 (Procname.to_string procname);
               let meth_body_nodes = T.instructions_trans context body extra_instrs exit_node in
-              Cfg.Node.add_locals_ret_declaration start_node (Cfg.Procdesc.get_locals procdesc);
-              Cfg.Node.set_succs_exn start_node meth_body_nodes [];
-              Cg.add_defined_node (CContext.get_cg context) (Cfg.Procdesc.get_proc_name procdesc))
+              let proc_attributes = Procdesc.get_attributes procdesc in
+              Procdesc.Node.add_locals_ret_declaration
+                start_node proc_attributes (Procdesc.get_locals procdesc);
+              Procdesc.node_set_succs_exn procdesc start_node meth_body_nodes [];
+              Cg.add_defined_node (CContext.get_cg context) (Procdesc.get_proc_name procdesc))
        | None -> ())
     with
     | Not_found -> ()
@@ -50,7 +52,7 @@ struct
         assert false
     | Assert_failure (file, line, column) ->
         Logging.out "Fatal error: exception Assert_failure(%s, %d, %d)\n%!" file line column;
-        Cfg.Procdesc.remove cfg procname;
+        Cfg.remove_proc_desc cfg procname;
         CMethod_trans.create_external_procdesc cfg procname is_objc_method None;
         ()
 
@@ -110,7 +112,7 @@ struct
                     let attrs = { (ProcAttributes.default procname Config.Clang) with
                                   loc = loc;
                                   objc_accessor = property_accessor; } in
-                    ignore (Cfg.Procdesc.create cfg attrs)
+                    ignore (Cfg.create_proc_desc cfg attrs)
                 | _ -> ()) in
              process_accessor obj_c_property_decl_info.Clang_ast_t.opdi_getter_method ~getter:true;
              process_accessor obj_c_property_decl_info.Clang_ast_t.opdi_setter_method ~getter:false
@@ -138,7 +140,6 @@ struct
 
   let should_translate_decl trans_unit_ctx dec decl_trans_context =
     let info = Clang_ast_proj.get_decl_tuple dec in
-    CLocation.update_curr_file trans_unit_ctx info;
     let source_range = info.Clang_ast_t.di_source_range in
     let translate_when_used = match dec with
       | Clang_ast_t.FunctionDecl (_, name_info, _, _)
@@ -176,31 +177,31 @@ struct
            let name = Ast_utils.get_qualified_name name_info in
            let curr_class = ObjcInterface_decl.get_curr_class name oi_decl_info in
            ignore
-             (ObjcInterface_decl.interface_declaration CTypes_decl.type_ptr_to_sil_type tenv dec);
+             (ObjcInterface_decl.interface_declaration CType_decl.type_ptr_to_sil_type tenv dec);
            process_methods trans_unit_ctx tenv cg cfg curr_class decl_list
 
        | ObjCProtocolDecl(_, name_info, decl_list, _, _) ->
            let name = Ast_utils.get_qualified_name name_info in
            let curr_class = CContext.ContextProtocol name in
-           ignore (ObjcProtocol_decl.protocol_decl CTypes_decl.type_ptr_to_sil_type tenv dec);
+           ignore (ObjcProtocol_decl.protocol_decl CType_decl.type_ptr_to_sil_type tenv dec);
            process_methods trans_unit_ctx tenv cg cfg curr_class decl_list
 
        | ObjCCategoryDecl(_, name_info, decl_list, _, ocdi) ->
            let name = Ast_utils.get_qualified_name name_info in
            let curr_class = ObjcCategory_decl.get_curr_class_from_category_decl name ocdi in
-           ignore (ObjcCategory_decl.category_decl CTypes_decl.type_ptr_to_sil_type tenv dec);
+           ignore (ObjcCategory_decl.category_decl CType_decl.type_ptr_to_sil_type tenv dec);
            process_methods trans_unit_ctx tenv cg cfg curr_class decl_list
 
        | ObjCCategoryImplDecl(_, name_info, decl_list, _, ocidi) ->
            let name = Ast_utils.get_qualified_name name_info in
            let curr_class = ObjcCategory_decl.get_curr_class_from_category_impl name ocidi in
-           ignore (ObjcCategory_decl.category_impl_decl CTypes_decl.type_ptr_to_sil_type tenv dec);
+           ignore (ObjcCategory_decl.category_impl_decl CType_decl.type_ptr_to_sil_type tenv dec);
            process_methods trans_unit_ctx tenv cg cfg curr_class decl_list;
 
        | ObjCImplementationDecl(decl_info, _, decl_list, _, idi) ->
            let curr_class = ObjcInterface_decl.get_curr_class_impl idi in
            let class_name = CContext.get_curr_class_name curr_class in
-           let type_ptr_to_sil_type = CTypes_decl.type_ptr_to_sil_type in
+           let type_ptr_to_sil_type = CType_decl.type_ptr_to_sil_type in
            ignore (ObjcInterface_decl.interface_impl_declaration type_ptr_to_sil_type tenv dec);
            CMethod_trans.add_default_method_for_class trans_unit_ctx class_name decl_info;
            process_methods trans_unit_ctx tenv cg cfg curr_class decl_list;
@@ -257,7 +258,7 @@ struct
           | _ -> false in
         let method_decls, no_method_decls = IList.partition is_method_decl decl_list in
         IList.iter translate no_method_decls;
-        ignore (CTypes_decl.add_types_from_decl_to_tenv tenv dec);
+        ignore (CType_decl.add_types_from_decl_to_tenv tenv dec);
         IList.iter translate method_decls
     | EnumDecl _ -> ignore (CEnum_decl.enum_decl dec)
     | LinkageSpecDecl (_, decl_list, _) ->

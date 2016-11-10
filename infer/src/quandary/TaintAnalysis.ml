@@ -21,9 +21,7 @@ module Summary = Summary.Make(struct
       { payload with Specs.quandary = Some summary; }
 
     let read_from_payload payload =
-      match payload.Specs.quandary with
-      | Some summary -> summary
-      | None -> []
+      payload.Specs.quandary
   end)
 
 module Make (TaintSpec : TaintSpec.S) = struct
@@ -101,7 +99,7 @@ module Make (TaintSpec : TaintSpec.S) = struct
       | Some _ as node_opt ->
           node_opt
       | None when is_rooted_in_environment access_path proc_data.extras ->
-          let call_site = CallSite.make (Cfg.Procdesc.get_proc_name proc_data.ProcData.pdesc) loc in
+          let call_site = CallSite.make (Procdesc.get_proc_name proc_data.ProcData.pdesc) loc in
           let trace =
             TraceDomain.of_source (TraceDomain.Source.make_footprint access_path call_site) in
           Some (TaintDomain.make_normal_leaf trace)
@@ -146,7 +144,57 @@ module Make (TaintSpec : TaintSpec.S) = struct
       let id_ap = AccessPath.Exact (AccessPath.of_id ret_id ret_typ) in
       TaintDomain.add_trace id_ap trace access_tree
 
-    let add_sinks sinks actuals ({ Domain.access_tree; id_map; } as astate) proc_data loc =
+    (* log any reportable source-sink flows in [trace] and remove logged sinks from the trace *)
+    let report_and_filter_trace trace callee_site (proc_data : formal_map ProcData.t) =
+      let trace_of_pname pname =
+        match Summary.read_summary proc_data.tenv proc_data.pdesc pname with
+        | Some summary ->
+            let join_output_trace acc { QuandarySummary.output_trace; } =
+              TraceDomain.join (TaintSpec.of_summary_trace output_trace) acc in
+            IList.fold_left join_output_trace TraceDomain.initial summary
+        | None ->
+            TraceDomain.initial in
+
+      let pp_path_short fmt (cur_passthroughs, sources_passthroughs, sinks_passthroughs) =
+        let pp_passthroughs fmt passthroughs =
+          if not (Passthrough.Set.is_empty passthroughs)
+          then F.fprintf fmt "(via %a)" Passthrough.Set.pp passthroughs in
+        let source = fst (IList.hd (IList.rev sources_passthroughs)) in
+        let sink = fst (IList.hd (IList.rev sinks_passthroughs)) in
+        F.fprintf
+          fmt
+          "Error: %a -> %a %a"
+          TraceDomain.Source.pp source
+          TraceDomain.Sink.pp sink
+          pp_passthroughs cur_passthroughs in
+
+      match TraceDomain.get_reportable_paths trace ~trace_of_pname with
+      | [] ->
+          trace
+      | paths ->
+          let report_error path =
+            let caller_pname = Procdesc.get_proc_name proc_data.pdesc in
+            let msg = Localise.to_string Localise.quandary_taint_error in
+            let trace_str = F.asprintf "%a" pp_path_short path in
+            let exn = Exceptions.Checkers (msg, Localise.verbatim_desc trace_str) in
+            Reporting.log_error caller_pname ~loc:(CallSite.loc callee_site) exn in
+
+          let reported_sinks =
+            IList.map
+              (fun ((_, sources, sinks) as path) ->
+                 let source = fst (IList.hd (IList.rev (sources))) in
+                 let sink = fst (IList.hd (IList.rev sinks)) in
+                 if not (CallSite.equal
+                           (TraceDomain.Source.call_site source)
+                           (TraceDomain.Sink.call_site sink))
+                 then report_error path;
+                 sink)
+              paths in
+          (* got new source -> sink flow. report it, but don't add the sink to the trace. if we do,
+             we will double-report later on. *)
+          TraceDomain.filter_sinks trace reported_sinks
+
+    let add_sinks sinks actuals ({ Domain.access_tree; id_map; } as astate) proc_data callee_site =
       let f_resolve_id = resolve_id id_map in
       (* add [sink] to the trace associated with the [formal_num]th actual *)
       let add_sink_to_actual access_tree_acc (sink_param : TraceDomain.Sink.t Sink.parameter) =
@@ -166,21 +214,16 @@ module Make (TaintSpec : TaintSpec.S) = struct
               then AccessPath.Abstracted actual_ap_raw
               else AccessPath.Exact actual_ap_raw in
             begin
-              match access_path_get_node actual_ap access_tree_acc proc_data loc with
+              match access_path_get_node
+                      actual_ap access_tree_acc proc_data (CallSite.loc callee_site) with
               | Some (actual_trace, _) ->
                   (* add callee_pname to actual trace as a sink *)
-                  let actual_trace' = TraceDomain.add_sink sink_param.sink actual_trace in
-                  begin
-                    match TraceDomain.get_reportable_exns actual_trace' with
-                    | [] ->
-                        TaintDomain.add_trace actual_ap actual_trace' access_tree_acc
-                    | reportable_exns ->
-                        (* got new source -> sink flow. report it, but don't update the trace. if we
-                           update the trace, we will double-report later on. *)
-                        let pname = Cfg.Procdesc.get_proc_name proc_data.ProcData.pdesc in
-                        IList.iter (Reporting.log_error pname ~loc) reportable_exns;
-                        access_tree_acc
-                  end
+                  let actual_trace' =
+                    report_and_filter_trace
+                      (TraceDomain.add_sink sink_param.sink actual_trace)
+                      callee_site
+                      proc_data in
+                  TaintDomain.add_trace actual_ap actual_trace' access_tree_acc
               | None ->
                   access_tree_acc
             end
@@ -239,7 +282,10 @@ module Make (TaintSpec : TaintSpec.S) = struct
         let caller_ap_trace_opt =
           match in_out_summary.output with
           | Out_return ret_ap ->
-              Some (apply_return ret_ap ret_id, TraceDomain.initial)
+              let caller_ret_ap = apply_return ret_ap ret_id in
+              let ret_trace =
+                access_path_get_trace caller_ret_ap access_tree proc_data callee_loc in
+              Some (caller_ret_ap, ret_trace)
           | Out_formal (formal_num, formal_ap) ->
               get_actual_ap_trace formal_num formal_ap access_tree
           | Out_global global_ap ->
@@ -250,10 +296,8 @@ module Make (TaintSpec : TaintSpec.S) = struct
             let output_trace = TaintSpec.of_summary_trace in_out_summary.output_trace in
             let appended_trace = TraceDomain.append in_trace output_trace callee_site in
             let joined_trace = TraceDomain.join caller_trace appended_trace in
-            IList.iter
-              (Reporting.log_error (CallSite.pname callee_site) ~loc:callee_loc)
-              (TraceDomain.get_reportable_exns joined_trace);
-            TaintDomain.add_trace caller_ap joined_trace access_tree
+            let filtered_trace = report_and_filter_trace joined_trace callee_site proc_data in
+            TaintDomain.add_trace caller_ap filtered_trace access_tree
         | None ->
             access_tree in
 
@@ -267,6 +311,12 @@ module Make (TaintSpec : TaintSpec.S) = struct
           analyze_id_assignment (Var.of_id lhs_id) rhs_exp rhs_typ astate
       | Sil.Store (Exp.Lvar lhs_pvar, lhs_typ, rhs_exp, _) when Pvar.is_frontend_tmp lhs_pvar ->
           analyze_id_assignment (Var.of_pvar lhs_pvar) rhs_exp lhs_typ astate
+      | Sil.Store (Exp.Lvar lhs_pvar, _, Exp.Exn _, _) when Pvar.is_return lhs_pvar ->
+          (* the Java frontend translates `throw Exception` as `return Exception`, which is a bit
+             wonky. this tranlsation causes problems for us in computing a summary when an
+             exception is "returned" from a void function. skip code like this for now
+             (fix via t14159157 later *)
+          astate
       | Sil.Store (lhs_exp, lhs_typ, rhs_exp, loc) ->
           let lhs_access_path =
             match AccessPath.of_lhs_exp lhs_exp lhs_typ ~f_resolve_id with
@@ -276,7 +326,7 @@ module Make (TaintSpec : TaintSpec.S) = struct
                 failwithf
                   "Assignment to unexpected lhs expression %a in proc %a at loc %a"
                   Exp.pp lhs_exp
-                  Procname.pp (Cfg.Procdesc.get_proc_name (proc_data.pdesc))
+                  Procname.pp (Procdesc.get_proc_name (proc_data.pdesc))
                   Location.pp loc in
           let astate' =
             analyze_assignment
@@ -307,7 +357,7 @@ module Make (TaintSpec : TaintSpec.S) = struct
                 failwithf
                   "Unexpected cast %a in procedure %a at line %a"
                   (Sil.pp_instr pe_text) instr
-                  Procname.pp (Cfg.Procdesc.get_proc_name (proc_data.pdesc))
+                  Procname.pp (Procdesc.get_proc_name (proc_data.pdesc))
                   Location.pp loc
           else
             astate
@@ -319,7 +369,7 @@ module Make (TaintSpec : TaintSpec.S) = struct
             let sinks = TraceDomain.Sink.get call_site actuals in
             let astate_with_sink = match sinks with
               | [] -> astate
-              | sinks -> add_sinks sinks actuals astate proc_data callee_loc in
+              | sinks -> add_sinks sinks actuals astate proc_data call_site in
 
             let source = TraceDomain.Source.get call_site in
             let astate_with_source =
@@ -347,10 +397,9 @@ module Make (TaintSpec : TaintSpec.S) = struct
 
             Domain.join astate_acc astate_with_summary in
 
-          (* highly polymorphic call sites stress reactive mode too much by spawning a ton of
-             threads that thrash the machine. here, we choose an arbitrary call limit that allows us
-             to finish the analysis in practice. this is obviously unsound; will try to remove in
-             the future. *)
+          (* highly polymorphic call sites stress reactive mode too much by using too much memory.
+             here, we choose an arbitrary call limit that allows us to finish the analysis in
+             practice. this is obviously unsound; will try to remove in the future. *)
           let max_calls = 10 in
           let targets =
             if IList.length call_flags.cf_targets <= max_calls
@@ -394,10 +443,16 @@ module Make (TaintSpec : TaintSpec.S) = struct
     let add_summaries_for_trace summary_acc access_path trace =
       let summary_trace = TaintSpec.to_summary_trace trace in
       let output_opt =
-        let base = fst (AccessPath.extract access_path) in
+        let base, accesses = AccessPath.extract access_path in
         match AccessPath.BaseMap.find base formal_map with
         | index ->
-            Some (QuandarySummary.make_formal_output index access_path)
+            (* Java is pass-by-value. thus, summaries should not include assignments to the formal
+               parameters (first part of the check) . however, they should reflect when a formal
+               passes through a sink (second part of the check) *)
+            if accesses = [] && TraceDomain.Sinks.is_empty (TraceDomain.sinks trace)
+            (* TODO: and if [base] is not passed by reference, for C/C++/Obj-C *)
+            then None
+            else Some (QuandarySummary.make_formal_output index access_path)
         | exception Not_found ->
             if is_return base
             then Some (QuandarySummary.make_return_output access_path)
@@ -461,8 +516,8 @@ module Make (TaintSpec : TaintSpec.S) = struct
   let checker { Callbacks.get_proc_desc; proc_name; proc_desc; tenv; } =
     let analyze_ondemand _ pdesc =
       let make_formal_access_paths pdesc =
-        let pname = Cfg.Procdesc.get_proc_name pdesc in
-        let attrs = Cfg.Procdesc.get_attributes pdesc in
+        let pname = Procdesc.get_proc_name pdesc in
+        let attrs = Procdesc.get_attributes pdesc in
         let formals_with_nums =
           IList.mapi
             (fun index (name, typ) ->
@@ -474,17 +529,24 @@ module Make (TaintSpec : TaintSpec.S) = struct
           AccessPath.BaseMap.empty
           formals_with_nums in
 
-      Preanal.doit ~handle_dynamic_dispatch:true pdesc dummy_cg tenv;
-      let formals = make_formal_access_paths pdesc in
-      let proc_data = ProcData.make pdesc tenv formals in
-      match Analyzer.compute_post proc_data with
-      | Some { access_tree; } ->
-          let summary = make_summary formals access_tree in
-          Summary.write_summary (Cfg.Procdesc.get_proc_name pdesc) summary;
-      | None ->
-          if Cfg.Node.get_succs (Cfg.Procdesc.get_start_node pdesc) = []
-          then ()
-          else failwith "Couldn't compute post" in
+      let has_body pdesc =
+        let attrs = Procdesc.get_attributes pdesc in
+        attrs.is_defined && not attrs.is_abstract in
+      if has_body pdesc
+      then
+        begin
+          Preanal.doit ~handle_dynamic_dispatch:true pdesc dummy_cg tenv;
+          let formals = make_formal_access_paths pdesc in
+          let proc_data = ProcData.make pdesc tenv formals in
+          match Analyzer.compute_post proc_data with
+          | Some { access_tree; } ->
+              let summary = make_summary formals access_tree in
+              Summary.write_summary (Procdesc.get_proc_name pdesc) summary;
+          | None ->
+              if Procdesc.Node.get_succs (Procdesc.get_start_node pdesc) = []
+              then ()
+              else failwith "Couldn't compute post"
+        end in
     let callbacks =
       {
         Ondemand.analyze_ondemand;

@@ -45,7 +45,7 @@ let get_original_return_type function_method_decl_info =
   match function_method_decl_info with
   | Func_decl_info (_, typ)
   | Cpp_Meth_decl_info (_, _, _, typ)
-  | Block_decl_info (_, typ, _) -> CTypes.return_type_of_function_type typ
+  | Block_decl_info (_, typ, _) -> CType.return_type_of_function_type typ
   | ObjC_Meth_decl_info (method_decl_info, _) -> method_decl_info.Clang_ast_t.omdi_result_type
 
 let get_class_param function_method_decl_info =
@@ -74,7 +74,7 @@ let is_objc_method function_method_decl_info =
 let get_return_param tenv function_method_decl_info =
   let is_objc_method = is_objc_method function_method_decl_info in
   let return_type_ptr = get_original_return_type function_method_decl_info in
-  let return_typ = CTypes_decl.type_ptr_to_sil_type tenv return_type_ptr in
+  let return_typ = CType_decl.type_ptr_to_sil_type tenv return_type_ptr in
   if should_add_return_param return_typ ~is_objc_method then
     [(Mangled.from_string CFrontend_config.return_param,
       Ast_expressions.create_pointer_qual_type ~is_const:false return_type_ptr)]
@@ -110,7 +110,7 @@ let get_parameters trans_unit_ctx tenv function_method_decl_info =
     match par with
     | Clang_ast_t.ParmVarDecl (_, name_info, qt, var_decl_info) ->
         let _, mangled = General_utils.get_var_name_mangled name_info var_decl_info in
-        let param_typ = CTypes_decl.type_ptr_to_sil_type tenv qt.Clang_ast_t.qt_type_ptr in
+        let param_typ = CType_decl.type_ptr_to_sil_type tenv qt.Clang_ast_t.qt_type_ptr in
         let qt_type_ptr =
           match param_typ with
           | Typ.Tstruct _ when General_utils.is_cpp_translation trans_unit_ctx ->
@@ -124,7 +124,7 @@ let get_parameters trans_unit_ctx tenv function_method_decl_info =
 (** get return type of the function and optionally type of function's return parameter *)
 let get_return_val_and_param_types tenv function_method_decl_info =
   let return_type_ptr = get_original_return_type function_method_decl_info in
-  let return_typ = CTypes_decl.type_ptr_to_sil_type tenv return_type_ptr in
+  let return_typ = CType_decl.type_ptr_to_sil_type tenv return_type_ptr in
   let is_objc_method = is_objc_method function_method_decl_info in
   if should_add_return_param return_typ ~is_objc_method then
     Ast_expressions.create_void_type, Some (Typ.Tptr (return_typ, Typ.Pk_pointer))
@@ -215,7 +215,7 @@ let get_method_name_from_clang tenv ms_opt =
        | Some decl ->
            if ObjcProtocol_decl.is_protocol decl then None
            else
-             (ignore (CTypes_decl.add_types_from_decl_to_tenv tenv decl);
+             (ignore (CType_decl.add_types_from_decl_to_tenv tenv decl);
               match ObjcCategory_decl.get_base_class_name_from_category decl with
               | Some class_name ->
                   let procname = CMethod_signature.ms_get_name ms in
@@ -267,12 +267,12 @@ let get_class_name_method_call_from_clang trans_unit_ctx tenv obj_c_message_expr
 let get_class_name_method_call_from_receiver_kind context obj_c_message_expr_info act_params =
   match obj_c_message_expr_info.Clang_ast_t.omei_receiver_kind with
   | `Class tp ->
-      let sil_type = CTypes_decl.type_ptr_to_sil_type context.CContext.tenv tp in
-      (CTypes.classname_of_type sil_type)
+      let sil_type = CType_decl.type_ptr_to_sil_type context.CContext.tenv tp in
+      (CType.classname_of_type sil_type)
   | `Instance ->
       (match act_params with
        | (_, Typ.Tptr(t, _)):: _
-       | (_, t):: _ -> CTypes.classname_of_type t
+       | (_, t):: _ -> CType.classname_of_type t
        | _ -> assert false)
   | `SuperInstance ->get_superclass_curr_class_objc context
   | `SuperClass -> get_superclass_curr_class_objc context
@@ -307,13 +307,13 @@ let get_formal_parameters tenv ms =
         let tp = if should_add_pointer (Mangled.to_string mangled) ms then
             (Ast_expressions.create_pointer_type qt_type_ptr)
           else qt_type_ptr in
-        let typ = CTypes_decl.type_ptr_to_sil_type tenv tp in
+        let typ = CType_decl.type_ptr_to_sil_type tenv tp in
         (mangled, typ):: defined_parameters pl' in
   defined_parameters (CMethod_signature.ms_get_args ms)
 
 let get_return_type tenv ms =
   let return_type = CMethod_signature.ms_get_ret_type ms in
-  CTypes_decl.type_ptr_to_sil_type tenv return_type
+  CType_decl.type_ptr_to_sil_type tenv return_type
 
 let sil_func_attributes_of_attributes attrs =
   let rec do_translation acc al = match al with
@@ -328,11 +328,11 @@ let sil_func_attributes_of_attributes attrs =
   do_translation [] attrs
 
 let should_create_procdesc cfg procname defined =
-  match Cfg.Procdesc.find_from_name cfg procname with
+  match Cfg.find_proc_desc_from_name cfg procname with
   | Some previous_procdesc ->
-      let is_defined_previous = Cfg.Procdesc.is_defined previous_procdesc in
+      let is_defined_previous = Procdesc.is_defined previous_procdesc in
       if defined && (not is_defined_previous) then
-        (Cfg.Procdesc.remove cfg (Cfg.Procdesc.get_proc_name previous_procdesc);
+        (Cfg.remove_proc_desc cfg (Procdesc.get_proc_name previous_procdesc);
          true)
       else false
   | None -> true
@@ -418,23 +418,23 @@ let create_local_procdesc trans_unit_ctx cfg tenv ms fbody captured is_objc_inst
             method_annotation;
             ret_type;
           } in
-        Cfg.Procdesc.create cfg proc_attributes in
+        Cfg.create_proc_desc cfg proc_attributes in
       if defined then
         (if !Config.arc_mode then
-           Cfg.Procdesc.set_flag procdesc Mleak_buckets.objc_arc_flag "true";
-         let start_kind = Cfg.Node.Start_node proc_name in
-         let start_node = Cfg.Node.create loc_start start_kind [] procdesc in
-         let exit_kind = Cfg.Node.Exit_node proc_name in
-         let exit_node = Cfg.Node.create loc_exit exit_kind [] procdesc in
-         Cfg.Procdesc.set_start_node procdesc start_node;
-         Cfg.Procdesc.set_exit_node procdesc exit_node) in
+           Procdesc.set_flag procdesc Mleak_buckets.objc_arc_flag "true";
+         let start_kind = Procdesc.Node.Start_node proc_name in
+         let start_node = Procdesc.create_node procdesc loc_start start_kind [] in
+         let exit_kind = Procdesc.Node.Exit_node proc_name in
+         let exit_node = Procdesc.create_node procdesc loc_exit exit_kind [] in
+         Procdesc.set_start_node procdesc start_node;
+         Procdesc.set_exit_node procdesc exit_node) in
   if should_create_procdesc cfg proc_name defined then
     (create_new_procdesc (); true)
   else false
 
 (** Create a procdesc for objc methods whose signature cannot be found. *)
 let create_external_procdesc cfg proc_name is_objc_inst_method type_opt =
-  match Cfg.Procdesc.find_from_name cfg proc_name with
+  match Cfg.find_proc_desc_from_name cfg proc_name with
   | Some _ -> ()
   | None ->
       let ret_type, formals =
@@ -450,7 +450,7 @@ let create_external_procdesc cfg proc_name is_objc_inst_method type_opt =
           loc;
           ret_type;
         } in
-      ignore (Cfg.Procdesc.create cfg proc_attributes)
+      ignore (Cfg.create_proc_desc cfg proc_attributes)
 
 let create_procdesc_with_pointer context pointer class_name_opt name =
   let open CContext in

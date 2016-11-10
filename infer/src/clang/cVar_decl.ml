@@ -59,11 +59,11 @@ let add_var_to_locals procdesc var_decl sil_typ pvar =
   match var_decl with
   | VarDecl (_, _, _, vdi) ->
       if not vdi.Clang_ast_t.vdi_is_global then
-        Cfg.Procdesc.append_locals procdesc [(Pvar.get_name pvar, sil_typ)]
+        Procdesc.append_locals procdesc [(Pvar.get_name pvar, sil_typ)]
   | _ -> assert false
 
 let rec compute_autorelease_pool_vars context stmts =
-  let procname = Cfg.Procdesc.get_proc_name context.CContext.procdesc in
+  let procname = Procdesc.get_proc_name context.CContext.procdesc in
   match stmts with
   | [] -> []
   | Clang_ast_t.DeclRefExpr (_, _, _, drei):: stmts' ->
@@ -72,7 +72,7 @@ let rec compute_autorelease_pool_vars context stmts =
        | Some decl_ref ->
            (match decl_ref.Clang_ast_t.dr_type_ptr with
             | Some type_ptr when decl_ref.Clang_ast_t.dr_kind = `Var ->
-                let typ = CTypes_decl.type_ptr_to_sil_type context.CContext.tenv type_ptr in
+                let typ = CType_decl.type_ptr_to_sil_type context.CContext.tenv type_ptr in
                 let pvar = sil_var_of_decl_ref context decl_ref procname in
                 if Pvar.is_local pvar then
                   General_utils.append_no_duplicateds [(Exp.Lvar pvar, typ)] res
@@ -86,7 +86,7 @@ let rec compute_autorelease_pool_vars context stmts =
 
 (* Returns a list of captured variables as sil variables. *)
 let captured_vars_from_block_info context cvl =
-  let procname = Cfg.Procdesc.get_proc_name context.CContext.procdesc in
+  let procname = Procdesc.get_proc_name context.CContext.procdesc in
   let sil_var_of_captured_var cv vars =
     match cv.Clang_ast_t.bcv_variable with
     | Some dr ->
@@ -97,7 +97,7 @@ let captured_vars_from_block_info context cvl =
                vars
              else
                let pvar = sil_var_of_decl_ref context dr procname in
-               let typ = CTypes_decl.type_ptr_to_sil_type context.CContext.tenv type_ptr in
+               let typ = CType_decl.type_ptr_to_sil_type context.CContext.tenv type_ptr in
                (pvar, typ) :: vars
          | _ -> assert false)
     | _ -> assert false in
