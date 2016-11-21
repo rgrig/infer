@@ -11,4 +11,10 @@ open! Utils;
 
 
 /** Main module for the analysis after the capture phase */
-let main: unit => unit;
+
+/** print the legend for the symbols on stdout ('F', '.', ...) */
+let print_stdout_legend: unit => unit;
+
+
+/** Given a name of the Makefile to use for multicore analysis, analyze the captured code */
+let main: string => unit;

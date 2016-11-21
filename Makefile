@@ -10,10 +10,19 @@ include $(ROOT_DIR)/Makefile.config
 
 ifeq ($(IS_FACEBOOK_TREE),yes)
 # With this makefile, all targets will default to have right env variables pointing to the sandbox
-  include $(ROOT_DIR)/facebook//Makefile.env
+  include $(ROOT_DIR)/facebook/Makefile.env
 endif
 
-BUILD_SYSTEMS_TESTS = ant assembly project_root_rel
+BUILD_SYSTEMS_TESTS = assembly clang_translation project_root_rel
+ifneq ($(ANT),no)
+BUILD_SYSTEMS_TESTS += ant
+endif
+ifneq ($(BUCK),no)
+BUILD_SYSTEMS_TESTS += buck
+endif
+ifneq ($(CMAKE),no)
+BUILD_SYSTEMS_TESTS += clang_compilation_db
+endif
 
 DIRECT_TESTS=
 ifeq ($(BUILD_C_ANALYZERS),yes)
@@ -22,7 +31,7 @@ endif
 ifeq ($(BUILD_JAVA_ANALYZERS),yes)
 DIRECT_TESTS += \
   java_checkers_test java_eradicate_test java_infer_test java_tracing_test \
-  java_quandary_test java_crashcontext_test java_harness_test
+  java_quandary_test java_threadsafety_test java_crashcontext_test java_harness_test
 endif
 ifneq ($(XCODE_SELECT),no)
 DIRECT_TESTS += objc_frontend_test objc_errors_test objc_linters_test objcpp_frontend_test objcpp_linters_test
@@ -132,6 +141,12 @@ $(1): infer
 	| grep -v "warning: ignoring old commands for target" \
 	| grep -v "warning: overriding commands for target" \
 	; exit $$$${PIPESTATUS[0]}
+
+.PHONY: $(1)_clean
+$(1)_clean:
+	$(MAKE) -C \
+	  $(INFER_DIR)/tests/codetoanalyze/$(shell printf $(1) | cut -f 1 -d _)/$(shell printf $(1) | cut -f 2 -d _) \
+	  clean
 endef
 
 $(foreach test,$(DIRECT_TESTS) $(DIRECT_TESTS_REPLACE),\
@@ -142,9 +157,13 @@ $(foreach test,$(DIRECT_TESTS) $(DIRECT_TESTS_REPLACE),\
 direct_tests: $(DIRECT_TESTS)
 
 define gen_build_system_test_rule
-.PHONY: $(1)_test
+.PHONY: build_$(1)_test
 build_$(1)_test: infer
 	$(MAKE) -C $(INFER_DIR)/tests/build_systems/$(1) test
+
+.PHONY: build_$(1)_clean
+build_$(1)_clean:
+	$(MAKE) -C $(INFER_DIR)/tests/build_systems/$(1) clean
 endef
 
 $(foreach test,$(BUILD_SYSTEMS_TESTS), $(eval $(call gen_build_system_test_rule,$(test))))
@@ -219,6 +238,10 @@ uninstall:
 	$(REMOVE_DIR) $(DESTDIR)$(libdir)/infer/
 	$(REMOVE) $(DESTDIR)$(bindir)/inferTraceBugs
 	$(REMOVE) $(DESTDIR)$(bindir)/infer
+
+.PHONY: test_clean
+test_clean: $(foreach test,$(DIRECT_TESTS),$(test)_clean) \
+            $(foreach test,$(BUILD_SYSTEMS_TESTS),build_$(test)_clean)
 
 .PHONY: install
 install: infer inferTraceBugs
@@ -310,6 +333,8 @@ endif
 	  $(DESTDIR)$(libdir)/infer/infer/lib/python/infer.py
 	$(INSTALL_PROGRAM) -C       infer/lib/python/inferTraceBugs \
 	  $(DESTDIR)$(libdir)/infer/infer/lib/python/inferTraceBugs
+	$(INSTALL_PROGRAM) -C       infer/lib/python/report.py \
+	  $(DESTDIR)$(libdir)/infer/infer/lib/python/report.py
 	$(INSTALL_PROGRAM) -C $(INFER_BIN) $(DESTDIR)$(libdir)/infer/infer/bin/
 	$(INSTALL_PROGRAM) -C $(INFERANALYZE_BIN) $(DESTDIR)$(libdir)/infer/infer/bin/
 	$(INSTALL_PROGRAM) -C $(INFERPRINT_BIN) $(DESTDIR)$(libdir)/infer/infer/bin/
@@ -325,7 +350,7 @@ ifeq ($(IS_FACEBOOK_TREE),yes)
 endif
 
 .PHONY: clean
-clean:
+clean: test_clean
 ifeq ($(IS_RELEASE_TREE),no)
 ifeq ($(BUILD_C_ANALYZERS),yes)
 	$(MAKE) -C $(FCP_DIR) clean
@@ -363,3 +388,8 @@ conf-clean: clean
 # print any variable for Makefile debugging
 print-%:
 	@echo '$*=$($*)'
+
+# print list of targets
+.PHONY: show-targets
+show-targets:
+	@$(MAKE) -pqrR . | grep --only-matching -e '^[a-zA-Z0-9][^ ]*:' | cut -d ':' -f 1 | sort

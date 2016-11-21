@@ -50,6 +50,14 @@ module type S = sig
   (** get a path for each of the reportable source -> sink flows in this trace *)
   val get_reportable_paths : t -> trace_of_pname:(Procname.t -> t) -> path list
 
+  (** create a loc_trace from a path; [source_should_nest s] should be true when we are going one
+      deeper into a call-chain, ie when lt_level should be bumper in the next loc_trace_elem, and
+      similarly for [sink_should_nest] *)
+  val to_loc_trace :
+    ?desc_of_source:(Source.t -> string) -> ?source_should_nest:(Source.t -> bool) ->
+    ?desc_of_sink:(Sink.t -> string) -> ?sink_should_nest:(Sink.t -> bool) ->
+    path -> Errlog.loc_trace
+
   (** create a trace from a source *)
   val of_source : Source.t -> t
 
@@ -130,9 +138,18 @@ module Make (Spec : Spec) = struct
   type path = Passthroughs.t * (Source.t * Passthroughs.t) list * (Sink.t * Passthroughs.t) list
 
   let compare t1 t2 =
-    Sources.compare t1.sources t2.sources
-    |> next Sinks.compare t1.sinks t2.sinks
-    |> next Passthroughs.compare t1.passthroughs t2.passthroughs
+    if t1 == t2
+    then
+      0
+    else
+      let n = Sources.compare t1.sources t2.sources in
+      if n <> 0
+      then n
+      else
+        let n = Sinks.compare t1.sinks t2.sinks in
+        if n <> 0
+        then n
+        else Passthroughs.compare t1.passthroughs t2.passthroughs
 
   let equal t1 t2 =
     compare t1 t2 = 0
@@ -157,14 +174,22 @@ module Make (Spec : Spec) = struct
     Sources.is_empty t.sources
 
   let get_reports t =
-    if Sinks.is_empty t.sinks
-    then []
+    if Sinks.is_empty t.sinks || Sources.is_empty t.sources
+    then
+      []
     else
-      let report_one source sink acc =
-        if Spec.should_report source sink
-        then (source, sink, t.passthroughs) :: acc
-        else acc in
-      Sources.fold (fun source acc -> Sinks.fold (report_one source) t.sinks acc) t.sources []
+      (* written to avoid closure allocations in hot code. change with caution. *)
+      let report_source source sinks acc0 =
+        let report_one sink acc =
+          if Spec.should_report source sink
+          then (source, sink, t.passthroughs) :: acc
+          else acc in
+        Sinks.fold report_one sinks acc0 in
+      let report_sources source acc =
+        if Source.is_footprint source
+        then acc
+        else report_source source t.sinks acc in
+      Sources.fold report_sources t.sources []
 
   let pp_path cur_pname fmt (cur_passthroughs, sources_passthroughs, sinks_passthroughs) =
     let pp_passthroughs fmt passthroughs =
@@ -214,6 +239,63 @@ module Make (Spec : Spec) = struct
          passthroughs, sources_passthroughs, sinks_passthroughs)
       (get_reports t)
 
+  let to_loc_trace
+      ?(desc_of_source=fun source ->
+          let callsite = Source.call_site source in
+          Format.asprintf "return from %a" Procname.pp (CallSite.pname callsite))
+      ?(source_should_nest=(fun _ -> true))
+      ?(desc_of_sink=fun sink ->
+          let callsite = Sink.call_site sink in
+          Format.asprintf "call to %a" Procname.pp (CallSite.pname callsite))
+      ?(sink_should_nest=(fun _ -> true))
+      (passthroughs, sources, sinks) =
+
+    let trace_elems_of_passthroughs lt_level passthroughs acc0 =
+      let trace_elem_of_passthrough passthrough acc =
+        let passthrough_site = Passthrough.site passthrough in
+        let desc = F.asprintf "flow through %a" Procname.pp (CallSite.pname passthrough_site) in
+        (Errlog.make_trace_element lt_level (CallSite.loc passthrough_site) desc []) :: acc in
+      (* sort passthroughs by ascending line number to create a coherent trace *)
+      let sorted_passthroughs =
+        IList.sort
+          (fun passthrough1 passthrough2 ->
+             let loc1 = CallSite.loc (Passthrough.site passthrough1) in
+             let loc2 = CallSite.loc (Passthrough.site passthrough2) in
+             Pervasives.compare loc1.Location.line loc2.Location.line)
+          (Passthroughs.elements passthroughs) in
+      IList.fold_right trace_elem_of_passthrough sorted_passthroughs acc0 in
+
+    let get_nesting should_nest elems start_nesting =
+      let level = ref start_nesting in
+      let get_nesting_ ((elem, _) as pair) =
+        if should_nest elem
+        then incr level;
+        pair, !level in
+      IList.map get_nesting_ (IList.rev elems) in
+
+    let trace_elems_of_path_elem call_site desc ~is_source ((elem, passthroughs), lt_level) acc =
+      let desc = desc elem in
+      let loc = CallSite.loc (call_site elem) in
+      if is_source
+      then
+        let trace_elem = Errlog.make_trace_element lt_level loc desc [] in
+        trace_elems_of_passthroughs (lt_level + 1) passthroughs (trace_elem :: acc)
+      else
+        let trace_elem = Errlog.make_trace_element (lt_level - 1) loc desc [] in
+        trace_elem :: (trace_elems_of_passthroughs lt_level passthroughs acc) in
+
+    let trace_elems_of_source =
+      trace_elems_of_path_elem Source.call_site desc_of_source ~is_source:true in
+    let trace_elems_of_sink =
+      trace_elems_of_path_elem Sink.call_site desc_of_sink ~is_source:false in
+    let sources_with_level = get_nesting source_should_nest sources (-1) in
+    let sinks_with_level = get_nesting sink_should_nest sinks 0 in
+    let trace_prefix =
+      IList.fold_right trace_elems_of_sink sinks_with_level []
+      |> trace_elems_of_passthroughs 0 passthroughs in
+    IList.fold_left
+      (fun acc source -> trace_elems_of_source source acc) trace_prefix sources_with_level
+
   let of_source source =
     let sources = Sources.singleton source in
     let passthroughs = Passthroughs.empty in
@@ -245,7 +327,7 @@ module Make (Spec : Spec) = struct
           caller_trace.sources
         else
           IList.map
-            (fun sink -> Source.to_callee sink callee_site)
+            (fun sink -> Source.with_callsite sink callee_site)
             (Sources.elements non_footprint_callee_sources)
           |> Sources.of_list
           |> Sources.union caller_trace.sources in
@@ -256,7 +338,7 @@ module Make (Spec : Spec) = struct
           caller_trace.sinks
         else
           IList.map
-            (fun sink -> Sink.to_callee sink callee_site)
+            (fun sink -> Sink.with_callsite sink callee_site)
             (Sinks.elements callee_trace.sinks)
           |> Sinks.of_list
           |> Sinks.union caller_trace.sinks in

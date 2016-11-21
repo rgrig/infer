@@ -71,7 +71,28 @@ let process_cluster_cmdline fname =>
   | Some (nr, cluster) => analyze_cluster (nr - 1) cluster
   };
 
-let main () => {
+let print_stdout_legend () => {
+  L.stdout "Starting analysis...@\n";
+  L.stdout "@\n";
+  L.stdout "legend:@\n";
+  L.stdout "  \"%s\" analyzing a file@\n" Config.log_analysis_file;
+  L.stdout "  \"%s\" analyzing a procedure@\n" Config.log_analysis_procedure;
+  if Config.stats_mode {
+    L.stdout "  \"%s\" analyzer crashed@\n" Config.log_analysis_crash;
+    L.stdout
+      "  \"%s\" timeout: procedure analysis took too much time@\n"
+      Config.log_analysis_wallclock_timeout;
+    L.stdout
+      "  \"%s\" timeout: procedure analysis took too many symbolic execution steps@\n"
+      Config.log_analysis_symops_timeout;
+    L.stdout
+      "  \"%s\" timeout: procedure analysis took too many recursive iterations@\n"
+      Config.log_analysis_recursion_timeout
+  };
+  L.stdout "@\n@?"
+};
+
+let main makefile => {
   switch Config.modified_targets {
   | Some file => MergeCapture.modified_file file
   | None => ()
@@ -86,9 +107,9 @@ let main () => {
       MergeCapture.merge_captured_targets ()
     };
     let clusters = DB.find_source_dirs ();
-    L.err "Found %d source files in %s@." (IList.length clusters) Config.results_dir;
-    if (Config.makefile_cmdline != "") {
-      ClusterMakefile.create_cluster_makefile clusters Config.makefile_cmdline
+    L.stdout "Found %d source files in %s@." (IList.length clusters) Config.results_dir;
+    if (makefile != "") {
+      ClusterMakefile.create_cluster_makefile clusters makefile
     } else {
       IList.iteri (fun i cluster => analyze_cluster i cluster) clusters;
       L.stdout "@\nAnalysis finished in %as@." pp_elapsed_time ()

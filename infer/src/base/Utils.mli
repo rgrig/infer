@@ -278,6 +278,9 @@ val directory_fold : ('a -> string -> 'a) -> 'a -> string -> 'a
 (** Functional iter function over all the file of a directory *)
 val directory_iter : (string -> unit) -> string -> unit
 
+(** Remove a directory and its contents *)
+val remove_directory_tree : string -> unit
+
 val read_optional_json_file : string -> (Yojson.Basic.json, string) result
 
 val with_file : string -> f:(out_channel -> 'a) -> 'a
@@ -298,3 +301,7 @@ val create_dir : string -> unit
 (** [create_path path] will create a directory at [path], creating all the parent directories if
     non-existing *)
 val create_path : string -> unit
+
+(** [realpath path] returns path with all symbolic links resolved. It caches results of previous
+    calls to avoid expensive system calls *)
+val realpath : string -> string

@@ -16,7 +16,7 @@ open! Utils
 
 (** Various kind of analyzers *)
 type analyzer = Capture | Compile | Infer | Eradicate | Checkers | Tracing
-              | Crashcontext | Linters | Quandary
+              | Crashcontext | Linters | Quandary | Threadsafety
 
 (** Association list of analyzers and their names *)
 val string_to_analyzer : (string * analyzer) list
@@ -61,6 +61,7 @@ val buck_infer_deps_file_name : string
 val captured_dir_name : string
 val checks_disabled_by_default : string list
 val clang_initializer_prefix : string
+val cpp_extra_include_dir : string
 val cpp_models_dir : string
 val csl_analysis : bool
 val current_exe : CommandLineOption.exe
@@ -92,6 +93,7 @@ val max_recursion : int
 val meet_level : int
 val models_dir : string
 val models_jar : string
+val multicore_dir_name : string
 val ncpu : int
 val nsnotification_center_checker_backend : bool
 val os_type : os_type
@@ -223,16 +225,18 @@ val out_file_cmdline : string
 val pmd_xml : bool
 val precondition_stats : bool
 val print_builtins : bool
+val print_traces_in_tests : bool
 val print_types : bool
 val print_using_diff : bool
 val procs_csv : string option
 val procs_xml : string option
 val project_root : string
-val project_root_realpath : string
 val quandary : bool
 val quiet : bool
 val reactive_mode : bool
+val reactive_capture : bool
 val report : string option
+val report_hook : string option
 val report_runtime_exceptions : bool
 val reports_include_ml_loc : bool
 val results_dir : string
@@ -255,19 +259,20 @@ val symops_per_iteration : int
 val test : bool
 val test_filtering : bool
 val testing_mode : bool
+val threadsafety : bool
 val trace_error : bool
 val trace_ondemand : bool
 val trace_join : bool
 val trace_rearrange : bool
 val type_size : bool
 val unsafe_malloc : bool
-val thread_safety: bool
 val use_compilation_database : [ `Deps | `NoDeps ] option
 val whole_seconds : bool
 val worklist_mode : int
 val write_dotty : bool
 val write_html : bool
 val xcode_developer_dir : string option
+val xcpretty : bool
 val xml_specs : bool
 
 

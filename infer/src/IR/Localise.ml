@@ -82,6 +82,7 @@ let stack_variable_address_escape = "STACK_VARIABLE_ADDRESS_ESCAPE"
 let static_initialization_order_fiasco = "STATIC_INITIALIZATION_ORDER_FIASCO"
 let strong_delegate_warning = "STRONG_DELEGATE_WARNING"
 let tainted_value_reaching_sensitive_function = "TAINTED_VALUE_REACHING_SENSITIVE_FUNCTION"
+let thread_safety_error = "THREAD_SAFETY_ERROR"
 let unary_minus_applied_to_unsigned_expression = "UNARY_MINUS_APPLIED_TO_UNSIGNED_EXPRESSION"
 let unsafe_guarded_by_access = "UNSAFE_GUARDED_BY_ACCESS"
 let uninitialized_value = "UNINITIALIZED_VALUE"
@@ -449,7 +450,7 @@ let desc_context_leak pname context_typ fieldname leak_path : error_desc =
             (Procname.java_get_method pname_java)
       | _ ->
           "" in
-    "Context " ^ context_str ^ "may leak during method " ^ pname_str ^ ":\n" in
+    "Context " ^ context_str ^ " may leak during method " ^ pname_str ^ ":\n" in
   { no_desc with descriptions = [preamble; leak_root; path_str] }
 
 let desc_unsafe_guarded_by_access pname accessed_fld guarded_by_str loc =

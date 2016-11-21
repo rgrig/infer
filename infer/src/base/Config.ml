@@ -18,13 +18,13 @@ module F = Format
 
 
 type analyzer = Capture | Compile | Infer | Eradicate | Checkers | Tracing
-              | Crashcontext | Linters | Quandary
+              | Crashcontext | Linters | Quandary | Threadsafety
 
 let string_to_analyzer =
   [("capture", Capture); ("compile", Compile);
    ("infer", Infer); ("eradicate", Eradicate); ("checkers", Checkers);
    ("tracing", Tracing); ("crashcontext", Crashcontext); ("linters", Linters);
-   ("quandary", Quandary);]
+   ("quandary", Quandary); ("threadsafety", Threadsafety)]
 
 let clang_frontend_action_symbols = [
   ("lint", `Lint);
@@ -156,6 +156,8 @@ let max_recursion = 5
     1 = use the meet to generate new preconditions *)
 let meet_level = 1
 
+let multicore_dir_name = "multicore"
+
 let nsnotification_center_checker_backend = false
 
 let perf_stats_prefix = "perf_stats"
@@ -236,7 +238,7 @@ let initial_analysis_time = Unix.time ()
 (* Resolve symlinks to get to the real executable. The real executable is located in [bin_dir]
    below, which allows us to find [lib_dir], [models_dir], etc., relative to it. *)
 let real_exe_name =
-  Core.Std.Filename.realpath Sys.executable_name
+  realpath Sys.executable_name
 
 let current_exe =
   if !Sys.interactive then CLOpt.Interactive
@@ -259,9 +261,12 @@ let models_dir =
 let models_jar =
   lib_dir // "java" // "models.jar"
 
-let cpp_models_dir =
+let cpp_extra_include_dir =
   let dir = bin_dir // Filename.parent_dir_name // "models" // "cpp" // "include" in
   Utils.filename_to_absolute dir (* Normalize the path *)
+
+let cpp_models_dir =
+  cpp_extra_include_dir // "infer_model"
 
 let wrappers_dir =
   lib_dir // "wrappers"
@@ -402,7 +407,7 @@ let init_work_dir, is_originator =
           Sys.getcwd ()
       with _ ->
         Sys.getcwd () in
-    let real_cwd = Core.Std.Filename.realpath cwd in
+    let real_cwd = realpath cwd in
     Unix.putenv "INFER_CWD" real_cwd;
     (real_cwd, true)
 
@@ -551,11 +556,11 @@ and analyzer =
     (* NOTE: if compilation fails here, it means you have added a new analyzer without updating the
        documentation of this option *)
     | Capture | Compile | Infer | Eradicate | Checkers | Tracing | Crashcontext | Linters
-    | Quandary -> () in
+    | Quandary | Threadsafety -> () in
   CLOpt.mk_symbol_opt ~deprecated:["analyzer"] ~long:"analyzer" ~short:"a"
     ~exes:CLOpt.[Toplevel]
     "Specify which analyzer to run (only one at a time is supported):\n\
-     - infer, eradicate, checkers, quandary: run the specified analysis\n\
+     - infer, eradicate, checkers, quandary, threadsafety: run the specified analysis\n\
      - capture: run capture phase only (no analysis)\n\
      - compile: run compilation command without interfering (not supported by all frontends)\n\
      - crashcontext, tracing: experimental (see --crashcontext and --tracing)\n\
@@ -645,7 +650,7 @@ and check_duplicate_symbols =
     ~exes:CLOpt.[Analyze]
     "Check if a symbol with the same name is defined in more than one file."
 
-and checkers, crashcontext, eradicate, quandary =
+and checkers, crashcontext, eradicate, quandary, threadsafety =
   let checkers =
     CLOpt.mk_bool ~deprecated:["checkers"] ~long:"checkers"
       "Activate the checkers instead of the full analysis"
@@ -665,7 +670,12 @@ and checkers, crashcontext, eradicate, quandary =
       "Activate the quandary taint analysis"
       [checkers] []
   in
-  (checkers, crashcontext, eradicate, quandary)
+  let threadsafety =
+    CLOpt.mk_bool_group ~deprecated:["threadsafety"] ~long:"threadsafety"
+      "Activate the thread safety analysis"
+      [checkers] []
+  in
+  (checkers, crashcontext, eradicate, quandary, threadsafety)
 
 and checkers_repeated_calls =
   CLOpt.mk_bool ~long:"checkers-repeated-calls"
@@ -686,10 +696,6 @@ and clang_include_to_override =
     "Use this option in the uncommon case where the normal compilation process overrides the \
      location of internal compiler headers. This option should specify the path to those headers \
      so that infer can use its own clang internal headers instead."
-
-and _ =
-  CLOpt.mk_string_opt ~deprecated:["classpath"] ~long:"classpath"
-    ~meta:"path" "Specify where to find user class files and annotation processors"
 
 and cluster =
   CLOpt.mk_path_opt ~deprecated:["cluster"] ~long:"cluster"
@@ -1050,6 +1056,11 @@ and print_builtins =
   CLOpt.mk_bool ~deprecated:["print_builtins"] ~long:"print-builtins"
     "Print the builtin functions and exit"
 
+and print_traces_in_tests =
+  CLOpt.mk_bool ~long:"print-traces-in-tests" ~default:true
+    ~exes:CLOpt.[Print]
+    "Include symbolic traces summaries in the output of --issues-tests"
+
 and print_using_diff =
   CLOpt.mk_bool ~deprecated_no:["noprintdiff"] ~long:"print-using-diff" ~default:true
     "Highlight the difference w.r.t. the previous prop when printing symbolic execution debug info"
@@ -1078,6 +1089,10 @@ and reactive =
   CLOpt.mk_bool ~deprecated:["reactive"] ~long:"reactive"
     "Reactive mode: the analysis starts from the files captured since the `infer` command started"
 
+and reactive_capture =
+  CLOpt.mk_bool ~long:"reactive-capture"
+    "Compile source files only when required by analyzer (clang only)"
+
 and report =
   CLOpt.mk_path_opt ~deprecated:["report"] ~long:"report"
     ~meta:"file" "Write a report of the analysis results to a file"
@@ -1085,6 +1100,14 @@ and report =
 and report_custom_error =
   CLOpt.mk_bool ~long:"report-custom-error"
     ""
+
+and report_hook =
+  CLOpt.mk_string_opt ~long:"report-hook"
+    ~default:(lib_dir // "python" // "report.py")
+    ~meta:"script"
+    "Specify a script to be executed after the analysis results are written.  This script will be \
+     passed --issues-csv, --issues-json, --issues-txt, --issues-xml, --project-root, and \
+     --results-dir."
 
 and results_dir =
   CLOpt.mk_path ~deprecated:["results_dir"; "-out"] ~long:"results-dir" ~short:"o"
@@ -1192,11 +1215,6 @@ and testing_mode =
   CLOpt.mk_bool ~deprecated:["testing_mode"; "-testing_mode"] ~long:"testing-mode" ~short:"tm"
     "Mode for testing, where no headers are translated, and dot files are created (clang only)"
 
-and thread_safety =
-  CLOpt.mk_bool ~long:"thread-safety"
-    ~exes:CLOpt.[Analyze]
-    "Run the experimental thread safety checker. (In conjunction with -a checkers)"
-
 and trace_join =
   CLOpt.mk_bool ~deprecated:["trace_join"] ~long:"trace-join"
     "Detailed tracing information during prop join operations"
@@ -1268,6 +1286,13 @@ and xcode_developer_dir =
   CLOpt.mk_path_opt ~long:"xcode-developer-dir"
     ~exes:CLOpt.[Toplevel]
     ~meta:"XCODE_DEVELOPER_DIR" "Specify the path to Xcode developer directory (Buck flavors only)"
+
+and xcpretty =
+  CLOpt.mk_bool ~long:"xcpretty"
+    ~default:true
+    ~exes:CLOpt.[Toplevel]
+    "Infer will use xcpretty together with xcodebuild to analyze an iOS app. xcpretty just needs \
+     to be in the path, infer command is still just infer -- <xcodebuild command>. (Recommended)"
 
 and xml_specs =
   CLOpt.mk_bool ~deprecated:["xml"] ~long:"xml-specs"
@@ -1344,6 +1369,7 @@ let post_parsing_initialization () =
   | Some Crashcontext -> checkers := true; crashcontext := true
   | Some Eradicate -> checkers := true; eradicate := true
   | Some Quandary -> checkers := true; quandary := true
+  | Some Threadsafety -> checkers := true; threadsafety := true
   | Some Tracing -> tracing := true
   | Some (Capture | Compile | Infer | Linters) | None -> ()
 
@@ -1461,16 +1487,18 @@ and patterns_modeled_expensive = !patterns_modeled_expensive
 and pmd_xml = !pmd_xml
 and precondition_stats = !precondition_stats
 and print_builtins = !print_builtins
+and print_traces_in_tests = !print_traces_in_tests
 and print_types = !print_types
 and print_using_diff = !print_using_diff
 and procs_csv = !procs_csv
 and procs_xml = !procs_xml
-and project_root_realpath = Core.Std.Filename.realpath project_root
 and quandary = !quandary
 and quiet = !quiet
 and reactive_mode = !reactive
+and reactive_capture = !reactive_capture
 and report = !report
 and report_custom_error = !report_custom_error
+and report_hook = !report_hook
 and report_runtime_exceptions = !tracing
 and reports_include_ml_loc = !reports_include_ml_loc
 and results_dir = !results_dir
@@ -1492,19 +1520,20 @@ and symops_per_iteration = !symops_per_iteration
 and test = !test
 and test_filtering = !test_filtering
 and testing_mode = !testing_mode
+and threadsafety = !threadsafety
 and trace_error = !trace_error
 and trace_ondemand = !trace_ondemand
 and trace_join = !trace_join
 and trace_rearrange = !trace_rearrange
 and type_size = !type_size
 and unsafe_malloc = !unsafe_malloc
-and thread_safety = !thread_safety
 and use_compilation_database = !use_compilation_database
 and whole_seconds = !whole_seconds
 and worklist_mode = !worklist_mode
 and write_dotty = !write_dotty
 and write_html = !write_html
 and xcode_developer_dir = !xcode_developer_dir
+and xcpretty = !xcpretty
 and xml_specs = !xml_specs
 
 
@@ -1519,7 +1548,7 @@ and analysis_blacklist_files_containing analyzer =
 and analysis_suppress_errors analyzer =
   IList.assoc (=) analyzer analysis_suppress_errors_options
 
-let checkers_enabled = not (eradicate || crashcontext || quandary)
+let checkers_enabled = not (eradicate || crashcontext || quandary || threadsafety)
 
 let clang_frontend_do_capture, clang_frontend_do_lint =
   match !clang_frontend_action with

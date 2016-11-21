@@ -16,7 +16,10 @@ import java.lang.annotation.Target;
 import com.google.common.annotations.VisibleForTesting;
 import android.annotation.SuppressLint;
 import javax.annotation.concurrent.GuardedBy;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import java.io.Closeable;
@@ -472,5 +475,109 @@ public class GuardedByExample {
   }
 
   // TODO: warn on misuse of read/write locks.
+
+  @GuardedBy("this")
+  Integer xForSub;
+
+  static class Sub extends GuardedByExample{
+
+    void goodSub1() {
+      synchronized (this){
+        xForSub = 22;
+      }
+    }
+
+    synchronized void goodSub2() {
+      xForSub = 22;
+    }
+
+    void badSub() {
+      xForSub = 22;
+    }
+
+  }
+
+  Lock normallock;
+
+  @GuardedBy("normallock")
+  Integer guardedbynl;
+
+  ReentrantLock reentrantlock;
+
+  @GuardedBy("reentrantlock")
+  Integer guardedbyrel;
+
+
+  void goodGuardedByNormalLock() {
+    normallock.lock();
+    guardedbynl = 22;
+    normallock.unlock();
+  }
+
+  void goodTryLockGuardedByNormalLock() {
+    if (normallock.tryLock()) {
+      guardedbynl = 22;
+      normallock.unlock();
+    }
+  }
+
+  void goodTryLockGuardedByReentrantLock() {
+    if (reentrantlock.tryLock()) {
+      guardedbyrel = 44;
+      reentrantlock.unlock();
+    }
+  }
+
+  void badGuardedByNormalLock(){
+    guardedbynl = 22;
+  }
+
+  void badGuardedByReentrantLock(){
+    guardedbyrel = 44;
+  }
+
+  static class OtherClassWithLock {
+    ReentrantLock lock;
+
+    @GuardedBy("lock")
+    Object guardedByLock;
+
+    Object otherClassObject;
+
+    void guardedInSameClassOk() {
+      lock.lock();
+      guardedByLock = new Object();
+      lock.unlock();
+    }
+  }
+
+  @GuardedBy("OtherClassWithLock.lock")
+  Object guardedByLock1;
+
+  @GuardedBy("codetoanalyze.java.infer.GuardedByExample$OtherClassWithLock.lock")
+  Object guardedByLock2;
+
+  @GuardedBy("OtherClassWithLock.otherClassObject")
+  Object guardedByLock3;
+
+  OtherClassWithLock otherClass;
+
+  void guardedByTypeSyntaxOk1() {
+    otherClass.lock.lock();
+    guardedByLock1 = true;
+    guardedByLock2 = true;
+    otherClass.lock.unlock();
+  }
+
+  void guardedByTypeSyntaxOk2() {
+    synchronized (otherClass.otherClassObject) {
+      guardedByLock3 = true;
+    }
+  }
+
+  void guardedByTypeSyntaxBad() {
+    guardedByLock1 = true;
+    guardedByLock2 = true;
+  }
 
 }

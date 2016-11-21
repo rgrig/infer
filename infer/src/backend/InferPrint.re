@@ -323,7 +323,8 @@ let should_report (issue_kind: Exceptions.err_kind) issue_type error_desc =>
       | Crashcontext
       | Infer
       | Linters
-      | Quandary => false
+      | Quandary
+      | Threadsafety => false
       };
     if analyzer_is_whitelisted {
       true
@@ -385,6 +386,7 @@ let should_report (issue_kind: Exceptions.err_kind) issue_type error_desc =>
                 static_initialization_order_fiasco,
                 strong_delegate_warning,
                 tainted_value_reaching_sensitive_function,
+                thread_safety_error,
                 unsafe_guarded_by_access
               ];
             IList.mem Localise.equal issue_type reportable_issue_types
@@ -581,17 +583,51 @@ let module IssuesJson = {
 };
 
 let pp_tests_of_report fmt report => {
+  open Jsonbug_t;
+  let pp_trace_elem fmt {description} => F.fprintf fmt "%s" description;
+  let pp_trace fmt trace =>
+    if Config.print_traces_in_tests {
+      let trace_without_empty_descs = IList.filter (fun {description} => description != "") trace;
+      F.fprintf fmt ", [%a]" (pp_comma_seq pp_trace_elem) trace_without_empty_descs
+    };
   let pp_row jsonbug =>
-    Jsonbug_t.(
-      F.fprintf
-        fmt
-        "%s, %s, %d, %s@."
-        jsonbug.file
-        jsonbug.procedure
-        (jsonbug.line - jsonbug.procedure_start_line)
-        jsonbug.bug_type
-    );
+    F.fprintf
+      fmt
+      "%s, %s, %d, %s%a@."
+      jsonbug.file
+      jsonbug.procedure
+      (jsonbug.line - jsonbug.procedure_start_line)
+      jsonbug.bug_type
+      pp_trace
+      jsonbug.bug_trace;
   IList.iter pp_row report
+};
+
+let tests_jsonbug_compare bug1 bug2 => {
+  open Jsonbug_t;
+  let n = string_compare bug1.file bug2.file;
+  if (n != 0) {
+    n
+  } else {
+    let n = string_compare bug1.procedure bug2.procedure;
+    if (n != 0) {
+      n
+    } else {
+      let n =
+        int_compare
+          (bug1.line - bug1.procedure_start_line) (bug2.line - bug2.procedure_start_line);
+      if (n != 0) {
+        n
+      } else {
+        let n = string_compare bug1.bug_type bug2.bug_type;
+        if (n != 0) {
+          n
+        } else {
+          int_compare bug1.hash bug2.hash
+        }
+      }
+    }
+  }
 };
 
 let module IssuesTxt = {
@@ -1178,10 +1214,13 @@ let pp_json_report_by_report_kind formats_by_report_kind fname =>
         };
       IList.iter pp_json_issue format_list
     };
-    let report = Jsonbug_j.report_of_string (String.concat "\n" report_lines);
+    let sorted_report = {
+      let report = Jsonbug_j.report_of_string (String.concat "\n" report_lines);
+      IList.sort tests_jsonbug_compare report
+    };
     let pp_report_by_report_kind (report_kind, format_list) =>
       switch (report_kind, format_list) {
-      | (Issues, [_, ..._]) => pp_json_issues format_list report
+      | (Issues, [_, ..._]) => pp_json_issues format_list sorted_report
       | _ => ()
       };
     IList.iter pp_report_by_report_kind formats_by_report_kind
@@ -1223,8 +1262,9 @@ let process_summary filters formats_by_report_kind linereader stats top_proc_set
 
 let module AnalysisResults = {
   type t = list (string, Specs.summary);
-  let spec_files_from_cmdline = {
-    /* find spec files specified by command-line arguments */
+  let spec_files_from_cmdline () => {
+    /* Find spec files specified by command-line arguments.  Not run at init time since the specs
+       files may be generated between init and report time. */
     IList.iter
       (
         fun arg =>
@@ -1268,7 +1308,7 @@ let module AnalysisResults = {
         exit 0
       | Some summary => summaries := [(fname, summary), ...!summaries]
       };
-    apply_without_gc (IList.iter load_file) spec_files_from_cmdline;
+    apply_without_gc (IList.iter load_file) (spec_files_from_cmdline ());
     let summ_cmp (_, summ1) (_, summ2) => {
       let n =
         DB.source_file_compare
@@ -1287,7 +1327,7 @@ let module AnalysisResults = {
 
   /** Create an iterator which loads spec files one at a time */
   let iterator_of_spec_files () => {
-    let sorted_spec_files = IList.sort string_compare spec_files_from_cmdline;
+    let sorted_spec_files = IList.sort string_compare (spec_files_from_cmdline ());
     let do_spec f fname =>
       switch (Specs.load_summary (DB.filename_from_string fname)) {
       | None =>
@@ -1341,8 +1381,6 @@ let compute_top_procedures = ref false;
 let register_perf_stats_report () => {
   let stats_dir = Filename.concat Config.results_dir Config.reporting_stats_dir_name;
   let stats_file = Filename.concat stats_dir (Config.perf_stats_prefix ^ ".json");
-  create_dir Config.results_dir;
-  create_dir stats_dir;
   PerfStats.register_report_at_exit stats_file
 };
 

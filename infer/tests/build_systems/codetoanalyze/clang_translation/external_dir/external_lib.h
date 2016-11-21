@@ -7,15 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
-struct SomeObject {
-  void some_method();
-};
-
-extern SomeObject global_object;
-
-struct SomeOtherObject {
-  SomeOtherObject() { global_object.some_method(); };
-};
-
-// BAD: report SIOF here
-SomeOtherObject another_global_object;
+#pragma once
+namespace external {
+int fun(int a) { return a; }
+}

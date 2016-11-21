@@ -6,12 +6,12 @@
 # of patent rights can be found in the PATENTS file in the same directory.
 
 TESTS_DIR = ../../..
-include $(TESTS_DIR)/clang.make
 
 ANALYZER = checkers
-CLANG_OPTIONS = -x c++ -std=c++11 -isystem$(MODELS_DIR)/cpp/include -isystem$(CLANG_INCLUDES)/c++/v1/ -c
+# see explanations in cpp/errors/Makefile for the custom isystem
+CLANG_OPTIONS = -x c++ -std=c++11 -nostdinc++ -isystem$(MODELS_DIR)/cpp/include -isystem$(CLANG_INCLUDES)/c++/v1/ -c
 INFER_OPTIONS = --cxx --ml-buckets cpp --no-filtering --debug-exceptions
-INFERPRINT_OPTIONS = --issues-txt
+INFERPRINT_OPTIONS = --issues-tests
 
 SOURCES = \
   siof/const.cpp \
@@ -19,5 +19,8 @@ SOURCES = \
   siof/pod_across_translation_units-1.cpp \
   siof/pod_across_translation_units-2.cpp \
   siof/pod_same_translation_unit.cpp \
-  siof/siof_across_translation_units-1.cpp \
-  siof/siof_across_translation_units-2.cpp \
+  siof/siof.cpp \
+  siof/siof_templated.cpp \
+  siof/siof_different_tu.cpp \
+
+include $(TESTS_DIR)/clang.make

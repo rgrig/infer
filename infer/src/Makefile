@@ -26,6 +26,7 @@ OCAMLBUILD_OPTIONS = \
   -r \
   -use-menhir -menhir 'menhir --explain --strict'\
   -use-ocamlfind \
+  -lflags -cclib,-lffi \
   -cflags -g -lflags -g \
   -cflags -short-paths \
   -cflags -safe-string \
@@ -35,7 +36,7 @@ OCAMLBUILD_OPTIONS = \
   -cflags -w,$(OCAML_FATAL_WARNINGS)-4-9-40-41-42-45-48 \
   -tag-line "<*{clang/clang_ast_*,backend/jsonbug_*,checkers/stacktree_*}>: warn(-27-32-35-39)" \
   -tag thread \
-  -pkgs atdgen,core,extlib,oUnit,str,unix,yojson,zip
+  -pkgs atdgen,core,ctypes.foreign,extlib,oUnit,str,unix,yojson,zip
 
 ifeq ($(ENABLE_OCAML_ANNOT),yes)
 OCAMLBUILD_OPTIONS += -cflags -annot
@@ -133,7 +134,7 @@ else
 EXTRA_DEPS = opensource
 endif
 
-DEPENDENCIES = IR backend base checkers eradicate harness integration quandary $(EXTRA_DEPS)
+DEPENDENCIES = IR backend base checkers eradicate harness integration tp/fts quandary $(EXTRA_DEPS)
 
 # ocamlbuild command with options common to all build targets
 OCAMLBUILD_BASE = rebuild $(OCAMLBUILD_OPTIONS) -j $(NCPU) $(addprefix -I , $(DEPENDENCIES))
@@ -178,15 +179,15 @@ all: infer
 infer: init $(STACKTREE_ATDGEN_STUBS) $(INFERPRINT_ATDGEN_STUBS)
 	$(OCAMLBUILD_CONFIG) -build-dir $(INFER_BUILD_DIR) $(OCAMLBUILD_NATIVE_OPTS) \
 	  $(INFER_CONFIG_TARGETS)
-	$(COPY) $(INFER_BUILD_DIR)/$(INFER_MAIN).native $(INFER_BIN)
-	$(COPY) $(INFER_BUILD_DIR)/$(INFERANALYZE_MAIN).native $(INFERANALYZE_BIN)
-	$(COPY) $(INFER_BUILD_DIR)/$(INFERPRINT_MAIN).native $(INFERPRINT_BIN)
-	$(COPY) $(INFER_BUILD_DIR)/$(INFERUNIT_MAIN).native $(INFERUNIT_BIN)
+	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFER_MAIN).native $(INFER_BIN)
+	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFERANALYZE_MAIN).native $(INFERANALYZE_BIN)
+	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFERPRINT_MAIN).native $(INFERPRINT_BIN)
+	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFERUNIT_MAIN).native $(INFERUNIT_BIN)
 ifeq ($(BUILD_JAVA_ANALYZERS),yes)
-	$(COPY) $(INFER_BUILD_DIR)/$(INFERJAVA_MAIN).native $(INFERJAVA_BIN)
+	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFERJAVA_MAIN).native $(INFERJAVA_BIN)
 endif
 ifeq ($(BUILD_C_ANALYZERS),yes)
-	$(COPY) $(INFER_BUILD_DIR)/$(INFERCLANG_MAIN).native $(INFERCLANG_BIN)
+	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFERCLANG_MAIN).native $(INFERCLANG_BIN)
 	cd $(INFER_BUILD_DIR) && $(LN_S) -f InferClang InferClang++ && cd -
 endif
 ifeq ($(ENABLE_OCAML_ANNOT),yes)
@@ -284,8 +285,8 @@ toplevel: init $(STACKTREE_ATDGEN_STUBS) $(INFERPRINT_ATDGEN_STUBS) $(CLANG_ATDG
 checkCopyright: $(CHECKCOPYRIGHT_BIN)
 
 $(CHECKCOPYRIGHT_BIN): sanitize $(BUILD_DIR) $(CHECKCOPYRIGHT_MAIN).ml
-	rebuild -quiet -r -j $(NCPU) -build-dir $(INFER_BUILD_DIR) -pkgs core_extended,str -tag thread -use-ocamlfind $(CHECKCOPYRIGHT_MAIN).native
-	$(COPY) $(INFER_BUILD_DIR)/$(CHECKCOPYRIGHT_MAIN).native $(CHECKCOPYRIGHT_BIN)
+	rebuild -quiet -r -j $(NCPU) -build-dir $(INFER_BUILD_DIR) -pkgs core,str -tag thread -use-ocamlfind $(CHECKCOPYRIGHT_MAIN).native
+	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(CHECKCOPYRIGHT_MAIN).native $(CHECKCOPYRIGHT_BIN)
 
 define gen_atdgen_rules
 # generate files using atdgen
@@ -318,7 +319,7 @@ $(foreach atd_type,b j t v,\
 
 define mirror_fcp_file
 $(CLANG_SOURCES)/$(notdir $(1)): $(1)
-	$(INSTALL) -m 644 -C $$< $$@
+	$(INSTALL_DATA) -C $$< $$@
 endef
 
 $(foreach file, $(FCP_FILES_TO_MIRROR), $(eval $(call mirror_fcp_file,$(file))))
@@ -354,7 +355,7 @@ version: base/Version.ml.in Makefile
 	  -e "s|@INFER_GIT_COMMIT[@]|$$INFER_GIT_COMMIT|g" \
 	  -e "s|@INFER_GIT_BRANCH[@]|$$INFER_GIT_BRANCH|g" \
 	  $< > "$$TMPFILE"; \
-	$(INSTALL) -m 644 -C "$$TMPFILE" base/Version.ml; \
+	$(INSTALL_DATA) -C "$$TMPFILE" base/Version.ml; \
 	rm -f "$$TMPFILE"
 
 $(BUILD_DIR):

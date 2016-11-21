@@ -27,7 +27,7 @@ module MockTrace = Trace.Make(struct
       let compare = CallSite.compare
       let pp = CallSite.pp
 
-      let to_callee t _ = t
+      let with_callsite t _ = t
 
       module Set = PrettyPrintable.MakePPSet(struct
           type nonrec t = t
@@ -45,7 +45,7 @@ module MockTrace = Trace.Make(struct
         then Some site
         else None
 
-      let is_footprint _ = assert false
+      let is_footprint _ = false
       let make_footprint _ = assert false
       let get_footprint_access_path _ = assert false
     end

@@ -157,8 +157,12 @@ def main():
                                  touch_if_present=not args.continue_capture)
 
         utils.configure_logging(args)
-        logging.info('output of locale.getdefaultlocale(): %s',
-                     str(locale.getdefaultlocale()))
+        try:
+            logging.info('output of locale.getdefaultlocale(): %s',
+                         str(locale.getdefaultlocale()))
+        except (locale.Error, ValueError) as e:
+            logging.info('locale.getdefaultlocale() failed with exception: %s',
+                         str(e))
         logging.info('encoding we chose in the end: %s',
                      config.CODESET)
         logging.info('Running command %s',
@@ -194,15 +198,6 @@ def main():
     else:
         global_argparser.print_help()
         sys.exit(os.EX_OK)
-
-    buck_not_in_compilation_database_mode =  \
-        mod_name == 'buck' and not args.use_compilation_database
-    if not (buck_not_in_compilation_database_mode or
-            mod_name == 'javac' or
-            mod_name == 'java'):
-        analysis = analyze.AnalyzerWrapper(args)
-        analysis.analyze_and_report()
-        analysis.save_stats()
 
 if __name__ == '__main__':
     main()

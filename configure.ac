@@ -98,8 +98,8 @@ AS_IF([test "x$enable_c_analyzers" = "xyes"], [
   AC_CHECK_TOOL([SHASUM], [shasum], [no])
   AC_ASSERT_PROG([shasum], [$SHASUM])
   # cmake is required to build llvm+clang
+  AC_CHECK_TOOL([CMAKE], [cmake], [no])
   AS_IF([test "x$is_release_tree" = "xno"], [
-    AC_CHECK_TOOL([CMAKE], [cmake], [no])
     AC_ASSERT_PROG([cmake], [$CMAKE])
   ])
   AC_ARG_ENABLE(ocamlopt-custom-cc,
@@ -116,7 +116,6 @@ AC_CHECK_TOOL([PYTHON27], [python2.7], [no])
 AC_ASSERT_PROG([python2.7], [$PYTHON27])
 
 AC_CHECK_TOOL([XCODE_SELECT], [xcode-select], [no])
-AC_SUBST([XCODE_SELECT])
 
 
 # prefer clang over gcc because the plugins makes use of
@@ -199,8 +198,8 @@ if test "x$enable_java_analyzers" = "xyes"; then
   AC_CHECK_TOOL([JAVAC], [javac], [no])
   AC_ASSERT_PROG([javac], [$JAVAC])
   AC_ASSERT_PROG([java], [$JAVA])
-  AC_ASSERT_OCAML_PKG([javalib], [], [2.3.1])
-  AC_ASSERT_OCAML_PKG([sawja], [], [1.5.1])
+  AC_ASSERT_OCAML_PKG([javalib], [], [2.3.3])
+  AC_ASSERT_OCAML_PKG([sawja], [], [1.5.2])
   AC_ASSERT_OCAML_PKG([ptrees])
 
   AC_MSG_CHECKING([for JAVA_HOME])
@@ -232,7 +231,6 @@ fi
 
 AC_CHECK_TOOL([ATDGEN], [atdgen], [no])
 AC_ASSERT_PROG([atdgen], [$ATDGEN])
-AC_SUBST([ATDGEN])
 
 AC_ARG_ENABLE(ocaml-annot,
   AS_HELP_STRING([--disable-ocaml-annot], [do not build ocaml .annot files]),
@@ -274,6 +272,9 @@ else
 fi
 AC_SUBST([NCPU])
 
+# tools that are optional, eg build systems to be run in integration tests
+AC_CHECK_TOOL([ANT], [ant], [no])
+AC_CHECK_TOOL([BUCK], [buck], [no])
 
 AC_CONFIG_FILES([
   Makefile.config

@@ -6,7 +6,6 @@
 # of patent rights can be found in the PATENTS file in the same directory.
 
 TESTS_DIR = ../../..
-include $(TESTS_DIR)/clang.make
 
 IPHONESIMULATOR_ISYSROOT_SUFFIX = /Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk
 
@@ -17,8 +16,10 @@ CLANG_OPTIONS = -x objective-c \
   -isysroot $(XCODEROOT)$(IPHONESIMULATOR_ISYSROOT_SUFFIX) \
   -mios-simulator-version-min=8.2 --target=x86_64-apple-darwin14 -c \
 
-CLEAN_EXTRA = infer-out-arc infer-out-all
+CLEAN_EXTRA = infer-out-arc infer-out-all infer-out-all infer-out-arc \
+              issues.exp.test.all issues.exp.test.arc issues.exp.test.default
 INFER_OPTIONS = --cxx  --check-duplicate-symbols --no-filtering --debug-exceptions
+INFERPRINT_OPTIONS = --issues-tests
 
 SOURCES_DEFAULT = \
   field_superclass/B.m \
@@ -96,6 +97,8 @@ SOURCES_ARC = \
   subtyping/KindOfClassExample.m \
   variadic_methods/premature_nil_termination.m \
 
+include $(TESTS_DIR)/clang.make
+
 OBJECTS_ARC = $(foreach source,$(SOURCES_ARC),$(basename $(source)).o)
 OBJECTS_BUCKET_ALL = $(foreach source,$(SOURCES_BUCKET_ALL),$(basename $(source)).o)
 OBJECTS_DEFAULT = $(foreach source,$(SOURCES_DEFAULT),$(basename $(source)).o)
@@ -131,8 +134,4 @@ issues.exp.test: infer-out-all/report.json infer-out-arc/report.json infer-out/r
 	  --from-json-report infer-out-arc/report.json
 	$(INFERPRINT_BIN) -q -a $(ANALYZER) $(INFERPRINT_OPTIONS) $@.default \
 	  --from-json-report infer-out/report.json
-	LC_ALL=C sort -t, -k1,1 -k2,2 -k3n,3 -o $@ $@.all $@.arc $@.default
-
-clean:
-	$(REMOVE_DIR) infer-out-all infer-out-arc
-	$(REMOVE) issues.exp.test.all issues.exp.test.arc issues.exp.test.default
+	cat $@.all $@.arc $@.default > $@

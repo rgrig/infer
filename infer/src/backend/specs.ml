@@ -327,6 +327,7 @@ type payload =
     (** Proc location and blame_range info for crashcontext analysis *)
     quandary : QuandarySummary.t option;
     siof : SiofDomain.astate option;
+    threadsafety : ThreadSafetyDomain.astate option;
   }
 
 type summary =
@@ -423,15 +424,17 @@ let get_signature summary =
   let s = ref "" in
   IList.iter
     (fun (p, typ) ->
-       let pp_name f () = F.fprintf f "%a" Mangled.pp p in
-       let pp f () = Typ.pp_decl pe_text pp_name f typ in
+       let pp f () = F.fprintf f "%a %a" (Typ.pp_full pe_text) typ Mangled.pp p in
        let decl = pp_to_string pp () in
        s := if !s = "" then decl else !s ^ ", " ^ decl)
     summary.attributes.ProcAttributes.formals;
-  let pp_procname f () = F.fprintf f "%a"
-      Procname.pp summary.attributes.ProcAttributes.proc_name in
   let pp f () =
-    Typ.pp_decl pe_text pp_procname f summary.attributes.ProcAttributes.ret_type in
+    F.fprintf
+      f
+      "%a %a"
+      (Typ.pp_full pe_text)
+      summary.attributes.ProcAttributes.ret_type
+      Procname.pp summary.attributes.ProcAttributes.proc_name in
   let decl = pp_to_string pp () in
   decl ^ "(" ^ !s ^ ")"
 
@@ -449,16 +452,17 @@ let pp_summary_no_stats_specs fmt summary =
   F.fprintf fmt "%a@\n" pp_pair (describe_phase summary);
   F.fprintf fmt "Dependency_map: @[%a@]@\n" pp_dependency_map summary.dependency_map
 
-let pp_payload pe fmt { preposts; typestate; crashcontext_frame; quandary; siof } =
+let pp_payload pe fmt { preposts; typestate; crashcontext_frame; quandary; siof; threadsafety } =
   let pp_opt pp fmt = function
     | Some x -> pp fmt x
     | None -> () in
-  F.fprintf fmt "%a%a%a%a%a"
+  F.fprintf fmt "%a%a%a%a%a%a"
     (pp_specs pe) (get_specs_from_preposts preposts)
     (pp_opt (TypeState.pp TypeState.unit_ext)) typestate
     (pp_opt Crashcontext.pp_stacktree) crashcontext_frame
     (pp_opt QuandarySummary.pp) quandary
     (pp_opt SiofDomain.pp) siof
+    (pp_opt ThreadSafetyDomain.pp) threadsafety
 
 
 let pp_summary_text ~whole_seconds fmt summary =
@@ -768,6 +772,7 @@ let empty_payload =
     crashcontext_frame = None;
     quandary = None;
     siof = None;
+    threadsafety = None;
   }
 
 (** [init_summary (depend_list, nodes,

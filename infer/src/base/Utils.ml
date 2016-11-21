@@ -582,6 +582,16 @@ let directory_iter f path =
   else
     f path
 
+
+let remove_directory_tree path =
+  Stream.from (fun _ -> Fts.fts_read (Fts.fts_open ?compar:None ~path_argv:[path] ~options:[]))
+  |> Stream.iter (fun ent ->
+      match Fts.FTSENT.info ent with
+      | FTS_D | FTS_DOT -> ()
+      | _ -> Core.Std.Unix.remove (Fts.FTSENT.name ent)
+    )
+
+
 let string_crc_hex32 s = Digest.to_hex (Digest.string s)
 
 let string_append_crc_cutoff ?(cutoff=100) ?(key="") name =
@@ -662,3 +672,12 @@ let rec create_path path =
   | Unix.Unix_error (Unix.ENOENT, _, _) ->
       create_path (Filename.dirname path);
       create_dir path
+
+let realpath_cache = Hashtbl.create 1023
+
+let realpath path =
+  try Hashtbl.find realpath_cache path
+  with Not_found ->
+    let realpath = Core.Std.Filename.realpath path in
+    Hashtbl.add realpath_cache path realpath;
+    realpath

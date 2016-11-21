@@ -20,9 +20,14 @@ module CppSource = struct
       | EnvironmentVariable (** source that was read from an environment variable *)
       | Other (** for testing or uncategorized sources *)
 
-    let compare sk1 sk2 = match sk1, sk2 with
-      | Footprint ap1, Footprint ap2 -> AccessPath.compare ap1 ap2
-      | _ -> tags_compare sk1 sk2
+    let compare sk1 sk2 =
+      if sk1 == sk2
+      then
+        0
+      else
+        match sk1, sk2 with
+        | Footprint ap1, Footprint ap2 -> AccessPath.compare ap1 ap2
+        | _ -> tags_compare sk1 sk2
 
     let equal sk1 sk2 =
       compare sk1 sk2 = 0
@@ -79,12 +84,18 @@ module CppSource = struct
     | pname ->
         failwithf "Non-C++ procname %a in C++ analysis@." Procname.pp pname
 
-  let to_callee t callee_site =
+  let with_callsite t callee_site =
     { t with site = callee_site; }
 
   let compare src1 src2 =
-    Kind.compare src1.kind src2.kind
-    |> next CallSite.compare src1.site src2.site
+    if src1 == src2
+    then
+      0
+    else
+      let n = Kind.compare src1.kind src2.kind in
+      if n <> 0
+      then n
+      else CallSite.compare src1.site src2.site
 
   let equal t1 t2 =
     compare t1 t2 = 0
@@ -159,12 +170,18 @@ module CppSink = struct
     | pname ->
         failwithf "Non-C++ procname %a in C++ analysis@." Procname.pp pname
 
-  let to_callee t callee_site =
+  let with_callsite t callee_site =
     { t with site = callee_site; }
 
   let compare snk1 snk2 =
-    Kind.compare snk1.kind snk2.kind
-    |> next CallSite.compare snk1.site snk2.site
+    if snk1 == snk2
+    then
+      0
+    else
+      let n = Kind.compare snk1.kind snk2.kind in
+      if n <> 0
+      then n
+      else CallSite.compare snk1.site snk2.site
 
   let equal t1 t2 =
     compare t1 t2 = 0

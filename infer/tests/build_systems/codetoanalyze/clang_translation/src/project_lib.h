@@ -7,13 +7,10 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
-// This file exists only so that the SIOF checkers sees global_object
-// being initialized via a method call. The SIOF checker could be
-// improved to know that all non-POD types require initialization in
-// C++.
+#pragma once
+namespace internal {
+int fun(int a) { return a; }
 
-struct SomeObject {
-  void some_method();
-};
-
-SomeObject global_object;
+// function shouldn't be translated if it's not used in source file
+int unused(int a) { return a; }
+}

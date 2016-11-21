@@ -33,7 +33,8 @@ module Dummy = struct
 
   let pp _ () = ()
 
-  let is_footprint _ = assert false
+  let is_footprint _ = false
+
   let make_footprint _ _ = assert false
   let get_footprint_access_path _ = assert false
   let get _ = None
@@ -50,5 +51,5 @@ module Dummy = struct
       let pp_element = pp
     end)
 
-  let to_callee t _ = t
+  let with_callsite t _ = t
 end

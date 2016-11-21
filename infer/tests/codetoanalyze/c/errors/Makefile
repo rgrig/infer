@@ -6,11 +6,15 @@
 # of patent rights can be found in the PATENTS file in the same directory.
 
 TESTS_DIR = ../../..
-include $(TESTS_DIR)/clang.make
 
 ANALYZER = infer
 CLANG_OPTIONS = -c
 INFER_OPTIONS = --report-custom-error --developer-mode --no-filtering --debug-exceptions
+# we need to disable traces in C tests because assertions/assertion_failure.c has different traces
+# on Linux and OSX because of different implementations of assert() on each platform
+INFERPRINT_OPTIONS = --no-print-traces-in-tests --issues-tests
 
 SOURCES = \
   $(wildcard */*.c) \
+
+include $(TESTS_DIR)/clang.make
