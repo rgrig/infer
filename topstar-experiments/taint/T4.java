@@ -2,10 +2,10 @@ import java.util.Random;
 
 class G { // global
   static private Object tracked = null;
-  static private int state = 0;
+  static int state = 0;
   static void get_ret(Object x) {
-    if (state == 0) while (true);
-    //if (maybe()) tracked = x;
+    //if (state == 0) while (true);
+    if (maybe()) tracked = x;
   }
   static void go_ret(Object x) {
   }
@@ -35,6 +35,7 @@ class O {
 
 public class T4 {
   public static void main(String[] args) {
+    G.state = 0;
     O x = O.get();
     O y = O.get();
     y.go();
