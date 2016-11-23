@@ -186,8 +186,6 @@ let smt_output = false
 
 let source_file_extentions = [".java"; ".m"; ".mm"; ".c"; ".cc"; ".cpp"; ".h"]
 
-let sources_dir_name = "sources"
-
 let specs_dir_name = "specs"
 
 let specs_files_suffix = ".specs"
@@ -701,6 +699,13 @@ and cluster =
   CLOpt.mk_path_opt ~deprecated:["cluster"] ~long:"cluster"
     ~meta:"file" "Specify a .cluster file to be analyzed"
 
+and compute_analytics =
+  CLOpt.mk_bool ~long:"compute-analytics"
+    ~default:false
+    ~exes:CLOpt.[Toplevel;Clang]
+    "Emit analytics as info-level issues, like component kit line count and \
+     component kit file cyclomatic complexity"
+
 (** Continue the capture for reactive mode:
     If a procedure was changed beforehand, keep the changed marking. *)
 and continue =
@@ -1138,10 +1143,6 @@ and skip_translation_headers =
     ~exes:CLOpt.[Clang]
     ~meta:"path prefix" "Ignore headers whose path matches the given prefix"
 
-and source_file_copy =
-  CLOpt.mk_string_opt ~deprecated:["source_file_copy"] ~long:"source-file-copy"
-    ~meta:"source_file" "Print the path of the copy of source_file in the results directory"
-
 and spec_abs_level =
   CLOpt.mk_int ~deprecated:["spec_abs_level"] ~long:"spec-abs-level" ~default:1
     ~meta:"int" "Set the level of abstracting the postconditions of discovered specs:\n\
@@ -1421,6 +1422,7 @@ and checkers_repeated_calls = !checkers_repeated_calls
 and clang_biniou_file = !clang_biniou_file
 and clang_include_to_override = !clang_include_to_override
 and cluster_cmdline = !cluster
+and compute_analytics = !compute_analytics
 and continue_capture = !continue
 and copy_propagation = !copy_propagation
 and crashcontext = !crashcontext
@@ -1509,7 +1511,6 @@ and show_progress_bar = !progress_bar
 and skip_analysis_in_path = !skip_analysis_in_path
 and skip_clang_analysis_in_path = !skip_clang_analysis_in_path
 and skip_translation_headers = !skip_translation_headers
-and source_file_copy = !source_file_copy
 and spec_abs_level = !spec_abs_level
 and stacktrace = !stacktrace
 and stacktraces_dir = !stacktraces_dir

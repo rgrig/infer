@@ -112,7 +112,6 @@ val save_compact_summaries : bool
 val save_time_in_summaries : bool
 val smt_output : bool
 val source_file_extentions : string list
-val sources_dir_name : string
 val specs_dir_name : string
 val specs_files_suffix : string
 val start_filename : string
@@ -163,6 +162,7 @@ val clang_frontend_do_capture : bool
 val clang_frontend_do_lint : bool
 val clang_include_to_override : string option
 val cluster_cmdline : string option
+val compute_analytics : bool
 val continue_capture : bool
 val copy_propagation : bool
 val crashcontext : bool
@@ -247,7 +247,6 @@ val show_progress_bar : bool
 val skip_analysis_in_path : string list
 val skip_clang_analysis_in_path : string list
 val skip_translation_headers : string list
-val source_file_copy : string option
 val spec_abs_level : int
 val specs_library : string list
 val stacktrace : string option
