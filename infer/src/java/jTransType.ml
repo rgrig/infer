@@ -8,42 +8,44 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 open Javalib_pack
 open Sawja_pack
+
+module L = Logging
 
 (** Type transformations between Javalib datatypes and sil datatypes *)
 
 exception Type_tranlsation_error of string
 
 let basic_type = function
-  | `Int -> Typ.Tint Typ.IInt
-  | `Bool -> Typ.Tint Typ.IBool
-  | `Byte -> Typ.Tint Typ.IChar
-  | `Char -> Typ.Tint Typ.IChar
-  | `Double -> Typ.Tfloat Typ.FDouble
-  | `Float -> Typ.Tfloat Typ.FFloat
-  | `Long -> Typ.Tint Typ.ILong
-  | `Short -> Typ.Tint Typ.IShort
+  | `Int -> Typ.mk (Tint Typ.IInt)
+  | `Bool -> Typ.mk (Tint Typ.IBool)
+  | `Byte -> Typ.mk (Tint Typ.IChar)
+  | `Char -> Typ.mk (Tint Typ.IChar)
+  | `Double -> Typ.mk (Tfloat Typ.FDouble)
+  | `Float -> Typ.mk (Tfloat Typ.FFloat)
+  | `Long -> Typ.mk (Tint Typ.ILong)
+  | `Short -> Typ.mk (Tint Typ.IShort)
 
 
 let cast_type = function
   | JBir.F2I
   | JBir.L2I
-  | JBir.D2I -> Typ.Tint Typ.IInt
+  | JBir.D2I -> Typ.mk (Typ.Tint Typ.IInt)
   | JBir.D2L
   | JBir.F2L
-  | JBir.I2L -> Typ.Tint Typ.ILong
+  | JBir.I2L -> Typ.mk (Typ.Tint Typ.ILong)
   | JBir.I2F
   | JBir.L2F
-  | JBir.D2F -> Typ.Tfloat Typ.FFloat
+  | JBir.D2F -> Typ.mk (Typ.Tfloat Typ.FFloat)
   | JBir.L2D
   | JBir.F2D
-  | JBir.I2D -> Typ.Tfloat Typ.FDouble
-  | JBir.I2B -> Typ.Tint Typ.IBool
-  | JBir.I2C -> Typ.Tint Typ.IChar
-  | JBir.I2S -> Typ.Tint Typ.IShort
+  | JBir.I2D -> Typ.mk (Typ.Tfloat Typ.FDouble)
+  | JBir.I2B -> Typ.mk (Typ.Tint Typ.IBool)
+  | JBir.I2C -> Typ.mk (Typ.Tint Typ.IChar)
+  | JBir.I2S -> Typ.mk (Typ.Tint Typ.IShort)
 
 
 let const_type const =
@@ -58,10 +60,10 @@ let const_type const =
 
 
 let typename_of_classname cn =
-  Typename.Java.from_string (JBasics.cn_name cn)
+  Typ.Name.Java.from_string (JBasics.cn_name cn)
 
 
-let rec get_named_type vt =
+let rec get_named_type vt : Typ.t =
   match vt with
   | JBasics.TBasic bt -> basic_type bt
   | JBasics.TObject ot ->
@@ -69,13 +71,14 @@ let rec get_named_type vt =
         match ot with
         | JBasics.TArray vt ->
             let content_type = get_named_type vt in
-            Typ.Tptr (Typ.Tarray (content_type, None), Typ.Pk_pointer)
-        | JBasics.TClass cn -> Typ.Tptr (Typ.Tstruct (typename_of_classname cn), Typ.Pk_pointer)
+            Typ.mk (Tptr (Typ.mk (Tarray (content_type, None, None)), Typ.Pk_pointer))
+        | JBasics.TClass cn ->
+            Typ.mk (Tptr (Typ.mk (Tstruct (typename_of_classname cn)), Typ.Pk_pointer))
       end
 
 
 let extract_cn_type_np typ =
-  match typ with
+  match typ.Typ.desc with
   | Typ.Tptr(vtyp, Typ.Pk_pointer) ->
       vtyp
   | _ -> typ
@@ -83,13 +86,13 @@ let extract_cn_type_np typ =
 let rec create_array_type typ dim =
   if dim > 0 then
     let content_typ = create_array_type typ (dim - 1) in
-    Typ.Tptr(Typ.Tarray (content_typ, None), Typ.Pk_pointer)
+    Typ.mk (Tptr(Typ.mk (Tarray (content_typ, None, None)), Typ.Pk_pointer))
   else typ
 
 let extract_cn_no_obj typ =
-  match typ with
-  | Typ.Tptr (Tstruct (TN_csu (Class _, _) as name), Pk_pointer) ->
-      let class_name = JBasics.make_cn (Typename.name name) in
+  match typ.Typ.desc with
+  | Typ.Tptr ({desc=Tstruct (JavaClass _ as name)}, Pk_pointer) ->
+      let class_name = JBasics.make_cn (Typ.Name.name name) in
       if JBasics.cn_equal class_name JBasics.java_lang_object then None
       else
         let jbir_class_name = class_name in
@@ -173,7 +176,7 @@ let method_signature_names ms =
   let return_type_name =
     match JBasics.ms_rtype ms with
     | None ->
-        if JBasics.ms_name ms = JConfig.constructor_name then
+        if String.equal (JBasics.ms_name ms) JConfig.constructor_name then
           None
         else
           Some (None, JConfig.void)
@@ -188,15 +191,15 @@ let method_signature_names ms =
 
 let get_method_kind m =
   if Javalib.is_static_method m
-  then Procname.Static
-  else Procname.Non_Static
+  then Typ.Procname.Static
+  else Typ.Procname.Non_Static
 
 let get_method_procname cn ms method_kind =
   let return_type_name, method_name, args_type_name = method_signature_names ms in
-  let class_name = cn_to_java_type cn in
+  let class_name = Typ.Name.Java.from_string (JBasics.cn_name cn) in
   let proc_name_java =
-    Procname.java class_name return_type_name method_name args_type_name method_kind in
-  Procname.Java proc_name_java
+    Typ.Procname.java class_name return_type_name method_name args_type_name method_kind in
+  Typ.Procname.Java proc_name_java
 
 (* create a mangled procname from an abstract or concrete method *)
 let translate_method_name m =
@@ -204,18 +207,21 @@ let translate_method_name m =
   get_method_procname cn ms (get_method_kind m)
 
 
-let create_fieldname cn fs =
-  let fieldname cn fs =
-    let fieldname = (JBasics.fs_name fs) in
-    let classname = (JBasics.cn_name cn) in
-    Mangled.from_string (classname^"."^fieldname) in
-  Ident.create_fieldname (fieldname cn fs) 0
+let fieldname_create cn fs =
+  let fieldname = (JBasics.fs_name fs) in
+  let classname = (JBasics.cn_name cn) in
+  Fieldname.Java.from_string (classname^"."^fieldname)
 
 let create_sil_class_field cn cf =
   let fs = cf.Javalib.cf_signature in
-  let field_name = create_fieldname cn fs
+  let field_name = fieldname_create cn fs
   and field_type = get_named_type (JBasics.fs_type fs)
-  and annotation = JAnnotation.translate_item cf.Javalib.cf_annotations in
+  and annotation =
+    let real_annotations = JAnnotation.translate_item cf.Javalib.cf_annotations in
+    (* translate modifers like "volatile" as annotations *)
+    match cf.Javalib.cf_kind with
+    | Javalib.Volatile -> (Annot.volatile, true) :: real_annotations
+    | Javalib.NotFinal | Final -> real_annotations in
   (field_name, field_type, annotation)
 
 
@@ -232,7 +238,7 @@ let collect_class_field cn cf (statics, nonstatics) =
 let collect_interface_field cn inf l =
   let fs = inf.Javalib.if_signature in
   let field_type = get_named_type (JBasics.fs_type fs) in
-  let field_name = create_fieldname cn fs in
+  let field_name = fieldname_create cn fs in
   let annotation = JAnnotation.translate_item inf.Javalib.if_annotations in
   (field_name, field_type, annotation) :: l
 
@@ -241,14 +247,15 @@ let collect_models_class_fields classpath_field_map cn cf fields =
   let static, nonstatic = fields in
   let field_name, field_type, annotation = create_sil_class_field cn cf in
   try
-    let classpath_ft = Ident.FieldMap.find field_name classpath_field_map in
+    let classpath_ft = Fieldname.Map.find field_name classpath_field_map in
     if Typ.equal classpath_ft field_type then fields
     else
       (* TODO (#6711750): fix type equality for arrays before failing here *)
-      let () = Logging.stderr "Found inconsistent types for %s\n\tclasspath: %a\n\tmodels: %a\n@."
-          (Ident.fieldname_to_string field_name)
-          (Typ.pp_full pe_text) classpath_ft
-          (Typ.pp_full pe_text) field_type in fields
+      let () = L.(debug Capture Quiet)
+          "Found inconsistent types for %s@\n\tclasspath: %a@\n\tmodels: %a@\n@."
+          (Fieldname.to_string field_name)
+          (Typ.pp_full Pp.text) classpath_ft
+          (Typ.pp_full Pp.text) field_type in fields
   with Not_found ->
     if Javalib.is_static_field (Javalib.ClassField cf) then
       ((field_name, field_type, annotation):: static, nonstatic)
@@ -260,9 +267,9 @@ let add_model_fields program classpath_fields cn =
   let statics, nonstatics = classpath_fields in
   let classpath_field_map =
     let collect_fields map =
-      IList.fold_left
-        (fun map (fn, ft, _) -> Ident.FieldMap.add fn ft map) map in
-    collect_fields (collect_fields Ident.FieldMap.empty statics) nonstatics in
+      List.fold
+        ~f:(fun map (fn, ft, _) -> Fieldname.Map.add fn ft map) ~init:map in
+    collect_fields (collect_fields Fieldname.Map.empty statics) nonstatics in
   try
     match JBasics.ClassMap.find cn (JClasspath.get_models program) with
     | Javalib.JClass _ as jclass ->
@@ -277,7 +284,7 @@ let add_model_fields program classpath_fields cn =
 
 let rec get_all_fields program tenv cn =
   let extract_class_fields classname =
-    let { StructTyp.fields; statics } = get_class_struct_typ program tenv classname in
+    let { Typ.Struct.fields; statics } = get_class_struct_typ program tenv classname in
     (statics, fields) in
   let trans_fields classname =
     match JClasspath.lookup_node classname program with
@@ -306,8 +313,8 @@ and get_class_struct_typ program tenv cn =
           Tenv.mk_struct tenv name
       | Some node ->
           let create_super_list interface_names =
-            IList.iter (fun cn -> ignore (get_class_struct_typ program tenv cn)) interface_names;
-            IList.map typename_of_classname interface_names in
+            List.iter ~f:(fun cn -> ignore (get_class_struct_typ program tenv cn)) interface_names;
+            List.map ~f:typename_of_classname interface_names in
           let supers, fields, statics, annots =
             match node with
             | Javalib.JInterface jinterface ->
@@ -337,14 +344,14 @@ and get_class_struct_typ program tenv cn =
 
 let get_class_type_no_pointer program tenv cn =
   ignore (get_class_struct_typ program tenv cn);
-  Typ.Tstruct (typename_of_classname cn)
+  Typ.mk (Tstruct (typename_of_classname cn))
 
 let get_class_type program tenv cn =
-  Typ.Tptr (get_class_type_no_pointer program tenv cn, Pk_pointer)
+  Typ.mk (Tptr (get_class_type_no_pointer program tenv cn, Pk_pointer))
 
 (** return true if [field_name] is the autogenerated C.$assertionsDisabled field for class C *)
 let is_autogenerated_assert_field field_name =
-  string_equal (Ident.java_fieldname_get_field field_name) "$assertionsDisabled"
+  String.equal (Fieldname.java_get_field field_name) "$assertionsDisabled"
 
 let is_closeable program tenv typ =
   let closeable_cn = JBasics.make_cn "java.io.Closeable" in
@@ -359,7 +366,8 @@ let is_closeable program tenv typ =
 let rec object_type program tenv ot =
   match ot with
   | JBasics.TClass cn -> get_class_type program tenv cn
-  | JBasics.TArray at -> Typ.Tptr (Typ.Tarray (value_type program tenv at, None), Typ.Pk_pointer)
+  | JBasics.TArray at ->
+      Typ.mk (Tptr (Typ.mk (Tarray (value_type program tenv at, None, None)), Typ.Pk_pointer))
 
 (** translate a value type *)
 and value_type program tenv vt =
@@ -369,31 +377,31 @@ and value_type program tenv vt =
 
 
 (**  Translate object types into Exp.Sizeof expressions *)
-let sizeof_of_object_type program tenv ot subtypes =
-  match object_type program tenv ot with
+let sizeof_of_object_type program tenv ot subtype =
+  match (object_type program tenv ot).Typ.desc with
   | Typ.Tptr (typ, _) ->
-      Exp.Sizeof (typ, None, subtypes)
+      Exp.Sizeof {typ; nbytes=None; dynamic_length=None; subtype}
   | _ ->
       raise (Type_tranlsation_error "Pointer or array type expected in tenv")
 
 
 (** return the name and type of a formal parameter, looking up the class name in case of "this" *)
 let param_type program tenv cn name vt =
-  if (JBir.var_name_g name) = Mangled.to_string JConfig.this
+  if String.equal (JBir.var_name_g name) (Mangled.to_string JConfig.this)
   then get_class_type program tenv cn
   else value_type program tenv vt
 
 
 let get_var_type_from_sig (context : JContext.t) var =
   let program = context.program in
-  try
-    let tenv = JContext.get_tenv context in
-    let vt', var' =
-      IList.find
-        (fun (_, var') -> JBir.var_equal var var')
-        (JBir.params context.impl) in
-    Some (param_type program tenv context.cn var' vt')
-  with Not_found -> None
+  let tenv = JContext.get_tenv context in
+  List.find_map ~f:(
+    fun (vt', var') ->
+      if JBir.var_equal var var'
+      then Some (param_type program tenv context.cn var' vt')
+      else None
+  )
+    (JBir.params context.impl)
 
 
 let get_var_type context var =
@@ -404,8 +412,8 @@ let get_var_type context var =
 
 
 let extract_array_type typ =
-  match typ with
-  | Typ.Tptr(Typ.Tarray (vtyp, _), Typ.Pk_pointer) -> vtyp
+  match typ.Typ.desc with
+  | Typ.Tptr({desc=Tarray (vtyp, _, _)}, Typ.Pk_pointer) -> vtyp
   | _ -> typ
 
 
@@ -430,7 +438,7 @@ let rec expr_type (context : JContext.t) expr =
     specified in ms. *)
 let return_type program tenv ms =
   match JBasics.ms_rtype ms with
-  | None -> Typ.Tvoid
+  | None -> Typ.mk Tvoid
   | Some vt -> value_type program tenv vt
 
 

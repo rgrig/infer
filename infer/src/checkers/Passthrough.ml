@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module F = Format
 
@@ -17,6 +17,7 @@ type t =
   {
     site : CallSite.t;
   }
+[@@deriving compare]
 
 let make site =
   { site }
@@ -24,16 +25,11 @@ let make site =
 let site t =
   t.site
 
-let compare pt1 pt2 =
-  (match pt1, pt2 with
-   | {site=site1}, {site=site2} -> CallSite.compare site1 site2
-  )[@warning "+9"]
-
 let pp fmt s =
   F.fprintf fmt "%a" CallSite.pp s.site
 
 module Set = PrettyPrintable.MakePPSet(struct
     type nonrec t = t
     let compare = compare
-    let pp_element = pp
+    let pp = pp
   end)

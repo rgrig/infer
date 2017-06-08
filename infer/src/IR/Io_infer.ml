@@ -8,7 +8,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Module to handle IO. Includes html and xml modules. *)
 
@@ -19,9 +19,9 @@ module Html =
 struct
   (** Create a new html file *)
   let create pk path =
-    let fname, dir_path = match IList.rev path with
+    let fname, dir_path = match List.rev path with
       | fname :: path_rev ->
-          fname, IList.rev ((fname ^ ".html") :: path_rev)
+          fname, List.rev ((fname ^ ".html") :: path_rev)
       | [] ->
           raise (Failure "Html.create") in
     let fd = DB.Results_dir.create_file pk dir_path in
@@ -127,9 +127,9 @@ struct
 
   (** Get the full html filename from a path *)
   let get_full_fname source path =
-    let dir_path = match IList.rev path with
+    let dir_path = match List.rev path with
       | fname :: path_rev ->
-          IList.rev ((fname ^ ".html") :: path_rev)
+          List.rev ((fname ^ ".html") :: path_rev)
       | [] ->
           raise (Failure "Html.open_out") in
     DB.Results_dir.path_to_filename (DB.Results_dir.Abs_source_dir source) dir_path
@@ -140,8 +140,8 @@ struct
     let fd =
       Unix.openfile
         (DB.filename_to_string full_fname)
-        [Unix.O_WRONLY; Unix.O_APPEND]
-        0o777 in
+        ~mode:Unix.[O_WRONLY; O_APPEND]
+        ~perm:0o777 in
     let outc = Unix.out_channel_of_descr fd in
     let fmt = F.formatter_of_out_channel outc in
     (fd, fmt)
@@ -164,7 +164,7 @@ struct
 
   (** Print start color *)
   let pp_start_color fmt color =
-    F.fprintf fmt "%s" ("<span class='" ^ (color_string color) ^ "'>")
+    F.fprintf fmt "%s" ("<span class='" ^ (Pp.color_string color) ^ "'>")
 
   (** Print end color *)
   let pp_end_color fmt () =
@@ -174,8 +174,9 @@ struct
     let pos_str = match pos with
       | None -> ""
       | Some s -> "#" ^ s in
+    let escaped_path = List.map ~f:Escape.escape_url path in
     let link_str =
-      (DB.filename_to_string (DB.Results_dir.path_to_filename DB.Results_dir.Rel path))
+      (DB.filename_to_string (DB.Results_dir.path_to_filename DB.Results_dir.Rel escaped_path))
       ^ ".html"
       ^ pos_str in
     let name_str = match name with
@@ -185,12 +186,12 @@ struct
     F.fprintf fmt " %s" pr_str
 
   (** File name for the node, given the procedure name and node id *)
-  let node_filename pname id = (Procname.to_filename pname) ^ "_node" ^ string_of_int id
+  let node_filename pname id = (Typ.Procname.to_filename pname) ^ "_node" ^ string_of_int id
 
   (** Print an html link to the given node. *)
   let pp_node_link path_to_root pname ~description ~preds ~succs ~exn ~isvisited ~isproof fmt id =
     let display_name =
-      (if description = "" then "N" else String.sub description 0 1)
+      (if String.equal description "" then "N" else String.sub description ~pos:0 ~len:1)
       ^ "_"
       ^ (string_of_int id) in
     let node_fname = node_filename pname id in
@@ -199,7 +200,7 @@ struct
       then "dangling"
       else if isproof then "visitedproof" else "visited" in
     let node_text =
-      let pp fmt () =
+      let pp fmt =
         Format.fprintf fmt
           "<span class='%s'>%s\
            <span class='expansion'>\
@@ -207,19 +208,17 @@ struct
            </span>\
            </span>"
           style_class display_name id
-          (pp_seq Format.pp_print_int) preds
-          (pp_seq Format.pp_print_int) succs
-          (pp_seq Format.pp_print_int) exn
+          (Pp.seq Format.pp_print_int) preds
+          (Pp.seq Format.pp_print_int) succs
+          (Pp.seq Format.pp_print_int) exn
           description
           (if not isvisited then "\nNOT VISITED" else "") in
-      pp_to_string pp () in
-    if not isvisited
-    then F.fprintf fmt " %s" node_text
-    else pp_link ~path: (path_to_root @ ["nodes"; node_fname]) fmt node_text
+      F.asprintf "%t" pp in
+    pp_link ~path: (path_to_root @ ["nodes"; node_fname]) fmt node_text
 
   (** Print an html link to the given proc *)
   let pp_proc_link path_to_root proc_name fmt text =
-    pp_link ~path: (path_to_root @ [Procname.to_filename proc_name]) fmt text
+    pp_link ~path: (path_to_root @ [Typ.Procname.to_filename proc_name]) fmt text
 
   (** Print an html link to the given line number of the current source file *)
   let pp_line_link ?(with_name = false) ?(text = None) source path_to_root fmt linenum =
@@ -234,9 +233,13 @@ struct
       (match text with Some s -> s | None -> linenum_str)
 
   (** Print an html link given node id and session *)
-  let pp_session_link ?(with_name = false) source path_to_root fmt (node_id, session, linenum) =
-    let node_name = "node" ^ (string_of_int node_id) in
-    let path_to_node = path_to_root @ ["nodes"; node_name] in
+  let pp_session_link ?(with_name = false) ?proc_name source path_to_root fmt
+      (node_id, session, linenum) =
+    let node_name = "node" ^ string_of_int node_id in
+    let node_fname = match proc_name with
+      | Some pname -> node_filename pname node_id
+      | None -> node_name in
+    let path_to_node = path_to_root @ ["nodes"; node_fname] in
     let pos = "session" ^ (string_of_int session) in
     pp_link
       ~name: (if with_name then Some pos else None)
@@ -308,13 +311,13 @@ struct
     pp fmt "%s=\"%s\"" name value
 
   let pp_attributes fmt l =
-    pp_seq pp_attribute fmt l
+    Pp.seq pp_attribute fmt l
 
   (** print an xml node *)
   let rec pp_node newline indent fmt = function
     | Tree { name = name; attributes = attributes; forest = forest } ->
-        let indent' = if newline = "" then "" else indent ^ "  " in
-        let space = if attributes = [] then "" else " " in
+        let indent' = if String.equal newline "" then "" else indent ^ "  " in
+        let space = if List.is_empty attributes then "" else " " in
         let pp_inside fmt () = match forest with
           | [] ->
               ()
@@ -333,9 +336,9 @@ struct
     | String s ->
         F.fprintf fmt "%s%s%s" indent s newline
   and pp_forest newline indent fmt forest =
-    IList.iter (pp_node newline indent fmt) forest
+    List.iter ~f:(pp_node newline indent fmt) forest
 
-  let pp_prelude fmt = pp fmt "%s" "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+  let pp_prelude fmt = pp fmt "%s" "<?xml version=\"1.0\" encoding=\"UTF-8\"?>@\n"
 
   let pp_open fmt name =
     pp_prelude fmt;

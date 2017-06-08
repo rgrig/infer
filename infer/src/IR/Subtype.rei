@@ -1,7 +1,4 @@
 /*
- * vim: set ft=rust:
- * vim: set ft=reason:
- *
  * Copyright (c) 2009 - 2013 Monoidics ltd.
  * Copyright (c) 2013 - present Facebook, Inc.
  * All rights reserved.
@@ -10,17 +7,15 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
 
 
 /** The Smallfoot Intermediate Language: Subtypes */
-let module L = Logging;
+module L = Logging;
 
-let module F = Format;
+module F = Format;
 
-type t;
-
-let compare: t => t => int;
+type t [@@deriving compare];
 
 let pp: F.formatter => t => unit;
 
@@ -35,20 +30,26 @@ let subtypes_instof: t;
 let join: t => t => t;
 
 
-/** [case_analysis (c1, st1) (c2,st2) f] performs case analysis on [c1 <: c2] according
-    to [st1] and [st2] where f c1 c2 is true if c1 is a subtype of c2.
-    get_subtypes returning a pair:
-    - whether [st1] and [st2] admit [c1 <: c2], and in case return the updated subtype [st1]
-    - whether [st1] and [st2] admit [not(c1 <: c2)], and in case return
-    the updated subtype [st1] */
-let case_analysis:
-  (Typename.t, t) =>
-  (Typename.t, t) =>
-  (Typename.t => Typename.t => bool) =>
-  (Typename.t => bool) =>
-  (option t, option t);
+/** [case_analysis tenv (c1, st1) (c2, st2)] performs case analysis on [c1 <: c2] according
+    to [st1] and [st2].
+    [case_analysis] returns a pair:
+    - whether [st1] and [st2] admit [c1 <: c2], and in case returns the updated subtype [st1]
+    - whether [st1] and [st2] admit [not(c1 <: c2)], and in case returns the updated subtype [st1] */
+let case_analysis: Tenv.t => (Typ.Name.t, t) => (Typ.Name.t, t) => (option t, option t);
 
-let check_subtype: (Typename.t => Typename.t => bool) => Typename.t => Typename.t => bool;
+
+/** [is_known_subtype tenv c1 c2] returns true if there is enough information in [tenv] to prove
+    that [c1] is a subtype of [c2].
+    Note that [not (is_known_subtype tenv c1 c2) == true] does not imply
+    that [is_known_not_subtype tenv c1 c2 == true] */
+let is_known_subtype: Tenv.t => Typ.Name.t => Typ.Name.t => bool;
+
+
+/** [is_known_not_subtype tenv c1 c2] returns true if there is enough information in [tenv] to prove
+    that [c1] is not a subtype of [c2].
+    Note that [not (is_known_not_subtype tenv c1 c2) == true] does not imply
+    that [is_known_subtype tenv c1 c2 == true] */
+let is_known_not_subtype: Tenv.t => Typ.Name.t => Typ.Name.t => bool;
 
 let subtypes_to_string: t => string;
 

@@ -1,12 +1,14 @@
 (* load dependencies *)
 #use "topfind";;
 #thread;;
-#require "core";;
+#require "cmdliner";;
+#require "core.top";;
 #require "ctypes";;
-#require "ctypes.foreign";;
+#require "ctypes.stubs";;
 #require "sawja";;
 #require "atdgen";;
-#require "extlib";;
+#require "xmlm";;
+#require "ANSITerminal";;
 
 (* load infer code *)
 #load_rec "toplevel.cmo";;

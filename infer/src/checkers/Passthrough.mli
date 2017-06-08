@@ -7,15 +7,15 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! IStd
+
 module F = Format
 
-type t
+type t [@@deriving compare]
 
 val make : CallSite.t -> t
 
 val site : t -> CallSite.t
-
-val compare : t -> t -> int
 
 val pp : F.formatter -> t -> unit
 

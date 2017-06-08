@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module L = Logging
 
@@ -31,7 +31,7 @@ module type DFStateType = sig
   val do_node : Tenv.t -> Procdesc.Node.t -> t -> (t list) * (t list)
 
   (** Can proc throw an exception? *)
-  val proc_throws : Procname.t -> throws
+  val proc_throws : Typ.Procname.t -> throws
 end
 
 (** Type for the dataflow API. *)
@@ -47,7 +47,7 @@ module type DF = sig
 end
 
 (** Determine if the node can throw an exception. *)
-let node_throws pdesc node (proc_throws : Procname.t -> throws) : throws =
+let node_throws pdesc node (proc_throws : Typ.Procname.t -> throws) : throws =
   let instr_throws instr =
     let is_return pvar =
       let ret_pvar = Procdesc.get_ret_var pdesc in
@@ -58,7 +58,7 @@ let node_throws pdesc node (proc_throws : Procname.t -> throws) : throws =
         Throws
     | Sil.Call (_, Exp.Const (Const.Cfun callee_pn), _, _, _)
       when BuiltinDecl.is_declared callee_pn ->
-        if Procname.equal callee_pn BuiltinDecl.__cast
+        if Typ.Procname.equal callee_pn BuiltinDecl.__cast
         then DontKnow
         else DoesNotThrow
     | Sil.Call (_, Exp.Const (Const.Cfun callee_pn), _, _, _) ->
@@ -75,14 +75,13 @@ let node_throws pdesc node (proc_throws : Procname.t -> throws) : throws =
     | t, DoesNotThrow -> res := t in
   let do_instr instr = update_res (instr_throws instr) in
 
-  IList.iter do_instr (Procdesc.Node.get_instrs node);
+  List.iter ~f:do_instr (Procdesc.Node.get_instrs node);
   !res
 
 (** Create an instance of the dataflow algorithm given a state parameter. *)
 module MakeDF(St: DFStateType) : DF with type state = St.t = struct
   module S = Procdesc.NodeSet
   module H = Procdesc.NodeHash
-  module N = Procdesc.Node
 
   type worklist = S.t
   type statemap = St.t H.t
@@ -100,9 +99,9 @@ module MakeDF(St: DFStateType) : DF with type state = St.t = struct
     | Transition of state * state list * state list
 
   let join states initial_state =
-    IList.fold_left
-      St.join
-      initial_state
+    List.fold
+      ~f:St.join
+      ~init:initial_state
       states
 
   (** Propagate [new_state] to all the nodes immediately reachable. *)
@@ -121,12 +120,12 @@ module MakeDF(St: DFStateType) : DF with type state = St.t = struct
     let succ_nodes = Procdesc.Node.get_succs node in
     let exn_nodes = Procdesc.Node.get_exn node in
     if throws <> Throws then
-      IList.iter
-        (fun s -> IList.iter (propagate_to_dest s) succ_nodes)
+      List.iter
+        ~f:(fun s -> List.iter ~f:(propagate_to_dest s) succ_nodes)
         states_succ;
     if throws <> DoesNotThrow then
-      IList.iter
-        (fun s -> IList.iter (propagate_to_dest s) exn_nodes)
+      List.iter
+        ~f:(fun s -> List.iter ~f:(propagate_to_dest s) exn_nodes)
         states_exn;
 
     H.replace t.post_states node states_succ;
@@ -171,14 +170,15 @@ module MakeDF(St: DFStateType) : DF with type state = St.t = struct
 end (* MakeDF *)
 
 (** Example dataflow callback: compute the the distance from a node to the start node. *)
-let callback_test_dataflow { Callbacks.proc_desc; tenv } =
+let callback_test_dataflow { Callbacks.proc_desc; tenv; summary } =
   let verbose = false in
   let module DFCount = MakeDF(struct
       type t = int
-      let equal = int_equal
-      let join n m = if n = 0 then m else n
+      let equal = Int.equal
+      let join n m = if Int.equal n 0 then m else n
       let do_node _ n s =
-        if verbose then L.stdout "visiting node %a with state %d@." Procdesc.Node.pp n s;
+        if verbose then
+          L.(debug Analysis Verbose) "visiting node %a with state %d@." Procdesc.Node.pp n s;
         [s + 1], [s + 1]
       let proc_throws _ = DoesNotThrow
     end) in
@@ -187,4 +187,5 @@ let callback_test_dataflow { Callbacks.proc_desc; tenv } =
     match transitions node with
     | DFCount.Transition _ -> ()
     | DFCount.Dead_state -> () in
-  IList.iter do_node (Procdesc.get_nodes proc_desc)
+  List.iter ~f:do_node (Procdesc.get_nodes proc_desc);
+  summary

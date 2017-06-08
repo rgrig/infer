@@ -8,7 +8,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Functions for "Smart" Pattern Matching *)
 
@@ -16,7 +16,7 @@ module L = Logging
 module F = Format
 
 let mem_idlist i l =
-  IList.exists (Ident.equal i) l
+  List.exists ~f:(Ident.equal i) l
 
 (** Type for a hpred pattern. flag=false means that the implication
     between hpreds is not considered, and flag = true means that it is
@@ -41,7 +41,7 @@ let rec exp_match e1 sub vars e2 : (Sil.subst * Ident.t list) option =
     in if (Exp.equal e1 e2_inst) then Some(sub, vars) else None in
   match e1, e2 with
   | _, Exp.Var id2 when (Ident.is_primed id2 && mem_idlist id2 vars) ->
-      let vars_new = IList.filter (fun id -> not (Ident.equal id id2)) vars in
+      let vars_new = List.filter ~f:(fun id -> not (Ident.equal id id2)) vars in
       let sub_new = match (Sil.extend_sub sub id2 e1) with
         | None -> assert false (* happens when vars contains the same variable twice. *)
         | Some sub_new -> sub_new
@@ -74,7 +74,7 @@ let rec exp_match e1 sub vars e2 : (Sil.subst * Ident.t list) option =
       check_equal sub vars e1 e2
   | Exp.Lvar _, _ | _, Exp.Lvar _ ->
       check_equal sub vars e1 e2
-  | Exp.Lfield(e1', fld1, _), Exp.Lfield(e2', fld2, _) when (Ident.fieldname_equal fld1 fld2) ->
+  | Exp.Lfield(e1', fld1, _), Exp.Lfield(e2', fld2, _) when (Fieldname.equal fld1 fld2) ->
       exp_match e1' sub vars e2'
   | Exp.Lfield _, _ | _, Exp.Lfield _ ->
       None
@@ -87,9 +87,9 @@ let exp_list_match es1 sub vars es2 =
   let f res_acc (e1, e2) = match res_acc with
     | None -> None
     | Some (sub_acc, vars_leftover) -> exp_match e1 sub_acc vars_leftover e2 in
-  let es_combined = try IList.combine es1 es2 with Invalid_argument _ -> assert false in
-  let es_match_res = IList.fold_left f (Some (sub, vars)) es_combined
-  in es_match_res
+  Option.find_map
+    ~f:(fun es_combined -> List.fold ~f ~init:(Some (sub, vars)) es_combined)
+    (List.zip es1 es2)
 
 (** Checks sexp1 = sexp2[sub ++ sub'] for some sub' with
     dom(sub') subseteq vars. Returns (sub ++ sub', vars - dom(sub')).
@@ -121,8 +121,8 @@ and fsel_match fsel1 sub vars fsel2 =
       if (Config.abs_struct <= 0) then None
       else Some (sub, vars) (* This can lead to great information loss *)
   | (fld1, se1') :: fsel1', (fld2, se2') :: fsel2' ->
-      let n = Ident.fieldname_compare fld1 fld2 in
-      if (n = 0) then begin
+      let n = Fieldname.compare fld1 fld2 in
+      if Int.equal n 0 then begin
         match strexp_match se1' sub vars se2' with
         | None -> None
         | Some (sub', vars') -> fsel_match fsel1' sub' vars' fsel2'
@@ -140,12 +140,14 @@ and isel_match isel1 sub vars isel2 =
   | [], _ | _, [] -> None
   | (idx1, se1') :: isel1', (idx2, se2') :: isel2' ->
       let idx2 = Sil.exp_sub sub idx2 in
-      let sanity_check = not (IList.exists (fun id -> Sil.ident_in_exp id idx2) vars) in
+      let sanity_check = not (List.exists ~f:(fun id -> Sil.ident_in_exp id idx2) vars) in
       if (not sanity_check) then begin
-        let pe = pe_text in
-        L.out "@[.... Sanity Check Failure while Matching Index-Strexps ....@.";
-        L.out "@[<4>    IDX1: %a, STREXP1: %a@." (Sil.pp_exp_printenv pe) idx1 (Sil.pp_sexp pe) se1';
-        L.out "@[<4>    IDX2: %a, STREXP2: %a@\n@." (Sil.pp_exp_printenv pe) idx2 (Sil.pp_sexp pe) se2';
+        let pe = Pp.text in
+        L.internal_error "@[.... Sanity Check Failure while Matching Index-Strexps ....@\n";
+        L.internal_error "@[<4>    IDX1: %a, STREXP1: %a@\n"
+          (Sil.pp_exp_printenv pe) idx1 (Sil.pp_sexp pe) se1';
+        L.internal_error "@[<4>    IDX2: %a, STREXP2: %a@\n@."
+          (Sil.pp_exp_printenv pe) idx2 (Sil.pp_sexp pe) se2';
         assert false
       end
       else if Exp.equal idx1 idx2 then begin
@@ -158,15 +160,8 @@ and isel_match isel1 sub vars isel2 =
 
 (* extends substitution sub by creating a new substitution for vars *)
 let sub_extend_with_ren (sub: Sil.subst) vars =
-  (*
-  let check_precondition () =
-  let dom = Sil.sub_domain sub in
-  let overlap = IList.exists (fun id -> IList.exists (Ident.equal id) dom) vars in
-  if overlap then assert false in
-  check_precondition ();
-  *)
   let f id = (id, Exp.Var (Ident.create_fresh Ident.kprimed)) in
-  let renaming_for_vars = Sil.sub_of_list (IList.map f vars) in
+  let renaming_for_vars = Sil.sub_of_list (List.map ~f vars) in
   Sil.sub_join sub renaming_for_vars
 
 type sidecondition = Prop.normal Prop.t -> Sil.subst -> bool
@@ -187,7 +182,7 @@ let rec instantiate_to_emp p condition sub vars = function
       else match hpat.hpred with
         | Sil.Hpointsto _ | Sil.Hlseg (Sil.Lseg_NE, _, _, _, _) | Sil.Hdllseg (Sil.Lseg_NE, _, _, _, _, _, _) -> None
         | Sil.Hlseg (_, _, e1, e2, _) ->
-            let fully_instantiated = not (IList.exists (fun id -> Sil.ident_in_exp id e1) vars)
+            let fully_instantiated = not (List.exists ~f:(fun id -> Sil.ident_in_exp id e1) vars)
             in if (not fully_instantiated) then None else
               let e1' = Sil.exp_sub sub e1
               in begin
@@ -198,7 +193,7 @@ let rec instantiate_to_emp p condition sub vars = function
               end
         | Sil.Hdllseg (_, _, iF, oB, oF, iB, _) ->
             let fully_instantiated =
-              not (IList.exists (fun id -> Sil.ident_in_exp id iF || Sil.ident_in_exp id oB) vars)
+              not (List.exists ~f:(fun id -> Sil.ident_in_exp id iF || Sil.ident_in_exp id oB) vars)
             in if (not fully_instantiated) then None else
               let iF' = Sil.exp_sub sub iF in
               let oB' = Sil.exp_sub sub oB
@@ -294,7 +289,8 @@ let rec iter_match_with_impl tenv iter condition sub vars hpat hpats =
   | Sil.Hlseg (k2, para2, e_start2, e_end2, es_shared2) ->
       let filter = gen_filter_lseg k2 para2 e_start2 e_end2 es_shared2 in
       let do_emp_lseg _ =
-        let fully_instantiated_start2 = not (IList.exists (fun id -> Sil.ident_in_exp id e_start2) vars) in
+        let fully_instantiated_start2 =
+          not (List.exists ~f:(fun id -> Sil.ident_in_exp id e_start2) vars) in
         if (not fully_instantiated_start2) then None
         else
           let e_start2' = Sil.exp_sub sub e_start2 in
@@ -318,7 +314,7 @@ let rec iter_match_with_impl tenv iter condition sub vars hpat hpats =
         let (para2_exist_vars, para2_inst) = Sil.hpara_instantiate para2 e_start2 e_end2 es_shared2 in
         (* let allow_impl hpred = {hpred=hpred; flag=hpat.flag} in *)
         let allow_impl hpred = { hpred = hpred; flag = true } in
-        let (para2_hpat, para2_hpats) = match IList.map allow_impl para2_inst with
+        let (para2_hpat, para2_hpats) = match List.map ~f:allow_impl para2_inst with
           | [] -> assert false (* the body of a parameter should contain at least one * conjunct *)
           | para2_pat :: para2_pats -> (para2_pat, para2_pats) in
         let new_vars = para2_exist_vars @ vars in
@@ -327,7 +323,7 @@ let rec iter_match_with_impl tenv iter condition sub vars hpat hpats =
         | None -> None
         | Some (sub_res, p_leftover) when condition p_leftover sub_res ->
             let not_in_para2_exist_vars id =
-              not (IList.exists (fun id' -> Ident.equal id id') para2_exist_vars) in
+              not (List.exists ~f:(fun id' -> Ident.equal id id') para2_exist_vars) in
             let sub_res' = Sil.sub_filter not_in_para2_exist_vars sub_res
             in Some (sub_res', p_leftover)
         | Some _ -> None
@@ -335,7 +331,7 @@ let rec iter_match_with_impl tenv iter condition sub vars hpat hpats =
         | (None, _) when not hpat.flag ->
             (* L.out "@[.... iter_match_with_impl (lseg not-matched) ....@\n@."; *)
             None
-        | (None, _) when Sil.lseg_kind_equal k2 Sil.Lseg_NE ->
+        | (None, _) when Sil.equal_lseg_kind k2 Sil.Lseg_NE ->
             (* L.out "@[.... iter_match_with_impl (lseg not-matched) ....@\n@."; *)
             do_para_lseg ()
         | (None, _) ->
@@ -352,7 +348,7 @@ let rec iter_match_with_impl tenv iter condition sub vars hpat hpats =
       let filter = gen_filter_dllseg k2 para2 iF2 oB2 oF2 iB2 es_shared2 in
       let do_emp_dllseg _ =
         let fully_instantiated_iFoB2 =
-          not (IList.exists (fun id -> Sil.ident_in_exp id iF2 || Sil.ident_in_exp id oB2) vars)
+          not (List.exists ~f:(fun id -> Sil.ident_in_exp id iF2 || Sil.ident_in_exp id oB2) vars)
         in if (not fully_instantiated_iFoB2) then None else
           let iF2' = Sil.exp_sub sub iF2 in
           let oB2' = Sil.exp_sub sub oB2
@@ -366,7 +362,7 @@ let rec iter_match_with_impl tenv iter condition sub vars hpat hpats =
               let p = Prop.prop_iter_to_prop tenv iter
               in prop_match_with_impl_sub tenv p condition sub_new vars_leftover hpat_next hpats_rest in
       let do_para_dllseg _ =
-        let fully_instantiated_iF2 = not (IList.exists (fun id -> Sil.ident_in_exp id iF2) vars)
+        let fully_instantiated_iF2 = not (List.exists ~f:(fun id -> Sil.ident_in_exp id iF2) vars)
         in if (not fully_instantiated_iF2) then None else
           let iF2' = Sil.exp_sub sub iF2
           in match exp_match iF2' sub vars iB2 with
@@ -375,7 +371,7 @@ let rec iter_match_with_impl tenv iter condition sub vars hpat hpats =
               let (para2_exist_vars, para2_inst) = Sil.hpara_dll_instantiate para2 iF2 oB2 oF2 es_shared2 in
               (* let allow_impl hpred = {hpred=hpred; flag=hpat.flag} in *)
               let allow_impl hpred = { hpred = hpred; flag = true } in
-              let (para2_hpat, para2_hpats) = match IList.map allow_impl para2_inst with
+              let (para2_hpat, para2_hpats) = match List.map ~f:allow_impl para2_inst with
                 | [] -> assert false (* the body of a parameter should contain at least one * conjunct *)
                 | para2_pat :: para2_pats -> (para2_pat, para2_pats) in
               let new_vars = para2_exist_vars @ vars_leftover in
@@ -384,13 +380,13 @@ let rec iter_match_with_impl tenv iter condition sub vars hpat hpats =
               | None -> None
               | Some (sub_res, p_leftover) when condition p_leftover sub_res ->
                   let not_in_para2_exist_vars id =
-                    not (IList.exists (fun id' -> Ident.equal id id') para2_exist_vars) in
+                    not (List.exists ~f:(fun id' -> Ident.equal id id') para2_exist_vars) in
                   let sub_res' = Sil.sub_filter not_in_para2_exist_vars sub_res
                   in Some (sub_res', p_leftover)
               | Some _ -> None
       in begin match ((Prop.prop_iter_find iter filter), hpats) with
         | (None, _) when not hpat.flag -> None
-        | (None, _) when Sil.lseg_kind_equal k2 Sil.Lseg_NE -> do_para_dllseg ()
+        | (None, _) when Sil.equal_lseg_kind k2 Sil.Lseg_NE -> do_para_dllseg ()
         | (None, _) -> execute_with_backtracking [do_emp_dllseg; do_para_dllseg]
         | (Some iter_cur, []) -> do_empty_hpats iter_cur ()
         | (Some iter_cur, _) -> execute_with_backtracking [do_nonempty_hpats iter_cur; do_next iter_cur]
@@ -413,23 +409,23 @@ and prop_match_with_impl_sub tenv p condition sub vars hpat hpats =
 and hpara_common_match_with_impl tenv impl_ok ids1 sigma1 eids2 ids2 sigma2 =
   try
     let sub_ids =
-      let ren_ids = IList.combine ids2 ids1 in
+      let ren_ids = List.zip_exn ids2 ids1 in
       let f (id2, id1) = (id2, Exp.Var id1) in
-      IList.map f ren_ids in
+      List.map ~f ren_ids in
     let (sub_eids, eids_fresh) =
       let f id = (id, Ident.create_fresh Ident.kprimed) in
-      let ren_eids = IList.map f eids2 in
-      let eids_fresh = IList.map snd ren_eids in
-      let sub_eids = IList.map (fun (id2, id1) -> (id2, Exp.Var id1)) ren_eids in
+      let ren_eids = List.map ~f eids2 in
+      let eids_fresh = List.map ~f:snd ren_eids in
+      let sub_eids = List.map ~f:(fun (id2, id1) -> (id2, Exp.Var id1)) ren_eids in
       (sub_eids, eids_fresh) in
     let sub = Sil.sub_of_list (sub_ids @ sub_eids) in
     match sigma2 with
-    | [] -> if sigma1 == [] then true else false
+    | [] -> if List.is_empty sigma1 then true else false
     | hpred2 :: sigma2 ->
         let (hpat2, hpats2) =
           let (hpred2_ren, sigma2_ren) = (Sil.hpred_sub sub hpred2, Prop.sigma_sub sub sigma2) in
           let allow_impl hpred = { hpred = hpred; flag = impl_ok } in
-          (allow_impl hpred2_ren, IList.map allow_impl sigma2_ren) in
+          (allow_impl hpred2_ren, List.map ~f:allow_impl sigma2_ren) in
         let condition _ _ = true in
         let p1 = Prop.normalize tenv (Prop.from_sigma sigma1) in
         begin
@@ -477,7 +473,7 @@ let sigma_remove_hpred eq sigma e =
     | Sil.Hpointsto (root, _, _)
     | Sil.Hlseg (_, _, root, _, _)
     | Sil.Hdllseg (_, _, root, _, _, _, _) -> eq root e in
-  let sigma_e, sigma_no_e = IList.partition filter sigma in
+  let sigma_e, sigma_no_e = List.partition_tf ~f:filter sigma in
   match sigma_e with
   | [] -> (None, sigma)
   | [hpred_e] -> (Some hpred_e, sigma_no_e)
@@ -485,8 +481,9 @@ let sigma_remove_hpred eq sigma e =
 
 (** {2 Routines used when finding disjoint isomorphic sigmas from a single sigma} *)
 
-type iso_mode = Exact | LFieldForget | RFieldForget
+type iso_mode = Exact | LFieldForget | RFieldForget [@@deriving compare]
 
+let equal_iso_mode = [%compare.equal : iso_mode]
 
 let rec generate_todos_from_strexp mode todos sexp1 sexp2 =
   match sexp1, sexp2 with
@@ -496,13 +493,13 @@ let rec generate_todos_from_strexp mode todos sexp1 sexp2 =
   | Sil.Eexp _, _ ->
       None
   | Sil.Estruct (fel1, _), Sil.Estruct (fel2, _) -> (* assume sorted w.r.t. fields *)
-      if (IList.length fel1 <> IList.length fel2) && mode == Exact
+      if (List.length fel1 <> List.length fel2) && equal_iso_mode mode Exact
       then None
       else generate_todos_from_fel mode todos fel1 fel2
   | Sil.Estruct _, _ ->
       None
   | Sil.Earray (len1, iel1, _), Sil.Earray (len2, iel2, _) ->
-      if (not (Exp.equal len1 len2) || IList.length iel1 <> IList.length iel2)
+      if (not (Exp.equal len1 len2) || List.length iel1 <> List.length iel2)
       then None
       else generate_todos_from_iel mode todos iel1 iel2
   | Sil.Earray _, _ ->
@@ -513,20 +510,20 @@ and generate_todos_from_fel mode todos fel1 fel2 =
   | [], [] ->
       Some todos
   | [], _ ->
-      if mode == RFieldForget then Some todos else None
+      if equal_iso_mode mode RFieldForget then Some todos else None
   | _, [] ->
-      if mode == LFieldForget then Some todos else None
+      if equal_iso_mode mode LFieldForget then Some todos else None
   | (fld1, strexp1) :: fel1', (fld2, strexp2) :: fel2' ->
-      let n = Ident.fieldname_compare fld1 fld2 in
-      if (n = 0) then
+      let n = Fieldname.compare fld1 fld2 in
+      if Int.equal n 0 then
         begin
           match generate_todos_from_strexp mode todos strexp1 strexp2 with
           | None -> None
           | Some todos' -> generate_todos_from_fel mode todos' fel1' fel2'
         end
-      else if (n < 0 && mode == LFieldForget) then
+      else if (n < 0 && equal_iso_mode mode LFieldForget) then
         generate_todos_from_fel mode todos fel1' fel2
-      else if (n > 0 && mode == RFieldForget) then
+      else if (n > 0 && equal_iso_mode mode RFieldForget) then
         generate_todos_from_fel mode todos fel1 fel2'
       else
         None
@@ -550,19 +547,19 @@ and generate_todos_from_iel mode todos iel1 iel2 =
 let corres_extend_front e1 e2 corres =
   let filter (e1', e2') = (Exp.equal e1 e1') || (Exp.equal e2 e2') in
   let checker e1' e2' = (Exp.equal e1 e1') && (Exp.equal e2 e2')
-  in match (IList.filter filter corres) with
+  in match (List.filter ~f:filter corres) with
   | [] -> Some ((e1, e2) :: corres)
   | [(e1', e2')] when checker e1' e2' -> Some corres
   | _ -> None
 
 let corres_extensible corres e1 e2 =
   let predicate (e1', e2') = (Exp.equal e1 e1') || (Exp.equal e2 e2')
-  in not (IList.exists predicate corres) && not (Exp.equal e1 e2)
+  in not (List.exists ~f:predicate corres) && not (Exp.equal e1 e2)
 
 let corres_related corres e1 e2 =
   let filter (e1', e2') = (Exp.equal e1 e1') || (Exp.equal e2 e2') in
   let checker e1' e2' = (Exp.equal e1 e1') && (Exp.equal e2 e2') in
-  match (IList.filter filter corres) with
+  match (List.filter ~f:filter corres) with
   | [] -> Exp.equal e1 e2
   | [(e1', e2')] when checker e1' e2' -> true
   | _ -> false
@@ -584,7 +581,7 @@ let rec generic_find_partial_iso tenv mode update corres sigma_corres todos sigm
   match todos with
   | [] ->
       let sigma1, sigma2 = sigma_corres in
-      Some (IList.rev corres, IList.rev sigma1, IList.rev sigma2, sigma_todo)
+      Some (List.rev corres, List.rev sigma1, List.rev sigma2, sigma_todo)
   | (e1, e2) :: todos' when corres_related corres e1 e2 ->
       begin
         match corres_extend_front e1 e2 corres with
@@ -638,7 +635,7 @@ let rec generic_find_partial_iso tenv mode update corres sigma_corres todos sigm
                    let new_sigma2 = hpred2 :: sigma2 in
                    (new_sigma1, new_sigma2) in
                  let new_todos =
-                   let shared12 = IList.combine shared1 shared2 in
+                   let shared12 = List.zip_exn shared1 shared2 in
                    (root1, root2) :: (next1, next2) :: shared12 @ todos' in
                  generic_find_partial_iso tenv mode update new_corres new_sigma_corres new_todos new_sigma_todo
                with Invalid_argument _ -> None)
@@ -656,7 +653,7 @@ let rec generic_find_partial_iso tenv mode update corres sigma_corres todos sigm
                    let new_sigma2 = hpred2 :: sigma2 in
                    (new_sigma1, new_sigma2) in
                  let new_todos =
-                   let shared12 = IList.combine shared1 shared2 in
+                   let shared12 = List.zip_exn shared1 shared2 in
                    (iF1, iF2):: (oB1, oB2):: (oF1, oF2):: (iB1, iB2):: shared12@todos' in
                  generic_find_partial_iso tenv mode update new_corres new_sigma_corres new_todos new_sigma_todo
                with Invalid_argument _ -> None)
@@ -705,7 +702,7 @@ let hpred_lift_to_pe hpred =
 
 (** Lift the kind of list segment predicates to PE in a given sigma *)
 let sigma_lift_to_pe sigma =
-  IList.map hpred_lift_to_pe sigma
+  List.map ~f:hpred_lift_to_pe sigma
 
 (** [generic_para_create] takes a correspondence, and a sigma
     and a list of expressions for the first part of this
@@ -719,20 +716,20 @@ let generic_para_create tenv corres sigma1 elist1 =
     let not_same_consts = function
       | Exp.Const c1, Exp.Const c2 -> not (Const.equal c1 c2)
       | _ -> true in
-    let new_corres' = IList.filter not_same_consts corres in
+    let new_corres' = List.filter ~f:not_same_consts corres in
     let add_fresh_id pair = (pair, Ident.create_fresh Ident.kprimed) in
-    IList.map add_fresh_id new_corres' in
+    List.map ~f:add_fresh_id new_corres' in
   let (es_shared, ids_shared, ids_exists) =
-    let not_in_elist1 ((e1, _), _) = not (IList.exists (Exp.equal e1) elist1) in
-    let corres_ids_no_elist1 = IList.filter not_in_elist1 corres_ids in
+    let not_in_elist1 ((e1, _), _) = not (List.exists ~f:(Exp.equal e1) elist1) in
+    let corres_ids_no_elist1 = List.filter ~f:not_in_elist1 corres_ids in
     let should_be_shared ((e1, e2), _) = Exp.equal e1 e2 in
-    let shared, exists = IList.partition should_be_shared corres_ids_no_elist1 in
-    let es_shared = IList.map (fun ((e1, _), _) -> e1) shared in
-    (es_shared, IList.map snd shared, IList.map snd exists) in
-  let renaming = IList.map (fun ((e1, _), id) -> (e1, id)) corres_ids in
+    let shared, exists = List.partition_tf ~f:should_be_shared corres_ids_no_elist1 in
+    let es_shared = List.map ~f:(fun ((e1, _), _) -> e1) shared in
+    (es_shared, List.map ~f:snd shared, List.map ~f:snd exists) in
+  let renaming = List.map ~f:(fun ((e1, _), id) -> (e1, id)) corres_ids in
   let body =
     let sigma1' = sigma_lift_to_pe sigma1 in
-    let renaming_exp = IList.map (fun (e1, id) -> (e1, Exp.Var id)) renaming in
+    let renaming_exp = List.map ~f:(fun (e1, id) -> (e1, Exp.Var id)) renaming in
     Prop.sigma_replace_exp tenv renaming_exp sigma1' in
   (renaming, body, ids_exists, ids_shared, es_shared)
 
@@ -744,11 +741,10 @@ let hpara_create tenv corres sigma1 root1 next1 =
   let renaming, body, ids_exists, ids_shared, es_shared =
     generic_para_create tenv corres sigma1 [root1; next1] in
   let get_id1 e1 =
-    try
-      let is_equal_to_e1 (e1', _) = Exp.equal e1 e1' in
-      let _, id = IList.find is_equal_to_e1 renaming in
-      id
-    with Not_found -> assert false in
+    let is_equal_to_e1 (e1', _) = Exp.equal e1 e1' in
+    match List.find ~f:is_equal_to_e1 renaming with
+    | Some (_, id) -> id
+    | None -> assert false in
   let id_root = get_id1 root1 in
   let id_next = get_id1 next1 in
   let hpara =
@@ -767,11 +763,10 @@ let hpara_dll_create tenv corres sigma1 root1 blink1 flink1 =
   let renaming, body, ids_exists, ids_shared, es_shared =
     generic_para_create tenv corres sigma1 [root1; blink1; flink1] in
   let get_id1 e1 =
-    try
-      let is_equal_to_e1 (e1', _) = Exp.equal e1 e1' in
-      let _, id = IList.find is_equal_to_e1 renaming in
-      id
-    with Not_found -> assert false in
+    let is_equal_to_e1 (e1', _) = Exp.equal e1 e1' in
+    match List.find ~f:is_equal_to_e1 renaming with
+    | Some (_, id) -> id
+    | None -> assert false in
   let id_root = get_id1 root1 in
   let id_blink = get_id1 blink1 in
   let id_flink = get_id1 flink1 in

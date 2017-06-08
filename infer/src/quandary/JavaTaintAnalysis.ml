@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module F = Format
 module L = Logging
@@ -15,88 +15,100 @@ module L = Logging
 include
   TaintAnalysis.Make(struct
     module Trace = JavaTrace
+    module AccessTree = AccessTree.Make(Trace)
 
-    let to_summary_trace trace = QuandarySummary.Java trace
+    let to_summary_access_tree access_tree = QuandarySummary.AccessTree.Java access_tree
 
-    let of_summary_trace = function
-      | QuandarySummary.Java trace -> trace
+    let of_summary_access_tree = function
+      | QuandarySummary.AccessTree.Java access_tree -> access_tree
       | _ -> assert false
 
-    let make_nth_param_ap n pname ~propagate_all =
-      let raw_ap =
-        (* base of this access path is always ignored, so type/name don't matter *)
-        AccessPath.of_pvar
-          (Pvar.mk (Mangled.from_string ("fake_param" ^ string_of_int n)) pname) Typ.Tvoid in
-      if propagate_all then AccessPath.Abstracted raw_ap else AccessPath.Exact raw_ap
-
-    (* propagate the trace from the nth parameter of [site.pname] to the return value of
-       [site.pname]. if [propagate_all] is true, all traces reachable from the parameter will
-       be propagated as well (e.g., for foo(x), we'll also propagate the traces associated with x.f,
-       x.f.g, and so on) *)
-    let propagate_nth_to_return n site ret_typ ~propagate_all =
-      let pname = CallSite.pname site in
-      let nth_param_ap = make_nth_param_ap n pname ~propagate_all in
-      let input = QuandarySummary.make_formal_input n nth_param_ap in
-      let output =
-        QuandarySummary.make_return_output
-          (AccessPath.Exact (AccessPath.of_pvar (Pvar.get_ret_pvar pname) ret_typ)) in
-      let footprint_source = Trace.Source.make_footprint nth_param_ap site in
-      let footprint_trace = Trace.of_source footprint_source in
-      QuandarySummary.make_in_out_summary input output (to_summary_trace footprint_trace)
-
-    (* propagate the trace associated with non-receiver actual to the receiver actual. also useful
-       for propagating taint from constructor actuals to the constructed object (which, like the
-       receiver, is also the first argument) *)
-    let propagate_to_receiver site actuals ~propagate_all =
-      match actuals with
-      | [] ->
-          failwithf
-            "Constructor %a has 0 actuals, which should never happen"
-            Procname.pp (CallSite.pname site)
-      | _ :: [] ->
-          (* constructor has no actuals, nothing to propagate *)
-          []
-      | _ :: actuals ->
-          let pname = CallSite.pname site in
-          let constructor_ap = make_nth_param_ap 0 pname ~propagate_all in
-          let output = QuandarySummary.make_formal_output 0 constructor_ap in
-          let make_propagation_summary acc n _ =
-            let n = n + 1 in (* skip the constructor actual *)
-            let nth_param_ap = make_nth_param_ap n pname ~propagate_all in
-            let input = QuandarySummary.make_formal_input n nth_param_ap in
-            let footprint_source = Trace.Source.make_footprint nth_param_ap site in
-            let footprint_trace = Trace.of_source footprint_source in
-            let summary =
-              QuandarySummary.make_in_out_summary input output (to_summary_trace footprint_trace) in
-            summary :: acc in
-          IList.fold_lefti make_propagation_summary [] actuals
-
-    let propagate_actuals_to_return site ret_type actuals ~propagate_all =
-      IList.mapi
-        (fun actual_num _-> propagate_nth_to_return actual_num site ret_type ~propagate_all)
-        actuals
-
-    let handle_unknown_call site ret_typ_opt actuals =
-      match CallSite.pname site with
-      | (Procname.Java java_pname) as pname ->
+    let handle_unknown_call pname ret_typ_opt actuals tenv =
+      let get_receiver_typ tenv = function
+        | HilExp.AccessPath access_path -> AccessPath.Raw.get_typ access_path tenv
+        | _ -> None in
+      let types_match typ class_string tenv =
+        match typ with
+        | Some ({ Typ.desc=Typ.Tptr ({desc=Tstruct original_typename}, _) }) ->
+            PatternMatch.supertype_exists
+              tenv
+              (fun typename _ -> String.equal (Typ.Name.name typename) class_string)
+              original_typename
+        | _ ->
+            false in
+      match pname with
+      | (Typ.Procname.Java java_pname) as pname ->
+          let is_static = Typ.Procname.java_is_static pname in
           begin
-            match Procname.java_get_class_name java_pname,
-                  Procname.java_get_method java_pname,
+            match Typ.Procname.java_get_class_name java_pname,
+                  Typ.Procname.java_get_method java_pname,
                   ret_typ_opt with
-            | _ when Procname.is_constructor pname ->
-                propagate_to_receiver site actuals ~propagate_all:true
-            | ("java.lang.StringBuffer" | "java.lang.StringBuilder" | "java.util.Formatter"), _,
-              Some ret_typ
-              when not (Procname.java_is_static pname) ->
-                (propagate_actuals_to_return site ret_typ actuals ~propagate_all:true) @
-                (propagate_to_receiver site actuals ~propagate_all:true)
-            | _, _, Some ret_typ ->
-                propagate_actuals_to_return site ret_typ actuals ~propagate_all:true
+            | "android.content.Intent", ("putExtra" | "putExtras"), _ ->
+                (* don't care about tainted extras. instead. we'll check that result of getExtra is
+                   always used safely *)
+                []
+            | _ when Typ.Procname.is_constructor pname ->
+                [TaintSpec.Propagate_to_receiver]
+            | _, _, (Some {Typ.desc=Tvoid} | None) when not is_static ->
+                (* for instance methods with no return value, propagate the taint to the receiver *)
+                [TaintSpec.Propagate_to_receiver]
+            | classname, _, Some ({Typ.desc=Tptr _ | Tstruct _}) ->
+                begin
+                  match actuals with
+                  | receiver_exp :: _
+                    when not is_static &&
+                         types_match (get_receiver_typ tenv receiver_exp) classname tenv ->
+                      (* if the receiver and return type are the same, propagate to both. we're
+                         assuming the call is one of the common "builder-style" methods that both
+                         updates and returns the receiver *)
+                      [TaintSpec.Propagate_to_receiver; TaintSpec.Propagate_to_return]
+                  | _ ->
+                      (* receiver doesn't match return type; just propagate to the return type *)
+                      [TaintSpec.Propagate_to_return]
+                end
             | _ ->
                 []
           end
       | pname when BuiltinDecl.is_declared pname ->
           []
       | pname ->
-          failwithf "Non-Java procname %a in Java analysis@." Procname.pp pname
+          failwithf "Non-Java procname %a in Java analysis@." Typ.Procname.pp pname
+
+    let get_model _ _ _ _ _ = None
+
+    let external_sanitizers =
+      List.map
+        ~f:(fun { QuandaryConfig.Sanitizer.procedure; } -> Str.regexp procedure)
+        (QuandaryConfig.Sanitizer.of_json Config.quandary_sanitizers)
+
+    let get_sanitizer = function
+      | Typ.Procname.Java java_pname ->
+          let procedure_string =
+            Printf.sprintf "%s.%s"
+              (Typ.Procname.java_get_class_name java_pname)
+              (Typ.Procname.java_get_method java_pname) in
+          List.find_map
+            ~f:(fun procedure_regex ->
+                if Str.string_match procedure_regex procedure_string 0
+                then Some TaintSpec.Return
+                else None)
+            external_sanitizers
+      | _ ->
+          None
+
+    let is_taintable_type typ =
+      match typ.Typ.desc with
+      | Typ.Tptr ({desc=Tstruct (JavaClass typename)}, _) | Tstruct (JavaClass typename) ->
+          begin
+            match Mangled.to_string_full typename with
+            | "android.content.Intent"
+            | "android.net.Uri"
+            | "java.lang.String"
+            | "java.net.URI" ->
+                true
+            | _ ->
+                false
+          end
+      | _ ->
+          false
   end)

@@ -7,68 +7,36 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-type issue =
-  | Assign_pointer_warning
-  | Bad_pointer_comparison
-  | Component_factory_function
-  | Component_initializer_with_side_effects
-  | Component_with_multiple_factory_methods
-  | Component_with_unconventional_superclass
-  | Cxx_reference_captured_in_objc_block
-  | Direct_atomic_property_access
-  | Global_variable_initialized_with_function_or_method_call
-  | Mutable_local_variable_in_component_file
-  | Registered_observer_being_deallocated
-  | Strong_delegate_warning
+open! IStd
 
-let to_string issue =
-  Localise.to_string
-    (match issue with
-     | Assign_pointer_warning ->
-         Localise.assign_pointer_warning
-     | Bad_pointer_comparison ->
-         Localise.bad_pointer_comparison
-     | Component_factory_function ->
-         Localise.component_factory_function
-     | Component_initializer_with_side_effects ->
-         Localise.component_initializer_with_side_effects
-     | Component_with_multiple_factory_methods ->
-         Localise.component_with_multiple_factory_methods
-     | Component_with_unconventional_superclass ->
-         Localise.component_with_unconventional_superclass
-     | Cxx_reference_captured_in_objc_block ->
-         Localise.cxx_reference_captured_in_objc_block
-     | Direct_atomic_property_access ->
-         Localise.direct_atomic_property_access
-     | Global_variable_initialized_with_function_or_method_call ->
-         Localise.global_variable_initialized_with_function_or_method_call
-     | Mutable_local_variable_in_component_file ->
-         Localise.mutable_local_variable_in_component_file
-     | Registered_observer_being_deallocated ->
-         Localise.registered_observer_being_deallocated
-     | Strong_delegate_warning ->
-         Localise.strong_delegate_warning
-    )
-
-let severity_of_issue issue =
-  match issue with
-  | Assign_pointer_warning
-  | Bad_pointer_comparison
-  | Cxx_reference_captured_in_objc_block
-  | Direct_atomic_property_access
-  | Global_variable_initialized_with_function_or_method_call
-  | Registered_observer_being_deallocated
-  | Strong_delegate_warning -> Exceptions.Kwarning
-  | Component_factory_function
-  | Component_initializer_with_side_effects
-  | Component_with_multiple_factory_methods
-  | Component_with_unconventional_superclass
-  | Mutable_local_variable_in_component_file -> Exceptions.Kadvice
-
+type mode = On | Off
 
 type issue_desc = {
-  issue : issue; (* issue *)
+  name : string; (* issue name *)
+  severity : Exceptions.err_kind;
+  mode : mode;
   description : string; (* Description in the error message *)
   suggestion : string option; (* an optional suggestion or correction *)
   loc : Location.t; (* location in the code *)
 }
+
+let string_of_mode m =
+  match m with
+  | On -> "On"
+  | Off -> "Off"
+
+let pp_issue fmt issue =
+  Format.fprintf fmt "{@\n   Name = %s@\n" (issue.name);
+  Format.fprintf fmt "   Severity = %s@\n" (Exceptions.err_kind_string issue.severity);
+  Format.fprintf fmt "   Mode = %s@\n" (string_of_mode issue.mode);
+  Format.fprintf fmt "   Descrption = %s@\n" issue.description;
+  (match issue.suggestion with
+   | Some s -> Format.fprintf fmt "   Suggestion = %s@\n" s
+   | _ -> ());
+  Format.fprintf fmt "   Loc = %s@\n" (Location.to_string issue.loc);
+  Format.fprintf fmt "}@\n"
+
+let should_run_check mode =
+  match mode with
+  | On -> true
+  | Off -> Config.debug_mode || Config.debug_exceptions || not Config.filtering

@@ -7,33 +7,39 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! IStd
+
 type 'a state = { pre: 'a; post: 'a; visit_count: int; }
 
 (** type of an intraprocedural abstract interpreter *)
 module type S = sig
-  module TransferFunctions : TransferFunctions.S
+  module TransferFunctions : TransferFunctions.SIL
 
-  module InvariantMap : Map.S with type key = TransferFunctions.CFG.id
-
-  (** create an interprocedural abstract interpreter given logic for handling summaries *)
-  module Interprocedural
-      (Summary : Summary.S with type summary = TransferFunctions.Domain.astate) :
-  sig
-    val checker : Callbacks.proc_callback_args -> TransferFunctions.extras ->
-      TransferFunctions.Domain.astate option
-  end
+  module InvariantMap : Caml.Map.S with type key = TransferFunctions.CFG.id
 
   (** invariant map from node id -> state representing postcondition for node id *)
   type invariant_map = TransferFunctions.Domain.astate state InvariantMap.t
 
-  (** compute and return the postcondition for the given procedure *)
-  val compute_post : TransferFunctions.extras ProcData.t -> TransferFunctions.Domain.astate option
+  (** compute and return the postcondition for the given procedure starting from [initial]. If
+      [debug] is true, print html debugging output. *)
+  val compute_post :
+    ?debug:bool ->
+    TransferFunctions.extras ProcData.t ->
+    initial:TransferFunctions.Domain.astate ->
+    TransferFunctions.Domain.astate option
 
-  (** compute and return invariant map for the given CFG/procedure. *)
-  val exec_cfg : TransferFunctions.CFG.t -> TransferFunctions.extras ProcData.t -> invariant_map
+  (** compute and return invariant map for the given CFG/procedure starting from [initial]. if
+      [debug] is true, print html debugging output. *)
+  val exec_cfg :
+    TransferFunctions.CFG.t ->
+    TransferFunctions.extras ProcData.t ->
+    initial:TransferFunctions.Domain.astate ->
+    debug:bool ->
+    invariant_map
 
-  (** compute and return invariant map for the given procedure. *)
-  val exec_pdesc : TransferFunctions.extras ProcData.t -> invariant_map
+  (** compute and return invariant map for the given procedure starting from [initial] *)
+  val exec_pdesc :
+    TransferFunctions.extras ProcData.t -> initial:TransferFunctions.Domain.astate -> invariant_map
 
   (** extract the postcondition for a node id from the given invariant map *)
   val extract_post : InvariantMap.key -> 'a state InvariantMap.t -> 'a option
@@ -48,13 +54,24 @@ end
 (** create an intraprocedural abstract interpreter from a scheduler and transfer functions *)
 module MakeNoCFG
     (Scheduler : Scheduler.S)
-    (TransferFunctions : TransferFunctions.S with module CFG = Scheduler.CFG) :
+    (TransferFunctions : TransferFunctions.SIL with module CFG = Scheduler.CFG) :
   S with module TransferFunctions = TransferFunctions
 
 (** create an intraprocedural abstract interpreter from a CFG and functors for creating a scheduler/
     transfer functions from a CFG *)
 module Make
     (CFG : ProcCfg.S)
-    (MakeScheduler : Scheduler.Make)
-    (MakeTransferFunctions : TransferFunctions.Make) :
+    (MakeTransferFunctions : TransferFunctions.MakeSIL) :
   S with module TransferFunctions = MakeTransferFunctions(CFG)
+
+(** create an interprocedural abstract interpreter given logic for handling summaries *)
+module Interprocedural (Summary : Summary.S) : sig
+
+  (** compute and return the summary for the given procedure and store it on disk using
+      [compute_post]. *)
+  val compute_and_store_post :
+    compute_post: ('a ProcData.t -> Summary.payload option) ->
+    make_extras : (Procdesc.t -> 'a) ->
+    Callbacks.proc_callback_args ->
+    Specs.summary
+end

@@ -8,7 +8,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module F = Format
 
@@ -25,10 +25,10 @@ let convert_string s =
     let cnt = ref 0 in
     let s' = ref "" in
     let f c =
-      if c == '_' then s' := !s' ^ "\\_"
+      if Char.equal c '_' then s' := !s' ^ "\\_"
       else s' := !s' ^ Char.escaped (String.get s !cnt);
       incr cnt in
-    String.iter f s;
+    String.iter ~f s;
     !s'
   end
   else s
@@ -41,7 +41,8 @@ let pp_string style f s =
   | Roman -> F.fprintf f "\\textrm{%s}" converted
   | Italics -> F.fprintf f "\\textit{%s}" converted
 
-let color_to_string = function
+let color_to_string (c : Pp.color) =
+  match c with
   | Black -> "black"
   | Blue -> "blue"
   | Green -> "green"

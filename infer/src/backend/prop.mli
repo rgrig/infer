@@ -8,7 +8,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Functions for Propositions (i.e., Symbolic Heaps) *)
 
@@ -31,7 +31,7 @@ type 'a t = private
     pi: pi;  (** pure part *)
     sigma_fp : sigma;  (** abduced spatial part *)
     pi_fp: pi;  (** abduced pure part *)
-  }
+  } [@@deriving compare]
 
 (** type to describe different strategies for initializing fields of a structure. [No_init] does not
     initialize any fields of the struct. [Fld_init] initializes the fields of the struct with fresh
@@ -44,28 +44,28 @@ type struct_init_mode =
 (** {2 Basic Functions for propositions} *)
 
 (** Compare propositions *)
-val prop_compare : 'a t -> 'a t -> int
+val compare_prop : 'a t -> 'a t -> int
 
 (** Check the equality of two sigma's *)
-val sigma_equal : sigma -> sigma -> bool
+val equal_sigma : sigma -> sigma -> bool
 
 (** Check the equality of two propositions *)
-val prop_equal : 'a t -> 'a t -> bool
+val equal_prop : 'a t -> 'a t -> bool
 
 (** Pretty print a substitution. *)
-val pp_sub : printenv -> Format.formatter -> subst -> unit
+val pp_sub : Pp.env -> Format.formatter -> subst -> unit
 
 (** Dump a substitution. *)
 val d_sub : subst -> unit
 
 (** Pretty print a pi. *)
-val pp_pi : printenv -> Format.formatter -> pi -> unit
+val pp_pi : Pp.env -> Format.formatter -> pi -> unit
 
 (** Dump a pi. *)
 val d_pi : pi -> unit
 
 (** Pretty print a sigma. *)
-val pp_sigma : printenv -> Format.formatter -> sigma -> unit
+val pp_sigma : Pp.env -> Format.formatter -> sigma -> unit
 
 (** Dump a sigma. *)
 val d_sigma : sigma -> unit
@@ -78,13 +78,13 @@ val d_pi_sigma: pi -> sigma -> unit
 val sigma_get_stack_nonstack : bool -> sigma -> sigma * sigma
 
 (** Update the object substitution given the stack variables in the prop *)
-val prop_update_obj_sub : printenv -> 'a t -> printenv
+val prop_update_obj_sub : Pp.env -> 'a t -> Pp.env
 
 (** Pretty print a proposition. *)
-val pp_prop : printenv -> Format.formatter -> 'a t -> unit
+val pp_prop : Pp.env -> Format.formatter -> 'a t -> unit
 
 (** Pretty print a proposition with type information *)
-val pp_prop_with_typ : printenv -> Format.formatter -> normal t -> unit
+val pp_prop_with_typ : Pp.env -> Format.formatter -> normal t -> unit
 
 (** Create a predicate environment for a prop *)
 val prop_pred_env : 'a t -> Sil.Predicates.env
@@ -96,7 +96,7 @@ val d_prop : 'a t -> unit
 val d_prop_with_typ : 'a t -> unit
 
 (** Pretty print a list propositions with type information *)
-val pp_proplist_with_typ : printenv -> Format.formatter -> normal t list -> unit
+val pp_proplist_with_typ : Pp.env -> Format.formatter -> normal t list -> unit
 
 val d_proplist_with_typ : 'a t list -> unit
 

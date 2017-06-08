@@ -8,7 +8,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Join and Meet Operators *)
 
@@ -16,7 +16,7 @@ open! Utils
 
 (** Join two pathsets *)
 val pathset_join :
-  Procname.t -> Tenv.t -> Paths.PathSet.t -> Paths.PathSet.t -> Paths.PathSet.t * Paths.PathSet.t
+  Typ.Procname.t -> Tenv.t -> Paths.PathSet.t -> Paths.PathSet.t -> Paths.PathSet.t * Paths.PathSet.t
 
 val join_time : float ref
 
@@ -25,7 +25,7 @@ val proplist_collapse_pre : Tenv.t -> Prop.normal Prop.t list -> Prop.normal Spe
 val pathset_collapse : Tenv.t -> Paths.PathSet.t -> Paths.PathSet.t
 
 (** reduce the pathset only based on implication checking. *)
-val pathset_collapse_impl : Procname.t -> Tenv.t -> Paths.PathSet.t -> Paths.PathSet.t
+val pathset_collapse_impl : Typ.Procname.t -> Tenv.t -> Paths.PathSet.t -> Paths.PathSet.t
 
 (** {2 Meet Operators} *)
 

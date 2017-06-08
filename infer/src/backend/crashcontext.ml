@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module F = Format
 module L = Logging
@@ -23,7 +23,7 @@ let frame_id_of_stackframe frame =
     loc_str
 
 let frame_id_of_summary stacktree =
-  let short_name = IList.hd
+  let short_name = List.hd_exn
       (Str.split (Str.regexp "(") stacktree.Stacktree_j.method_name) in
   match stacktree.Stacktree_j.location with
   | None ->
@@ -49,22 +49,22 @@ let stracktree_of_frame frame =
 (** k = 1 implementation, where k is the number of levels of calls inlined *)
 let stitch_summaries stacktrace_file summary_files out_file =
   let stacktrace = Stacktrace.of_json_file stacktrace_file in
-  let summaries = IList.map
-      (Ag_util.Json.from_file Stacktree_j.read_stacktree)
+  let summaries = List.map
+      ~f:(Ag_util.Json.from_file Stacktree_j.read_stacktree)
       summary_files in
-  let summary_map = IList.fold_left
-      (fun acc stacktree ->
-         StringMap.add (frame_id_of_summary stacktree) stacktree acc)
-      StringMap.empty
+  let summary_map = List.fold
+      ~f:(fun acc stacktree ->
+          String.Map.add ~key:(frame_id_of_summary stacktree) ~data:stacktree acc)
+      ~init:String.Map.empty
       summaries in
   let expand_stack_frame frame =
     (* TODO: Implement k > 1 case *)
     let frame_id = frame_id_of_stackframe frame in
-    if StringMap.exists (fun key _ -> key = frame_id) summary_map then
-      StringMap.find frame_id summary_map
+    if String.Map.existsi ~f:(fun ~key ~data:_ -> String.equal key frame_id) summary_map then
+      String.Map.find_exn summary_map frame_id
     else
       stracktree_of_frame frame in
-  let expanded_frames = IList.map expand_stack_frame stacktrace.frames in
+  let expanded_frames = List.map ~f:expand_stack_frame stacktrace.frames in
   let crashcontext = { Stacktree_j.stack = expanded_frames} in
   Ag_util.Json.to_file Stacktree_j.write_crashcontext_t out_file crashcontext
 
@@ -73,8 +73,8 @@ let collect_all_summaries root_summaries_dir stacktrace_file stacktraces_dir =
     Utils.directory_fold
       (fun summaries path ->
          (* check if the file is a JSON file under the crashcontext dir *)
-         if not (Sys.is_directory path) && Filename.check_suffix path "json" &&
-            string_is_suffix "crashcontext" (Filename.dirname path)
+         if (Sys.is_directory path) <> `Yes && Filename.check_suffix path "json" &&
+            String.is_suffix ~suffix:"crashcontext" (Filename.dirname path)
          then path :: summaries
          else summaries)
       []
@@ -82,9 +82,9 @@ let collect_all_summaries root_summaries_dir stacktrace_file stacktraces_dir =
   let pair_for_stacktrace_file = match stacktrace_file with
     | None -> None
     | Some file ->
-        let crashcontext_dir = Config.results_dir // "crashcontext" in
-        create_dir crashcontext_dir;
-        Some (file, crashcontext_dir // "crashcontext.json") in
+        let crashcontext_dir = Config.results_dir ^/ "crashcontext" in
+        Utils.create_dir crashcontext_dir;
+        Some (file, crashcontext_dir ^/ "crashcontext.json") in
   let trace_file_regexp = Str.regexp "\\(.*\\)\\.json" in
   let pairs_for_stactrace_dir = match stacktraces_dir with
     | None -> []
@@ -111,7 +111,7 @@ let collect_all_summaries root_summaries_dir stacktrace_file stacktraces_dir =
     | Some pair -> pair :: pairs_for_stactrace_dir in
   let process_stacktrace (stacktrace_file, out_file) =
     stitch_summaries stacktrace_file method_summaries out_file in
-  IList.iter process_stacktrace input_output_file_pairs
+  List.iter ~f:process_stacktrace input_output_file_pairs
 
 let crashcontext_epilogue ~in_buck_mode =
   (* if we are the top-level process, then find the output directory and
@@ -124,7 +124,7 @@ let crashcontext_epilogue ~in_buck_mode =
       let buck_out = match Config.buck_out with
         | Some dir -> dir
         | None -> "buck-out" in
-      Config.project_root // buck_out
+      Config.project_root ^/ buck_out
     end
     else Config.results_dir in
   collect_all_summaries

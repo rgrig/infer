@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module L = Logging
 
@@ -27,21 +27,18 @@ module ConstantMap = Exp.Map
 
 (** Dataflow struct *)
 module ConstantFlow = Dataflow.MakeDF(struct
-    type t = (Const.t option) ConstantMap.t
+    type t = (Const.t option) ConstantMap.t [@@deriving compare]
+
+    let equal = [%compare.equal : t]
 
     let pp fmt constants =
       let pp_key fmt = Exp.pp fmt in
       let print_kv k = function
-        | Some v -> Format.fprintf fmt "  %a -> %a@." pp_key k (Const.pp pe_text) v
+        | Some v -> Format.fprintf fmt "  %a -> %a@." pp_key k (Const.pp Pp.text) v
         | _ -> Format.fprintf fmt "  %a -> None@." pp_key k in
       Format.fprintf fmt "[@.";
       ConstantMap.iter print_kv constants;
       Format.fprintf fmt "]@."
-
-    (* Item - wise equality where values are equal iff
-       - both are None
-       - both are a constant and equal wrt. Const.equal *)
-    let equal m n = ConstantMap.equal (opt_equal Const.equal) m n
 
     let join = ConstantMap.merge merge_values
 
@@ -58,13 +55,13 @@ module ConstantFlow = Dataflow.MakeDF(struct
               (ConstantMap.add key value ConstantMap.empty) in
 
           let has_class pn name = match pn with
-            | Procname.Java pn_java ->
-                Procname.java_get_class_name pn_java = name
+            | Typ.Procname.Java pn_java ->
+                String.equal (Typ.Procname.java_get_class_name pn_java) name
             | _ ->
                 false in
           let has_method pn name = match pn with
-            | Procname.Java pn_java ->
-                Procname.java_get_method pn_java = name
+            | Typ.Procname.Java pn_java ->
+                String.equal (Typ.Procname.java_get_method pn_java) name
             | _ ->
                 false in
 
@@ -113,18 +110,18 @@ module ConstantFlow = Dataflow.MakeDF(struct
 
       if verbose then
         begin
-          L.stdout "Node %i:" (Procdesc.Node.get_id node :> int);
-          L.stdout "%a" pp constants;
-          IList.iter
-            (fun instr -> L.stdout "%a@." (Sil.pp_instr pe_text) instr)
+          L.(debug Analysis Verbose) "Node %i:" (Procdesc.Node.get_id node :> int);
+          L.(debug Analysis Verbose) "%a" pp constants;
+          List.iter
+            ~f:(fun instr -> L.(debug Analysis Verbose) "%a@." (Sil.pp_instr Pp.text) instr)
             (Procdesc.Node.get_instrs node)
         end;
       let constants =
-        IList.fold_left
-          do_instr
-          constants
+        List.fold
+          ~f:do_instr
+          ~init:constants
           (Procdesc.Node.get_instrs node) in
-      if verbose then L.stdout "%a\n@." pp constants;
+      if verbose then L.(debug Analysis Verbose) "%a@\n@." pp constants;
       [constants], [constants]
   end)
 

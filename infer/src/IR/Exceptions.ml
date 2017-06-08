@@ -8,35 +8,41 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module L = Logging
 module F = Format
 
 (** visibility of the exception *)
-type exception_visibility =
+type visibility =
   | Exn_user (** always add to error log *)
   | Exn_developer (** only add to error log in developer mode *)
   | Exn_system (** never add to error log *)
+[@@deriving compare]
 
-let string_of_exception_visibility vis =
+let equal_visibility = [%compare.equal : visibility]
+
+let string_of_visibility vis =
   match vis with
   | Exn_user -> "user"
   | Exn_developer -> "developer"
   | Exn_system  -> "system"
 
 (** severity of bugs *)
-type exception_severity =
+type severity =
   | High (* high severity bug *)
   | Medium (* medium severity bug *)
   | Low (* low severity bug *)
 
-(** class of error *)
-type err_class = Checker | Prover | Nocat
+(** class of error/warning *)
+type err_class = Checker | Prover | Nocat | Linters [@@deriving compare]
+
+let equal_err_class = [%compare.equal : err_class]
 
 (** kind of error/warning *)
-type err_kind =
-    Kwarning | Kerror | Kinfo | Kadvice
+type err_kind = Kwarning | Kerror | Kinfo | Kadvice | Klike [@@deriving compare]
+
+let equal_err_kind = [%compare.equal : err_kind]
 
 exception Abduction_case_not_implemented of L.ml_loc
 exception Analysis_stops of Localise.error_desc * L.ml_loc option
@@ -59,6 +65,7 @@ exception Deallocate_stack_variable of Localise.error_desc
 exception Deallocate_static_memory of Localise.error_desc
 exception Deallocation_mismatch of Localise.error_desc * L.ml_loc
 exception Divide_by_zero of Localise.error_desc * L.ml_loc
+exception Double_lock of Localise.error_desc * L.ml_loc
 exception Empty_vector_access of Localise.error_desc * L.ml_loc
 exception Eradicate of string * Localise.error_desc
 exception Field_not_null_checked of Localise.error_desc * L.ml_loc
@@ -66,11 +73,11 @@ exception Frontend_warning of string * Localise.error_desc * L.ml_loc
 exception Checkers of string * Localise.error_desc
 exception Inherently_dangerous_function of Localise.error_desc
 exception Internal_error of Localise.error_desc
-exception Java_runtime_exception of Typename.t * string * Localise.error_desc
+exception Java_runtime_exception of Typ.Name.t * string * Localise.error_desc
 exception Leak of
-    bool * Sil.hpred * (exception_visibility * Localise.error_desc)
+    bool * Sil.hpred * (visibility * Localise.error_desc)
     * bool * PredSymb.resource * L.ml_loc
-exception Missing_fld of Ident.fieldname * L.ml_loc
+exception Missing_fld of Fieldname.t * L.ml_loc
 exception Premature_nil_termination of Localise.error_desc * L.ml_loc
 exception Null_dereference of Localise.error_desc * L.ml_loc
 exception Null_test_after_dereference of Localise.error_desc * L.ml_loc
@@ -91,6 +98,7 @@ exception Tainted_value_reaching_sensitive_function of Localise.error_desc * L.m
 exception Unary_minus_applied_to_unsigned_expression of Localise.error_desc * L.ml_loc
 exception Uninitialized_value of Localise.error_desc * L.ml_loc
 exception Unknown_proc
+exception Unreachable_code_after of Localise.error_desc * L.ml_loc
 exception Unsafe_guarded_by_access of Localise.error_desc * L.ml_loc
 exception Use_after_free of Localise.error_desc * L.ml_loc
 exception Wrong_argument_number of L.ml_loc
@@ -98,11 +106,6 @@ exception Wrong_argument_number of L.ml_loc
 
 (** Turn an exception into a descriptive string, error description, location in ml source, and category *)
 let recognize_exception exn =
-  let filter_out_bucket desc =
-    Config.filter_buckets &&
-    match Localise.error_desc_get_bucket desc with
-    | None -> false
-    | Some bucket -> bucket <> Localise.BucketLevel.b1 in
   let err_name, desc, (ml_loc_opt : L.ml_loc option), visibility, severity, force_kind, eclass =
     match exn with (* all the names of Exn_user errors must be defined in Localise *)
     | Abduction_case_not_implemented ml_loc ->
@@ -174,6 +177,9 @@ let recognize_exception exn =
     | Divide_by_zero (desc, ml_loc) ->
         (Localise.divide_by_zero,
          desc, Some ml_loc, Exn_user, High, Some Kerror, Checker)
+    | Double_lock (desc, ml_loc) ->
+        (Localise.double_lock,
+         desc, Some ml_loc, Exn_user, High, Some Kerror, Prover)
     | Eradicate (kind_s, desc) ->
         (Localise.from_string kind_s, desc, None, Exn_user, High, None, Prover)
     | Empty_vector_access (desc, ml_loc) ->
@@ -184,7 +190,7 @@ let recognize_exception exn =
          desc, Some ml_loc, Exn_user, Medium, Some Kwarning, Nocat)
     | Frontend_warning (name, desc, ml_loc) ->
         (Localise.from_string name,
-         desc, Some ml_loc, Exn_user, Medium, None, Nocat)
+         desc, Some ml_loc, Exn_user, Medium, None, Linters)
     | Checkers (kind_s, desc) ->
         (Localise.from_string kind_s,
          desc, None, Exn_user, High, None, Prover)
@@ -205,9 +211,10 @@ let recognize_exception exn =
          desc, None, Exn_developer, High, None, Nocat)
     | Invalid_argument s ->
         let desc = Localise.verbatim_desc s in
-        (Localise.from_string "Invalid_argument", desc, None, Exn_system, Low, None, Nocat)
+        (Localise.from_string "Invalid_argument",
+         desc, None, Exn_system, Low, None, Nocat)
     | Java_runtime_exception (exn_name, _, desc) ->
-        let exn_str = Typename.name exn_name in
+        let exn_str = Typ.Name.name exn_name in
         (Localise.from_string exn_str, desc, None, Exn_user, High, None, Prover)
     | Leak (fp_part, _, (exn_vis, error_desc), done_array_abstraction, resource, ml_loc) ->
         if done_array_abstraction
@@ -228,8 +235,9 @@ let recognize_exception exn =
         (Localise.from_string "Match failure",
          Localise.no_desc, Some ml_loc, Exn_developer, High, None, Nocat)
     | Missing_fld (fld, ml_loc) ->
-        let desc = Localise.verbatim_desc (Ident.fieldname_to_string fld) in
-        (Localise.from_string "Missing_fld", desc, Some ml_loc, Exn_developer, Medium, None, Nocat)
+        let desc = Localise.verbatim_desc (Fieldname.to_string fld) in
+        (Localise.from_string "Missing_fld" ~hum:"Missing Field",
+         desc, Some ml_loc, Exn_developer, Medium, None, Nocat)
     | Premature_nil_termination (desc, ml_loc) ->
         (Localise.premature_nil_termination,
          desc, Some ml_loc, Exn_user, High, None, Prover)
@@ -272,11 +280,11 @@ let recognize_exception exn =
         (Localise.skip_pointer_dereference,
          desc, Some ml_loc, Exn_user, Medium, Some Kinfo, Nocat) (* always an info *)
     | Symexec_memory_error ml_loc ->
-        (Localise.from_string "Symexec_memory_error",
+        (Localise.from_string "Symexec_memory_error" ~hum:"Symbolic Execution Memory Error",
          Localise.no_desc, Some ml_loc, Exn_developer, Low, None, Nocat)
     | Sys_error s ->
         let desc = Localise.verbatim_desc s in
-        (Localise.from_string "Sys_error",
+        (Localise.from_string "Sys_error" ~hum:"System Error",
          desc, None, Exn_system, Low, None, Nocat)
     | Tainted_value_reaching_sensitive_function (desc, ml_loc) ->
         (Localise.tainted_value_reaching_sensitive_function,
@@ -292,8 +300,10 @@ let recognize_exception exn =
         (Localise.unary_minus_applied_to_unsigned_expression,
          desc, Some ml_loc, Exn_user, Medium, None, Nocat)
     | Unknown_proc ->
-        (Localise.from_string "Unknown_proc",
+        (Localise.from_string "Unknown_proc" ~hum:"Unknown Procedure",
          Localise.no_desc, None, Exn_developer, Low, None, Nocat)
+    | Unreachable_code_after (desc, ml_loc) ->
+        (Localise.unreachable_code_after, desc, Some ml_loc, Exn_user, Medium, None, Nocat)
     | Unsafe_guarded_by_access (desc, ml_loc) ->
         (Localise.unsafe_guarded_by_access,
          desc, Some ml_loc, Exn_user, High, None, Prover)
@@ -301,19 +311,15 @@ let recognize_exception exn =
         (Localise.use_after_free,
          desc, Some ml_loc, Exn_user, High, None, Prover)
     | Wrong_argument_number ml_loc ->
-        (Localise.from_string "Wrong_argument_number",
+        (Localise.from_string "Wrong_argument_number" ~hum:"Wrong Argument Number",
          Localise.no_desc, Some ml_loc, Exn_developer, Low, None, Nocat)
     | Failure _ as f ->
         raise f
     | exn ->
-        let exn_name = Printexc.to_string exn in
+        let exn_name = Exn.to_string exn in
         (Localise.from_string exn_name,
          Localise.no_desc, None, Exn_developer, Low, None, Nocat) in
-  let visibility' =
-    if visibility = Exn_user && filter_out_bucket desc
-    then Exn_developer
-    else visibility in
-  (err_name, desc, ml_loc_opt, visibility', severity, force_kind, eclass)
+  (err_name, desc, ml_loc_opt, visibility, severity, force_kind, eclass)
 
 (** print a description of the exception to the html output *)
 let print_exception_html s exn =
@@ -321,8 +327,8 @@ let print_exception_html s exn =
   let ml_loc_string = match ml_loc_opt with
     | None -> ""
     | Some ml_loc -> " " ^ L.ml_loc_to_string ml_loc in
-  let desc_str = pp_to_string Localise.pp_error_desc desc in
-  (L.d_strln_color Red) (s ^ (Localise.to_string err_name) ^ " " ^ desc_str ^ ml_loc_string)
+  let desc_str = F.asprintf "%a" Localise.pp_error_desc desc in
+  (L.d_strln_color Red) (s ^ (Localise.to_issue_id err_name) ^ " " ^ desc_str ^ ml_loc_string)
 
 (** string describing an error kind *)
 let err_kind_string = function
@@ -330,22 +336,24 @@ let err_kind_string = function
   | Kerror -> "ERROR"
   | Kinfo -> "INFO"
   | Kadvice -> "ADVICE"
+  | Klike -> "LIKE"
 
 (** string describing an error class *)
 let err_class_string = function
   | Checker -> "CHECKER"
   | Prover -> "PROVER"
   | Nocat -> ""
+  | Linters -> "Linters"
 
-(** wether to print the bug key together with the error message *)
+(** whether to print the bug key together with the error message *)
 let print_key = false
 
-(** pretty print an error given its (id,key), location, kind, name, description, and optional ml location *)
-let pp_err (_, node_key) loc ekind ex_name desc ml_loc_opt fmt () =
-  let kind = err_kind_string (if ekind = Kinfo then Kwarning else ekind) (* eclipse does not know about infos: treat as warning *) in
+(** pretty print an error  *)
+let pp_err ~node_key loc ekind ex_name desc ml_loc_opt fmt () =
+  let kind = err_kind_string (if equal_err_kind ekind Kinfo then Kwarning else ekind) in
   let pp_key fmt k = if print_key then F.fprintf fmt " key: %d " k else () in
-  F.fprintf fmt "%s:%d: %s: %a %a%a%a@\n"
-    (DB.source_file_to_string loc.Location.file)
+  F.fprintf fmt "%a:%d: %s: %a %a%a%a@\n"
+    SourceFile.pp loc.Location.file
     loc.Location.line
     kind
     Localise.pp ex_name
@@ -356,4 +364,5 @@ let pp_err (_, node_key) loc ekind ex_name desc ml_loc_opt fmt () =
 (** Return true if the exception is not serious and should be handled in timeout mode *)
 let handle_exception exn =
   let _, _, _, visibility, _, _, _ = recognize_exception exn in
-  visibility == Exn_user || visibility == Exn_developer
+  equal_visibility visibility Exn_user ||
+  equal_visibility visibility Exn_developer

@@ -7,332 +7,17 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
-
-(** General utility functions and definition with global scope *)
+open! IStd
+open! PVariant
 
 module F = Format
-
-(** List police: don't use the list module to avoid non-tail recursive
-    functions and builtin equality. Use IList instead. *)
-module List = struct end
-
-type ('a, 'b) result =
-  | Ok of 'a
-  | Error of 'b
+module Hashtbl = Caml.Hashtbl
 
 (** initial process times *)
 let initial_times = Unix.times ()
 
 (** precise time of day at the start of the analysis *)
 let initial_timeofday = Unix.gettimeofday ()
-
-(** {2 Generic Utility Functions} *)
-
-(** Compare police: generic compare disabled. *)
-let compare = ()
-
-let string_equal (s1: string) (s2: string) = s1 = s2
-
-let string_compare (s1: string) (s2: string) = Pervasives.compare s1 s2
-
-let float_compare (f1: float) (f2: float) = Pervasives.compare f1 f2
-
-let bool_compare (b1: bool) (b2: bool) = Pervasives.compare b1 b2
-
-let bool_equal (b1: bool) (b2: bool) = b1 = b2
-
-(** Extend and equality function to an option type. *)
-let opt_equal cmp x1 x2 = match x1, x2 with
-  | None, None -> true
-  | Some _, None -> false
-  | None, Some _ -> false
-  | Some y1, Some y2 -> cmp y1 y2
-
-let opt_compare cmp x1 x2 =
-  match x1, x2 with
-  | Some y1, Some y2 -> cmp y1 y2
-  | None, None -> 0
-  | None, _ -> -1
-  | _, None -> 1
-
-(** Efficient comparison for integers *)
-let int_compare (i: int) (j: int) = (Obj.magic (i > j)) - (Obj.magic (i < j))
-
-let int_equal (i: int) (j: int) = i = j
-
-(** Generic comparison of pairs given a compare function for each element of the pair. *)
-let pair_compare compare compare' (x1, y1) (x2, y2) =
-  let n = compare x1 x2 in
-  if n <> 0 then n else compare' y1 y2
-
-(** Generic comparison of triples given a compare function for each element of the triple *)
-let triple_compare compare compare' compare'' (x1, y1, z1) (x2, y2, z2) =
-  let n = compare x1 x2 in
-  if n <> 0 then n else let n = compare' y1 y2 in
-    if n <> 0 then n else compare'' z1 z2
-
-(** Generic equality of triples given an equal function for each element of the triple *)
-let triple_equal x_equal y_equal z_equal (x1, y1, z1) (x2, y2, z2) =
-  x_equal x1 x2 && y_equal y1 y2 && z_equal z1 z2
-
-let fst3 (x,_,_) = x
-let snd3 (_,x,_) = x
-let trd3 (_,_,x) = x
-
-let int_of_bool b = if b then 1 else 0
-
-let tags_compare (x : 'a) (y : 'a) =
-  let x = Obj.repr x
-  and y = Obj.repr y in
-  if Obj.is_int x
-  then
-    if Obj.is_int y
-    (* we can use (-) because tags are small and won't overflow *)
-    then Obj.obj x - Obj.obj y
-    else -1
-  else if Obj.is_int y
-  then 1
-  else
-    let r = Obj.tag x - Obj.tag y in
-    if r = 0
-    then failwith "Comparing parameterized constructors"
-    else r
-
-(** {2 Useful Modules} *)
-
-(** Set of integers *)
-module IntSet =
-  Set.Make(struct
-    type t = int
-    let compare = int_compare
-  end)
-
-(** Hash table over strings *)
-module StringHash = Hashtbl.Make (
-  struct
-    type t = string
-    let equal (s1: string) (s2: string) = s1 = s2
-    let hash = Hashtbl.hash
-  end)
-
-(** Set of strings *)
-module StringSet = Set.Make(String)
-
-(** Pretty print a set of strings *)
-let pp_stringset fmt ss =
-  StringSet.iter (fun s -> F.fprintf fmt "%s " s) ss
-
-(** string list -> StringSet.t
-    from http://stackoverflow.com/a/2382330 *)
-let string_set_of_list list =
-  IList.fold_left (fun acc x -> StringSet.add x acc) StringSet.empty list
-
-(** intersection of two string lists, as a StringSet.t
-    from http://stackoverflow.com/a/2382330 *)
-let string_list_intersection a b =
-  StringSet.inter (string_set_of_list a) (string_set_of_list b)
-
-module StringPPSet = PrettyPrintable.MakePPSet(struct
-    type t = string
-    let compare = string_compare
-    let pp_element fmt s = F.fprintf fmt "%s" s
-  end)
-
-(** Maps from integers *)
-module IntMap = Map.Make (struct
-    type t = int
-    let compare = int_compare
-  end)
-
-(** Maps from strings *)
-module StringMap = Map.Make (struct
-    type t = string
-    let compare (s1: string) (s2: string) = Pervasives.compare s1 s2 end)
-
-(** {2 Printing} *)
-
-(** Kind of simple printing: default or with full types *)
-type pp_simple_kind = PP_SIM_DEFAULT | PP_SIM_WITH_TYP
-
-(** Kind of printing *)
-type printkind = PP_TEXT | PP_LATEX | PP_HTML
-
-(** Colors supported in printing *)
-type color = Black | Blue | Green | Orange | Red
-
-(** map subexpressions (as Obj.t element compared by physical equality) to colors *)
-type colormap = Obj.t -> color
-
-(** Print environment threaded through all the printing functions *)
-type printenv = {
-  pe_opt : pp_simple_kind; (** Current option for simple printing *)
-  pe_kind : printkind; (** Current kind of printing *)
-  pe_cmap_norm : colormap; (** Current colormap for the normal part *)
-  pe_cmap_foot : colormap; (** Current colormap for the footprint part *)
-  pe_color : color; (** Current color *)
-  pe_obj_sub : (Obj.t -> Obj.t) option (** generic object substitution *)
-}
-
-(** Create a colormap of a given color *)
-let colormap_from_color color (_: Obj.t) = color
-
-(** standard colormap: black *)
-let colormap_black (_: Obj.t) = Black
-
-(** red colormap *)
-let colormap_red (_: Obj.t) = Red
-
-(** Default text print environment *)
-let pe_text =
-  { pe_opt = PP_SIM_DEFAULT;
-    pe_kind = PP_TEXT;
-    pe_cmap_norm = colormap_black;
-    pe_cmap_foot = colormap_black;
-    pe_color = Black;
-    pe_obj_sub = None }
-
-(** Default html print environment *)
-let pe_html color =
-  { pe_text with
-    pe_kind = PP_HTML;
-    pe_cmap_norm = colormap_from_color color;
-    pe_cmap_foot = colormap_from_color color;
-    pe_color = color }
-
-(** Default latex print environment *)
-let pe_latex color =
-  { pe_opt = PP_SIM_DEFAULT;
-    pe_kind = PP_LATEX;
-    pe_cmap_norm = colormap_from_color color;
-    pe_cmap_foot = colormap_from_color color;
-    pe_color = color;
-    pe_obj_sub = None }
-
-(** Extend the normal colormap for the given object with the given color *)
-let pe_extend_colormap pe (x: Obj.t) (c: color) =
-  let colormap (y: Obj.t) =
-    if x == y then c
-    else pe.pe_cmap_norm y in
-  { pe with pe_cmap_norm = colormap }
-
-(** Set the object substitution, which is supposed to preserve the type.
-    Currently only used for a map from (identifier) expressions to the program var containing them *)
-let pe_set_obj_sub pe (sub: 'a -> 'a) =
-  let new_obj_sub x =
-    let x' = Obj.repr (sub (Obj.obj x)) in
-    match pe.pe_obj_sub with
-    | None -> x'
-    | Some sub' -> sub' x' in
-  { pe with pe_obj_sub = Some (new_obj_sub) }
-
-(** Reset the object substitution, so that no substitution takes place *)
-let pe_reset_obj_sub pe =
-  { pe with pe_obj_sub = None }
-
-(** string representation of colors *)
-let color_string = function
-  | Black -> "color_black"
-  | Blue -> "color_blue"
-  | Green -> "color_green"
-  | Orange -> "color_orange"
-  | Red -> "color_red"
-
-(** Pretty print a space-separated sequence *)
-let rec pp_seq pp f = function
-  | [] -> ()
-  | [x] -> F.fprintf f "%a" pp x
-  | x:: l -> F.fprintf f "%a %a" pp x (pp_seq pp) l
-
-(** Print a comma-separated sequence *)
-let rec pp_comma_seq pp f = function
-  | [] -> ()
-  | [x] -> F.fprintf f "%a" pp x
-  | x:: l -> F.fprintf f "%a,%a" pp x (pp_comma_seq pp) l
-
-(** Print a ;-separated sequence. *)
-let rec _pp_semicolon_seq oneline pe pp f =
-  let pp_sep fmt () =
-    if oneline then F.fprintf fmt " " else F.fprintf fmt "@\n" in
-  function
-  | [] -> ()
-  | [x] -> F.fprintf f "%a" pp x
-  | x:: l ->
-      (match pe.pe_kind with
-       | PP_TEXT | PP_HTML ->
-           F.fprintf f "%a ; %a%a" pp x pp_sep () (_pp_semicolon_seq oneline pe pp) l
-       | PP_LATEX ->
-           F.fprintf f "%a ;\\\\%a %a" pp x pp_sep () (_pp_semicolon_seq oneline pe pp) l)
-
-(** Print a ;-separated sequence with newlines. *)
-let pp_semicolon_seq pe = _pp_semicolon_seq false pe
-
-(** Print a ;-separated sequence on one line. *)
-let pp_semicolon_seq_oneline pe = _pp_semicolon_seq true pe
-
-(** Print an or-separated sequence. *)
-let pp_or_seq pe pp f = function
-  | [] -> ()
-  | [x] -> F.fprintf f "%a" pp x
-  | x:: l ->
-      (match pe.pe_kind with
-       | PP_TEXT ->
-           F.fprintf f "%a || %a" pp x (pp_semicolon_seq pe pp) l
-       | PP_HTML ->
-           F.fprintf f "%a &or; %a" pp x (pp_semicolon_seq pe pp) l
-       | PP_LATEX ->
-           F.fprintf f "%a \\vee %a" pp x (pp_semicolon_seq pe pp) l)
-
-(** Produce a string from a 1-argument pretty printer function *)
-let pp_to_string pp x =
-  let buf = Buffer.create 1 in
-  let fmt = Format.formatter_of_buffer buf in
-  Format.fprintf fmt "%a@?" pp x;
-  Buffer.contents buf
-
-(** Print the current time and date in a format similar to the "date" command *)
-let pp_current_time f () =
-  let tm = Unix.localtime (Unix.time ()) in
-  F.fprintf f "%02d/%02d/%4d %02d:%02d" tm.Unix.tm_mday tm.Unix.tm_mon (tm.Unix.tm_year + 1900) tm.Unix.tm_hour tm.Unix.tm_min
-
-(** Print the time in seconds elapsed since the beginning of the execution of the current command. *)
-let pp_elapsed_time fmt () =
-  let elapsed = Unix.gettimeofday () -. initial_timeofday in
-  Format.fprintf fmt "%f" elapsed
-
-(** Check if the lhs is a substring of the rhs. *)
-let string_is_prefix s1 s2 =
-  String.length s1 <= String.length s2 &&
-  String.sub s2 0 (String.length s1) = s1
-
-(** Check if the lhs is a postfix of the rhs. *)
-let string_is_suffix s1 s2 =
-  let l1 = String.length s1 in
-  let l2 = String.length s2 in
-  l1 <= l2 &&
-  String.sub s2 (l2 - l1) l1 = s1
-
-(** Check if the lhs is contained in the rhs. *)
-let string_contains s1 s2 =
-  let rexp = Str.regexp_string s1 in
-  try
-    ignore (Str.search_forward rexp s2 0);
-    true
-  with Not_found -> false
-
-(** Split a string across the given character, if given. (e.g. split first.second with '.').*)
-let string_split_character s c =
-  try
-    let index = String.rindex s c in
-    let lhs = String.sub s 0 index in
-    let rhs = String.sub s (index + 1) ((String.length s) - (1 + index)) in
-    (Some lhs, rhs)
-  with Not_found -> (None, s)
-
-let string_value_or_empty_string
-    (string_option: string option): string =
-  match string_option with
-  | Some s -> s
-  | None -> ""
 
 (** read a source file and return a list of lines, or None in case of error *)
 let read_file fname =
@@ -341,7 +26,7 @@ let read_file fname =
   let cleanup () =
     match !cin_ref with
     | None -> ()
-    | Some cin -> close_in cin in
+    | Some cin -> In_channel.close cin in
   try
     let cin = open_in fname in
     cin_ref := Some cin;
@@ -353,7 +38,7 @@ let read_file fname =
   with
   | End_of_file ->
       cleanup ();
-      Some (IList.rev !res)
+      Some (List.rev !res)
   | Sys_error _ ->
       cleanup ();
       None
@@ -366,11 +51,11 @@ let copy_file fname_from fname_to =
   let cleanup () =
     begin match !cin_ref with
       | None -> ()
-      | Some cin -> close_in cin
+      | Some cin -> In_channel.close cin
     end;
     begin match !cout_ref with
       | None -> ()
-      | Some cout -> close_out cout
+      | Some cout -> Out_channel.close cout
     end in
   try
     let cin = open_in fname_from in
@@ -417,132 +102,41 @@ let do_outf outf_opt f =
 
 (** close an outfile *)
 let close_outf outf =
-  close_out outf.out_c
+  Out_channel.close outf.out_c
 
-let ( // ) = Filename.concat
-
-(** convert a filename to absolute path and normalize by removing occurrences of "." and ".." *)
-module FileNormalize = struct
-  let rec fname_to_list_rev fname =
-    if fname = "" then [] else
-      let base = Filename.basename fname in
-      let dir = Filename.dirname fname in
-      let does_not_split = (* make sure it terminates whatever the implementation of Filename *)
-        fname = base || String.length dir >= String.length fname in
-      if does_not_split then [fname]
-      else base :: fname_to_list_rev dir
-
-  (* split a file name into a list of strings representing it as a path *)
-  let fname_to_list fname =
-    IList.rev (fname_to_list_rev fname)
-
-  (* concatenate a list of strings representing a path into a filename *)
-  let rec list_to_fname base path = match path with
-    | [] -> base
-    | x :: path' -> list_to_fname (base // x) path'
-
-  (* normalize a path where done_l is a reversed path from the root already normalized *)
-  (* and todo_l is the path still to normalize *)
-  let rec normalize done_l todo_l = match done_l, todo_l with
-    | _, y :: tl when y = Filename.current_dir_name -> (* path/. --> path *)
-        normalize done_l tl
-    | [_], y :: tl when y = Filename.parent_dir_name -> (* /.. --> / *)
-        normalize done_l tl
-    | _ :: dl, y :: tl when y = Filename.parent_dir_name -> (* path/x/.. --> path *)
-        normalize dl tl
-    | _, y :: tl -> normalize (y :: done_l) tl
-    | _, [] -> IList.rev done_l
-
-  (* check if the filename contains "." or ".." *)
-  let fname_contains_current_parent fname =
-    let l = fname_to_list fname in
-    IList.exists (fun x -> x = Filename.current_dir_name || x = Filename.parent_dir_name) l
-
-  (* convert a filename to absolute path, if necessary, and normalize "." and ".." *)
-  let fname_to_absolute_normalize fname =
-    let is_relative = Filename.is_relative fname in
-    let must_normalize = fname_contains_current_parent fname in
-    let simple_case () =
-      if is_relative then Unix.getcwd () // fname
-      else fname in
-    if must_normalize then begin
-      let done_l, todo_l =
-        if is_relative then
-          fname_to_list_rev (Unix.getcwd ()), fname_to_list fname
-        else match fname_to_list fname with
-          | [] -> [fname], [] (* should not happen *)
-          | root :: l -> [root], l in
-      let normal_l = normalize done_l todo_l in
-      match normal_l with
-      | base :: l -> list_to_fname base l
-      | [] -> (* should not happen *) simple_case ()
-    end
-    else simple_case ()
-
-  (*
-  let test () =
-  let test_fname fname =
-  let fname' = fname_to_absolute_normalize fname in
-  Format.fprintf Format.std_formatter "fname %s --> %s@." fname fname' in
-  let tests = [".";
-  "..";
-  "aaa.c";
-  "/";
-  "/..";
-  "../test.c";
-  "src/../././test.c"] in
-  List.map test_fname tests
-  *)
-end
 
 (** Convert a filename to an absolute one if it is relative, and normalize "." and ".." *)
-let filename_to_absolute fname =
-  FileNormalize.fname_to_absolute_normalize fname
-
-(** Convert an absolute filename to one relative to the current directory. *)
-let filename_to_relative root fname =
-  let string_strict_subtract s1 s2 =
-    let n1, n2 = String.length s1, String.length s2 in
-    if n1 < n2 && String.sub s2 0 n1 = s1 then
-      String.sub s2 (n1 + 1) (n2 - (n1 + 1))
-    else s2 in
-  let norm_root = (* norm_root is root without any trailing / *)
-    Filename.dirname root // Filename.basename root in
-  let remainder = (* remove the path prefix to root including trailing / *)
-    string_strict_subtract norm_root fname in
-  remainder
+let filename_to_absolute ~root fname =
+  let add_entry rev_done entry =
+    match entry, rev_done with
+    | ".", [] -> entry :: rev_done                  (* id on . *)
+    | ".", _ -> rev_done                            (* path/. --> path *)
+    | "..", ("." | "..") :: _ -> entry :: rev_done  (* id on {.,..}/.. *)
+    | "..", ["/"] -> rev_done                       (* /.. -> / *)
+    | "..", _ :: rev_done_parent -> rev_done_parent (* path/dir/.. --> path *)
+    | _ -> entry :: rev_done
+  in
+  let abs_fname = if Filename.is_absolute fname then fname else root ^/ fname in
+  Filename.of_parts (List.rev (List.fold ~f:add_entry ~init:[] (Filename.parts abs_fname)))
 
 
-(** flags for a procedure *)
-type proc_flags = (string, string) Hashtbl.t
-
-let proc_flags_empty () : proc_flags = Hashtbl.create 1
-
-let proc_flag_skip = "skip"
-let proc_flag_ignore_return = "ignore_return"
-
-let proc_flags_add proc_flags key value =
-  Hashtbl.replace proc_flags key value
-
-let proc_flags_find proc_flags key =
-  Hashtbl.find proc_flags key
-
-let join_strings sep = function
-  | [] -> ""
-  | hd:: tl ->
-      IList.fold_left (fun str p -> str ^ sep ^ p) hd tl
-
-let next compare =
-  fun x y n ->
-    if n <> 0 then n
-    else compare x y
+(** Convert an absolute filename to one relative to the given directory. *)
+let filename_to_relative ~root fname =
+  let rec relativize_if_under origin target =
+    match origin, target with
+    | x :: xs, y :: ys when String.equal x y -> relativize_if_under xs ys
+    | [], [] -> Some "."
+    | [], ys -> Some (Filename.of_parts ys)
+    | _ -> None
+  in
+  relativize_if_under (Filename.parts root) (Filename.parts fname)
 
 
 let directory_fold f init path =
   let collect current_dir (accu, dirs) path =
-    let full_path = current_dir // path in
+    let full_path = current_dir ^/ path in
     try
-      if Sys.is_directory full_path then
+      if Sys.is_directory full_path = `Yes then
         (accu, full_path:: dirs)
       else
         (f accu full_path, dirs)
@@ -552,9 +146,9 @@ let directory_fold f init path =
     match dirs with
     | [] -> accu
     | d:: tl ->
-        let (new_accu, new_dirs) = Array.fold_left (collect d) (accu, tl) (Sys.readdir d) in
+        let (new_accu, new_dirs) = Array.fold ~f:(collect d) ~init:(accu, tl) (Sys.readdir d) in
         loop new_accu new_dirs in
-  if Sys.is_directory path then
+  if Sys.is_directory path = `Yes then
     loop init [path]
   else
     f init path
@@ -562,9 +156,9 @@ let directory_fold f init path =
 
 let directory_iter f path =
   let apply current_dir dirs path =
-    let full_path = current_dir // path in
+    let full_path = current_dir ^/ path in
     try
-      if Sys.is_directory full_path then
+      if Sys.is_directory full_path = `Yes then
         full_path:: dirs
       else
         let () = f full_path in
@@ -575,56 +169,54 @@ let directory_iter f path =
     match dirs with
     | [] -> ()
     | d:: tl ->
-        let new_dirs = Array.fold_left (apply d) tl (Sys.readdir d) in
+        let new_dirs = Array.fold ~f:(apply d) ~init:tl (Sys.readdir d) in
         loop new_dirs in
-  if Sys.is_directory path then
+  if Sys.is_directory path = `Yes then
     loop [path]
   else
     f path
 
-
-let remove_directory_tree path =
-  Stream.from (fun _ -> Fts.fts_read (Fts.fts_open ?compar:None ~path_argv:[path] ~options:[]))
-  |> Stream.iter (fun ent ->
-      match Fts.FTSENT.info ent with
-      | FTS_D | FTS_DOT -> ()
-      | _ -> Core.Std.Unix.remove (Fts.FTSENT.name ent)
-    )
+let dir_is_empty path =
+  let dir_handle = Unix.opendir path in
+  let is_empty = ref true in
+  (try
+     while !is_empty;
+     do if not (List.mem ~equal:String.equal["."; ".."] (Unix.readdir dir_handle)) then
+         is_empty := false;
+     done;
+   with End_of_file -> ()
+  );
+  Unix.closedir dir_handle;
+  !is_empty
 
 
 let string_crc_hex32 s = Digest.to_hex (Digest.string s)
 
-let string_append_crc_cutoff ?(cutoff=100) ?(key="") name =
-  let name_up_to_cutoff =
-    if String.length name <= cutoff
-    then name
-    else String.sub name 0 cutoff in
-  let crc_str =
-    let name_for_crc = name ^ key in
-    string_crc_hex32 name_for_crc in
-  name_up_to_cutoff ^ "." ^ crc_str
-
-let read_optional_json_file path =
-  if Sys.file_exists path then
-    try
-      Ok (Yojson.Basic.from_file path)
-    with Sys_error msg | Yojson.Json_error msg ->
-      Error msg
-  else Ok (`Assoc [])
+let read_json_file path =
+  try
+    Ok (Yojson.Basic.from_file path)
+  with Sys_error msg | Yojson.Json_error msg ->
+    Error msg
 
 let do_finally f g =
   let res = try f () with exc -> g () |> ignore; raise exc in
   let res' = g () in
   (res, res')
 
-let with_file file ~f =
-  let oc = open_out file in
+let with_file_in file ~f =
+  let ic = In_channel.create file in
+  let f () = f ic in
+  let g () =  In_channel.close ic in
+  do_finally f g |> fst
+
+let with_file_out file ~f =
+  let oc = Out_channel.create file in
   let f () = f oc in
-  let g () = close_out oc in
+  let g () =  Out_channel.close oc in
   do_finally f g |> fst
 
 let write_json_to_file destfile json =
-  with_file destfile ~f:(fun oc -> Yojson.Basic.pretty_to_channel oc json)
+  with_file_out destfile ~f:(fun oc -> Yojson.Basic.pretty_to_channel oc json)
 
 let consume_in chan_in =
   try
@@ -639,45 +231,68 @@ let with_process_in command read =
     Unix.close_process_in chan in
   do_finally f g
 
-let failwithf fmt =
-  Format.kfprintf (fun _ -> failwith (Format.flush_str_formatter ()))
-    Format.str_formatter fmt
-
-let invalid_argf fmt =
-  Format.kfprintf (fun _ -> invalid_arg (Format.flush_str_formatter ()))
-    Format.str_formatter fmt
-
+let shell_escape_command cmd =
+  let escape arg =
+    (* ends on-going single quote, output single quote inside double quotes, then open a new single
+       quote *)
+    Escape.escape_map (function | '\'' -> Some "'\"'\"'" | _ -> None) arg
+    |> Printf.sprintf "'%s'" in
+  List.map ~f:escape cmd |> String.concat ~sep:" "
 
 (** Create a directory if it does not exist already. *)
 let create_dir dir =
   try
-    if (Unix.stat dir).Unix.st_kind != Unix.S_DIR then
-      failwithf "@.ERROR: file %s exists and is not a directory@." dir
+    if (Unix.stat dir).Unix.st_kind <> Unix.S_DIR then
+      failwithf "file %s exists and is not a directory@." dir
   with Unix.Unix_error _ ->
-  try Unix.mkdir dir 0o700 with
+  try Unix.mkdir dir ~perm:0o700 with
     Unix.Unix_error _ ->
       let created_concurrently = (* check if another process created it meanwhile *)
-        try (Unix.stat dir).Unix.st_kind = Unix.S_DIR
+        try Polymorphic_compare.(=) ((Unix.stat dir).Unix.st_kind) Unix.S_DIR
         with Unix.Unix_error _ -> false in
       if not created_concurrently then
-        failwithf "@.ERROR: cannot create directory %s@." dir
-
-(** [create_path path] will create a directory at [path], creating all the parent directories if
-    non-existing *)
-let rec create_path path =
-  try
-    Unix.mkdir path 0o700
-  with
-  | Unix.Unix_error (Unix.EEXIST, _, _) -> ()
-  | Unix.Unix_error (Unix.ENOENT, _, _) ->
-      create_path (Filename.dirname path);
-      create_dir path
+        failwithf "cannot create directory %s@." dir
 
 let realpath_cache = Hashtbl.create 1023
 
 let realpath path =
-  try Hashtbl.find realpath_cache path
-  with Not_found ->
-    let realpath = Core.Std.Filename.realpath path in
-    Hashtbl.add realpath_cache path realpath;
-    realpath
+  match Hashtbl.find realpath_cache path with
+  | exception Not_found -> (
+      match Filename.realpath path with
+      | realpath ->
+          Hashtbl.add realpath_cache path (Ok realpath);
+          realpath
+      | exception Unix.Unix_error (code, f, arg) ->
+          F.eprintf
+            "WARNING: Failed to resolve file %s with \"%s\" @\n@." arg (Unix.error_message code);
+          (* cache failures as well *)
+          Hashtbl.add realpath_cache path (Error (code, f, arg));
+          raise (Unix.Unix_error (code, f, arg))
+    )
+  | Ok path -> path
+  | Error (code, f, arg) -> raise (Unix.Unix_error (code, f, arg))
+
+
+(* never closed *)
+let devnull = lazy (Unix.openfile "/dev/null" ~mode:[Unix.O_WRONLY])
+
+let suppress_stderr2 f2 x1 x2 =
+  let restore_stderr src =
+    Unix.dup2 ~src ~dst:Unix.stderr;
+    Unix.close src in
+  let orig_stderr = Unix.dup Unix.stderr in
+  Unix.dup2 ~src:(Lazy.force devnull) ~dst:Unix.stderr;
+  let f () = f2 x1 x2 in
+  let finally () = restore_stderr orig_stderr in
+  protect ~f ~finally
+
+let compare_versions v1 v2 =
+  let int_list_of_version v =
+    let lv = String.split ~on:'.' v in
+    let int_of_string_or_zero v =
+      try int_of_string v
+      with Failure _ -> 0 in
+    List.map ~f:int_of_string_or_zero lv in
+  let lv1  = int_list_of_version v1 in
+  let lv2  = int_list_of_version v2 in
+  [%compare : int list] lv1 lv2

@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module F = Format
 
@@ -15,7 +15,7 @@ module F = Format
     file). Defines useful wrappers that allows us to do tricks like turn a forward cfg into a
     backward one, or view a cfg as having a single instruction per node. *)
 
-type index = Node_index | Instr_index of int
+type index = Node_index | Instr_index of int [@@deriving compare]
 
 module type Node = sig
   type t
@@ -23,9 +23,10 @@ module type Node = sig
 
   val kind : t -> Procdesc.Node.nodekind
   val id : t -> id
+  val hash : t -> int
   val loc : t -> Location.t
-  val underlying_id : t -> Procdesc.Node.id
-  val id_compare : id -> id -> int
+  val underlying_node : t -> Procdesc.Node.t
+  val compare_id : id -> id -> int
   val pp_id : F.formatter -> id -> unit
 end
 
@@ -35,9 +36,10 @@ module DefaultNode = struct
 
   let kind = Procdesc.Node.get_kind
   let id = Procdesc.Node.get_id
+  let hash = Procdesc.Node.hash
   let loc = Procdesc.Node.get_loc
-  let underlying_id = id
-  let id_compare = Procdesc.Node.id_compare
+  let underlying_node t = t
+  let compare_id = Procdesc.Node.compare_id
   let pp_id = Procdesc.Node.pp_id
 end
 
@@ -47,22 +49,20 @@ module InstrNode = struct
 
   let kind = Procdesc.Node.get_kind
 
-  let underlying_id t = Procdesc.Node.get_id t
+  let underlying_node t = t
 
-  let id t = underlying_id t, Node_index
+  let id t = Procdesc.Node.get_id (underlying_node t), Node_index
+
+  let hash node = Hashtbl.hash (id node)
 
   let loc t = Procdesc.Node.get_loc t
 
-  let index_compare index1 index2 = match index1, index2 with
-    | Node_index, Node_index -> 0
-    | Instr_index i1, Instr_index i2 -> int_compare i1 i2
-    | Node_index, Instr_index _ -> 1
-    | Instr_index _, Node_index -> -1
+  let compare_index = compare_index
 
-  let id_compare (id1, index1) (id2, index2) =
-    let n = Procdesc.Node.id_compare id1 id2 in
+  let compare_id (id1, index1) (id2, index2) =
+    let n = Procdesc.Node.compare_id id1 id2 in
     if n <> 0 then n
-    else index_compare index1 index2
+    else compare_index index1 index2
 
   let pp_id fmt (id, index) = match index with
     | Node_index -> Procdesc.Node.pp_id fmt id
@@ -109,6 +109,8 @@ module type S = sig
   val nodes : t -> node list
 
   val from_pdesc : Procdesc.t -> t
+
+  val is_loop_head : Procdesc.t -> node -> bool
 end
 
 (** Forward CFG with no exceptional control-flow *)
@@ -118,7 +120,7 @@ module Normal = struct
   include (DefaultNode : module type of DefaultNode with type t := node)
 
   let instrs = Procdesc.Node.get_instrs
-  let instr_ids n = IList.map (fun i -> i, None) (instrs n)
+  let instr_ids n = List.map ~f:(fun i -> i, None) (instrs n)
   let normal_succs _ n = Procdesc.Node.get_succs n
   let normal_preds _ n = Procdesc.Node.get_preds n
   (* prune away exceptional control flow *)
@@ -131,6 +133,7 @@ module Normal = struct
   let proc_desc t = t
   let nodes = Procdesc.get_nodes
   let from_pdesc pdesc = pdesc
+  let is_loop_head = Procdesc.is_loop_head
 end
 
 (** Forward CFG with exceptional control-flow *)
@@ -140,6 +143,14 @@ module Exceptional = struct
   type t = Procdesc.t * id_node_map
   include (DefaultNode : module type of DefaultNode with type t := node)
 
+  let exceptional_succs _ n = match Procdesc.Node.get_kind n with
+    | Procdesc.Node.Stmt_node ("call_noexcept") ->
+        (* Hack: signal from the frontend that this node should be modelled as non-throwing.
+           Eventually, we'll just avoid translating the exceptional edge in the frontend instead. *)
+        []
+    | _ ->
+        Procdesc.Node.get_exn n
+
   let from_pdesc pdesc =
     (* map from a node to its exceptional predecessors *)
     let add_exn_preds exn_preds_acc n =
@@ -148,27 +159,25 @@ module Exceptional = struct
         let existing_exn_preds =
           try Procdesc.IdMap.find exn_succ_node_id exn_preds_acc
           with Not_found -> [] in
-        if not (IList.mem Procdesc.Node.equal n existing_exn_preds)
+        if not (List.mem ~equal:Procdesc.Node.equal existing_exn_preds n)
         then (* don't add duplicates *)
           Procdesc.IdMap.add exn_succ_node_id (n :: existing_exn_preds) exn_preds_acc
         else
           exn_preds_acc in
-      IList.fold_left add_exn_pred exn_preds_acc (Procdesc.Node.get_exn n) in
+      List.fold ~f:add_exn_pred ~init:exn_preds_acc (exceptional_succs pdesc n) in
     let exceptional_preds =
-      IList.fold_left add_exn_preds Procdesc.IdMap.empty (Procdesc.get_nodes pdesc) in
+      List.fold ~f:add_exn_preds ~init:Procdesc.IdMap.empty (Procdesc.get_nodes pdesc) in
     pdesc, exceptional_preds
 
   let instrs = Procdesc.Node.get_instrs
 
-  let instr_ids n = IList.map (fun i -> i, None) (instrs n)
+  let instr_ids n = List.map ~f:(fun i -> i, None) (instrs n)
 
   let nodes (t, _) = Procdesc.get_nodes t
 
   let normal_succs _ n = Procdesc.Node.get_succs n
 
   let normal_preds _ n = Procdesc.Node.get_preds n
-
-  let exceptional_succs _ n = Procdesc.Node.get_exn n
 
   let exceptional_preds (_, exn_pred_map) n =
     try Procdesc.IdMap.find (Procdesc.Node.get_id n) exn_pred_map
@@ -182,8 +191,8 @@ module Exceptional = struct
         normal_succs
     | exceptional_succs ->
         normal_succs @ exceptional_succs
-        |> IList.sort Procdesc.Node.compare
-        |> IList.remove_duplicates Procdesc.Node.compare
+        |> List.sort ~cmp:Procdesc.Node.compare
+        |> List.remove_consecutive_duplicates ~equal:Procdesc.Node.equal
 
   (** get all normal and exceptional predecessors of [n]. *)
   let preds t n =
@@ -193,19 +202,20 @@ module Exceptional = struct
         normal_preds
     | exceptional_preds ->
         normal_preds @ exceptional_preds
-        |> IList.sort Procdesc.Node.compare
-        |> IList.remove_duplicates Procdesc.Node.compare
+        |> List.sort ~cmp:Procdesc.Node.compare
+        |> List.remove_consecutive_duplicates ~equal:Procdesc.Node.equal
 
   let proc_desc (pdesc, _) = pdesc
   let start_node (pdesc, _) = Procdesc.get_start_node pdesc
   let exit_node (pdesc, _) = Procdesc.get_exit_node pdesc
+  let is_loop_head = Procdesc.is_loop_head
 end
 
 (** Wrapper that reverses the direction of the CFG *)
 module Backward (Base : S) = struct
   include Base
-  let instrs n = IList.rev (Base.instrs n)
-  let instr_ids n = IList.rev (Base.instr_ids n)
+  let instrs n = List.rev (Base.instrs n)
+  let instr_ids n = List.rev (Base.instr_ids n)
 
   let succs = Base.preds
   let preds = Base.succs
@@ -225,19 +235,19 @@ module OneInstrPerNode (Base : S with type node = Procdesc.Node.t
 
   (* keep the invariants before/after each instruction *)
   let instr_ids t =
-    IList.mapi
-      (fun i instr ->
+    List.mapi
+      ~f:(fun i instr ->
          let id = Procdesc.Node.get_id t, Instr_index i in
          instr, Some id)
       (instrs t)
 end
 
-module NodeIdMap (CFG : S) = Map.Make(struct
+module NodeIdMap (CFG : S) = Caml.Map.Make(struct
     type t = CFG.id
-    let compare = CFG.id_compare
+    let compare = CFG.compare_id
   end)
 
-module NodeIdSet (CFG : S) = Set.Make(struct
+module NodeIdSet (CFG : S) = Caml.Set.Make(struct
     type t = CFG.id
-    let compare = CFG.id_compare
+    let compare = CFG.compare_id
   end)

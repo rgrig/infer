@@ -7,14 +7,12 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module F = Format
 
-module TestInterpreter = AnalyzerTester.Make
-    (ProcCfg.Exceptional)
-    (Scheduler.ReversePostorder)
-    (CopyPropagation.TransferFunctions)
+module TestInterpreter =
+  AnalyzerTester.Make (ProcCfg.Exceptional) (CopyPropagation.TransferFunctions)
 
 let tests =
   let open OUnit2 in
@@ -162,5 +160,5 @@ let tests =
       var_assign_id "c" "b";
       invariant "{ &b -> a$0, &c -> b$0 }"
     ];
-  ] |> TestInterpreter.create_tests ProcData.empty_extras in
+  ] |> TestInterpreter.create_tests ProcData.empty_extras ~initial:CopyPropagation.Domain.empty in
   "copy_propagation_test_suite">:::test_list

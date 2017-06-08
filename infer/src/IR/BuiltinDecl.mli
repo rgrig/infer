@@ -7,9 +7,9 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Procnames for the builtin functions supported *)
-include BUILTINS.S with type t = Procname.t
+include BUILTINS.S with type t = Typ.Procname.t
 
-val is_declared : Procname.t -> bool
+val is_declared : Typ.Procname.t -> bool

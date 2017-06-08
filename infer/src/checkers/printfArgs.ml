@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module L = Logging
 module F = Format
@@ -45,13 +45,10 @@ let add_printf_like_function plf =
 
 
 let printf_like_function
-    (proc_name: Procname.t): printf_signature option =
-  try
-    Some (
-      IList.find
-        (fun printf -> string_equal printf.unique_id (Procname.to_unique_id proc_name))
-        !printf_like_functions)
-  with Not_found -> None
+    (proc_name: Typ.Procname.t): printf_signature option =
+  List.find
+    ~f:(fun printf -> String.equal printf.unique_id (Typ.Procname.to_unique_id proc_name))
+    !printf_like_functions
 
 let default_format_type_name
     (format_type: string): string =
@@ -69,16 +66,16 @@ let format_type_matches_given_type
     (given_type: string): bool =
   match format_type with
   | "d" | "i" | "u" | "x" | "X" | "o" ->
-      IList.mem
-        string_equal
-        given_type
+      List.mem
+        ~equal:String.equal
         ["java.lang.Integer"; "java.lang.Long"; "java.lang.Short"; "java.lang.Byte"]
-  | "a" | "A" | "f" | "F" | "g" | "G" | "e" | "E" ->
-      IList.mem
-        string_equal
         given_type
+  | "a" | "A" | "f" | "F" | "g" | "G" | "e" | "E" ->
+      List.mem
+        ~equal:String.equal
         ["java.lang.Double"; "java.lang.Float"]
-  | "c" -> string_equal given_type "java.lang.Character"
+        given_type
+  | "c" -> String.equal given_type "java.lang.Character"
   | "b" | "h" | "H" | "s" -> true  (* accepts pretty much anything, even null *)
   | _ -> false
 
@@ -87,15 +84,15 @@ let format_arguments
     (printf: printf_signature)
     (args: (Exp.t * Typ.t) list): (string option * (Exp.t list) * (Exp.t option)) =
 
-  let format_string = match IList.nth args printf.format_pos with
+  let format_string = match List.nth_exn args printf.format_pos with
     | Exp.Const (Const.Cstr fmt), _ -> Some fmt
     | _ -> None in
 
-  let fixed_nvars = IList.map
-      (fun i -> fst (IList.nth args i))
+  let fixed_nvars = List.map
+      ~f:(fun i -> fst (List.nth_exn args i))
       printf.fixed_pos in
   let varargs_nvar = match printf.vararg_pos with
-    | Some pos -> Some (fst (IList.nth args pos))
+    | Some pos -> Some (fst (List.nth_exn args pos))
     | None -> None in
 
   format_string, fixed_nvars, varargs_nvar
@@ -108,21 +105,19 @@ let rec format_string_type_names
     let fmt_re = Str.regexp "%[0-9]*\\.?[0-9]*[A-mo-z]" in (* matches '%2.1d' etc. *)
     let _ = Str.search_forward fmt_re fmt_string start in
     let fmt_match = Str.matched_string fmt_string in
-    let fmt_type = String.sub fmt_match ((String.length fmt_match) - 1) 1 in
+    let fmt_type = String.sub fmt_match ~pos:((String.length fmt_match) - 1) ~len:1 in
     fmt_type:: format_string_type_names fmt_string (Str.match_end ())
   with Not_found -> []
-
-let printf_args_name = "CHECKERS_PRINTF_ARGS"
 
 let check_printf_args_ok tenv
     (node: Procdesc.Node.t)
     (instr: Sil.instr)
-    (proc_name: Procname.t)
+    (proc_name: Typ.Procname.t)
     (proc_desc: Procdesc.t): unit =
 
   (* Check if format string lines up with arguments *)
   let rec check_type_names instr_loc n_arg instr_proc_name fmt_type_names arg_type_names =
-    let instr_name = Procname.to_simplified_string instr_proc_name in
+    let instr_name = Typ.Procname.to_simplified_string instr_proc_name in
     let instr_line = Location.to_string instr_loc in
     match (fmt_type_names, arg_type_names) with
     | ft:: fs, gt:: gs ->
@@ -137,7 +132,7 @@ let check_printf_args_ok tenv
           Checkers.ST.report_error tenv
             proc_name
             proc_desc
-            printf_args_name
+            Localise.checkers_printf_args
             instr_loc
             description
         else
@@ -151,7 +146,7 @@ let check_printf_args_ok tenv
         Checkers.ST.report_error tenv
           proc_name
           proc_desc
-          printf_args_name
+          Localise.checkers_printf_args
           instr_loc
           description in
 
@@ -181,7 +176,7 @@ let check_printf_args_ok tenv
           try
             let fmt, fixed_nvars, array_nvar = format_arguments printf args in
             let instrs = Procdesc.Node.get_instrs node in
-            let fixed_nvar_type_names = IList.map (fixed_nvar_type_name instrs) fixed_nvars in
+            let fixed_nvar_type_names = List.map ~f:(fixed_nvar_type_name instrs) fixed_nvars in
             let vararg_ivar_type_names = match array_nvar with
               | Some nvar -> (
                   let ivar = array_ivar instrs nvar in
@@ -199,20 +194,22 @@ let check_printf_args_ok tenv
                 Checkers.ST.report_error tenv
                   proc_name
                   proc_desc
-                  printf_args_name
+                  Localise.checkers_printf_args
                   cl
                   "Format string must be string literal"
           with e ->
-            L.stderr
+            L.internal_error
               "%s Exception when analyzing %s: %s@."
-              printf_args_name
-              (Procname.to_string proc_name)
-              (Printexc.to_string e))
+              (Localise.to_issue_id Localise.checkers_printf_args)
+              (Typ.Procname.to_string proc_name)
+              (Exn.to_string e))
       | None -> ())
   | _ -> ()
 
-let callback_printf_args { Callbacks.tenv; proc_desc; proc_name } : unit =
-  Procdesc.iter_instrs (fun n i -> check_printf_args_ok tenv n i proc_name proc_desc) proc_desc
+let callback_printf_args { Callbacks.tenv; proc_desc; summary } : Specs.summary =
+  let proc_name = Procdesc.get_proc_name proc_desc in
+  Procdesc.iter_instrs (fun n i -> check_printf_args_ok tenv n i proc_name proc_desc) proc_desc;
+  summary
 
 (*
 let printf_signature_to_string
@@ -221,6 +218,6 @@ let printf_signature_to_string
     "{%s; %d [%s] %s}"
     printf.unique_id
     printf.format_pos
-    (String.concat "," (IList.map string_of_int printf.fixed_pos))
+    (String.concat ~sep:"," (List.map ~f:string_of_int printf.fixed_pos))
     (match printf.vararg_pos with | Some i -> string_of_int i | _ -> "-")
 *)

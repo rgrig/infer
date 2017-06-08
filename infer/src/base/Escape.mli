@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Escape a string for use in a CSV or XML file: replace reserved
     characters with escape sequences *)
@@ -26,6 +26,9 @@ val escape_path : string -> string
 
 (** escape a string to be used in an xml file *)
 val escape_xml : string -> string
+
+
+val escape_url : string -> string
 
 (** escape a string to be used as a file name *)
 val escape_filename : string -> string

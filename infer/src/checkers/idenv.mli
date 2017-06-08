@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Environment for temporary identifiers used in instructions.
     Lazy implementation: only created when actually used. *)
@@ -16,7 +16,6 @@ open! Utils
 type t
 
 val create : Procdesc.t -> t
-val create_from_idenv : t -> Procdesc.t -> t
 val lookup : t -> Ident.t -> Exp.t option
 val expand_expr : t -> Exp.t -> Exp.t
 

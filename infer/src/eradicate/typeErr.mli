@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 
 (** Module for Type Error messages. *)
@@ -15,10 +15,10 @@ open! Utils
 
 module type InstrRefT =
 sig
-  type t
+  type t [@@deriving compare]
+  val equal : t -> t -> bool
   type generator
   val create_generator : Procdesc.Node.t -> generator
-  val equal : t -> t -> bool
   val gen : generator -> t
   val get_node : t -> Procdesc.Node.t
   val hash : t -> int
@@ -30,49 +30,49 @@ module InstrRef : InstrRefT
 module Strict :
 sig
   val signature_get_strict :
-    Tenv.t -> Annotations.annotated_signature -> Annot.t option
+    Tenv.t -> AnnotatedSignature.t -> Annot.t option
 end (* Strict *)
 
 
 type origin_descr =
   string *
   Location.t option *
-  Annotations.annotated_signature option  (* callee signature *)
+  AnnotatedSignature.t option  (* callee signature *)
 
 type parameter_not_nullable =
-  Annotations.annotation *
+  AnnotatedSignature.annotation *
   string * (* description *)
   int * (* parameter number *)
-  Procname.t *
+  Typ.Procname.t *
   Location.t * (* callee location *)
   origin_descr
 
 (** Instance of an error *)
 type err_instance =
   | Condition_redundant of (bool * (string option) * bool)
-  | Inconsistent_subclass_return_annotation of Procname.t * Procname.t
-  | Inconsistent_subclass_parameter_annotation of string * int * Procname.t * Procname.t
-  | Field_not_initialized of Ident.fieldname * Procname.t
-  | Field_not_mutable of Ident.fieldname * origin_descr
-  | Field_annotation_inconsistent of Annotations.annotation * Ident.fieldname * origin_descr
-  | Field_over_annotated of Ident.fieldname * Procname.t
-  | Null_field_access of string option * Ident.fieldname * origin_descr * bool
+  | Inconsistent_subclass_return_annotation of Typ.Procname.t * Typ.Procname.t
+  | Inconsistent_subclass_parameter_annotation of string * int * Typ.Procname.t * Typ.Procname.t
+  | Field_not_initialized of Fieldname.t * Typ.Procname.t
+  | Field_not_mutable of Fieldname.t * origin_descr
+  | Field_annotation_inconsistent of AnnotatedSignature.annotation * Fieldname.t * origin_descr
+  | Field_over_annotated of Fieldname.t * Typ.Procname.t
+  | Null_field_access of string option * Fieldname.t * origin_descr * bool
   | Call_receiver_annotation_inconsistent
-    of Annotations.annotation * string option * Procname.t * origin_descr
+    of AnnotatedSignature.annotation * string option * Typ.Procname.t * origin_descr
   | Parameter_annotation_inconsistent of parameter_not_nullable
-  | Return_annotation_inconsistent of Annotations.annotation * Procname.t * origin_descr
-  | Return_over_annotated of Procname.t
+  | Return_annotation_inconsistent of AnnotatedSignature.annotation * Typ.Procname.t * origin_descr
+  | Return_over_annotated of Typ.Procname.t
 
 
 val node_reset_forall : Procdesc.Node.t -> unit
 
 type st_report_error =
-  Procname.t ->
+  Typ.Procname.t ->
   Procdesc.t ->
-  string ->
+  Localise.t ->
   Location.t ->
   ?advice: string option ->
-  ?field_name: Ident.fieldname option ->
+  ?field_name: Fieldname.t option ->
   ?origin_loc: Location.t option ->
   ?exception_kind: (string -> Localise.error_desc -> exn) ->
   ?always_report: bool ->

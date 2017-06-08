@@ -47,8 +47,23 @@ class shared_ptr : public std__shared_ptr<T> {
 // use it to avoid compilation errors and make infer analyzer happy
 #define __cast_to_infer_ptr(self) ((infer_shared_ptr_t)self)
 
+  // provide overload for volatile void* to accomodate for situation when
+  // T is volatile ('volatile int' for example). 'void*' and 'nullptr_t'
+  // overloads are to avoid 'call to model_set is ambiguous' compilation errors
+  static void model_set(infer_shared_ptr_t self, nullptr_t value) {
+    *self = value;
+  }
+
   static void model_set(infer_shared_ptr_t self, const void* value) {
     *self = value;
+  }
+
+  static void model_set(infer_shared_ptr_t self, volatile void* value) {
+    *self = const_cast<const void*>(value);
+  }
+
+  static void model_set(infer_shared_ptr_t self, void* value) {
+    *self = const_cast<const void*>(value);
   }
 
   static void model_copy(infer_shared_ptr_t self, infer_shared_ptr_t other) {
@@ -377,9 +392,20 @@ shared_ptr<T> const_pointer_cast(shared_ptr<U> const& r) noexcept {
   return const_pointer_cast<T, U>((const std__shared_ptr<U>&)r);
 }
 
+template <class T>
+class enable_shared_from_this : public std__enable_shared_from_this<T> {
+ public:
+  shared_ptr<T> shared_from_this() {
+    return std__enable_shared_from_this<T>::shared_from_this();
+  }
+  shared_ptr<T const> shared_from_this() const {
+    return std__enable_shared_from_this<T>::shared_from_this();
+  }
+};
+
 template <class T, class... Args>
 shared_ptr<T> make_shared(Args&&... args) {
-  return shared_ptr<T>(new T(std::forward<Args>(args)...));
+  return shared_ptr<T>(::new T(std::forward<Args>(args)...));
 }
 
 #undef __cast_to_infer_ptr

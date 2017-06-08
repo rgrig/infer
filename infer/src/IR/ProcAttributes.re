@@ -6,19 +6,41 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
+
+module Hashtbl = Caml.Hashtbl;
 
 
 /** Attributes of a procedure. */
-let module L = Logging;
+module L = Logging;
 
-let module F = Format;
+module F = Format;
+
+
+/** flags for a procedure */
+type proc_flags = Hashtbl.t string string;
+
+let compare_proc_flags x y => {
+  let bindings x => Hashtbl.fold (fun k d l => [(k, d), ...l]) x [];
+  [%compare : list (string, string)] (bindings x) (bindings y)
+};
+
+let proc_flags_empty () :proc_flags => Hashtbl.create 1;
+
+let proc_flag_skip = "skip";
+
+let proc_flag_ignore_return = "ignore_return";
+
+let proc_flags_add proc_flags key value => Hashtbl.replace proc_flags key value;
+
+let proc_flags_find proc_flags key => Hashtbl.find proc_flags key;
 
 
 /** Type for ObjC accessors */
 type objc_accessor_type =
-  | Objc_getter Ident.fieldname
-  | Objc_setter Ident.fieldname;
+  | Objc_getter Fieldname.t
+  | Objc_setter Fieldname.t
+[@@deriving compare];
 
 type t = {
   access: PredSymb.access, /** visibility access */
@@ -35,19 +57,22 @@ type t = {
   is_defined: bool, /** true if the procedure is defined, and not just declared */
   is_objc_instance_method: bool, /** the procedure is an objective-C instance method */
   is_cpp_instance_method: bool, /** the procedure is an C++ instance method */
+  is_cpp_noexcept_method: bool, /** the procedure is an C++ method annotated with "noexcept" */
   is_java_synchronized_method: bool, /** the procedure is a Java synchronized method */
+  is_model: bool, /** the procedure is a model */
   is_synthetic_method: bool, /** the procedure is a synthetic method */
   language: Config.language, /** language of the procedure */
   loc: Location.t, /** location of this procedure in the source code */
-  translation_unit: option DB.source_file, /** translation unit to which the procedure belongs */
+  translation_unit: option SourceFile.t, /** translation unit to which the procedure belongs */
   mutable locals: list (Mangled.t, Typ.t), /** name and type of local variables */
   method_annotation: Annot.Method.t, /** annotations for java methods */
   objc_accessor: option objc_accessor_type, /** type of ObjC accessor, if any */
-  proc_flags: proc_flags, /** flags of the procedure */
-  proc_name: Procname.t, /** name of the procedure */
+  proc_flags, /** flags of the procedure */
+  proc_name: Typ.Procname.t, /** name of the procedure */
   ret_type: Typ.t, /** return type */
-  source_file_captured: DB.source_file /** source file where the procedure was captured */
-};
+  source_file_captured: SourceFile.t /** source file where the procedure was captured */
+}
+[@@deriving compare];
 
 let default proc_name language => {
   access: PredSymb.Default,
@@ -62,9 +87,11 @@ let default proc_name language => {
   is_abstract: false,
   is_bridge_method: false,
   is_cpp_instance_method: false,
+  is_cpp_noexcept_method: false,
   is_java_synchronized_method: false,
   is_defined: false,
   is_objc_instance_method: false,
+  is_model: false,
   is_synthetic_method: false,
   language,
   loc: Location.dummy,
@@ -74,6 +101,6 @@ let default proc_name language => {
   objc_accessor: None,
   proc_flags: proc_flags_empty (),
   proc_name,
-  ret_type: Typ.Tvoid,
-  source_file_captured: DB.source_file_empty
+  ret_type: Typ.mk Typ.Tvoid,
+  source_file_captured: SourceFile.invalid __FILE__
 };

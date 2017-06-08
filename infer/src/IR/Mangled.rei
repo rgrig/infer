@@ -1,7 +1,4 @@
 /*
- * vim: set ft=rust:
- * vim: set ft=reason:
- *
  * Copyright (c) 2009 - 2013 Monoidics ltd.
  * Copyright (c) 2013 - present Facebook, Inc.
  * All rights reserved.
@@ -10,17 +7,13 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
 
 
 /** Module for Mangled Names */
 
 /** Type of mangled names */
-type t;
-
-
-/** Comparison for mangled names */
-let compare: t => t => int;
+type t [@@deriving compare];
 
 
 /** Equality for mangled names */
@@ -29,10 +22,6 @@ let equal: t => t => bool;
 
 /** Convert a string to a mangled name */
 let from_string: string => t;
-
-
-/** Create a mangled type name from a package name and a class name */
-let from_package_class: string => string => t;
 
 
 /** Create a mangled name from a plain and mangled string */
@@ -56,4 +45,8 @@ let pp: Format.formatter => t => unit;
 
 
 /** Set of Mangled. */
-let module MangledSet: Set.S with type elt = t;
+module Set: Caml.Set.S with type elt = t;
+
+
+/** Map with Mangled as key */
+module Map: Caml.Map.S with type key = t;

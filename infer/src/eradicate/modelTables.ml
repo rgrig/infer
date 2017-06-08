@@ -7,7 +7,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
+module Hashtbl = Caml.Hashtbl
 
 (*
  * This file is a big bunch of tables; they read better with really long lines.
@@ -50,7 +51,7 @@ let check_not_null_parameter_list, check_not_null_list =
       1, (o, [n]), "com.facebook.infer.annotation.Assertions.assumeNotNull(java.lang.Object):java.lang.Object";
       1, (o, [n; o]), "com.facebook.infer.annotation.Assertions.assumeNotNull(java.lang.Object,java.lang.String):java.lang.Object";
     ] in
-  IList.map (fun (x, _, z) -> (x, z)) list, IList.map (fun (_, y, z) -> (y, z)) list
+  List.map ~f:(fun (x, _, z) -> (x, z)) list, List.map ~f:(fun (_, y, z) -> (y, z)) list
 
 let check_state_list =
   [
@@ -110,16 +111,9 @@ let mapPut_list =
     cp, "java.util.Map.put(java.lang.Object,java.lang.Object):java.lang.Object";
   ]
 
-(** Models for @Strict annotations *)
-let annotated_list_strict =
-  [
-    (n, [o]), "android.content.Context.getSystemService(java.lang.String):java.lang.Object";
-  ]
-
 (** Models for @Nullable annotations *)
 let annotated_list_nullable =
   check_not_null_list @ check_state_list @ check_argument_list @
-  annotated_list_strict @
   [
     n1, "android.os.Parcel.writeList(java.util.List):void";
     n2, "android.os.Parcel.writeParcelable(android.os.Parcelable,int):void";
@@ -147,6 +141,7 @@ let annotated_list_nullable =
     n1, "java.lang.String.equals(java.lang.Object):boolean";
     n1, "java.lang.StringBuilder.append(java.lang.String):java.lang.StringBuilder";
     (n, [o]), "java.lang.System.getProperty(java.lang.String):java.lang.String";
+    (n, [o]), "java.lang.System.getenv(java.lang.String):java.lang.String";
     on, "java.net.URLClassLoader.newInstance(java.net.URL[],java.lang.ClassLoader):java.net.URLClassLoader";
     n1, "java.util.AbstractList.equals(java.lang.Object):boolean";
     ca, "java.util.ArrayList.add(java.lang.Object):boolean"; (* container add *)
@@ -187,6 +182,8 @@ let annotated_list_nullable =
     o3, "javax.lang.model.util.Types.getDeclaredType(javax.lang.model.type.DeclaredType, javax.lang.model.element.TypeElement, javax.lang.model.type.TypeMirror[]):javax.lang.model.type.DeclaredType";
     o2, "javax.lang.model.util.Types.asMemberOf(javax.lang.model.type.DeclaredType, javax.lang.model.element.Element):javax.lang.model.type.TypeMirror";
     n3, "javax.tools.JavaCompiler.getStandardFileManager(javax.tools.DiagnosticListener,java.util.Locale,java.nio.charset.Charset):javax.tools.StandardJavaFileManager";
+    ng, "javax.tools.JavaFileObject.getAccessLevel():javax.lang.model.element.Modifier";
+    ng, "javax.tools.JavaFileObject.getNestingKind():javax.lang.model.element.NestingKind";
     o2, "com.sun.source.util.SourcePositions.getStartPosition(com.sun.source.tree.CompilationUnitTree, com.sun.source.tree.Tree):long";
     o2, "com.sun.source.util.SourcePositions.getEndPosition(com.sun.source.tree.CompilationUnitTree, com.sun.source.tree.Tree):long";
     (n, [o; o]), "com.sun.source.util.TreePath.getPath(com.sun.source.tree.CompilationUnitTree, com.sun.source.tree.Tree):com.sun.source.util.TreePath";
@@ -227,18 +224,24 @@ let annotated_list_present =
     (n, [o]), "com.google.common.base.Optional.of(java.lang.Object):com.google.common.base.Optional";
   ]
 
+(** Models for methods that do not return *)
+let noreturn_list =
+  [
+    (o, [o]), "java.lang.System.exit(int):void";
+  ]
+
+
 type model_table_t = (string, bool * bool list) Hashtbl.t
 
 let mk_table list =
   let map = Hashtbl.create 1 in
-  IList.iter (function (v, pn_id) -> Hashtbl.replace map pn_id v) list;
+  List.iter ~f:(function (v, pn_id) -> Hashtbl.replace map pn_id v) list;
   map
 
 let this_file = __FILE__
 
 let annotated_table_nullable = mk_table annotated_list_nullable
 let annotated_table_present = mk_table annotated_list_present
-let annotated_table_strict = mk_table annotated_list_strict
 let check_not_null_table, check_not_null_parameter_table =
   mk_table check_not_null_list, mk_table check_not_null_parameter_list
 let check_state_table = mk_table check_state_list
@@ -247,4 +250,5 @@ let containsKey_table = mk_table containsKey_list
 let mapPut_table = mk_table mapPut_list
 let optional_get_table = mk_table optional_get_list
 let optional_isPresent_table = mk_table optional_isPresent_list
+let noreturn_table = mk_table noreturn_list
 let true_on_null_table = mk_table true_on_null_list

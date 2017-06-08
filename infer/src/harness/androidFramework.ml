@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module L = Logging
 module F = Format
@@ -20,9 +20,10 @@ let on_destroy_view = "onDestroyView"
 (** return true if [pname] is a special lifecycle cleanup method *)
 let is_destroy_method pname =
   match pname with
-  | Procname.Java pname_java ->
-      let method_name = Procname.java_get_method pname_java in
-      string_equal method_name on_destroy || string_equal method_name on_destroy_view
+  | Typ.Procname.Java pname_java ->
+      let method_name = Typ.Procname.java_get_method pname_java in
+      String.equal method_name on_destroy
+      || String.equal method_name on_destroy_view
   | _ ->
       false
 
@@ -57,7 +58,7 @@ let android_lifecycles =
 
 let is_subtype_package_class tenv tname package classname =
   PatternMatch.is_subtype tenv
-    tname (Typename.TN_csu (Class Java, Mangled.from_package_class package classname))
+    tname (Typ.Name.Java.from_package_class package classname)
 
 let is_context tenv tname =
   is_subtype_package_class tenv tname "android.content" "Context"
@@ -77,8 +78,8 @@ let is_fragment tenv tname =
 
 (** return true if [class_name] is the name of a class that belong to the Android framework *)
 let is_android_lib_class class_name =
-  let class_str = Typename.name class_name in
-  string_is_prefix "android" class_str || string_is_prefix "com.android" class_str
+  let class_str = Typ.Name.name class_name in
+  String.is_prefix ~prefix:"android" class_str || String.is_prefix ~prefix:"com.android" class_str
 
 (** given an Android framework type mangled string [lifecycle_typ] (e.g., android.app.Activity) and
     a list of method names [lifecycle_procs_strs], get the appropriate typ and procnames *)
@@ -87,25 +88,21 @@ let get_lifecycle_for_framework_typ_opt tenv lifecycle_typ lifecycle_proc_strs =
   | Some { methods } ->
       (* TODO (t4645631): collect the procedures for which is_java is returning false *)
       let lookup_proc lifecycle_proc =
-        IList.find (fun decl_proc ->
+        List.find_exn ~f:(fun decl_proc ->
             match decl_proc with
-            | Procname.Java decl_proc_java ->
-                lifecycle_proc = Procname.java_get_method decl_proc_java
+            | Typ.Procname.Java decl_proc_java ->
+                String.equal lifecycle_proc (Typ.Procname.java_get_method decl_proc_java)
             | _ ->
                 false
           ) methods in
       (* convert each of the framework lifecycle proc strings to a lifecycle method procname *)
       let lifecycle_procs =
-        IList.fold_left (fun lifecycle_procs lifecycle_proc_str ->
+        List.fold ~f:(fun lifecycle_procs lifecycle_proc_str ->
             try (lookup_proc lifecycle_proc_str) :: lifecycle_procs
             with Not_found -> lifecycle_procs)
-          [] lifecycle_proc_strs in
+          ~init:[] lifecycle_proc_strs in
       lifecycle_procs
   | _ -> []
 
 (** return the complete list of (package, lifecycle_classname, lifecycle_methods) trios *)
 let get_lifecycles = android_lifecycles
-
-let non_stub_android_jar () =
-  let root_dir = Filename.dirname (Filename.dirname Sys.executable_name) in
-  IList.fold_left Filename.concat root_dir ["lib"; "java"; "android"; "android-19.jar"]

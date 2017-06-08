@@ -7,6 +7,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 let is_custom_init _ _  = false
+
+let is_logging_method _ = false

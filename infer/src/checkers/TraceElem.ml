@@ -7,24 +7,25 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! IStd
+
 module F = Format
 
 module type Kind = sig
-  type t
+  type t [@@deriving compare]
 
-  val compare : t -> t -> int
   val pp : F.formatter -> t -> unit
 end
 
 module type S = sig
-  type t
+  type t [@@deriving compare]
 
   module Kind : Kind
 
   val call_site : t -> CallSite.t
   val kind : t -> Kind.t
 
-  val make : Kind.t -> CallSite.t -> t
+  val make : ?indexes:IntSet.t -> Kind.t -> CallSite.t -> t
   val with_callsite : t -> CallSite.t -> t
 
   val pp : F.formatter -> t -> unit

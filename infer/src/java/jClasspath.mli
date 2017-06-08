@@ -8,7 +8,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 open Javalib_pack
 
@@ -23,22 +23,22 @@ val models_tenv : Tenv.t ref
 val add_models : string -> unit
 
 (** Check if there is a model for the given procname *)
-val is_model : Procname.t -> bool
-
-(** create a source file from an absolute path.
-    Source files are relative if the project root is specified and absolute otherwise *)
-val java_source_file_from_path : string -> DB.source_file
+val is_model : Typ.Procname.t -> bool
 
 val split_classpath : string -> string list
 
 (** map entry for source files with potential basname collision within the same compiler call *)
 type file_entry =
-  | Singleton of DB.source_file
-  | Duplicate of (string * DB.source_file) list
+  | Singleton of SourceFile.t
+  | Duplicate of (string * SourceFile.t) list
+
+type t = string * file_entry String.Map.t * JBasics.ClassSet.t
 
 (** load the list of source files and the list of classes from the javac verbose file *)
-val load_sources_and_classes : unit ->
-  string * file_entry StringMap.t * JBasics.ClassSet.t
+val load_from_verbose_output : string -> t
+
+(** load the list of source files and the list of classes from Config.generated_classes *)
+val load_from_arguments : string -> t
 
 type classmap = JCode.jcode Javalib.interface_or_class JBasics.ClassMap.t
 

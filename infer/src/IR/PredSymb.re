@@ -1,7 +1,4 @@
 /*
- * vim: set ft=rust:
- * vim: set ft=reason:
- *
  * Copyright (c) 2009 - 2013 Monoidics ltd.
  * Copyright (c) 2013 - present Facebook, Inc.
  * All rights reserved.
@@ -10,16 +7,17 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
 
 
 /** The Smallfoot Intermediate Language: Predicate Symbols */
-let module L = Logging;
+module L = Logging;
 
-let module F = Format;
+module F = Format;
 
 type func_attribute =
-  | FA_sentinel int int /** __attribute__((sentinel(int, int))) */;
+  | FA_sentinel int int /** __attribute__((sentinel(int, int))) */
+[@@deriving compare];
 
 
 /** Visibility modifiers. */
@@ -27,7 +25,10 @@ type access =
   | Default
   | Public
   | Private
-  | Protected;
+  | Protected
+[@@deriving compare];
+
+let equal_access = [%compare.equal : access];
 
 
 /** Return the value of the FA_sentinel attribute in [attr_list] if it is found */
@@ -41,16 +42,8 @@ type mem_kind =
   | Mmalloc /** memory allocated with malloc */
   | Mnew /** memory allocated with new */
   | Mnew_array /** memory allocated with new[] */
-  | Mobjc /** memory allocated with objective-c alloc */;
-
-let mem_kind_to_num =
-  fun
-  | Mmalloc => 0
-  | Mnew => 1
-  | Mnew_array => 2
-  | Mobjc => 3;
-
-let mem_kind_compare mk1 mk2 => int_compare (mem_kind_to_num mk1) (mem_kind_to_num mk2);
+  | Mobjc /** memory allocated with objective-c alloc */
+[@@deriving compare];
 
 
 /** resource that can be allocated */
@@ -58,31 +51,17 @@ type resource =
   | Rmemory mem_kind
   | Rfile
   | Rignore
-  | Rlock;
-
-let resource_compare r1 r2 => {
-  let res_to_num =
-    fun
-    | Rmemory mk => mem_kind_to_num mk
-    | Rfile => 100
-    | Rignore => 200
-    | Rlock => 300;
-  int_compare (res_to_num r1) (res_to_num r2)
-};
+  | Rlock
+[@@deriving compare];
 
 
 /** kind of resource action */
 type res_act_kind =
   | Racquire
-  | Rrelease;
+  | Rrelease
+[@@deriving compare];
 
-let res_act_kind_compare rak1 rak2 =>
-  switch (rak1, rak2) {
-  | (Racquire, Racquire) => 0
-  | (Racquire, Rrelease) => (-1)
-  | (Rrelease, Racquire) => 1
-  | (Rrelease, Rrelease) => 0
-  };
+let equal_res_act_kind = [%compare.equal : res_act_kind];
 
 
 /** kind of dangling pointers */
@@ -93,72 +72,51 @@ type dangling_kind =
       of a stack variable which went out of scope */
   | DAaddr_stack_var
   /** pointer is -1 */
-  | DAminusone;
-
-let dangling_kind_compare dk1 dk2 =>
-  switch (dk1, dk2) {
-  | (DAuninit, DAuninit) => 0
-  | (DAuninit, _) => (-1)
-  | (_, DAuninit) => 1
-  | (DAaddr_stack_var, DAaddr_stack_var) => 0
-  | (DAaddr_stack_var, _) => (-1)
-  | (_, DAaddr_stack_var) => 1
-  | (DAminusone, DAminusone) => 0
-  };
+  | DAminusone
+[@@deriving compare];
 
 
 /** position in a path: proc name, node id */
-type path_pos = (Procname.t, int);
+type path_pos = (Typ.Procname.t, int) [@@deriving compare];
 
-let path_pos_compare (pn1, nid1) (pn2, nid2) => {
-  let n = Procname.compare pn1 pn2;
-  if (n != 0) {
-    n
-  } else {
-    int_compare nid1 nid2
-  }
-};
-
-let path_pos_equal pp1 pp2 => path_pos_compare pp1 pp2 == 0;
+let equal_path_pos = [%compare.equal : path_pos];
 
 type taint_kind =
   | Tk_unverified_SSL_socket
   | Tk_shared_preferences_data
   | Tk_privacy_annotation
   | Tk_integrity_annotation
-  | Tk_unknown;
+  | Tk_unknown
+[@@deriving compare];
 
-let taint_kind_compare tk1 tk2 =>
-  switch (tk1, tk2) {
-  | (Tk_unverified_SSL_socket, Tk_unverified_SSL_socket) => 0
-  | (Tk_unverified_SSL_socket, _) => (-1)
-  | (_, Tk_unverified_SSL_socket) => 1
-  | (Tk_shared_preferences_data, Tk_shared_preferences_data) => 0
-  | (Tk_shared_preferences_data, _) => 1
-  | (_, Tk_shared_preferences_data) => (-1)
-  | (Tk_privacy_annotation, Tk_privacy_annotation) => 0
-  | (Tk_privacy_annotation, _) => 1
-  | (_, Tk_privacy_annotation) => (-1)
-  | (Tk_integrity_annotation, Tk_integrity_annotation) => 0
-  | (Tk_integrity_annotation, _) => 1
-  | (_, Tk_integrity_annotation) => (-1)
-  | (Tk_unknown, Tk_unknown) => 0
-  };
-
-type taint_info = {taint_source: Procname.t, taint_kind: taint_kind};
-
-let taint_info_compare {taint_source: ts1, taint_kind: tk1} {taint_source: ts2, taint_kind: tk2} =>
-  taint_kind_compare tk1 tk2 |> next Procname.compare ts1 ts2;
+type taint_info = {taint_source: Typ.Procname.t, taint_kind} [@@deriving compare];
 
 
 /** acquire/release action on a resource */
 type res_action = {
   ra_kind: res_act_kind, /** kind of action */
   ra_res: resource, /** kind of resource */
-  ra_pname: Procname.t, /** name of the procedure used to acquire/release the resource */
+  ra_pname: Typ.Procname.t, /** name of the procedure used to acquire/release the resource */
   ra_loc: Location.t, /** location of the acquire/release */
   ra_vpath: DecompiledExp.vpath /** vpath of the resource value */
 };
+
+/* ignore other values beside resources: arbitrary merging into one */
+let compare_res_action {ra_kind: k1, ra_res: r1} {ra_kind: k2, ra_res: r2} =>
+  [%compare : (res_act_kind, resource)] (k1, r1) (k2, r2);
+
+/* type aliases for components of t values that compare should ignore */
+type _annot_item = Annot.Item.t;
+
+let compare__annot_item _ _ => 0;
+
+type _location = Location.t;
+
+let compare__location _ _ => 0;
+
+type _path_pos = path_pos;
+
+let compare__path_pos _ _ => 0;
 
 
 /** Attributes are nary function symbols that are applied to expression arguments in Apred and
@@ -174,7 +132,7 @@ type t =
   | Aautorelease
   | Adangling dangling_kind /** dangling pointer */
   /** undefined value obtained by calling the given procedure, plus its return value annots */
-  | Aundef Procname.t Annot.Item.t Location.t path_pos
+  | Aundef Typ.Procname.t _annot_item _location _path_pos
   | Ataint taint_info
   | Auntaint taint_info
   | Alocked
@@ -184,86 +142,32 @@ type t =
   /** attributed exp is null due to a call to a method with given path as null receiver */
   | Aobjc_null
   /** value was returned from a call to the given procedure, plus the annots of the return value */
-  | Aretval Procname.t Annot.Item.t
+  | Aretval Typ.Procname.t Annot.Item.t
   /** denotes an object registered as an observers to a notification center */
   | Aobserver
   /** denotes an object unsubscribed from observers of a notification center */
-  | Aunsubscribed_observer;
+  | Aunsubscribed_observer
+[@@deriving compare];
 
-let compare (att1: t) (att2: t) :int =>
-  switch (att1, att2) {
-  | (Aresource ra1, Aresource ra2) =>
-    let n = res_act_kind_compare ra1.ra_kind ra2.ra_kind;
-    if (n != 0) {
-      n
-    } else {
-      /* ignore other values beside resources: arbitrary merging into one */
-      resource_compare
-        ra1.ra_res ra2.ra_res
-    }
-  | (Aresource _, _) => (-1)
-  | (_, Aresource _) => 1
-  | (Aautorelease, Aautorelease) => 0
-  | (Aautorelease, _) => (-1)
-  | (_, Aautorelease) => 1
-  | (Adangling dk1, Adangling dk2) => dangling_kind_compare dk1 dk2
-  | (Adangling _, _) => (-1)
-  | (_, Adangling _) => 1
-  | (Aundef pn1 _ _ _, Aundef pn2 _ _ _) => Procname.compare pn1 pn2
-  | (Ataint ti1, Ataint ti2) => taint_info_compare ti1 ti2
-  | (Ataint _, _) => (-1)
-  | (_, Ataint _) => 1
-  | (Auntaint ti1, Auntaint ti2) => taint_info_compare ti1 ti2
-  | (Auntaint _, _) => (-1)
-  | (_, Auntaint _) => 1
-  | (Alocked, Alocked) => 0
-  | (Alocked, _) => (-1)
-  | (_, Alocked) => 1
-  | (Aunlocked, Aunlocked) => 0
-  | (Aunlocked, _) => (-1)
-  | (_, Aunlocked) => 1
-  | (Adiv0 pp1, Adiv0 pp2) => path_pos_compare pp1 pp2
-  | (Adiv0 _, _) => (-1)
-  | (_, Adiv0 _) => 1
-  | (Aobjc_null, Aobjc_null) => 0
-  | (Aobjc_null, _) => (-1)
-  | (_, Aobjc_null) => 1
-  | (Aretval pn1 annots1, Aretval pn2 annots2) =>
-    let n = Procname.compare pn1 pn2;
-    if (n != 0) {
-      n
-    } else {
-      Annot.Item.compare annots1 annots2
-    }
-  | (Aretval _, _) => (-1)
-  | (_, Aretval _) => 1
-  | (Aobserver, Aobserver) => 0
-  | (Aobserver, _) => (-1)
-  | (_, Aobserver) => 1
-  | (Aunsubscribed_observer, Aunsubscribed_observer) => 0
-  | (Aunsubscribed_observer, _) => (-1)
-  | (_, Aunsubscribed_observer) => 1
-  };
-
-let equal att1 att2 => compare att1 att2 == 0;
+let equal = [%compare.equal : t];
 
 
 /** name of the allocation function for the given memory kind */
 let mem_alloc_pname =
   fun
-  | Mmalloc => Procname.from_string_c_fun "malloc"
-  | Mnew => Procname.from_string_c_fun "new"
-  | Mnew_array => Procname.from_string_c_fun "new[]"
-  | Mobjc => Procname.from_string_c_fun "alloc";
+  | Mmalloc => Typ.Procname.from_string_c_fun "malloc"
+  | Mnew => Typ.Procname.from_string_c_fun "new"
+  | Mnew_array => Typ.Procname.from_string_c_fun "new[]"
+  | Mobjc => Typ.Procname.from_string_c_fun "alloc";
 
 
 /** name of the deallocation function for the given memory kind */
 let mem_dealloc_pname =
   fun
-  | Mmalloc => Procname.from_string_c_fun "free"
-  | Mnew => Procname.from_string_c_fun "delete"
-  | Mnew_array => Procname.from_string_c_fun "delete[]"
-  | Mobjc => Procname.from_string_c_fun "dealloc";
+  | Mmalloc => Typ.Procname.from_string_c_fun "free"
+  | Mnew => Typ.Procname.from_string_c_fun "delete"
+  | Mnew_array => Typ.Procname.from_string_c_fun "delete[]"
+  | Mobjc => Typ.Procname.from_string_c_fun "dealloc";
 
 
 /** Categories of attributes */
@@ -276,11 +180,10 @@ type category =
   | ACobjc_null
   | ACundef
   | ACretval
-  | ACobserver;
+  | ACobserver
+[@@deriving compare];
 
-let category_compare (ac1: category) (ac2: category) :int => Pervasives.compare ac1 ac2;
-
-let category_equal att1 att2 => category_compare att1 att2 == 0;
+let equal_category = [%compare.equal : category];
 
 let to_category att =>
   switch att {
@@ -328,13 +231,13 @@ let to_string pe =>
         };
       let str_vpath =
         if Config.trace_error {
-          pp_to_string (DecompiledExp.pp_vpath pe) ra.ra_vpath
+          F.asprintf "%a" (DecompiledExp.pp_vpath pe) ra.ra_vpath
         } else {
           ""
         };
       name ^
       Binop.str pe Lt ^
-      Procname.to_string ra.ra_pname ^
+      Typ.Procname.to_string ra.ra_pname ^
       ":" ^ string_of_int ra.ra_loc.Location.line ^ Binop.str pe Gt ^ str_vpath
     }
   | Aautorelease => "AUTORELEASE"
@@ -350,14 +253,14 @@ let to_string pe =>
   | Aundef pn _ loc _ =>
     "UND" ^
     Binop.str pe Lt ^
-    Procname.to_string pn ^ Binop.str pe Gt ^ ":" ^ string_of_int loc.Location.line
-  | Ataint {taint_source} => "TAINTED[" ^ Procname.to_string taint_source ^ "]"
+    Typ.Procname.to_string pn ^ Binop.str pe Gt ^ ":" ^ string_of_int loc.Location.line
+  | Ataint {taint_source} => "TAINTED[" ^ Typ.Procname.to_string taint_source ^ "]"
   | Auntaint _ => "UNTAINTED"
   | Alocked => "LOCKED"
   | Aunlocked => "UNLOCKED"
   | Adiv0 (_, _) => "DIV0"
   | Aobjc_null => "OBJC_NULL"
-  | Aretval pn _ => "RET" ^ Binop.str pe Lt ^ Procname.to_string pn ^ Binop.str pe Gt
+  | Aretval pn _ => "RET" ^ Binop.str pe Lt ^ Typ.Procname.to_string pn ^ Binop.str pe Gt
   | Aobserver => "OBSERVER"
   | Aunsubscribed_observer => "UNSUBSCRIBED_OBSERVER";
 

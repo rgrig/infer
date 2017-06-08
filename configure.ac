@@ -15,19 +15,15 @@ AC_PREREQ([2.63])
 # - opam
 # - docker/Dockerfile
 AC_INIT([Infer],
-        [0.9.4],
+        [0.12.0],
         [https://github.com/facebook/infer/issues/])
-
-# this has to happen just after AC_INIT() because later macros may mess with the arguments passed to
-# this script
-config_flags="$*"
 
 AC_CONFIG_SRCDIR([infer/src/IR/Sil.re])
 
 # WARNING: keep in sync with above
 INFER_MAJOR=0
-INFER_MINOR=9
-INFER_PATCH=4
+INFER_MINOR=12
+INFER_PATCH=0
 
 AC_SUBST([INFER_MAJOR])
 AC_SUBST([INFER_MINOR])
@@ -42,6 +38,8 @@ AC_SUBST([IS_RELEASE_TREE])
 AC_CHECK_FILE([.facebook], [is_facebook_tree=yes], [is_facebook_tree=no])
 IS_FACEBOOK_TREE=$is_facebook_tree
 AC_SUBST([IS_FACEBOOK_TREE])
+
+AC_ARG_VAR([PATH], [the shell's $PATH list of directories to search for executables])
 
 # to compile the facebook-clang-plugins
 AC_ARG_VAR([CLANG_PREFIX], [directory where clang is installed (defaults=$PWD/facebook-clang-plugins/clang/install)])
@@ -98,7 +96,7 @@ AS_IF([test "x$enable_c_analyzers" = "xyes"], [
   AC_CHECK_TOOL([SHASUM], [shasum], [no])
   AC_ASSERT_PROG([shasum], [$SHASUM])
   # cmake is required to build llvm+clang
-  AC_CHECK_TOOL([CMAKE], [cmake], [no])
+  AC_PATH_TOOL([CMAKE], [cmake], [no])
   AS_IF([test "x$is_release_tree" = "xno"], [
     AC_ASSERT_PROG([cmake], [$CMAKE])
   ])
@@ -115,7 +113,7 @@ AS_IF([test "x$enable_c_analyzers" = "xyes"], [
 AC_CHECK_TOOL([PYTHON27], [python2.7], [no])
 AC_ASSERT_PROG([python2.7], [$PYTHON27])
 
-AC_CHECK_TOOL([XCODE_SELECT], [xcode-select], [no])
+AC_PATH_TOOL([XCODE_SELECT], [xcode-select], [no])
 
 
 # prefer clang over gcc because the plugins makes use of
@@ -172,30 +170,40 @@ fi
 AC_PROG_OCAML
 AC_ASSERT_PROG([ocamlc], [$OCAMLC])
 # check the version of OCaml
-AC_ASSERT_OCAML_MIN_VERSION([4.02.3])
+AC_ASSERT_OCAML_MIN_VERSION([4.04.0])
 AC_ASSERT_PROG([ocamlopt], [$OCAMLOPT])
 AC_ASSERT_PROG([ocamlbuild], [$OCAMLBUILD])
 AC_PROG_FINDLIB
 AC_PROG_OCAMLLEX
 AC_ASSERT_PROG([ocamllex], [$OCAMLLEX])
-AC_PROG_OCAMLYACC
-AC_ASSERT_PROG([ocamlyacc], [$OCAMLYACC])
+AC_PATH_TOOL([MENHIR], [menhir], [no])
+AC_ASSERT_PROG([menhir], [$MENHIR])
 AC_ASSERT_OCAML_PKG([atdgen], [], [1.6.0])
 AC_ASSERT_OCAML_PKG([biniou])
 AC_ASSERT_OCAML_PKG([camlzip], [zip])
 AC_ASSERT_OCAML_PKG([easy-format])
-AC_ASSERT_OCAML_PKG([extlib], [], [1.5.4])
 AC_ASSERT_OCAML_PKG([oUnit], [], [2.0.0])
 AC_ASSERT_OCAML_PKG([reason])
 AC_ASSERT_OCAML_PKG([yojson])
 # check for rebuild after checking for Reason since `rebuild` is normally provided by Reason. This
 # way if Reason is missing we get a more helpful error message and not "rebuild not found".
-AC_CHECK_TOOL([REBUILD], [rebuild], [no])
+AC_PATH_TOOL([REBUILD], [rebuild], [no])
 AC_ASSERT_PROG([rebuild], [$REBUILD])
+
+AC_ARG_VAR([CAML_LD_LIBRARY_PATH],
+  [Additional directories to search for dynamically-loaded libraries.])
+
+
+AC_CHECK_TOOL([OPAM], [opam], [no])
+AS_IF([test "$OPAM" != "no"], [
+  AC_MSG_CHECKING([current opam switch])
+  OPAMSWITCH=$("$OPAM" switch show)
+  AC_MSG_RESULT([$OPAMSWITCH])
+])
 
 if test "x$enable_java_analyzers" = "xyes"; then
   AC_CHECK_TOOL([JAVA], [java], [no])
-  AC_CHECK_TOOL([JAVAC], [javac], [no])
+  AC_PATH_TOOL([JAVAC], [javac], [no])
   AC_ASSERT_PROG([javac], [$JAVAC])
   AC_ASSERT_PROG([java], [$JAVA])
   AC_ASSERT_OCAML_PKG([javalib], [], [2.3.3])
@@ -229,15 +237,8 @@ _ACEOF
 fi
 
 
-AC_CHECK_TOOL([ATDGEN], [atdgen], [no])
+AC_PATH_TOOL([ATDGEN], [atdgen], [no])
 AC_ASSERT_PROG([atdgen], [$ATDGEN])
-
-AC_ARG_ENABLE(ocaml-annot,
-  AS_HELP_STRING([--disable-ocaml-annot], [do not build ocaml .annot files]),
-  ,
-  enable_ocaml_annot=yes)
-ENABLE_OCAML_ANNOT=$enable_ocaml_annot
-AC_SUBST([ENABLE_OCAML_ANNOT])
 
 AC_ARG_ENABLE(ocaml-bin-annot,
   AS_HELP_STRING([--disable-ocaml-bin-annot], [do not build ocaml .cmt files]),
@@ -250,8 +251,8 @@ AC_SUBST([ENABLE_OCAML_BINANNOT])
 # We use Buck to run the Infer tests
 AC_MSG_CHECKING([which version of Buck to use])
 buckversion_file=.buckversion
-oss_buck_version=7722fca11136f5059c113379969a116802a58df0
-fb_buck_version=3a688647b6fca77bda05ab55f2f53860a470edfc
+oss_buck_version=c8c96ad4f2664c9636865e162513c530823f6d5b
+fb_buck_version=a5e9b874a2ee0607cefa87367577583e187a83a4
 AS_IF([test x"$is_facebook_tree" = x"yes"],
   [buck_version=$fb_buck_version],
   [buck_version=$oss_buck_version])
@@ -259,11 +260,11 @@ echo $buck_version > "$buckversion_file"
 AC_MSG_RESULT([$buck_version])
 
 
-AC_CHECK_TOOL([GETCONF], [getconf], [no])
+AC_PATH_TOOL([GETCONF], [getconf], [no])
 AC_MSG_CHECKING([the number of cpus the build host has])
 if test "$GETCONF" != "no"; then
-  if test $(getconf _NPROCESSORS_ONLN); then
-    NCPU=$(getconf _NPROCESSORS_ONLN)
+  if test $("$GETCONF" _NPROCESSORS_ONLN); then
+    NCPU=$("$GETCONF" _NPROCESSORS_ONLN)
     AC_MSG_RESULT([$NCPU])
   fi
 else
@@ -272,15 +273,59 @@ else
 fi
 AC_SUBST([NCPU])
 
-# tools that are optional, eg build systems to be run in integration tests
-AC_CHECK_TOOL([ANT], [ant], [no])
-AC_CHECK_TOOL([BUCK], [buck], [no])
+# optional progs and libraries that, eg build systems to be run in integration tests
+
+AC_PATH_TOOL([ANT], [ant], [no])
+if test ! -z "$SANDCASTLE"; then
+   BUCK=buck
+   AC_SUBST([BUCK])
+else
+  AC_PATH_TOOL([BUCK], [buck], [no])
+fi
+AC_ARG_VAR([MVN], [command to execute Maven when running tests])
+AS_IF([test "x$MVN" = "x"], [
+  AC_PATH_TOOL([MVN], [mvn], [no])
+], [
+  AC_MSG_RESULT([checking for mvn... $MVN])
+])
+AC_PATH_TOOL([NDKBUILD], [ndk-build], [no])
+if test x"$NDKBUILD" = x"no"; then
+# ndk-build not in $PATH, look into potential android NDK install paths and record the absolute path
+# to ndk-build
+  AC_PATH_PROG([NDKBUILD], [ndk-build], [no],
+    [$PATH$PATH_SEPARATOR$ANDROID_NDK$PATH_SEPARATOR/opt/android_ndk/r10e])
+fi
+
+AC_CHECK_PYTHON_MODULE([$PYTHON27], [lxml])
+
+AC_PATH_TOOL([XCPRETTY], [xcpretty], [no])
+
+AC_PATH_TOOL([BREW], [brew], [no])
+
+# warn about broken pkg-config version for brew users
+if test "$BREW" != "no"; then
+  if "$BREW" info pkg-config > /dev/null && \
+     test x"$(which pkg-config)" = x"/usr/local/bin/pkg-config"; then
+    AC_MSG_NOTICE([pkg-config seems to have been installed from Homebrew])
+    AC_MSG_CHECKING([for bad version of pkg-config brew package])
+    if readlink $(which pkg-config) | grep -q -e '/0.29.1_1/'; then
+      AC_MSG_RESULT([found 0.29.1_1])
+      AC_MSG_WARN([])
+      AC_MSG_WARN([This version of pkg-config is known to cause issues with compiling infer.])
+      AC_MSG_WARN([Consider running the following command to get a working version:])
+      AC_MSG_WARN([])
+      AC_MSG_WARN([  brew remove pkg-config && brew update && brew install pkg-config])
+      AC_MSG_WARN([])
+    else
+      AC_MSG_RESULT([no bad version found])
+    fi
+  fi
+fi
+
+AC_CHECK_INFER_MAN_LAST_MODIFIED()
 
 AC_CONFIG_FILES([
-  Makefile.config
+  Makefile.autoconf
 ])
-
-AC_MSG_NOTICE([saving configure flags to ./config.flags])
-echo $config_flags > config.flags
 
 AC_OUTPUT

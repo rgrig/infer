@@ -7,19 +7,19 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! IStd
+
 module F = Format
 
-type t
-
-val compare : t -> t -> int
+type t [@@deriving compare]
 
 val equal : t -> t -> bool
 
-val pname : t -> Procname.t
+val pname : t -> Typ.Procname.t
 
 val loc : t -> Location.t
 
-val make : Procname.t -> Location.t -> t
+val make : Typ.Procname.t -> Location.t -> t
 
 val dummy : t
 

@@ -7,25 +7,29 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-type t = Procname.t
+open! IStd
 
-let builtin_decls = ref Procname.Set.empty
+type t = Typ.Procname.t
+
+let builtin_decls = ref Typ.Procname.Set.empty
 
 let register pname =
-  builtin_decls := Procname.Set.add pname !builtin_decls
+  builtin_decls := Typ.Procname.Set.add pname !builtin_decls
 
 let create_procname name =
-  let pname = Procname.from_string_c_fun name in
+  let pname = Typ.Procname.from_string_c_fun name in
   register pname;
   pname
 
 let create_objc_class_method class_name method_name =
-  let method_kind = Procname.ObjCClassMethod in
-  let pname = (Procname.ObjC_Cpp (Procname.objc_cpp class_name method_name method_kind)) in
+  let method_kind = Typ.Procname.ObjCClassMethod in
+  let tname = Typ.Name.Objc.from_string class_name in
+  let pname = Typ.Procname.ObjC_Cpp
+      (Typ.Procname.objc_cpp tname method_name method_kind Typ.NoTemplate ~is_generic_model:false) in
   register pname;
   pname
 
-let is_declared pname = Procname.Set.mem pname !builtin_decls
+let is_declared pname = Typ.Procname.Set.mem pname !builtin_decls
 
 let __assert_fail = create_procname "__assert_fail"
 let __builtin_va_arg = create_procname "__builtin_va_arg"

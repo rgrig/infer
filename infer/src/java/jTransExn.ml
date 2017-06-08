@@ -8,7 +8,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
+module Hashtbl = Caml.Hashtbl
 
 open Javalib_pack
 open Sawja_pack
@@ -23,7 +24,7 @@ let create_handler_table impl =
       Hashtbl.replace handler_tb pc (exn_handler:: handlers)
     with Not_found ->
       Hashtbl.add handler_tb pc [exn_handler] in
-  IList.iter collect (JBir.exception_edges impl);
+  List.iter ~f:collect (JBir.exception_edges impl);
   handler_tb
 
 let translate_exceptions (context : JContext.t) exit_nodes get_body_nodes handler_table =
@@ -56,7 +57,7 @@ let translate_exceptions (context : JContext.t) exit_nodes get_body_nodes handle
         let catch_nodes = get_body_nodes handler.JBir.e_handler in
         let loc = match catch_nodes with
           | n:: _ -> Procdesc.Node.get_loc n
-          | [] -> Location.dummy in
+          | [] -> Location.none context.source_file in
         let exn_type =
           let class_name =
             match handler.JBir.e_catch_type with
@@ -64,16 +65,17 @@ let translate_exceptions (context : JContext.t) exit_nodes get_body_nodes handle
             | Some cn -> cn in
           match JTransType.get_class_type
                   context.program (JContext.get_tenv context) class_name with
-          | Typ.Tptr (typ, _) -> typ
+          | {Typ.desc=Tptr (typ, _)} -> typ
           | _ -> assert false in
         let id_instanceof = Ident.create_fresh Ident.knormal in
         let instr_call_instanceof =
           let instanceof_builtin = Exp.Const (Const.Cfun BuiltinDecl.__instanceof) in
           let args = [
-            (Exp.Var id_exn_val, Typ.Tptr(exn_type, Typ.Pk_pointer));
-            (Exp.Sizeof (exn_type, None, Subtype.exact), Typ.Tvoid)] in
+            (Exp.Var id_exn_val, Typ.mk (Tptr(exn_type, Typ.Pk_pointer)));
+            (Exp.Sizeof {typ=exn_type; nbytes=None; dynamic_length=None; subtype=Subtype.exact},
+             Typ.mk Tvoid)] in
           Sil.Call
-            (Some (id_instanceof, Tint IBool), instanceof_builtin, args, loc, CallFlags.default) in
+            (Some (id_instanceof, Typ.mk (Tint IBool)), instanceof_builtin, args, loc, CallFlags.default) in
         let if_kind = Sil.Ik_switch in
         let instr_prune_true = Sil.Prune (Exp.Var id_instanceof, loc, true, if_kind) in
         let instr_prune_false =
@@ -93,7 +95,7 @@ let translate_exceptions (context : JContext.t) exit_nodes get_body_nodes handle
           create_node loc node_kind_false instrs_false in
         Procdesc.node_set_succs_exn procdesc node_true catch_nodes exit_nodes;
         Procdesc.node_set_succs_exn procdesc node_false succ_nodes exit_nodes;
-        let is_finally = handler.JBir.e_catch_type = None in
+        let is_finally = is_none handler.JBir.e_catch_type in
         if is_finally
         then [node_true] (* TODO (#4759480): clean up the translation so prune nodes are not created at all *)
         else [node_true; node_false] in
@@ -104,10 +106,10 @@ let translate_exceptions (context : JContext.t) exit_nodes get_body_nodes handle
         collect succ_nodes remove_temps handler in
 
       let nodes_first_handler =
-        IList.fold_left process_handler exit_nodes (IList.rev handler_list) in
+        List.fold ~f:process_handler ~init:exit_nodes (List.rev handler_list) in
       let loc = match nodes_first_handler with
         | n:: _ -> Procdesc.Node.get_loc n
-        | [] -> Location.dummy in
+        | [] -> Location.none context.source_file in
       let entry_node = create_entry_node loc in
       Procdesc.node_set_succs_exn procdesc entry_node nodes_first_handler exit_nodes;
       Hashtbl.add catch_block_table handler_list [entry_node] in

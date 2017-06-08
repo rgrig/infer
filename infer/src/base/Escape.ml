@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Escape a string for use in a CSV or XML file: replace reserved
     characters with escape sequences *)
@@ -27,7 +27,7 @@ let escape_map map_fun s =
 let escape_csv s =
   let map = function
     | '"' -> Some "\"\""
-    | c when Char.code c > 127 -> Some "?" (* non-ascii character: escape *)
+    | c when Char.to_int c > 127 -> Some "?" (* non-ascii character: escape *)
     | _ -> None in
   escape_map map s
 
@@ -39,8 +39,31 @@ let escape_xml s =
     | '<' -> Some "&lt;"
     | '&' -> Some "&amp;"
     | '%' -> Some "&#37;"
-    | c when Char.code c > 127 -> (* non-ascii character: escape *)
-        Some ("&#" ^ string_of_int (Char.code c) ^ ";")
+    | c when Char.to_int c > 127 -> (* non-ascii character: escape *)
+        Some ("&#" ^ string_of_int (Char.to_int c) ^ ";")
+    | _ -> None in
+  escape_map map s
+
+let escape_url s =
+  let map = function
+    | '!' -> Some "%21"
+    | '#' -> Some "%23"
+    | '$' -> Some "%24"
+    | '&' -> Some "%26"
+    | '\'' -> Some "%27"
+    | '(' -> Some "%28"
+    | ')' -> Some "%29"
+    | '*' -> Some "%2A"
+    | '+' -> Some "%2B"
+    | ',' -> Some "%2C"
+    | '/' -> Some "%2F"
+    | ':' -> Some "%3A"
+    | ';' -> Some "%3B"
+    | '=' -> Some "%3D"
+    | '?' -> Some "%3F"
+    | '@' -> Some "%40"
+    | '[' -> Some "%5B"
+    | ']' -> Some "%5D"
     | _ -> None in
   escape_map map s
 
@@ -54,7 +77,7 @@ let escape_dotty s =
 let escape_path s =
   let map = function
     | c ->
-        if Char.escaped c = Filename.dir_sep
+        if String.equal (Char.escaped c) Filename.dir_sep
         then Some "_"
         else None in
   escape_map map s
@@ -63,6 +86,6 @@ let escape_path s =
    as Python may need to see them *)
 let escape_filename s =
   let map = function
-    | c when Char.code c > 127 -> Some "?" (* non-ascii character: escape *)
+    | c when Char.to_int c > 127 -> Some "?" (* non-ascii character: escape *)
     | _ -> None in
   escape_map map s

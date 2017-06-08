@@ -7,7 +7,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
+open! PVariant
 
 module L = Logging
 module F = Format
@@ -24,16 +25,14 @@ let buck_out () = Filename.concat Config.project_root "buck-out"
 
 let infer_deps () = Filename.concat Config.results_dir Config.buck_infer_deps_file_name
 
-let modified_targets = ref StringSet.empty
+let modified_targets = ref String.Set.empty
 
-let modified_file file = match Utils.read_file file with
+let modified_file file =
+  match Utils.read_file file with
   | Some targets ->
-      modified_targets :=
-        IList.fold_left (fun s target -> StringSet.add target s) StringSet.empty targets
+      modified_targets := List.fold ~f:String.Set.add ~init:String.Set.empty targets
   | None ->
       ()
-
-let debug = 0
 
 type stats =
   {
@@ -57,7 +56,7 @@ let link_exists s =
 
 (* Table mapping directories to multilinks.
    Used for the hashed directories where attrbute files are stored. *)
-let multilinks_dir_table = StringHash.create 16
+let multilinks_dir_table = String.Table.create ~size:16 ()
 
 
 (* Add a multilink for attributes to the internal per-directory table.
@@ -67,7 +66,7 @@ let add_multilink_attr ~stats src dst =
   let attr_dir_name = Filename.basename attr_dir in
   let multilinks =
     try
-      StringHash.find multilinks_dir_table attr_dir_name
+      String.Table.find_exn multilinks_dir_table attr_dir_name
     with
     | Not_found ->
         let multilinks = match Multilinks.read ~dir:attr_dir with
@@ -76,46 +75,45 @@ let add_multilink_attr ~stats src dst =
               multilinks
           | None ->
               Multilinks.create () in
-        StringHash.add multilinks_dir_table attr_dir_name multilinks;
+        String.Table.set multilinks_dir_table ~key:attr_dir_name ~data:multilinks;
         multilinks in
   Multilinks.add multilinks src;
   stats.files_multilinked <- stats.files_multilinked + 1
 
 let create_link ~stats src dst =
   if link_exists dst then Unix.unlink dst;
-  Unix.symlink src dst;
+  Unix_.symlink ~src ~dst;
   (* Set the accessed and modified time of the original file slightly in the past.  Due to
      the coarse precision of the timestamps, it is possible for the source and destination of a
      link to have the same modification time. When this happens, the files will be considered to
      need re-analysis every time, indefinitely. *)
   let near_past = Unix.gettimeofday () -. 1. in
-  Unix.utimes src near_past near_past;
+  Unix.utimes src ~access:near_past ~modif:near_past;
   stats.files_linked <- stats.files_linked + 1
 
 let create_multilinks () =
-  let do_dir dir multilinks =
+  let do_dir ~key:dir ~data:multilinks =
     let attributes_dir =
       Filename.concat (Filename.concat Config.results_dir Config.attributes_dir_name) dir in
     Multilinks.write multilinks ~dir:attributes_dir in
-  StringHash.iter do_dir multilinks_dir_table
+  String.Table.iteri ~f:do_dir multilinks_dir_table
 
 
 (** Create symbolic links recursively from the destination to the source.
     Replicate the structure of the source directory in the destination,
     with files replaced by links to the source. *)
 let rec slink ~stats ~skiplevels src dst =
-  if debug >=3
-  then L.stderr "slink src:%s dst:%s skiplevels:%d@." src dst skiplevels;
-  if Sys.is_directory src
+  L.(debug MergeCapture Verbose) "slink src:%s dst:%s skiplevels:%d@." src dst skiplevels;
+  if Sys.is_directory src = `Yes
   then
     begin
-      if not (Sys.file_exists dst)
-      then Unix.mkdir dst 0o700;
+      if (Sys.file_exists dst) <> `Yes
+      then Unix.mkdir dst ~perm:0o700;
       let items = Sys.readdir src in
       Array.iter
-        (fun item ->
-           slink ~stats ~skiplevels:(skiplevels - 1)
-             (Filename.concat src item) (Filename.concat dst item))
+        ~f:(fun item ->
+            slink ~stats ~skiplevels:(skiplevels - 1)
+              (Filename.concat src item) (Filename.concat dst item))
         items
     end
   else if skiplevels > 0 then ()
@@ -134,48 +132,46 @@ let should_link ~target ~target_results_dir ~stats infer_out_src infer_out_dst =
     let filename = DB.filename_from_string file in
     let time_orig = DB.file_modified_time ~symlink:false filename in
     let time_link = DB.file_modified_time ~symlink:true filename in
-    if debug >= 2 then
-      L.stderr "file:%s time_orig:%f time_link:%f@."
-        file time_orig time_link;
+    L.(debug MergeCapture Verbose) "file:%s time_orig:%f time_link:%f@." file time_orig time_link;
     time_link > time_orig in
   let symlinks_up_to_date captured_file =
-    if Sys.is_directory captured_file then
+    if Sys.is_directory captured_file = `Yes then
       let contents = Array.to_list (Sys.readdir captured_file) in
-      IList.for_all
-        (fun file ->
-           let file_path = Filename.concat captured_file file in
-           Sys.file_exists file_path &&
-           (not check_timestamp_of_symlinks || symlink_up_to_date file_path))
+      List.for_all
+        ~f:(fun file ->
+            let file_path = Filename.concat captured_file file in
+            Sys.file_exists file_path = `Yes &&
+            (not check_timestamp_of_symlinks || symlink_up_to_date file_path))
         contents
     else true in
   let check_file captured_file =
-    Sys.file_exists captured_file &&
+    Sys.file_exists captured_file = `Yes &&
     symlinks_up_to_date captured_file in
   let was_copied () =
     let captured_src = Filename.concat infer_out_src Config.captured_dir_name in
     let captured_dst = Filename.concat infer_out_dst Config.captured_dir_name in
-    if Sys.file_exists captured_src && Sys.is_directory captured_src
+    if Sys.file_exists captured_src = `Yes &&
+       Sys.is_directory captured_src = `Yes
     then
       begin
         let captured_files = Array.to_list (Sys.readdir captured_src) in
-        num_captured_files := IList.length captured_files;
-        IList.for_all
-          (fun file ->
-             check_file (Filename.concat captured_dst file))
+        num_captured_files := List.length captured_files;
+        List.for_all
+          ~f:(fun file ->
+              check_file (Filename.concat captured_dst file))
           captured_files
       end
     else
       true in
   let was_modified () =
-    StringSet.mem target !modified_targets in
+    String.Set.mem !modified_targets target in
   let r =
     was_modified () ||
     not (was_copied ()) in
   if r then stats.targets_merged <- stats.targets_merged + 1;
-  if debug >= 2
-  then L.stderr "lnk:%s:%d %s@." (if r then "T" else "F") !num_captured_files target_results_dir
-  else if debug >= 1 && r
-  then L.stderr "%s@."target_results_dir;
+  L.(debug MergeCapture Verbose) "lnk:%s:%d %s@." (if r then "T" else "F") !num_captured_files
+    target_results_dir;
+  if r then L.(debug MergeCapture Medium) "%s@."target_results_dir;
   r
 
 (** should_link needs to know whether the source file has changed,
@@ -189,21 +185,21 @@ let process_merge_file deps_file =
     | target :: _ :: target_results_dir :: _ ->
         let infer_out_src =
           if Filename.is_relative target_results_dir then
-            Filename.dirname (buck_out ()) // target_results_dir
+            Filename.dirname (buck_out ()) ^/ target_results_dir
           else target_results_dir in
         let skiplevels = 2 in (* Don't link toplevel files, definitely not .start *)
         if should_link ~target ~target_results_dir ~stats infer_out_src infer_out_dst
         then slink ~stats ~skiplevels infer_out_src infer_out_dst
     | _ ->
         () in
-  Option.may
-    (fun lines -> IList.iter process_line lines)
-    (read_file deps_file);
+  Option.iter
+    ~f:(fun lines -> List.iter ~f:process_line lines)
+    (Utils.read_file deps_file);
   create_multilinks ();
-  L.stdout "Captured results merged.@.";
-  L.stdout "Targets merged: %d@." stats.targets_merged;
-  L.stdout "Files linked: %d@." stats.files_linked;
-  L.stdout "Files multilinked: %d@." stats.files_multilinked
+  L.progress "Captured results merged.@.";
+  L.progress "Targets merged: %d@." stats.targets_merged;
+  L.progress "Files linked: %d@." stats.files_linked;
+  L.progress "Files multilinked: %d@." stats.files_multilinked
 
 
 let merge_captured_targets () =

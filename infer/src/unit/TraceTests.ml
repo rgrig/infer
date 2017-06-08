@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module L = Logging
 module F = Format
@@ -17,30 +17,22 @@ module MockTraceElem = struct
     | Kind1
     | Kind2
     | Footprint
+    | Unknown
+  [@@deriving compare]
+
+  let unknown = Unknown
 
   let call_site _ = CallSite.dummy
 
   let kind t = t
 
-  let make kind _ = kind
-
-  let compare t1 t2 =
-    match t1, t2 with
-    | Kind1, Kind1 -> 0
-    | Kind1, _ -> (-1)
-    | _, Kind1 -> 1
-    | Kind2, Kind2 -> 0
-    | Kind2, _ -> (-1)
-    | _, Kind2 -> 1
-    | Footprint, Footprint -> 0
-
-  let equal t1 t2 =
-    compare t1 t2 = 0
+  let make ?indexes:_ kind _ = kind
 
   let pp fmt = function
     | Kind1 -> F.fprintf fmt "Kind1"
     | Kind2 -> F.fprintf fmt "Kind2"
     | Footprint -> F.fprintf fmt "Footprint"
+    | Unknown -> F.fprintf fmt "Unknown"
 
   module Kind = struct
     type nonrec t = t
@@ -51,31 +43,33 @@ module MockTraceElem = struct
   module Set = PrettyPrintable.MakePPSet(struct
       type nonrec t = t
       let compare = compare
-      let pp_element = pp
+      let pp = pp
     end)
 
   let with_callsite t _ = t
 end
 
 module MockSource = struct
-  include MockTraceElem
+  include
+    (Source.Make(struct
+       include MockTraceElem
 
-  let make = MockTraceElem.make
+       let get _ = assert false
+       let get_tainted_formals _ = assert false
+     end))
 
-  let is_footprint kind =
-    kind = Footprint
-
-  let make_footprint _ _ = Footprint
-
-  let get _ = assert false
-  let get_footprint_access_path _ = assert false
+  let equal = [%compare.equal : t]
 end
 
 module MockSink = struct
   include MockTraceElem
-
+  type parameter = { sink : t; index : int; }
 
   let get _ = assert false
+
+  let indexes _ = IntSet.empty
+
+  let equal = [%compare.equal : t]
 end
 
 
@@ -84,7 +78,7 @@ module MockTrace = Trace.Make(struct
     module Sink = MockSink
 
     let should_report source sink =
-      Source.kind source = Sink.kind sink
+      [%compare.equal : MockTraceElem.t] (Source.kind source) (Sink.kind sink)
   end)
 
 let tests =
@@ -103,23 +97,30 @@ let tests =
         |> MockTrace.add_sink sink2 in
       let reports = MockTrace.get_reports trace in
 
-      assert_equal (IList.length reports) 2;
+      assert_equal (List.length reports) 2;
       assert_bool
         "Reports should contain source1 -> sink1"
-        (IList.exists
-           (fun (source, sink, _) -> MockSource.equal source source1 && MockSink.equal sink sink1)
+        (List.exists
+           ~f:(fun (source, sink, _) ->
+               MockSource.equal source source1 && MockSink.equal sink sink1)
            reports);
       assert_bool
         "Reports should contain source2 -> sink2"
-        (IList.exists
-           (fun (source, sink, _) -> MockSource.equal source source2 && MockSink.equal sink sink2)
+        (List.exists
+           ~f:(fun (source, sink, _) ->
+               MockSource.equal source source2 && MockSink.equal sink sink2)
            reports) in
     "get_reports">::get_reports_ in
 
   let append =
     let append_ _ =
       let call_site = CallSite.dummy in
-      let footprint_source = MockSource.make_footprint MockTraceElem.Kind1 call_site in
+      let footprint_ap = AccessPath.Exact (AccessPath.of_id (Ident.create_none ()) (Typ.mk Tvoid)) in
+      let dummy_pdesc =
+        Cfg.create_proc_desc
+          (Cfg.create_cfg ())
+          (ProcAttributes.default Typ.Procname.empty_block !Config.curr_language) in
+      let footprint_source = MockSource.make_footprint footprint_ap dummy_pdesc in
       let source_trace =
         MockTrace.of_source source1 in
       let footprint_trace =
@@ -131,13 +132,8 @@ let tests =
         |> MockTrace.add_sink sink1 in
       assert_bool
         "Appended trace should contain source and sink"
-        (MockTrace.equal (MockTrace.append source_trace footprint_trace call_site) expected_trace);
-
-      let appended_trace = MockTrace.append source_trace source_trace call_site in
-      assert_bool
-        "Appending a trace that doesn't add a new source/sink should add a passthrough"
-        (MockTrace.Passthroughs.mem
-           (Passthrough.make call_site) (MockTrace.passthroughs appended_trace)) in
+        (MockTrace.equal
+           (MockTrace.append source_trace footprint_trace call_site) expected_trace) in
     "append">::append_ in
 
   "trace_domain_suite">:::[get_reports; append]

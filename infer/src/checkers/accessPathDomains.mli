@@ -7,6 +7,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! IStd
+
 (** Generic abstract domains backed by access paths *)
 
 (** add-only set of access paths. To make common operations efficient (namely, add, join, and
@@ -15,7 +17,7 @@
     call to [normalize]. however, [normalize] is quadratic in the size of the set, so it should be
     used sparingly (recommendation: only before computing a summary based on the access path set) *)
 module Set : sig
-  include AbstractDomain.S
+  include AbstractDomain.WithBottom
 
   val of_list : AccessPath.t list -> astate
 

@@ -7,25 +7,26 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Case Proc *)
 type proc_origin =
   {
-    pname : Procname.t;
+    pname : Typ.Procname.t;
     loc: Location.t;
-    annotated_signature : Annotations.annotated_signature;
+    annotated_signature : AnnotatedSignature.t;
     is_library : bool;
-  }
+  } [@@deriving compare]
 
 type t =
   | Const of Location.t (** A constant in the source *)
-  | Field of Ident.fieldname * Location.t (** A field access *)
+  | Field of t * Fieldname.t * Location.t (** A field access *)
   | Formal of Mangled.t (** A formal parameter *)
   | Proc of proc_origin (** A procedure call *)
   | New (** A new object creation *)
   | ONone (** No origin is known *)
   | Undef (** Undefined value before initialization *)
+[@@deriving compare]
 
 val equal : t -> t -> bool
 

@@ -8,7 +8,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Execution Paths *)
 
@@ -19,7 +19,10 @@ module Path : sig
   type session = int
 
   (** add a call with its sub-path, the boolean indicates whether the subtrace for the procedure should be included *)
-  val add_call : bool -> t -> Procname.t -> t -> t
+  val add_call : bool -> t -> Typ.Procname.t -> t -> t
+
+  (** add a call to a procname that's had to be skipped, along with the reason *)
+  val add_skipped_call : t -> Typ.Procname.t -> string -> t
 
   (** check whether a path contains another path *)
   val contains : t -> t -> bool
@@ -40,7 +43,7 @@ module Path : sig
   val d_stats : t -> unit
 
   (** extend a path with a new node reached from the given session, with an optional string for exceptions *)
-  val extend : Procdesc.Node.t -> Typename.t option -> session -> t -> t
+  val extend : Procdesc.Node.t -> Typ.Name.t option -> session -> t -> t
 
   val add_description : t -> string -> t
 
@@ -53,7 +56,7 @@ module Path : sig
       [f level path session exn_opt] is passed the current nesting [level] and [path]
       and previous [session] and possible exception [exn_opt] *)
   val iter_shortest_sequence :
-    (int -> t -> int -> Typename.t option -> unit) -> PredSymb.path_pos option -> t -> unit
+    (int -> t -> int -> Typ.Name.t option -> unit) -> PredSymb.path_pos option -> t -> unit
 
   (** join two paths *)
   val join : t -> t -> t
@@ -118,7 +121,7 @@ module PathSet : sig
   val partition : (Prop.normal Prop.t -> bool) -> t -> t * t
 
   (** pretty print the pathset *)
-  val pp : printenv -> Format.formatter -> t -> unit
+  val pp : Pp.env -> Format.formatter -> t -> unit
 
   (** number of elements in the pathset *)
   val size : t -> int

@@ -7,23 +7,24 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Nodule to represent annotations on types. *)
 
-type t
+type t [@@deriving compare]
 
-val const : Annotations.annotation -> bool -> TypeOrigin.t -> t
+val equal : t -> t -> bool
+
+val const : AnnotatedSignature.annotation -> bool -> TypeOrigin.t -> t
 
 (** Human-readable description of the origin of a nullable value. *)
 val descr_origin : Tenv.t -> t -> TypeErr.origin_descr
 
-val equal : t -> t -> bool
 val from_item_annotation : Annot.Item.t -> TypeOrigin.t -> t
 val get_origin : t -> TypeOrigin.t
-val get_value : Annotations.annotation -> t -> bool
+val get_value : AnnotatedSignature.annotation -> t -> bool
 val join : t -> t -> t option
 val origin_is_fun_library : t -> bool
-val set_value : Annotations.annotation -> bool -> t -> t
+val set_value : AnnotatedSignature.annotation -> bool -> t -> t
 val to_string : t -> string
 val with_origin : t -> TypeOrigin.t -> t

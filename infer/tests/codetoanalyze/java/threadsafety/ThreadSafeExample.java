@@ -9,17 +9,11 @@
 
 package codetoanalyze.java.checkers;
 
-import java.lang.annotation.Documented;
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+import javax.annotation.concurrent.NotThreadSafe;
 
-@Documented
-@Target(ElementType.TYPE)
-@Retention(RetentionPolicy.CLASS)
-@interface ThreadSafe {
-}
+import com.facebook.infer.annotation.ThreadSafe;
+
+import com.google.common.annotations.VisibleForTesting;
 
 @ThreadSafe
 public class ThreadSafeExample{
@@ -43,6 +37,92 @@ public class ThreadSafeExample{
     f = 24;
   }
 
+  public void recursiveBad() {
+    f = 44;
+    recursiveBad();
+  }
+
+  private void evenOk() {
+    f = 44;
+    oddBad();
+  }
+
+  public void oddBad() {
+    evenOk(); // should report here
+  }
+
+  // shouldn't report here because it's a private method
+  private void assignInPrivateMethodOk() {
+    f = 24;
+  }
+
+  // but should report here, because now it's called
+  public void callPublicMethodBad() {
+    assignInPrivateMethodOk();
+  }
+
+  private void callAssignInPrivateMethod() {
+    assignInPrivateMethodOk();
+  }
+
+  // should report a deeperTraceBade -> callAssignInPrivateMethod -> assignInPrivateMethodOk trace
+  public void deeperTraceBad() {
+    callAssignInPrivateMethod();
+  }
+
+  public synchronized void callFromSynchronizedPublicMethodOk() {
+    assignInPrivateMethodOk();
+  }
+
+  private synchronized void synchronizedCallerOk() {
+    assignInPrivateMethodOk();
+  }
+
+  public void callFromUnsynchronizedPublicMethodOk() {
+    synchronizedCallerOk();
+  }
+
+  // although the constructor touches f, we shouldn't complain here
+  public void callConstructorOk() {
+    new ThreadSafeExample();
+  }
+
+  private Object returnConstructorOk() {
+    return new ThreadSafeExample();
+  }
+
+  public void transitivelyCallConstructorOk() {
+    returnConstructorOk();
+  }
+
+  volatile Object volatileField;
+
+  // we don't warn on unsafe writes to volatile fields
+  public void unsafeVolatileWriteOk() {
+    this.volatileField = new Object();
+  }
+
+  // don't count the method as public if it's marked VisibleForTesting
+  @VisibleForTesting
+  public void visibleForTestingNotPublicOk() {
+    this.f = 47;
+  }
+
+  // but do complain if a VisibleForTesting method is called from a public method
+  public void callVisibleForTestingBad() {
+    visibleForTestingNotPublicOk();
+  }
+
+  Object sharedField;
+
+  private void writePrivateSharedFieldOk() {
+    this.sharedField = new Object();
+  }
+
+  public Object returnSharedFieldOk() {
+    return this.sharedField; // ok because it only races with a private method
+  }
+
 }
 
 class ExtendsThreadSafeExample extends ThreadSafeExample{
@@ -58,6 +138,30 @@ class ExtendsThreadSafeExample extends ThreadSafeExample{
   /* Bad now that it's overridden */
   public void tsOK() {
      field = 44;
+  }
+
+}
+
+@NotThreadSafe
+class NotThreadSafeExtendsThreadSafeExample extends ThreadSafeExample{
+
+  Integer field;
+
+/* We don't want to warn on this */
+  public void newmethodBad() {
+     field = 22;
+  }
+
+}
+
+@ThreadSafe
+class YesThreadSafeExtendsNotThreadSafeExample extends NotThreadSafeExtendsThreadSafeExample{
+
+  Integer subsubfield;
+
+/* We do want to warn on this */
+  public void subsubmethodBad() {
+     subsubfield = 22;
   }
 
 }

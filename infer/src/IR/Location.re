@@ -6,38 +6,30 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
 
-let module F = Format;
+module F = Format;
 
-let module L = Logging;
+module L = Logging;
 
 
 /** Location in the original source file */
 type t = {
   line: int, /** The line number. -1 means "do not know" */
   col: int, /** The column number. -1 means "do not know" */
-  file: DB.source_file /** The name of the source file */
-};
+  file: SourceFile.t /** The name of the source file */
+}
+[@@deriving compare];
 
-let compare loc1 loc2 => {
-  let n = int_compare loc1.line loc2.line;
-  if (n != 0) {
-    n
-  } else {
-    DB.source_file_compare loc1.file loc2.file
-  }
-};
+let equal = [%compare.equal : t];
 
 
 /** Dump a location */
 let d (loc: t) => L.add_print_action (L.PTloc, Obj.repr loc);
 
+let none file => {line: (-1), col: (-1), file};
 
-/** Dummy location */
-let dummy = {line: (-1), col: (-1), file: DB.source_file_empty};
-
-let equal loc1 loc2 => compare loc1 loc2 == 0;
+let dummy = none (SourceFile.invalid __FILE__);
 
 
 /** Pretty print a location */
@@ -45,9 +37,17 @@ let pp f (loc: t) => F.fprintf f "[line %d]" loc.line;
 
 let to_string loc => {
   let s = string_of_int loc.line;
-  if (loc.col !== (-1)) {
+  if (loc.col != (-1)) {
     s ^ ":" ^ string_of_int loc.col
   } else {
     s
   }
+};
+
+
+/** Pretty print a file-position of a location */
+let pp_file_pos f (loc: t) => {
+  let fname = SourceFile.to_string loc.file;
+  let pos = to_string loc;
+  F.fprintf f "%s:%s" fname pos
 };

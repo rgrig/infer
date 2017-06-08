@@ -7,16 +7,16 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Filter type for a source file *)
-type path_filter = DB.source_file -> bool
+type path_filter = SourceFile.t -> bool
 
 (** Filter type for an error name. *)
 type error_filter = Localise.t -> bool
 
 (** Filter type for a procedure name *)
-type proc_filter = Procname.t -> bool
+type proc_filter = Typ.Procname.t -> bool
 
 type filters =
   {
@@ -31,10 +31,9 @@ val do_not_filter : filters
 (** Create filters based on the config file *)
 val create_filters : Config.analyzer -> filters
 
-val never_return_null_matcher : DB.source_file -> Procname.t -> bool
-val suppress_warnings_matcher : DB.source_file -> Procname.t -> bool
-val skip_translation_matcher : DB.source_file -> Procname.t -> bool
-val modeled_expensive_matcher : (string -> bool) -> Procname.t -> bool
+val never_return_null_matcher : SourceFile.t -> Typ.Procname.t -> bool
+val skip_translation_matcher : SourceFile.t -> Typ.Procname.t -> bool
+val modeled_expensive_matcher : (string -> bool) -> Typ.Procname.t -> bool
 
 (** Load the config file and list the files to report on *)
 val test: unit -> unit

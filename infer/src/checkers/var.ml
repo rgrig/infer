@@ -7,13 +7,16 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Single abstraction for all the kinds of variables in SIL *)
 
 type t =
-  | ProgramVar of Pvar.t
   | LogicalVar of Ident.t
+  | ProgramVar of Pvar.t
+[@@deriving compare]
+
+let equal = [%compare.equal : t]
 
 let of_id id =
   LogicalVar id
@@ -21,31 +24,31 @@ let of_id id =
 let of_pvar pvar =
   ProgramVar pvar
 
+let of_formal_index formal_index =
+  of_id (Ident.create_footprint Ident.name_spec formal_index)
+
 let to_exp = function
   | ProgramVar pvar -> Exp.Lvar pvar
   | LogicalVar id -> Exp.Var id
 
-let compare v1 v2 = match v1, v2 with
-  | ProgramVar pv1, ProgramVar pv2 -> Pvar.compare pv1 pv2
-  | LogicalVar sv1, LogicalVar sv2 -> Ident.compare sv1 sv2
-  | ProgramVar _, _ -> 1
-  | LogicalVar _, _ -> -1
+let is_global  = function
+  | ProgramVar pvar -> Pvar.is_global pvar
+  | LogicalVar _ -> false
 
-let equal v1 v2 =
-  compare v1 v2 = 0
+let is_return = function
+  | ProgramVar pvar -> Pvar.is_return pvar
+  | LogicalVar _ -> false
+
+let is_footprint = function
+  | ProgramVar _ -> false
+  | LogicalVar id -> Ident.is_footprint id
 
 let pp fmt = function
-  | ProgramVar pv -> (Pvar.pp pe_text) fmt pv
-  | LogicalVar id -> (Ident.pp pe_text) fmt id
+  | ProgramVar pv -> (Pvar.pp Pp.text) fmt pv
+  | LogicalVar id -> (Ident.pp Pp.text) fmt id
 
 module Map = PrettyPrintable.MakePPMap(struct
     type nonrec t = t
     let compare = compare
-    let pp_key = pp
-  end)
-
-module Set = PrettyPrintable.MakePPSet(struct
-    type nonrec t = t
-    let compare = compare
-    let pp_element = pp
+    let pp = pp
   end)

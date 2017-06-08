@@ -7,17 +7,13 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open !Utils
+open! IStd
 
 module F = Format
 
 (* string set domain we use to ensure we're getting the expected traces *)
 module MockTraceDomain = struct
-  include AbstractDomain.FiniteSet
-    (PrettyPrintable.MakePPSet(struct
-       include String
-       let pp_element fmt s = Format.fprintf fmt "%s" s
-     end))
+  include AbstractDomain.FiniteSet (String)
 
   let top_str = "T"
 
@@ -26,7 +22,7 @@ module MockTraceDomain = struct
   (* stop others from creating top by accident, adding to top, or removing it *)
   let add e s =
     assert (e <> top_str);
-    if s == top
+    if phys_equal s top
     then top
     else add e s
 
@@ -43,7 +39,7 @@ module MockTraceDomain = struct
 
   (* similarly, hack printing so top looks different *)
   let pp fmt s =
-    if s == top
+    if phys_equal s top
     then F.fprintf fmt "T"
     else pp fmt s
 end
@@ -70,7 +66,7 @@ let tests =
 
   let f = make_field_access "f" in
   let g = make_field_access "g" in
-  let array = make_array_access Typ.Tvoid in
+  let array = make_array_access (Typ.mk Tvoid) in
 
   let x = AccessPath.Exact (make_access_path "x" []) in
   let xF = AccessPath.Exact (make_access_path "x" ["f"]) in
@@ -137,7 +133,7 @@ let tests =
 
   let get_trace_str access_path tree =
     match Domain.get_trace access_path tree with
-    | Some trace -> pp_to_string MockTraceDomain.pp trace
+    | Some trace -> F.asprintf "%a" MockTraceDomain.pp trace
     | None -> no_trace in
 
   let assert_traces_eq access_path tree expected_trace_str =
@@ -406,7 +402,7 @@ let tests =
       let x_y_star_base_tree =
         Domain.BaseMap.add
           y_base
-          (Domain.make_starred_leaf MockTraceDomain.initial)
+          (Domain.make_starred_leaf MockTraceDomain.empty)
           x_base_tree in
       assert_trees_equal (widen x_base_tree y_base_tree) x_y_star_base_tree;
 
@@ -439,13 +435,13 @@ let tests =
     let fold_test_ _ =
       let collect_ap_traces acc ap trace =
         (ap, trace) :: acc in
-      let ap_traces = Domain.fold collect_ap_traces tree [] in
+      let ap_traces = Domain.trace_fold collect_ap_traces tree [] in
       let has_ap_trace_pair ap_in trace_in =
-        IList.exists
-          (fun (ap, trace) -> AccessPath.equal ap ap_in && MockTraceDomain.equal trace trace_in)
+        List.exists
+          ~f:(fun (ap, trace) -> AccessPath.equal ap ap_in && MockTraceDomain.equal trace trace_in)
           ap_traces in
 
-      assert_bool "Should have six ap/trace pairs" (IList.length ap_traces = 6);
+      assert_bool "Should have six ap/trace pairs" (Int.equal (List.length ap_traces) 6);
       assert_bool "has x pair" (has_ap_trace_pair x x_trace);
       assert_bool "has xF pair" (has_ap_trace_pair xF xF_trace);
       assert_bool "has xFG pair" (has_ap_trace_pair xFG xFG_trace);

@@ -7,14 +7,14 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module F = Format
 module L = Logging
 
 (** backward analysis for computing set of maybe-live variables at each program point *)
 
-module Domain = AbstractDomain.FiniteSet(Var.Set)
+module Domain = AbstractDomain.FiniteSet(Var)
 
 (* compilers 101-style backward transfer functions for liveness analysis. gen a variable when it is
    read, kill the variable when it is assigned *)
@@ -27,8 +27,14 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   let exp_add_live exp astate =
     let (ids, pvars) = Exp.get_vars exp in
     let astate' =
-      IList.fold_left (fun astate_acc id -> Domain.add (Var.of_id id) astate_acc) astate ids in
-    IList.fold_left (fun astate_acc pvar -> Domain.add (Var.of_pvar pvar) astate_acc) astate' pvars
+      List.fold
+        ~f:(fun astate_acc id -> Domain.add (Var.of_id id) astate_acc)
+        ~init:astate
+        ids in
+    List.fold
+      ~f:(fun astate_acc pvar -> Domain.add (Var.of_pvar pvar) astate_acc)
+      ~init:astate'
+      pvars
 
   let exec_instr astate _ _ = function
     | Sil.Load (lhs_id, rhs_exp, _, _) ->
@@ -46,19 +52,13 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     | Sil.Prune (exp, _, _, _) ->
         exp_add_live exp astate
     | Sil.Call (ret_id, call_exp, params, _, _) ->
-        Option.map_default (fun (ret_id, _) -> Domain.remove (Var.of_id ret_id) astate)
-          astate ret_id
+        Option.value_map ~f:(fun (ret_id, _) -> Domain.remove (Var.of_id ret_id) astate)
+          ~default:astate ret_id
         |> exp_add_live call_exp
-        |> IList.fold_right exp_add_live (IList.map fst params)
+        |> (fun x -> List.fold_right ~f:exp_add_live (List.map ~f:fst params) ~init:x)
     | Sil.Declare_locals _ | Remove_temps _ | Abstract _ | Nullify _ ->
         astate
 end
 
 module Analyzer =
-  AbstractInterpreter.Make
-    (ProcCfg.Backward(ProcCfg.Exceptional))
-    (Scheduler.ReversePostorder)
-    (TransferFunctions)
-
-let checker { Callbacks.proc_desc; tenv; } =
-  ignore(Analyzer.exec_pdesc (ProcData.make_default proc_desc tenv))
+  AbstractInterpreter.Make (ProcCfg.Backward(ProcCfg.Exceptional)) (TransferFunctions)

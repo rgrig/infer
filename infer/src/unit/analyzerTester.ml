@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module F = Format
 module L = Logging
@@ -31,7 +31,7 @@ module StructuredSil = struct
   type structured_program = structured_instr list
 
   let rec pp_structured_instr fmt = function
-    | Cmd instr -> (Sil.pp_instr pe_text) fmt instr
+    | Cmd instr -> (Sil.pp_instr Pp.text) fmt instr
     | If (exp, then_instrs, else_instrs) ->
         (* TODO (t10287763): indent bodies of if/while *)
         F.fprintf fmt "if (%a) {@.%a@.} else {@.%a@.}"
@@ -59,9 +59,9 @@ module StructuredSil = struct
 
   let pp_structured_program = pp_structured_instr_list
 
-  let dummy_typ = Typ.Tvoid
+  let dummy_typ = Typ.mk Tvoid
   let dummy_loc = Location.dummy
-  let dummy_procname = Procname.empty_block
+  let dummy_procname = Typ.Procname.empty_block
 
   let label_counter = ref 0
 
@@ -124,7 +124,10 @@ module StructuredSil = struct
   let cast_id_to_id lhs cast_typ rhs =
     let lhs_id = ident_of_str lhs in
     let rhs_id = Exp.Var (ident_of_str rhs) in
-    make_call ~procname:BuiltinDecl.__cast (Some (lhs_id, cast_typ)) [rhs_id, cast_typ]
+    let cast_sizeof =
+      Exp.Sizeof { typ = cast_typ; nbytes=None; dynamic_length=None; subtype=Subtype.exact; } in
+    let args = [(rhs_id, cast_typ); (cast_sizeof, cast_typ)] in
+    make_call ~procname:BuiltinDecl.__cast (Some (lhs_id, cast_typ)) args
 
   let var_assign_exp ~rhs_typ lhs rhs_exp =
     let lhs_exp = var_of_str lhs in
@@ -132,7 +135,7 @@ module StructuredSil = struct
 
   let var_assign_int lhs rhs =
     let rhs_exp = Exp.int (IntLit.of_int rhs) in
-    let rhs_typ = Typ.Tint Typ.IInt in
+    let rhs_typ = Typ.mk (Tint Typ.IInt) in
     var_assign_exp ~rhs_typ lhs rhs_exp
 
   let var_assign_id ?(rhs_typ=dummy_typ) lhs rhs =
@@ -147,8 +150,8 @@ module StructuredSil = struct
     make_set ~rhs_typ ~lhs_exp ~rhs_exp
 
   let call_unknown ret_id_str_opt arg_strs =
-    let args = IList.map (fun param_str -> (var_of_str param_str, dummy_typ)) arg_strs in
-    let ret_id = Option.map (fun (str, typ) -> (ident_of_str str, typ)) ret_id_str_opt in
+    let args = List.map ~f:(fun param_str -> (var_of_str param_str, dummy_typ)) arg_strs in
+    let ret_id = Option.map ~f:(fun (str, typ) -> (ident_of_str str, typ)) ret_id_str_opt in
     make_call ret_id args
 
   let call_unknown_no_ret arg_strs =
@@ -156,13 +159,11 @@ module StructuredSil = struct
 end
 
 module Make
-    (CFG : ProcCfg.S with type node = Procdesc.Node.t)
-    (S : Scheduler.Make)
-    (T : TransferFunctions.Make) = struct
+    (CFG : ProcCfg.S with type node = Procdesc.Node.t) (T : TransferFunctions.MakeSIL) = struct
 
   open StructuredSil
 
-  module I = AbstractInterpreter.Make (CFG) (S) (T)
+  module I = AbstractInterpreter.Make (CFG) (T)
   module M = I.InvariantMap
 
   type assert_map = string M.t
@@ -231,9 +232,9 @@ module Make
           (* add the assertion to be checked after analysis converges *)
           node, M.add (CFG.id node) (inv_str, inv_label) assert_map
     and structured_instrs_to_node last_node assert_map exn_handlers instrs =
-      IList.fold_left
-        (fun acc instr -> structured_instr_to_node acc exn_handlers instr)
-        (last_node, assert_map)
+      List.fold
+        ~f:(fun acc instr -> structured_instr_to_node acc exn_handlers instr)
+        ~init:(last_node, assert_map)
         instrs in
     let start_node = create_node (Procdesc.Node.Start_node pname) [] in
     Procdesc.set_start_node pdesc start_node;
@@ -245,16 +246,16 @@ module Make
     Procdesc.set_exit_node pdesc exit_node;
     pdesc, assert_map
 
-  let create_test test_program extras pp_opt test_pname _ =
-    let pp_state = Option.default I.TransferFunctions.Domain.pp pp_opt in
+  let create_test test_program extras pp_opt ~initial test_pname _ =
+    let pp_state = Option.value ~default:I.TransferFunctions.Domain.pp pp_opt in
     let pdesc, assert_map = structured_program_to_cfg test_program test_pname in
-    let inv_map = I.exec_pdesc (ProcData.make pdesc (Tenv.create ()) extras) in
+    let inv_map = I.exec_pdesc (ProcData.make pdesc (Tenv.create ()) extras) ~initial in
 
     let collect_invariant_mismatches node_id (inv_str, inv_label) error_msgs_acc =
       let post_str =
         try
           let state = M.find node_id inv_map in
-          pp_to_string pp_state state.post
+          F.asprintf "%a" pp_state state.post
         with Not_found -> "_|_" in
       if inv_str <> post_str then
         let error_msg =
@@ -271,7 +272,7 @@ module Make
         let mismatches_str =
           F.pp_print_list
             (fun fmt error_msg -> F.fprintf fmt "%s" error_msg) F.str_formatter
-            (IList.rev error_msgs)
+            (List.rev error_msgs)
           |> F.flush_str_formatter in
         let assert_fail_message =
           F.fprintf F.str_formatter "Error while analyzing@.%a:@.%s@."
@@ -279,9 +280,9 @@ module Make
           |> F.flush_str_formatter in
         OUnit2.assert_failure assert_fail_message
 
-  let create_tests ?(test_pname=Procname.empty_block) ?pp_opt extras tests =
+  let create_tests ?(test_pname=Typ.Procname.empty_block) ~initial ?pp_opt extras tests =
     let open OUnit2 in
-    IList.map (fun (name, test_program) ->
-        name>::create_test test_program extras pp_opt test_pname) tests
+    List.map ~f:(fun (name, test_program) ->
+        name>::create_test test_program extras ~initial pp_opt test_pname) tests
 
 end

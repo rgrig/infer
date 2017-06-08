@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** module for running OCaml unit tests *)
 
@@ -20,12 +20,14 @@ let () =
     AddressTakenTests.tests;
     BoundedCallTreeTests.tests;
     CopyPropagationTests.tests;
+    DifferentialTests.tests;
+    DifferentialFiltersTests.tests;
     ProcCfgTests.tests;
     LivenessTests.tests;
     SchedulerTests.tests;
     StacktraceTests.tests;
     TaintTests.tests;
     TraceTests.tests;
-  ] in
+  ] @ ClangTests.tests in
   let test_suite = "all" >::: tests in
   OUnit2.run_test_tt_main test_suite

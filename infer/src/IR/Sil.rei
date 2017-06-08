@@ -1,7 +1,4 @@
 /*
- * vim: set ft=rust:
- * vim: set ft=reason:
- *
  * Copyright (c) 2009 - 2013 Monoidics ltd.
  * Copyright (c) 2013 - present Facebook, Inc.
  * All rights reserved.
@@ -10,11 +7,11 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
 
 
 /** The Smallfoot Intermediate Language */
-let module F = Format;
+module F = Format;
 
 
 /** {2 Programs and Types} */
@@ -31,7 +28,8 @@ type if_kind =
   | Ik_if
   | Ik_land_lor /* obtained from translation of && or || */
   | Ik_while
-  | Ik_switch;
+  | Ik_switch
+[@@deriving compare];
 
 
 /** An instruction. */
@@ -59,7 +57,16 @@ type instr =
   | Nullify Pvar.t Location.t
   | Abstract Location.t /** apply abstraction */
   | Remove_temps (list Ident.t) Location.t /** remove temporaries */
-  | Declare_locals (list (Pvar.t, Typ.t)) Location.t /** declare local variables */;
+  | Declare_locals (list (Pvar.t, Typ.t)) Location.t /** declare local variables */
+[@@deriving compare];
+
+let equal_instr: instr => instr => bool;
+
+
+/** compare instructions from different procedures without considering loc's, ident's, and pvar's.
+    the [exp_map] param gives a mapping of names used in the procedure of [instr1] to identifiers
+    used in the procedure of [instr2] */
+let compare_structural_instr: instr => instr => Exp.Map.t Exp.t => (int, Exp.Map.t Exp.t);
 
 let skip_instr: instr;
 
@@ -70,7 +77,7 @@ let instr_is_auxiliary: instr => bool;
 
 /** Offset for an lvalue. */
 type offset =
-  | Off_fld Ident.fieldname Typ.t
+  | Off_fld Fieldname.t Typ.t
   | Off_index Exp.t;
 
 
@@ -81,13 +88,19 @@ type atom =
   | Aeq Exp.t Exp.t /** equality */
   | Aneq Exp.t Exp.t /** disequality */
   | Apred PredSymb.t (list Exp.t) /** predicate symbol applied to exps */
-  | Anpred PredSymb.t (list Exp.t) /** negated predicate symbol applied to exps */;
+  | Anpred PredSymb.t (list Exp.t) /** negated predicate symbol applied to exps */
+[@@deriving compare];
+
+let equal_atom: atom => atom => bool;
 
 
 /** kind of lseg or dllseg predicates */
 type lseg_kind =
   | Lseg_NE /** nonempty (possibly circular) listseg */
-  | Lseg_PE /** possibly empty (possibly circular) listseg */;
+  | Lseg_PE /** possibly empty (possibly circular) listseg */
+[@@deriving compare];
+
+let equal_lseg_kind: lseg_kind => lseg_kind => bool;
 
 
 /** The boolean is true when the pointer was dereferenced without testing for zero. */
@@ -111,7 +124,10 @@ type inst =
   | Irearrange zero_flag null_case_flag int PredSymb.path_pos
   | Itaint
   | Iupdate zero_flag null_case_flag int PredSymb.path_pos
-  | Ireturn_from_call int;
+  | Ireturn_from_call int
+[@@deriving compare];
+
+let equal_inst: inst => inst => bool;
 
 let inst_abstraction: inst;
 
@@ -153,8 +169,10 @@ let inst_new_loc: Location.t => inst => inst;
 /** Update [inst_old] to [inst_new] preserving the zero flag */
 let update_inst: inst => inst => inst;
 
+exception JoinFail;
 
-/** join of instrumentations */
+
+/** join of instrumentations, can raise JoinFail */
 let inst_partial_join: inst => inst => inst;
 
 
@@ -163,9 +181,9 @@ let inst_partial_meet: inst => inst => inst;
 
 
 /** structured expressions represent a value of structured type, such as an array or a struct. */
-type strexp =
-  | Eexp Exp.t inst /** Base case: expression with instrumentation */
-  | Estruct (list (Ident.fieldname, strexp)) inst /** C structure */
+type strexp0 'inst =
+  | Eexp Exp.t 'inst /** Base case: expression with instrumentation */
+  | Estruct (list (Fieldname.t, strexp0 'inst)) 'inst /** C structure */
   /** Array of given length
       There are two conditions imposed / used in the array case.
       First, if some index and value pair appears inside an array
@@ -173,49 +191,85 @@ type strexp =
       For instance, x |->[10 | e1: v1] implies that e1 <= 9.
       Second, if two indices appear in an array, they should be different.
       For instance, x |->[10 | e1: v1, e2: v2] implies that e1 != e2. */
-  | Earray Exp.t (list (Exp.t, strexp)) inst;
+  | Earray Exp.t (list (Exp.t, strexp0 'inst)) 'inst
+[@@deriving compare];
+
+type strexp = strexp0 inst;
+
+
+/** Comparison function for strexp.
+    The inst:: parameter specifies whether instumentations should also
+    be considered (false by default).  */
+let compare_strexp: inst::bool? => strexp => strexp => int;
+
+
+/** Equality function for strexp.
+    The inst:: parameter specifies whether instumentations should also
+    be considered (false by default).  */
+let equal_strexp: inst::bool? => strexp => strexp => bool;
 
 
 /** an atomic heap predicate */
-type hpred =
-  | Hpointsto Exp.t strexp Exp.t
+type hpred0 'inst =
+  | Hpointsto Exp.t (strexp0 'inst) Exp.t
   /** represents [exp|->strexp:typexp] where [typexp]
-      is an expression representing a type, e.g. [sizeof(t)]. */
-  | Hlseg lseg_kind hpara Exp.t Exp.t (list Exp.t)
+      is an expression representing a type, e.h. [sizeof(t)]. */
+  | Hlseg lseg_kind (hpara0 'inst) Exp.t Exp.t (list Exp.t)
   /** higher - order predicate for singly - linked lists.
       Should ensure that exp1!= exp2 implies that exp1 is allocated.
       This assumption is used in the rearrangement. The last [exp list] parameter
-      is used to denote the shared links by all the nodes in the list.*/
-  | Hdllseg lseg_kind hpara_dll Exp.t Exp.t Exp.t Exp.t (list Exp.t)
-/** higher-order predicate for doubly-linked lists. */
-/** parameter for the higher-order singly-linked list predicate.
-    Means "lambda (root,next,svars). Exists evars. body".
-    Assume that root, next, svars, evars are disjoint sets of
-    primed identifiers, and include all the free primed identifiers in body.
-    body should not contain any non - primed identifiers or program
-    variables (i.e. pvars). */
-and hpara = {
+      is used to denote the shared links by all the nodes in the list. */
+  | Hdllseg lseg_kind (hpara_dll0 'inst) Exp.t Exp.t Exp.t Exp.t (list Exp.t)
+  /** higher-order predicate for doubly-linked lists.
+      Parameter for the higher-order singly-linked list predicate.
+      Means "lambda (root,next,svars). Exists evars. body".
+      Assume that root, next, svars, evars are disjoint sets of
+      primed identifiers, and include all the free primed identifiers in body.
+      body should not contain any non - primed identifiers or program
+      variables (i.e. pvars). */
+[@@deriving compare]
+and hpara0 'inst = {
   root: Ident.t,
   next: Ident.t,
   svars: list Ident.t,
   evars: list Ident.t,
-  body: list hpred
+  body: list (hpred0 'inst)
 }
+[@@deriving compare]
 /** parameter for the higher-order doubly-linked list predicates.
     Assume that all the free identifiers in body_dll should belong to
     cell, blink, flink, svars_dll, evars_dll. */
-and hpara_dll = {
+and hpara_dll0 'inst = {
   cell: Ident.t, /** address cell */
   blink: Ident.t, /** backward link */
   flink: Ident.t, /** forward link */
   svars_dll: list Ident.t,
   evars_dll: list Ident.t,
-  body_dll: list hpred
-};
+  body_dll: list (hpred0 'inst)
+}
+[@@deriving compare];
+
+type hpred = hpred0 inst;
+
+type hpara = hpara0 inst;
+
+type hpara_dll = hpara_dll0 inst;
+
+
+/** Comparison function for hpred.
+    The inst:: parameter specifies whether instumentations should also
+    be considered (false by default).  */
+let compare_hpred: inst::bool? => hpred => hpred => int;
+
+
+/** Equality function for hpred.
+    The inst:: parameter specifies whether instumentations should also
+    be considered (false by default).  */
+let equal_hpred: inst::bool? => hpred => hpred => bool;
 
 
 /** Sets of heap predicates */
-let module HpredSet: Set.S with type elt = hpred;
+module HpredSet: Caml.Set.S with type elt = hpred;
 
 
 /** {2 Compaction} */
@@ -260,63 +314,6 @@ let block_pvar: Pvar.t;
 /** Check if a pvar is a local pointing to a block in objc */
 let is_block_pvar: Pvar.t => bool;
 
-let exp_typ_compare: (Exp.t, Typ.t) => (Exp.t, Typ.t) => int;
-
-let instr_compare: instr => instr => int;
-
-
-/** compare instructions from different procedures without considering loc's, ident's, and pvar's.
-    the [exp_map] param gives a mapping of names used in the procedure of [instr1] to identifiers
-    used in the procedure of [instr2] */
-let instr_compare_structural: instr => instr => Exp.Map.t Exp.t => (int, Exp.Map.t Exp.t);
-
-let atom_compare: atom => atom => int;
-
-let atom_equal: atom => atom => bool;
-
-
-/** Comparison function for strexp.
-    The inst:: parameter specifies whether instumentations should also
-    be considered (false by default).  */
-let strexp_compare: inst::bool? => strexp => strexp => int;
-
-
-/** Equality function for strexp.
-    The inst:: parameter specifies whether instumentations should also
-    be considered (false by default).  */
-let strexp_equal: inst::bool? => strexp => strexp => bool;
-
-let hpara_compare: hpara => hpara => int;
-
-let hpara_equal: hpara => hpara => bool;
-
-let hpara_dll_compare: hpara_dll => hpara_dll => int;
-
-let hpara_dll_equal: hpara_dll => hpara_dll => bool;
-
-let lseg_kind_compare: lseg_kind => lseg_kind => int;
-
-let lseg_kind_equal: lseg_kind => lseg_kind => bool;
-
-
-/** Comparison function for hpred.
-    The inst:: parameter specifies whether instumentations should also
-    be considered (false by default).  */
-let hpred_compare: inst::bool? => hpred => hpred => int;
-
-
-/** Equality function for hpred.
-    The inst:: parameter specifies whether instumentations should also
-    be considered (false by default).  */
-let hpred_equal: inst::bool? => hpred => hpred => bool;
-
-let fld_strexp_compare: (Ident.fieldname, strexp) => (Ident.fieldname, strexp) => int;
-
-let fld_strexp_list_compare:
-  list (Ident.fieldname, strexp) => list (Ident.fieldname, strexp) => int;
-
-let exp_strexp_compare: (Exp.t, strexp) => (Exp.t, strexp) => int;
-
 
 /** Return the lhs expression of a hpred */
 let hpred_get_lhs: hpred => Exp.t;
@@ -325,19 +322,19 @@ let hpred_get_lhs: hpred => Exp.t;
 /** {2 Pretty Printing} */
 
 /** Begin change color if using diff printing, return updated printenv and change status */
-let color_pre_wrapper: printenv => F.formatter => 'a => (printenv, bool);
+let color_pre_wrapper: Pp.env => F.formatter => 'a => (Pp.env, bool);
 
 
 /** Close color annotation if changed */
-let color_post_wrapper: bool => printenv => F.formatter => unit;
+let color_post_wrapper: bool => Pp.env => F.formatter => unit;
 
 
 /** Pretty print an expression. */
-let pp_exp_printenv: printenv => F.formatter => Exp.t => unit;
+let pp_exp_printenv: Pp.env => F.formatter => Exp.t => unit;
 
 
 /** Pretty print an expression with type. */
-let pp_exp_typ: printenv => F.formatter => (Exp.t, Typ.t) => unit;
+let pp_exp_typ: Pp.env => F.formatter => (Exp.t, Typ.t) => unit;
 
 
 /** dump an expression. */
@@ -345,11 +342,11 @@ let d_exp: Exp.t => unit;
 
 
 /** Pretty print a type. */
-let pp_texp: printenv => F.formatter => Exp.t => unit;
+let pp_texp: Pp.env => F.formatter => Exp.t => unit;
 
 
 /** Pretty print a type with all the details. */
-let pp_texp_full: printenv => F.formatter => Exp.t => unit;
+let pp_texp_full: Pp.env => F.formatter => Exp.t => unit;
 
 
 /** Dump a type expression with all the details. */
@@ -357,7 +354,7 @@ let d_texp_full: Exp.t => unit;
 
 
 /** Pretty print a list of expressions. */
-let pp_exp_list: printenv => F.formatter => list Exp.t => unit;
+let pp_exp_list: Pp.env => F.formatter => list Exp.t => unit;
 
 
 /** Dump a list of expressions. */
@@ -365,7 +362,7 @@ let d_exp_list: list Exp.t => unit;
 
 
 /** Pretty print an offset */
-let pp_offset: printenv => F.formatter => offset => unit;
+let pp_offset: Pp.env => F.formatter => offset => unit;
 
 
 /** Convert an offset to a string */
@@ -377,7 +374,7 @@ let d_offset: offset => unit;
 
 
 /** Pretty print a list of offsets */
-let pp_offset_list: printenv => F.formatter => list offset => unit;
+let pp_offset_list: Pp.env => F.formatter => list offset => unit;
 
 
 /** Dump a list of offsets */
@@ -393,7 +390,7 @@ let instr_get_exps: instr => list Exp.t;
 
 
 /** Pretty print an instruction. */
-let pp_instr: printenv => F.formatter => instr => unit;
+let pp_instr: Pp.env => F.formatter => instr => unit;
 
 
 /** Dump an instruction. */
@@ -401,7 +398,7 @@ let d_instr: instr => unit;
 
 
 /** Pretty print a list of instructions. */
-let pp_instr_list: printenv => F.formatter => list instr => unit;
+let pp_instr_list: Pp.env => F.formatter => list instr => unit;
 
 
 /** Dump a list of instructions. */
@@ -409,7 +406,7 @@ let d_instr_list: list instr => unit;
 
 
 /** Pretty print an atom. */
-let pp_atom: printenv => F.formatter => atom => unit;
+let pp_atom: Pp.env => F.formatter => atom => unit;
 
 
 /** Dump an atom. */
@@ -421,7 +418,7 @@ let inst_to_string: inst => string;
 
 
 /** Pretty print a strexp. */
-let pp_sexp: printenv => F.formatter => strexp => unit;
+let pp_sexp: Pp.env => F.formatter => strexp => unit;
 
 
 /** Dump a strexp. */
@@ -429,7 +426,7 @@ let d_sexp: strexp => unit;
 
 
 /** Pretty print a strexp list. */
-let pp_sexp_list: printenv => F.formatter => list strexp => unit;
+let pp_sexp_list: Pp.env => F.formatter => list strexp => unit;
 
 
 /** Dump a strexp. */
@@ -437,7 +434,7 @@ let d_sexp_list: list strexp => unit;
 
 
 /** Pretty print a hpred. */
-let pp_hpred: printenv => F.formatter => hpred => unit;
+let pp_hpred: Pp.env => F.formatter => hpred => unit;
 
 
 /** Dump a hpred. */
@@ -445,25 +442,25 @@ let d_hpred: hpred => unit;
 
 
 /** Pretty print a hpara. */
-let pp_hpara: printenv => F.formatter => hpara => unit;
+let pp_hpara: Pp.env => F.formatter => hpara => unit;
 
 
 /** Pretty print a list of hparas. */
-let pp_hpara_list: printenv => F.formatter => list hpara => unit;
+let pp_hpara_list: Pp.env => F.formatter => list hpara => unit;
 
 
 /** Pretty print a hpara_dll. */
-let pp_hpara_dll: printenv => F.formatter => hpara_dll => unit;
+let pp_hpara_dll: Pp.env => F.formatter => hpara_dll => unit;
 
 
 /** Pretty print a list of hpara_dlls. */
-let pp_hpara_dll_list: printenv => F.formatter => list hpara_dll => unit;
+let pp_hpara_dll_list: Pp.env => F.formatter => list hpara_dll => unit;
 
 
 /** Module Predicates records the occurrences of predicates as parameters
     of (doubly -)linked lists and Epara.
     Provides unique numbering for predicates and an iterator. */
-let module Predicates: {
+module Predicates: {
 
   /** predicate environment */
   type env;
@@ -490,7 +487,7 @@ let module Predicates: {
 
 
 /** Pretty print a hpred with optional predicate env */
-let pp_hpred_env: printenv => option Predicates.env => F.formatter => hpred => unit;
+let pp_hpred_env: Pp.env => option Predicates.env => F.formatter => hpred => unit;
 
 
 /** {2 Functions for traversing SIL data types} */
@@ -566,7 +563,7 @@ let fav_duplicates: ref bool;
 
 
 /** Pretty print a fav. */
-let pp_fav: printenv => F.formatter => fav => unit;
+let pp_fav: Pp.env => F.formatter => fav => unit;
 
 
 /** Create a new [fav]. */
@@ -669,7 +666,11 @@ let hpara_av_add: fav => hpara => unit;
 
 
 /** {2 Substitution} */
-type subst;
+type subst [@@deriving compare];
+
+
+/** Equality for substitutions. */
+let equal_subst: subst => subst => bool;
 
 
 /** Create a substitution from a list of pairs.
@@ -688,14 +689,6 @@ let sub_to_list: subst => list (Ident.t, Exp.t);
 
 /** The empty substitution. */
 let sub_empty: subst;
-
-
-/** Comparison for substitutions. */
-let sub_compare: subst => subst => int;
-
-
-/** Equality for substitutions. */
-let sub_equal: subst => subst => bool;
 
 
 /** Compute the common id-exp part of two inputs [subst1] and [subst2].
@@ -725,7 +718,7 @@ let sub_filter: (Ident.t => bool) => subst => subst;
 
 /** [sub_filter_exp filter sub] restricts the domain of [sub] to the
     identifiers satisfying [filter(id, sub(id))]. */
-let sub_filter_pair: ((Ident.t, Exp.t) => bool) => subst => subst;
+let sub_filter_pair: subst => f::((Ident.t, Exp.t) => bool) => subst;
 
 
 /** [sub_range_partition filter sub] partitions [sub] according to

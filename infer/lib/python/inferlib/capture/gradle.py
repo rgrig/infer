@@ -25,6 +25,7 @@ LANG = ['java']
 def gen_instance(*args):
     return GradleCapture(*args)
 
+
 # This creates an empty argparser for the module, which provides only
 # description/usage information and no arguments.
 create_argparser = util.base_argparser(MODULE_DESCRIPTION, MODULE_NAME)
@@ -76,7 +77,7 @@ class GradleCapture:
                     sources.write('\n'.join(map(utils.encode, java_files)))
                     sources.flush()
                     java_args.append('@' + sources.name)
-                capture = jwlib.create_infer_command(self.args, java_args)
+                capture = jwlib.create_infer_command(java_args)
                 calls.append(capture)
         return calls
 

@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module F = Format
 module L = Logging
@@ -16,12 +16,10 @@ module Domain = struct
   include Var.Map
   type astate = Var.t Var.Map.t
 
-  let initial = Var.Map.empty
-
   (* return true if the key-value bindings in [rhs] are a subset of the key-value bindings in
      [lhs] *)
   let (<=) ~lhs ~rhs =
-    if lhs == rhs
+    if phys_equal lhs rhs
     then true
     else
       Var.Map.for_all
@@ -31,7 +29,7 @@ module Domain = struct
         rhs
 
   let join astate1 astate2 =
-    if astate1 == astate2
+    if phys_equal astate1 astate2
     then astate1
     else
       let keep_if_same _ v1_opt v2_opt = match v1_opt, v2_opt with
@@ -101,12 +99,12 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         let kill_ret_id (id,_) =
           Domain.kill_copies_with_var (Var.of_id id) astate in
         let kill_actuals_by_ref astate_acc = function
-          | (Exp.Lvar pvar, Typ.Tptr _) -> Domain.kill_copies_with_var (Var.of_pvar pvar) astate_acc
+          | (Exp.Lvar pvar, {Typ.desc=Tptr _}) -> Domain.kill_copies_with_var (Var.of_pvar pvar) astate_acc
           | _ -> astate_acc in
-        let astate' = Option.map_default kill_ret_id astate ret_id in
-        if !Config.curr_language = Config.Java
+        let astate' = Option.value_map ~f:kill_ret_id ~default:astate ret_id in
+        if Config.curr_language_is Config.Java
         then astate' (* Java doesn't have pass-by-reference *)
-        else IList.fold_left kill_actuals_by_ref astate' actuals
+        else List.fold ~f:kill_actuals_by_ref ~init:astate' actuals
     | Sil.Store _ | Prune _ | Nullify _ | Abstract _ | Remove_temps _ | Declare_locals _ ->
         (* none of these can assign to program vars or logical vars *)
         astate

@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module L = Logging
 module P = Printf
@@ -18,64 +18,41 @@ module P = Printf
 
 type proc_origin =
   {
-    pname : Procname.t;
+    pname : Typ.Procname.t;
     loc: Location.t;
-    annotated_signature : Annotations.annotated_signature;
+    annotated_signature : AnnotatedSignature.t;
     is_library : bool;
-  }
+  } [@@deriving compare]
 
 type t =
   | Const of Location.t
-  | Field of Ident.fieldname * Location.t
+  | Field of t * Fieldname.t * Location.t
   | Formal of Mangled.t
   | Proc of proc_origin
   | New
   | ONone
   | Undef
+[@@deriving compare]
 
-let proc_origin_equal po1 po2 =
-  Procname.equal po1.pname po2.pname &&
-  Location.equal po1.loc po2.loc &&
-  Annotations.equal po1.annotated_signature po2.annotated_signature &&
-  bool_equal po1.is_library po2.is_library
+let equal = [%compare.equal : t]
 
-let equal o1 o2 = match o1, o2 with
-  | Const loc1, Const loc2 ->
-      Location.equal loc1 loc2
-  | Const _, _
-  | _, Const _ -> false
-  | Field (fn1, loc1), Field (fn2, loc2) ->
-      Ident.fieldname_equal fn1 fn2 &&
-      Location.equal loc1 loc2
-  | Field _, _
-  | _, Field _ -> false
-  | Formal s1, Formal s2 ->
-      Mangled.equal s1 s2
-  | Formal _, _
-  | _, Formal _ -> false
-  | Proc po1 , Proc po2 ->
-      proc_origin_equal po1 po2
-  | Proc _, _
-  | _, Proc _ -> false
-  | New, New -> true
-  | New, _
-  | _, New -> false
-  | ONone, ONone -> true
-  | ONone, _
-  | _, ONone -> false
-  | Undef, Undef -> true
-
-let to_string = function
-  | Const _ -> "Const"
-  | Field (fn, _) -> "Field " ^ Ident.fieldname_to_simplified_string fn
-  | Formal s -> "Formal " ^ Mangled.to_string s
+let rec to_string = function
+  | Const _ ->
+      "Const"
+  | Field (o, fn, _) ->
+      "Field " ^ Fieldname.to_simplified_string fn ^ (" (inner: " ^ to_string o ^ ")")
+  | Formal s ->
+      "Formal " ^ Mangled.to_string s
   | Proc po ->
       Printf.sprintf
         "Fun %s"
-        (Procname.to_simplified_string po.pname)
-  | New -> "New"
-  | ONone -> "ONone"
-  | Undef -> "Undef"
+        (Typ.Procname.to_simplified_string po.pname)
+  | New ->
+      "New"
+  | ONone ->
+      "ONone"
+  | Undef ->
+      "Undef"
 
 let get_description tenv origin =
   let atline loc =
@@ -83,8 +60,8 @@ let get_description tenv origin =
   match origin with
   | Const loc ->
       Some ("null constant" ^ atline loc, Some loc, None)
-  | Field (fn, loc) ->
-      Some ("field " ^ Ident.fieldname_to_simplified_string fn ^ atline loc, Some loc, None)
+  | Field (_, fn, loc) ->
+      Some ("field " ^ Fieldname.to_simplified_string fn ^ atline loc, Some loc, None)
   | Formal s ->
       Some ("method parameter " ^ Mangled.to_string s, None, None)
   | Proc po ->
@@ -102,7 +79,7 @@ let get_description tenv origin =
       let description = Printf.sprintf
           "call to %s%s%s%s"
           strict
-          (Procname.to_simplified_string po.pname)
+          (Typ.Procname.to_simplified_string po.pname)
           modelled_in
           (atline po.loc) in
       Some (description, Some po.loc, Some po.annotated_signature)
@@ -113,5 +90,10 @@ let get_description tenv origin =
 
 let join o1 o2 = match o1, o2 with (* left priority *)
   | Undef, _
-  | _, Undef -> Undef
-  | _ -> o1
+  | _, Undef ->
+      Undef
+  | Field _, (Const _ | Formal _ | Proc _ | New) ->
+      (* low priority to Field, to support field initialization patterns *)
+      o2
+  | _ ->
+      o1

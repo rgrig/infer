@@ -1,7 +1,4 @@
 /*
- * vim: set ft=rust:
- * vim: set ft=reason:
- *
  * Copyright (c) 2009 - 2013 Monoidics ltd.
  * Copyright (c) 2013 - present Facebook, Inc.
  * All rights reserved.
@@ -10,212 +7,112 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
+
+module Hashtbl = Caml.Hashtbl;
 
 
 /** Module for Names and Identifiers */
-let module L = Logging;
+module L = Logging;
 
-let module F = Format;
+module F = Format;
 
-type name = string;
+module Name = {
+  type t =
+    | Primed
+    | Normal
+    | Footprint
+    | Spec
+    | FromString string
+  [@@deriving compare];
+  let primed = "t";
+  let normal = "n";
+  let footprint = "f";
+  let spec = "val";
+  let from_string s => FromString s;
+  let to_string =
+    fun
+    | Primed => primed
+    | Normal => normal
+    | Footprint => footprint
+    | Spec => spec
+    | FromString s => s;
+};
 
-type fieldname = {fpos: int, fname: Mangled.t};
+type name = Name.t [@@deriving compare];
 
-type kind = int;
+let name_spec = Name.Spec;
 
-let kprimed = (-1);
+let name_primed = Name.Primed;
 
-let knormal = 0;
+let equal_name = [%compare.equal : name];
 
-let kfootprint = 1;
+type kind =
+  | KNone
+  /** special kind of "null ident" (basically, a more compact way of implementing an ident option).
+      useful for situations when an instruction requires an id, but no one should read the result. */
+  | KFootprint
+  | KNormal
+  | KPrimed
+[@@deriving compare];
 
+let kfootprint = KFootprint;
 
-/** special kind of "null ident" (basically, a more compact way of implementing an ident option).
-    useful for situations when an instruction requires an id, but no one should read the result. */
-let knone = 2;
+let knormal = KNormal;
+
+let kprimed = KPrimed;
+
+let equal_kind = [%compare.equal : kind];
 
 /* timestamp for a path identifier */
 let path_ident_stamp = (-3);
 
-type t = {kind: int, name: name, stamp: int};
+type t = {kind, name: Name.t, stamp: int} [@@deriving compare];
 
-type _ident = t;
-
-
-/** {2 Comparison Functions} */
-let name_compare = string_compare;
-
-let fieldname_compare fn1 fn2 => {
-  let n = int_compare fn1.fpos fn2.fpos;
-  if (n != 0) {
-    n
-  } else {
-    Mangled.compare fn1.fname fn2.fname
-  }
-};
-
-let name_equal = string_equal;
-
-let kind_equal k1 k2 => k1 === k2;
-
-let compare i1 i2 => {
-  let n = i2.kind - i1.kind;
-  if (n != 0) {
-    n
-  } else {
-    let n = name_compare i1.name i2.name;
-    if (n != 0) {
-      n
-    } else {
-      int_compare i1.stamp i2.stamp
-    }
-  }
-};
-
+/* most unlikely first */
 let equal i1 i2 =>
-  i1.stamp === i2.stamp &&
-  i1.kind === i2.kind && name_equal i1.name i2.name /* most unlikely first */;
-
-let fieldname_equal fn1 fn2 => fieldname_compare fn1 fn2 == 0;
-
-let rec ident_list_compare il1 il2 =>
-  switch (il1, il2) {
-  | ([], []) => 0
-  | ([], _) => (-1)
-  | (_, []) => 1
-  | ([i1, ...l1], [i2, ...l2]) =>
-    let n = compare i1 i2;
-    if (n != 0) {
-      n
-    } else {
-      ident_list_compare l1 l2
-    }
-  };
-
-let ident_list_equal ids1 ids2 => ident_list_compare ids1 ids2 == 0;
+  Int.equal i1.stamp i2.stamp && equal_kind i1.kind i2.kind && equal_name i1.name i2.name;
 
 
 /** {2 Set for identifiers} */
-let module IdentSet = Set.Make {
-  type t = _ident;
-  let compare = compare;
-};
+module IdentSet =
+  Caml.Set.Make {
+    type nonrec t = t;
+    let compare = compare;
+  };
 
-let module IdentMap = Map.Make {
-  type t = _ident;
-  let compare = compare;
-};
+module IdentMap =
+  Caml.Map.Make {
+    type nonrec t = t;
+    let compare = compare;
+  };
 
-let module IdentHash = Hashtbl.Make {
-  type t = _ident;
-  let equal = equal;
-  let hash (id: t) => Hashtbl.hash id;
-};
+module IdentHash =
+  Hashtbl.Make {
+    type nonrec t = t;
+    let equal = equal;
+    let hash (id: t) => Hashtbl.hash id;
+  };
 
-let module FieldSet = Set.Make {
-  type t = fieldname;
-  let compare = fieldname_compare;
-};
-
-let module FieldMap = Map.Make {
-  type t = fieldname;
-  let compare = fieldname_compare;
-};
-
-let idlist_to_idset ids => IList.fold_left (fun set id => IdentSet.add id set) IdentSet.empty ids;
+let idlist_to_idset ids =>
+  List.fold f::(fun set id => IdentSet.add id set) init::IdentSet.empty ids;
 
 
 /** {2 Conversion between Names and Strings} */
-
-let module NameHash = Hashtbl.Make {
-  type t = name;
-  let equal = name_equal;
-  let hash = Hashtbl.hash;
-};
+module NameHash =
+  Hashtbl.Make {
+    type t = name;
+    let equal = equal_name;
+    let hash = Hashtbl.hash;
+  };
 
 
 /** Convert a string to a name */
-let string_to_name (s: string) => s;
-
-
-/** Create a field name with the given position (field number in the CSU) */
-let create_fieldname (n: Mangled.t) (position: int) => {fpos: position, fname: n};
+let string_to_name = Name.from_string;
 
 
 /** Convert a name to a string. */
-let name_to_string (name: name) => name;
-
-
-/** Convert a fieldname to a string. */
-let fieldname_to_string fn => Mangled.to_string fn.fname;
-
-
-/** Convert a fieldname to a string, including the mangled part. */
-let fieldname_to_complete_string fn => Mangled.to_string_full fn.fname;
-
-
-/** Convert a fieldname to a simplified string with at most one-level path. */
-let fieldname_to_simplified_string fn => {
-  let s = Mangled.to_string fn.fname;
-  switch (string_split_character s '.') {
-  | (Some s1, s2) =>
-    switch (string_split_character s1 '.') {
-    | (Some _, s4) => s4 ^ "." ^ s2
-    | _ => s
-    }
-  | _ => s
-  }
-};
-
-
-/** Convert a fieldname to a flat string without path. */
-let fieldname_to_flat_string fn => {
-  let s = Mangled.to_string fn.fname;
-  switch (string_split_character s '.') {
-  | (Some _, s2) => s2
-  | _ => s
-  }
-};
-
-
-/** Returns the class part of the fieldname */
-let java_fieldname_get_class fn => {
-  let fn = fieldname_to_string fn;
-  let ri = String.rindex fn '.';
-  String.sub fn 0 ri
-};
-
-
-/** Returns the last component of the fieldname */
-let java_fieldname_get_field fn => {
-  let fn = fieldname_to_string fn;
-  let ri = 1 + String.rindex fn '.';
-  String.sub fn ri (String.length fn - ri)
-};
-
-
-/** Check if the field is the synthetic this$n of a nested class, used to access the n-th outher instance. */
-let java_fieldname_is_outer_instance fn => {
-  let fn = fieldname_to_string fn;
-  let fn_len = String.length fn;
-  let this = ".this$";
-  let this_len = String.length this;
-  let zero_to_nine s => s >= "0" && s <= "9";
-  fn_len > this_len &&
-  String.sub fn (fn_len - this_len - 1) this_len == this &&
-  zero_to_nine (String.sub fn (fn_len - 1) 1)
-};
-
-let fieldname_offset fn => fn.fpos;
-
-
-/** hidded fieldname constant */
-let fieldname_hidden = create_fieldname (Mangled.from_string ".hidden") 0;
-
-
-/** hidded fieldname constant */
-let fieldname_is_hidden fn => fieldname_equal fn fieldname_hidden;
+let name_to_string = Name.to_string;
 
 
 /** {2 Functions and Hash Tables for Managing Stamps} */
@@ -227,7 +124,7 @@ let set_stamp i stamp => {...i, stamp};
 /** Get the stamp of the identifier */
 let get_stamp i => i.stamp;
 
-let module NameGenerator = {
+module NameGenerator = {
   type t = NameHash.t int;
   let create () :t => NameHash.create 17;
 
@@ -266,34 +163,20 @@ let module NameGenerator = {
 };
 
 
-/** Name used for primed tmp variables */
-let name_primed = string_to_name "t";
-
-
-/** Name used for normal tmp variables */
-let name_normal = string_to_name "n";
-
-
-/** Name used for footprint tmp variables */
-let name_footprint = string_to_name "f";
-
-
-/** Name used for spec variables */
-let name_spec = string_to_name "val";
-
-
 /** Name used for the return variable */
 let name_return = Mangled.from_string "return";
 
 
 /** Return the standard name for the given kind */
 let standard_name kind =>
-  if (kind === knormal || kind === knone) {
-    name_normal
-  } else if (kind === kfootprint) {
-    name_footprint
+  if (equal_kind kind KNormal || equal_kind kind KNone) {
+    Name.Normal
+  } else if (
+    equal_kind kind KFootprint
+  ) {
+    Name.Footprint
   } else {
-    name_primed
+    Name.Primed
   };
 
 
@@ -309,21 +192,21 @@ let create kind stamp => create_with_stamp kind (standard_name kind) stamp;
 
 
 /** Generate a normal identifier with the given name and stamp */
-let create_normal name stamp => create_with_stamp knormal name stamp;
+let create_normal name stamp => create_with_stamp KNormal name stamp;
 
 
 /** Create a fresh identifier with default name for the given kind. */
 let create_fresh kind => NameGenerator.create_fresh_ident kind (standard_name kind);
 
-let create_none () => create_fresh knone;
+let create_none () => create_fresh KNone;
 
 
 /** Generate a primed identifier with the given name and stamp */
-let create_primed name stamp => create_with_stamp kprimed name stamp;
+let create_primed name stamp => create_with_stamp KPrimed name stamp;
 
 
 /** Generate a footprint identifier with the given name and stamp */
-let create_footprint name stamp => create_with_stamp kfootprint name stamp;
+let create_footprint name stamp => create_with_stamp KFootprint name stamp;
 
 
 /** {2 Functions for Identifiers} */
@@ -331,30 +214,32 @@ let create_footprint name stamp => create_with_stamp kfootprint name stamp;
 /** Get a name of an identifier */
 let get_name id => id.name;
 
-let is_primed (id: t) => id.kind === kprimed;
+let has_kind id kind => equal_kind id.kind kind;
 
-let is_normal (id: t) => id.kind === knormal || id.kind === knone;
+let is_primed (id: t) => has_kind id KPrimed;
 
-let is_footprint (id: t) => id.kind === kfootprint;
+let is_normal (id: t) => has_kind id KNormal || has_kind id KNone;
 
-let is_none (id: t) => id.kind == knone;
+let is_footprint (id: t) => has_kind id KFootprint;
 
-let is_path (id: t) => id.kind === knormal && id.stamp == path_ident_stamp;
+let is_none (id: t) => has_kind id KNone;
+
+let is_path (id: t) => has_kind id KNormal && Int.equal id.stamp path_ident_stamp;
 
 let make_unprimed id =>
-  if (id.kind != kprimed) {
+  if (not (has_kind id KPrimed)) {
     assert false
-  } else if (id.kind === knone) {
-    {...id, kind: knone}
+  } else if (has_kind id KNone) {
+    {...id, kind: KNone}
   } else {
-    {...id, kind: knormal}
+    {...id, kind: KNormal}
   };
 
 
 /** Update the name generator so that the given id's are not generated again */
 let update_name_generator ids => {
   let upd id => ignore (create_with_stamp id.kind id.name id.stamp);
-  IList.iter upd ids
+  List.iter f::upd ids
 };
 
 
@@ -367,14 +252,14 @@ let create_path pathstring =>
 
 /** Convert an identifier to a string. */
 let to_string id =>
-  if (id.kind === knone) {
+  if (has_kind id KNone) {
     "_"
   } else {
     let base_name = name_to_string id.name;
     let prefix =
-      if (id.kind === kfootprint) {
+      if (has_kind id KFootprint) {
         "@"
-      } else if (id.kind === knormal) {
+      } else if (has_kind id KNormal) {
         ""
       } else {
         "_"
@@ -387,28 +272,22 @@ let to_string id =>
 /** Pretty print a name. */
 let pp_name f name => F.fprintf f "%s" (name_to_string name);
 
-let pp_fieldname f fn =>
-  /* only use for debug F.fprintf f "%a#%d" pp_name fn.fname fn.fpos */
-  Mangled.pp f fn.fname;
-
 
 /** Pretty print a name in latex. */
 let pp_name_latex style f (name: name) => Latex.pp_string style f (name_to_string name);
 
-let pp_fieldname_latex style f fn => Latex.pp_string style f (Mangled.to_string fn.fname);
-
 
 /** Pretty print an identifier. */
 let pp pe f id =>
-  switch pe.pe_kind {
-  | PP_TEXT
-  | PP_HTML => F.fprintf f "%s" (to_string id)
-  | PP_LATEX =>
+  switch pe.Pp.kind {
+  | TEXT
+  | HTML => F.fprintf f "%s" (to_string id)
+  | LATEX =>
     let base_name = name_to_string id.name;
     let style =
-      if (id.kind == kfootprint) {
+      if (has_kind id KFootprint) {
         Latex.Boldface
-      } else if (id.kind == knormal) {
+      } else if (has_kind id KNormal) {
         Latex.Roman
       } else {
         Latex.Roman
@@ -418,8 +297,8 @@ let pp pe f id =>
 
 
 /** pretty printer for lists of identifiers */
-let pp_list pe => pp_comma_seq (pp pe);
+let pp_list pe => Pp.comma_seq (pp pe);
 
 
 /** pretty printer for lists of names */
-let pp_name_list = pp_comma_seq pp_name;
+let pp_name_list = Pp.comma_seq pp_name;

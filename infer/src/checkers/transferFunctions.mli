@@ -7,18 +7,39 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! IStd
+
 (** Transfer functions that push abstract states across instructions. A typical client should
     implement the Make signature to allow the transfer functions to be used with any kind of CFG. *)
 
 module type S = sig
   module CFG : ProcCfg.S
-  module Domain : AbstractDomain.S (* abstract domain whose state we propagate *)
-  type extras (* read-only extra state (results of previous analyses, globals, etc.) *)
 
-  (* {A} instr {A'}. [node] is the node of the current instruction *)
-  val exec_instr : Domain.astate -> extras ProcData.t -> CFG.node -> Sil.instr -> Domain.astate
+  (** abstract domain whose state we propagate *)
+  module Domain : AbstractDomain.S
+
+  (** read-only extra state (results of previous analyses, globals, etc.) *)
+  type extras
+
+  (** type of the instructions the transfer functions operate on *)
+  type instr
+
+  (** {A} instr {A'}. [node] is the node of the current instruction *)
+  val exec_instr : Domain.astate -> extras ProcData.t -> CFG.node -> instr -> Domain.astate
 end
 
-module type Make = functor (C : ProcCfg.S) -> sig
-  include (S with module CFG = C)
+module type SIL = sig
+  include (S with type instr := Sil.instr)
+end
+
+module type HIL = sig
+  include (S with type instr := HilInstr.t)
+end
+
+module type MakeSIL = functor (C : ProcCfg.S) -> sig
+  include (SIL with module CFG = C)
+end
+
+module type MakeHIL = functor (C : ProcCfg.S) -> sig
+  include (HIL with module CFG = C)
 end

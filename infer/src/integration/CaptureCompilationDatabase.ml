@@ -7,73 +7,32 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
-module CLOpt = CommandLineOption
 module F = Format
 
+module CLOpt = CommandLineOption
+module L = Logging
+
 let capture_text =
-  if Config.analyzer = Config.Linters then "linting"
+  if Config.equal_analyzer Config.analyzer Config.Linters then "linting"
   else "translating"
 
-let replace_header_file_with_source_file file_path =
-  let file_path = DB.source_file_to_abs_path file_path in
-  let possible_file_replacements file_path =
-    IList.map (fun suffix -> (Filename.chop_extension file_path) ^ suffix ) [".m"; ".mm"] in
-  let file =
-    if Filename.check_suffix file_path ".h" || Filename.check_suffix file_path ".hh" then
-      try
-        IList.find Sys.file_exists (possible_file_replacements file_path)
-      with Not_found ->
-        Logging.out "Couldn't find any replacement source file for file %s " file_path;
-        file_path
-    else file_path in
-  DB.abs_source_file_from_path file
-
 (** Read the files to compile from the changed files index. *)
-let read_files_to_compile () =
-  let changed_files = DB.SourceFileSet.empty in
-  match DB.read_changed_files_index with
+let should_capture_file_from_index () =
+  match SourceFile.changed_files_set with
   | None ->
       (match Config.changed_files_index with
        | Some index ->
-           Process.print_error_and_exit "Error reading the changed files index %s.\n%!" index
-       | None -> changed_files)
-  | Some lines ->
-      IList.fold_left
-        (fun changed_files line ->
-           let file = replace_header_file_with_source_file (DB.source_file_from_string line) in
-           DB.SourceFileSet.add file changed_files)
-        changed_files lines
+           Process.print_error_and_exit "Error reading the changed files index %s.@\n%!" index
+       | None -> function _ -> true)
+  | Some files_set ->
+      function source_file -> SourceFile.Set.mem source_file files_set
 
-(** The buck targets are assumed to start with //, aliases are not supported. *)
-let check_args_for_targets args =
-  if not (IList.exists (Utils.string_is_prefix "//") args) then
-    let args_s = String.concat " " args in
-    Process.print_error_and_exit
-      "Error reading buck command %s. Please, pass buck targets, aliases are not allowed.\n%!"
-      args_s
-
-let add_flavor_to_targets args =
-  let flavor =
-    match Config.use_compilation_database with
-    | Some `Deps -> "#uber-compilation-database"
-    | Some `NoDeps -> "#compilation-database"
-    | _ -> assert false (* cannot happen *) in
-  let process_arg arg =
-    (* Targets are assumed to start with //, aliases are not allowed *)
-    if Utils.string_is_prefix "//" arg then arg ^ flavor
-    else arg in
-  IList.map process_arg args
-
-let create_files_stack compilation_database changed_files =
+let create_files_stack compilation_database should_capture_file =
   let stack = Stack.create () in
-  let should_add_file_to_cdb changed_files file_path =
-    match Config.changed_files_index with
-    | Some _ -> DB.SourceFileSet.mem (DB.source_file_from_string file_path) changed_files
-    | None -> true in
-  let add_to_stack file _ = if should_add_file_to_cdb changed_files file then
-      Stack.push file stack in
+  let add_to_stack file _ = if should_capture_file file then
+      Stack.push stack file in
   CompilationDatabase.iter compilation_database add_to_stack;
   stack
 
@@ -81,10 +40,10 @@ let swap_command cmd =
   let plusplus = "++" in
   let clang = "clang" in
   let clangplusplus = "clang++" in
-  if Utils.string_is_suffix plusplus cmd then
-    Config.wrappers_dir // clangplusplus
+  if String.is_suffix ~suffix:plusplus cmd then
+    Config.wrappers_dir ^/ clangplusplus
   else
-    Config.wrappers_dir // clang
+    Config.wrappers_dir ^/ clang
 
 let run_compilation_file compilation_database file =
   try
@@ -93,92 +52,96 @@ let run_compilation_file compilation_database file =
     let arg_file =
       ClangQuotes.mk_arg_file
         "cdb_clang_args_" ClangQuotes.EscapedNoQuotes [compilation_data.args] in
-    let args = Array.of_list [wrapper_cmd; "@" ^ arg_file] in
+    let args = ["@" ^ arg_file] in
     let env =
-      let env0 = Unix.environment () in
-      let found = ref false in
-      Array.iteri (fun i key_val ->
-          match string_split_character key_val '=' with
-          | Some var, args when string_equal var CLOpt.args_env_var ->
-              found := true ;
-              env0.(i) <-
-                F.sprintf "%s=%s%c--fcp-syntax-only" CLOpt.args_env_var args CLOpt.env_var_sep
-          | _ ->
-              ()
-        ) env0 ;
-      if !found then
-        env0
-      else
-        Array.append env0 [|CLOpt.args_env_var ^ "=--fcp-syntax-only"|] in
+      `Extend [
+        (CLOpt.args_env_var,
+         String.concat ~sep:(String.of_char CLOpt.env_var_sep)
+           (Option.to_list (Sys.getenv CLOpt.args_env_var) @ ["--fcp-syntax-only"]))] in
     (Some compilation_data.dir, wrapper_cmd, args, env)
   with Not_found ->
-    Process.print_error_and_exit "Failed to find compilation data for %s \n%!" file
+    Process.print_error_and_exit "Failed to find compilation data for %a@\n%!"
+      SourceFile.pp file
 
-let run_compilation_database compilation_database changed_files =
+let run_compilation_database compilation_database should_capture_file =
   let number_of_files = CompilationDatabase.get_size compilation_database in
-  Logging.out "Starting %s %d files \n%!" capture_text number_of_files;
-  Logging.stdout "Starting %s %d files \n%!" capture_text number_of_files;
-  let jobs_stack = create_files_stack compilation_database changed_files in
+  L.(debug Capture Quiet) "Starting %s %d files@\n%!" capture_text number_of_files;
+  L.progress "Starting %s %d files@\n%!" capture_text number_of_files;
+  let jobs_stack = create_files_stack compilation_database should_capture_file in
   let capture_text_upper = String.capitalize capture_text in
-  let job_to_string = fun file -> capture_text_upper ^ " " ^ file in
-  Process.run_jobs_in_parallel jobs_stack (run_compilation_file compilation_database) job_to_string
+  let job_to_string =
+    fun file -> Format.asprintf "%s %a" capture_text_upper SourceFile.pp file in
+  let fail_on_failed_job =
+    if Config.linters_ignore_clang_failures then false
+    else
+      match Config.buck_compilation_database with
+      | Some `NoDeps -> Config.clang_frontend_do_lint
+      | _ -> false in
+  Process.run_jobs_in_parallel ~fail_on_failed_job jobs_stack
+    (run_compilation_file compilation_database) job_to_string
 
 (** Computes the compilation database files. *)
-let get_compilation_database_files_buck () =
-  let cmd = IList.rev_append Config.rest (IList.rev Config.buck_build_args) in
-  match cmd with
-  | buck :: build :: args ->
-      (check_args_for_targets args;
-       let args_with_flavor = add_flavor_to_targets args in
-       let buck_build = Array.of_list
-           (buck :: build :: "--config" :: "*//cxx.pch_enabled=false" :: args_with_flavor) in
-       Process.create_process_and_wait buck_build;
-       let buck_targets_list = buck :: "targets" :: "--show-output" :: args_with_flavor in
-       let buck_targets = String.concat " " buck_targets_list in
-       try
-         match fst @@ Utils.with_process_in buck_targets Std.input_list with
-         | [] -> Logging.stdout "There are no files to process, exiting."; exit 0
-         | lines ->
-             Logging.out "Reading compilation database from:@\n%s@\n" (String.concat "\n" lines);
-             let scan_output compilation_database_files chan =
-               Scanf.sscanf chan "%s %s"
-                 (fun target file -> StringMap.add target file compilation_database_files) in
-             (* Map from targets to json output *)
-             let compilation_database_files = IList.fold_left scan_output StringMap.empty lines in
-             IList.map (snd) (StringMap.bindings compilation_database_files)
-       with Unix.Unix_error (err, _, _) ->
-         Process.print_error_and_exit
-           "Cannot execute %s\n%!"
-           (buck_targets ^ " " ^ (Unix.error_message err)))
+let get_compilation_database_files_buck ~prog ~args =
+  match Buck.add_flavors_to_buck_command args with
+  | build :: args_with_flavor -> (
+      let build_args = build :: "--config" :: "*//cxx.pch_enabled=false" :: args_with_flavor in
+      Process.create_process_and_wait ~prog ~args:build_args;
+      (* The option --keep-going is not accepted in the command buck targets *)
+      let args_with_flavor_no_keep_going =
+        List.filter ~f:(fun s -> not (String.equal s "--keep-going")) args_with_flavor in
+      let buck_targets_shell =
+        prog :: "targets" :: "--show-output" :: args_with_flavor_no_keep_going
+        |> Utils.shell_escape_command in
+      let (output, exit_or_signal) =
+        Utils.with_process_in buck_targets_shell In_channel.input_lines in
+      match exit_or_signal with
+      | Error _ as status ->
+          failwithf "*** command failed:@\n*** %s@\n*** %s@."
+            buck_targets_shell
+            (Unix.Exit_or_signal.to_string_hum status)
+      | Ok () ->
+          match output with
+          | [] -> L.external_error "There are no files to process, exiting@."; exit 0
+          | lines ->
+              L.(debug Capture Quiet) "Reading compilation database from:@\n%s@\n"
+                (String.concat ~sep:"\n" lines);
+              (* this assumes that flavors do not contain spaces *)
+              let split_regex = Str.regexp "#[^ ]* " in
+              let scan_output compilation_database_files line =
+                match Str.bounded_split split_regex line 2 with
+                | _::filename::[] ->
+                    `Raw filename::compilation_database_files
+                | _ ->
+                    failwithf
+                      "Failed to parse `buck targets --show-output ...` line of output:@\n%s"
+                      line in
+              List.fold ~f:scan_output ~init:[] lines
+    )
   | _ ->
-      let cmd = String.concat " " cmd in
+      let cmd = String.concat ~sep:" " (prog :: args) in
       Process.print_error_and_exit "Incorrect buck command: %s. Please use buck build <targets>" cmd
 
 (** Compute the compilation database files. *)
-let get_compilation_database_files_xcodebuild () =
-  let cmd_and_args = IList.rev Config.rest in
-  let temp_dir = Config.results_dir // "clang" in
-  create_dir temp_dir;
-  let tmp_file = Filename.temp_file ~temp_dir:temp_dir "cdb" ".json" in
-  let xcodebuild_cmd, xcodebuild_args =
-    match cmd_and_args with
-    | [] -> failwith("Build command cannot be empty")
-    | cmd :: _ -> cmd, cmd_and_args in
-  let xcpretty_cmd = "xcpretty" in
-  let xcpretty_cmd_args =
-    [xcpretty_cmd; "--report"; "json-compilation-database"; "--output"; tmp_file] in
+let get_compilation_database_files_xcodebuild ~prog ~args =
+  let tmp_file = Filename.temp_file "cdb" ".json" in
+  let xcodebuild_prog, xcodebuild_args = prog, prog::args in
+  let xcpretty_prog = "xcpretty" in
+  let xcpretty_args =
+    [xcpretty_prog; "--report"; "json-compilation-database"; "--output"; tmp_file] in
+  L.(debug Capture Quiet) "Running %s | %s@\n@." (List.to_string ~f:Fn.id xcodebuild_args)
+    (List.to_string ~f:Fn.id xcpretty_args);
   let producer_status, consumer_status =
-    Process.pipeline ~producer_prog:xcodebuild_cmd ~producer_args:xcodebuild_args
-      ~consumer_prog:xcpretty_cmd ~consumer_args:xcpretty_cmd_args in
+    Process.pipeline
+      ~producer_prog:xcodebuild_prog ~producer_args:xcodebuild_args
+      ~consumer_prog:xcpretty_prog ~consumer_args:xcpretty_args in
   match producer_status, consumer_status with
-  | Ok (), Ok () -> [tmp_file]
+  | Ok (), Ok () -> [`Escaped tmp_file]
   | _ ->
-      Logging.stderr "There was an error executing the build command";
+      L.external_error "There was an error executing the build command";
       exit 1
 
+let capture_files_in_database compilation_database =
+  run_compilation_database compilation_database (should_capture_file_from_index ())
 
-let capture_files_in_database db_json_files =
-  let changed_files = read_files_to_compile () in
-  let compilation_database = CompilationDatabase.empty () in
-  IList.iter (CompilationDatabase.decode_json_file compilation_database) db_json_files;
-  run_compilation_database compilation_database changed_files
+let capture_file_in_database compilation_database source_file =
+  run_compilation_database compilation_database (SourceFile.equal source_file)

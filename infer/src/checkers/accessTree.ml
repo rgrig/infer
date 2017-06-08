@@ -7,45 +7,72 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module F = Format
 module L = Logging
 
-(** tree of (trace, access path) associations organized by structure of access paths *)
-module Make (TraceDomain : AbstractDomain.S) = struct
-
+module type S = sig
+  module TraceDomain : AbstractDomain.WithBottom
   module AccessMap = AccessPath.AccessMap
   module BaseMap = AccessPath.BaseMap
 
   type node = TraceDomain.astate * tree
   and tree =
-    | Subtree of node AccessMap.t (* map from access -> nodes. a leaf is encoded as an empty map *)
-    | Star (* special leaf for starred access paths *)
+    | Subtree of node AccessMap.t
+    | Star
 
-  (* map from base var -> access subtree *)
+  type t = node BaseMap.t
+
+  include AbstractDomain.WithBottom with type astate = t
+
+  val empty_node : node
+
+  val make_node : TraceDomain.astate -> node AccessMap.t -> node
+
+  val make_access_node : TraceDomain.astate -> AccessPath.access -> TraceDomain.astate -> node
+
+  val make_normal_leaf : TraceDomain.astate -> node
+
+  val make_starred_leaf : TraceDomain.astate -> node
+
+  val get_node : AccessPath.t -> t -> node option
+
+  val get_trace : AccessPath.t -> t -> TraceDomain.astate option
+
+  val add_node : AccessPath.t -> node -> t -> t
+
+  val add_trace : AccessPath.t -> TraceDomain.astate -> t -> t
+
+  val node_join : node -> node -> node
+
+  val fold : ('a -> AccessPath.t -> node -> 'a) -> t -> 'a -> 'a
+
+  val trace_fold : ('a -> AccessPath.t -> TraceDomain.astate -> 'a) -> t -> 'a -> 'a
+
+  val pp_node : F.formatter -> node -> unit
+end
+
+module Make (TraceDomain : AbstractDomain.WithBottom) = struct
+  module TraceDomain = TraceDomain
+  module AccessMap = AccessPath.AccessMap
+  module BaseMap = AccessPath.BaseMap
+
+  type node = TraceDomain.astate * tree
+  and tree =
+    | Subtree of node AccessMap.t
+    | Star
+
   type t = node BaseMap.t
   type astate = t
 
-  (** Here's how to represent a few different kinds of trace * access path associations:
-      (x, T)               := { x |-> (T, Subtree {}) }
-      (x.f, T)             := { x |-> (empty, Subtree { f |-> (T, Subtree {}) }) }
-      (x*, T)              := { x |-> (T, Star) }
-      (x.f*, T)            := { x |-> (empty, Subtree { f |-> (T, Star) }) }
-      (x, T1), (y, T2)     := { x |-> (T1, Subtree {}), y |-> (T2, Subtree {}) }
-      (x.f, T1), (x.g, T2) := { x |-> (empty, Subtree { f |-> (T1, Subtree {}),
-                                                        g |-> (T2, Subtree {}) }) }
-  *)
-
   let empty = BaseMap.empty
-
-  let initial = empty
 
   let make_node trace subtree =
     trace, Subtree subtree
 
   let empty_node =
-    make_node TraceDomain.initial AccessMap.empty
+    make_node TraceDomain.empty AccessMap.empty
 
   let make_normal_leaf trace =
     make_node trace AccessMap.empty
@@ -55,9 +82,6 @@ module Make (TraceDomain : AbstractDomain.S) = struct
 
   let make_access_node base_trace access trace =
     make_node base_trace (AccessMap.singleton access (make_normal_leaf trace))
-
-  let make_empty_trace_access_node trace access =
-    make_access_node TraceDomain.initial access trace
 
   (** find all of the traces in the subtree and join them with [orig_trace] *)
   let rec join_all_traces orig_trace = function
@@ -70,7 +94,6 @@ module Make (TraceDomain : AbstractDomain.S) = struct
     | Star ->
         orig_trace
 
-  (** retrieve the trace and subtree associated with [ap] from [tree] *)
   let get_node ap tree =
     let rec accesses_get_node access_list trace tree =
       match access_list, tree with
@@ -96,12 +119,11 @@ module Make (TraceDomain : AbstractDomain.S) = struct
     | exception Not_found ->
         None
 
-  (** retrieve the trace associated with [ap] from [tree] *)
   let get_trace ap tree =
-    Option.map fst (get_node ap tree)
+    Option.map ~f:fst (get_node ap tree)
 
   let rec access_tree_lteq ((lhs_trace, lhs_tree) as lhs) ((rhs_trace, rhs_tree) as rhs) =
-    if lhs == rhs
+    if phys_equal lhs rhs
     then true
     else
       TraceDomain.(<=) ~lhs:lhs_trace ~rhs:rhs_trace &&
@@ -120,7 +142,7 @@ module Make (TraceDomain : AbstractDomain.S) = struct
           false
 
   let (<=) ~lhs ~rhs =
-    if lhs == rhs
+    if phys_equal lhs rhs
     then true
     else
       BaseMap.for_all
@@ -131,8 +153,8 @@ module Make (TraceDomain : AbstractDomain.S) = struct
            with Not_found -> false)
         lhs
 
-  let node_join f_node_merge f_trace_merge ((trace1, tree1) as node1) ((trace2, tree2) as node2) =
-    if node1 == node2
+  let node_join_ f_node_merge f_trace_merge ((trace1, tree1) as node1) ((trace2, tree2) as node2) =
+    if phys_equal node1 node2
     then node1
     else
       let trace' = f_trace_merge trace1 trace2 in
@@ -141,31 +163,34 @@ module Make (TraceDomain : AbstractDomain.S) = struct
       match tree1, tree2 with
       | Subtree subtree1, Subtree subtree2 ->
           let tree' = AccessMap.merge (fun _ v1 v2 -> f_node_merge v1 v2) subtree1 subtree2 in
-          if trace' == trace1 && tree' == subtree1
+          if phys_equal trace' trace1 && phys_equal tree' subtree1
           then node1
-          else if trace' == trace2 && tree' == subtree2
+          else if phys_equal trace' trace2 && phys_equal tree' subtree2
           then node2
           else trace', Subtree tree'
       | Star, t ->
           (* vacuum up all the traces associated with the subtree t and join them with trace' *)
           let trace'' = join_all_traces trace' t in
-          if trace'' == trace1
+          if phys_equal trace'' trace1
           then node1
           else trace'', Star
       | t, Star ->
           (* same as above, but kind-of duplicated to allow address equality optimization *)
           let trace'' = join_all_traces trace' t in
-          if trace'' == trace2
+          if phys_equal trace'' trace2
           then node2
           else trace'', Star
 
-  let rec node_merge node1_opt node2_opt =
+  let rec node_join node1 node2 =
+    node_join_ node_merge TraceDomain.join node1 node2
+
+  and node_merge node1_opt node2_opt =
     match node1_opt, node2_opt with
     | Some node1, Some node2 ->
-        let joined_node = node_join node_merge TraceDomain.join node1 node2 in
-        if joined_node == node1
+        let joined_node = node_join node1 node2 in
+        if phys_equal joined_node node1
         then node1_opt
-        else if joined_node == node2
+        else if phys_equal joined_node node2
         then node2_opt
         else Some joined_node
     | None, node_opt | node_opt, None ->
@@ -183,7 +208,7 @@ module Make (TraceDomain : AbstractDomain.S) = struct
                 node_to_add
             | true, true ->
                 (* adding x[_], do weak update on subtree and on its immediate trace *)
-                node_join node_merge TraceDomain.join node_to_add node
+                node_join node_to_add node
             | _ ->
                 (* adding x.f* or x[_]*, join with traces of subtree and replace it with * *)
                 let node_trace, node_tree = node_to_add in
@@ -191,11 +216,11 @@ module Make (TraceDomain : AbstractDomain.S) = struct
                 make_starred_leaf (join_all_traces trace' node_tree)
           end
       | _, (_, Star) ->
-          node_join node_merge TraceDomain.join node_to_add node
+          node_join node_to_add node
       | access :: accesses, (trace, Subtree subtree) ->
           let access_node =
             try AccessMap.find access subtree
-            with Not_found -> make_normal_leaf TraceDomain.initial in
+            with Not_found -> make_normal_leaf TraceDomain.empty in
           (* once we encounter a subtree rooted in an array access, we have to do weak updates in
              the entire subtree. the reason: if I do x[i].f.g = <interesting trace>, then
              x[j].f.g = <empty trace>, I don't want to overwrite <interesting trace>. instead, I
@@ -207,50 +232,45 @@ module Make (TraceDomain : AbstractDomain.S) = struct
           trace, Subtree (AccessMap.add access access_node' subtree) in
     access_tree_add_trace_ ~seen_array_access accesses node
 
-  (** add ([ap], [node]) to [tree]. *)
   let add_node ap node_to_add tree =
     let base, accesses = AccessPath.extract ap in
     let is_exact = AccessPath.is_exact ap in
     let base_node =
       try BaseMap.find base tree
-      with Not_found -> make_normal_leaf TraceDomain.initial in
+      with Not_found -> make_normal_leaf TraceDomain.empty in
     let base_node' =
       access_tree_add_trace ~node_to_add ~seen_array_access:false ~is_exact accesses base_node in
     BaseMap.add base base_node' tree
 
-  (** add [ap] to [tree] and associate its leaf node with [trace].
-      if [ap] or a suffix of [ap] is not already present in the tree, it will be added with empty
-      traces associated with each of the inner nodes.
-      if [ap] is already present in the tree and contains no array accesses, this overwrites the
-      existing trace. if [ap] does contain array accesses, it joins the existing trace with [trace].
-  *)
   let add_trace ap trace tree =
     add_node ap (make_normal_leaf trace) tree
 
   let join tree1 tree2 =
-    if tree1 == tree2
+    if phys_equal tree1 tree2
     then tree1
     else BaseMap.merge (fun _ n1 n2 -> node_merge n1 n2) tree1 tree2
 
   let rec access_map_fold_ f base accesses m acc =
     AccessMap.fold (fun access node acc -> node_fold_ f base (accesses @ [access]) node acc) m acc
-  and node_fold_ f base accesses (trace, tree) acc =
+  and node_fold_ f base accesses ((_, tree) as node) acc =
     let cur_ap_raw = base, accesses in
     match tree with
     | Subtree access_map ->
-        let acc' = f acc (AccessPath.Exact cur_ap_raw) trace in
+        let acc' = f acc (AccessPath.Exact cur_ap_raw) node in
         access_map_fold_ f base accesses access_map acc'
     | Star ->
-        f acc (AccessPath.Abstracted cur_ap_raw) trace
+        f acc (AccessPath.Abstracted cur_ap_raw) node
 
-  let node_fold (f : 'a -> AccessPath.t -> TraceDomain.astate -> 'a) base node acc =
+  let node_fold (f : 'a -> AccessPath.t -> node -> 'a) base node acc =
     node_fold_ f base [] node acc
 
-  let access_map_fold (f : 'a -> AccessPath.t -> TraceDomain.astate -> 'a) base m acc =
-    access_map_fold_ f base [] m acc
-
-  let fold (f : 'a ->  AccessPath.t -> TraceDomain.astate -> 'a) tree acc_ =
+  let fold (f : 'a -> AccessPath.t -> node -> 'a) tree acc_ =
     BaseMap.fold (fun base node acc -> node_fold f base node acc) tree acc_
+
+  let trace_fold (f : 'a -> AccessPath.t -> TraceDomain.astate -> 'a) =
+    let f_ acc ap (trace, _) =
+      f acc ap trace in
+    fold f_
 
   (* replace the normal leaves of [node] with starred leaves *)
   let rec node_add_stars ((trace, tree) as node) = match tree with
@@ -259,13 +279,13 @@ module Make (TraceDomain : AbstractDomain.S) = struct
         then make_starred_leaf trace
         else
           let subtree' = AccessMap.map node_add_stars subtree in
-          if subtree' == subtree
+          if phys_equal subtree' subtree
           then node
           else trace, Subtree subtree'
     | Star -> node
 
   let widen ~prev ~next ~num_iters =
-    if prev == next
+    if phys_equal prev next
     then prev
     else
       let trace_widen prev next =
@@ -273,15 +293,15 @@ module Make (TraceDomain : AbstractDomain.S) = struct
       let rec node_widen prev_node_opt next_node_opt =
         match prev_node_opt, next_node_opt with
         | Some prev_node, Some next_node ->
-            let widened_node = node_join node_widen trace_widen prev_node next_node in
-            if widened_node == prev_node
+            let widened_node = node_join_ node_widen trace_widen prev_node next_node in
+            if phys_equal widened_node prev_node
             then prev_node_opt
-            else if widened_node == next_node
+            else if phys_equal widened_node next_node
             then next_node_opt
             else Some widened_node
         | None, Some next_node ->
             let widened_node = node_add_stars next_node in
-            if widened_node == next_node
+            if phys_equal widened_node next_node
             then next_node_opt
             else Some widened_node
         | Some _, None | None, None ->

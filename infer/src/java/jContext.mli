@@ -8,7 +8,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 open Javalib_pack
 open Sawja_pack
@@ -22,7 +22,7 @@ type jump_kind =
 
 (** Hastable for storing nodes that correspond to if-instructions. These are
     used when adding the edges in the contrl flow graph. *)
-module NodeTbl : Hashtbl.S with type key = Procdesc.Node.t
+module NodeTbl : Caml.Hashtbl.S with type key = Procdesc.Node.t
 
 
 (** data structure for saving the three structures tht contain the intermediate
@@ -41,9 +41,9 @@ type t = private
     impl : JBir.t;
     mutable var_map : (Pvar.t * Typ.t * Typ.t) JBir.VarMap.t;
     if_jumps : int NodeTbl.t;
-    goto_jumps : (int, jump_kind) Hashtbl.t;
+    goto_jumps : (int, jump_kind) Caml.Hashtbl.t;
     cn : JBasics.class_name;
-    source_file : DB.source_file;
+    source_file : SourceFile.t;
     program : JClasspath.program;
   }
 
@@ -54,7 +54,7 @@ val create_context :
   Procdesc.t ->
   JBir.t ->
   JBasics.class_name ->
-  DB.source_file ->
+  SourceFile.t ->
   JClasspath.program ->
   t
 
@@ -96,7 +96,7 @@ val reset_pvar_type : t -> unit
 val reset_exn_node_table : unit -> unit
 
 (** adds the exception node for a given method *)
-val add_exn_node : Procname.t -> Procdesc.Node.t -> unit
+val add_exn_node : Typ.Procname.t -> Procdesc.Node.t -> unit
 
 (** returns the exception node of a given method *)
 val get_exn_node : Procdesc.t -> Procdesc.Node.t option

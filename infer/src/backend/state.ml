@@ -8,7 +8,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** State of symbolic execution *)
 
@@ -64,7 +64,7 @@ let initial () = {
   diverging_states_node = Paths.PathSet.empty;
   diverging_states_proc = Paths.PathSet.empty;
   last_instr = None;
-  last_node = Procdesc.Node.dummy ();
+  last_node = Procdesc.Node.dummy None;
   last_path = None;
   last_prop_tenv_pdesc = None;
   last_session = 0;
@@ -133,14 +133,16 @@ let node_simple_key node =
       | Sil.Abstract _ -> add_key 6
       | Sil.Remove_temps _ -> add_key 7
       | Sil.Declare_locals _ -> add_key 8 in
-  IList.iter do_instr (Procdesc.Node.get_instrs node);
+  List.iter ~f:do_instr (Procdesc.Node.get_instrs node);
   Hashtbl.hash !key
 
 (** key for a node: look at the current node, successors and predecessors *)
 let node_key node =
   let succs = Procdesc.Node.get_succs node in
   let preds = Procdesc.Node.get_preds node in
-  let v = (node_simple_key node, IList.map node_simple_key succs, IList.map node_simple_key preds) in
+  let v = (node_simple_key node,
+           List.map ~f:node_simple_key succs,
+           List.map ~f:node_simple_key preds) in
   Hashtbl.hash v
 
 (** normalize the list of instructions by renaming let-bound ids *)
@@ -149,29 +151,26 @@ let instrs_normalize instrs =
     let do_instr ids = function
       | Sil.Load (id, _, _, _) -> id :: ids
       | _ -> ids in
-    IList.fold_left do_instr [] instrs in
+    List.fold ~f:do_instr ~init:[] instrs in
   let subst =
-    let count = ref min_int in
+    let count = ref Int.min_value in
     let gensym id =
       incr count;
       Ident.set_stamp id !count in
-    Sil.sub_of_list (IList.map (fun id -> (id, Exp.Var (gensym id))) bound_ids) in
-  IList.map (Sil.instr_sub subst) instrs
+    Sil.sub_of_list (List.map ~f:(fun id -> (id, Exp.Var (gensym id))) bound_ids) in
+  List.map ~f:(Sil.instr_sub subst) instrs
 
 (** Create a function to find duplicate nodes.
     A node is a duplicate of another one if they have the same kind and location
     and normalized (w.r.t. renaming of let - bound ids) list of instructions. *)
 let mk_find_duplicate_nodes proc_desc : (Procdesc.Node.t -> Procdesc.NodeSet.t) =
   let module M = (* map from (loc,kind) *)
-    Map.Make(struct
-      type t = Location.t * Procdesc.Node.nodekind
-      let compare (loc1, k1) (loc2, k2) =
-        let n = Location.compare loc1 loc2 in
-        if n <> 0 then n else Procdesc.Node.kind_compare k1 k2
+    Caml.Map.Make(struct
+      type t = Location.t * Procdesc.Node.nodekind [@@deriving compare]
     end) in
 
   let module S = (* set of nodes with normalized insructions *)
-    Set.Make(struct
+    Caml.Set.Make(struct
       type t = Procdesc.Node.t * Sil.instr list
       let compare (n1, _) (n2, _) =
         Procdesc.Node.compare n1 n2
@@ -201,7 +200,7 @@ let mk_find_duplicate_nodes proc_desc : (Procdesc.Node.t -> Procdesc.NodeSet.t) 
 
     let nodes = Procdesc.get_nodes proc_desc in
     try
-      IList.iter do_node nodes;
+      List.iter ~f:do_node nodes;
       !m
     with E.Threshold ->
       M.empty in
@@ -212,16 +211,17 @@ let mk_find_duplicate_nodes proc_desc : (Procdesc.Node.t -> Procdesc.NodeSet.t) 
       let elements = S.elements s in
       let (_, node_normalized_instrs), _ =
         let filter (node', _) = Procdesc.Node.equal node node' in
-        match IList.partition filter elements with
+        match List.partition_tf ~f:filter elements with
         | [this], others -> this, others
         | _ -> raise Not_found in
       let duplicates =
         let equal_normalized_instrs (_, normalized_instrs') =
-          IList.compare Sil.instr_compare node_normalized_instrs normalized_instrs' = 0 in
-        IList.filter equal_normalized_instrs elements in
-      IList.fold_left
-        (fun nset (node', _) -> Procdesc.NodeSet.add node' nset)
-        Procdesc.NodeSet.empty duplicates
+          List.equal ~equal:Sil.equal_instr node_normalized_instrs normalized_instrs' in
+        List.filter ~f:equal_normalized_instrs elements in
+      List.fold
+        ~f:(fun nset (node', _) -> Procdesc.NodeSet.add node' nset)
+        ~init:Procdesc.NodeSet.empty
+        duplicates
     with Not_found -> Procdesc.NodeSet.singleton node in
 
   find_duplicate_nodes
@@ -253,7 +253,7 @@ let extract_pre p tenv pdesc abstract_fun =
     let fav = Prop.prop_fav p in
     let idlist = Sil.fav_to_list fav in
     let count = ref 0 in
-    Sil.sub_of_list (IList.map (fun id ->
+    Sil.sub_of_list (List.map ~f:(fun id ->
         incr count; (id, Exp.Var (Ident.create_normal Ident.name_spec !count))) idlist) in
   let _, p' = PropUtil.remove_locals_formals tenv pdesc p in
   let pre, _ = Prop.extract_spec p' in
@@ -275,7 +275,7 @@ let get_session () =
 let get_path_pos () =
   let pname = match get_prop_tenv_pdesc () with
     | Some (_, _, pdesc) -> Procdesc.get_proc_name pdesc
-    | None -> Procname.from_string_c_fun "unknown_procedure" in
+    | None -> Typ.Procname.from_string_c_fun "unknown_procedure" in
   let nid = get_node_id () in
   (pname, (nid :> int))
 
@@ -286,7 +286,7 @@ let mark_execution_start node =
 
 let mark_execution_end node =
   let fs = get_failure_stats node in
-  let success = fs.instr_fail = 0 in
+  let success = Int.equal fs.instr_fail 0 in
   fs.instr_ok <- 0;
   fs.instr_fail <- 0;
   if success then fs.node_ok <- fs.node_ok + 1
@@ -302,26 +302,28 @@ let mark_instr_fail exn =
   let session = get_session () in
   let loc_trace = get_loc_trace () in
   let fs = get_failure_stats (get_node ()) in
-  if fs.first_failure = None then
+  if is_none fs.first_failure then
     fs.first_failure <- Some (loc, key, (session :> int), loc_trace, exn);
   fs.instr_fail <- fs.instr_fail + 1
 
 type log_issue =
-  Procname.t ->
+  ?store_summary: bool ->
+  Typ.Procname.t ->
   ?loc: Location.t ->
   ?node_id: (int * int) ->
   ?session: int ->
   ?ltr: Errlog.loc_trace ->
+  ?linters_def_file:string ->
   exn ->
   unit
 
 let process_execution_failures (log_issue : log_issue) pname =
   let do_failure _ fs =
-    (* L.err "Node:%a node_ok:%d node_fail:%d@." Procdesc.Node.pp node fs.node_ok fs.node_fail; *)
+    (* L.out "Node:%a node_ok:%d node_fail:%d@." Procdesc.Node.pp node fs.node_ok fs.node_fail; *)
     match fs.node_ok, fs.first_failure with
-    | 0, Some (loc, key, _, loc_trace, exn) ->
+    | 0, Some (loc, key, _, loc_trace, exn) when not Config.debug_exceptions ->
         let ex_name, _, ml_loc_opt, _, _, _, _ = Exceptions.recognize_exception exn in
-        let desc' = Localise.verbatim_desc ("exception: " ^ Localise.to_string ex_name) in
+        let desc' = Localise.verbatim_desc ("exception: " ^ Localise.to_issue_id ex_name) in
         let exn' = Exceptions.Analysis_stops (desc', ml_loc_opt) in
         log_issue pname ~loc ~node_id:key ~ltr:loc_trace exn'
     | _ -> () in

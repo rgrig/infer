@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 type t
 
@@ -21,8 +21,10 @@ val empty : unit -> t
 
 val get_size : t -> int
 
-val iter : t -> (string -> compilation_data -> unit) -> unit
+val iter : t -> (SourceFile.t -> compilation_data -> unit) -> unit
 
-val find : t -> string -> compilation_data
+val find : t -> SourceFile.t -> compilation_data
 
-val decode_json_file : t -> string -> unit
+val decode_json_file : t ->  [< `Escaped of string | `Raw of string ] -> unit
+
+val from_json_files :  [< `Escaped of string | `Raw of string ] list -> t

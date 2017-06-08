@@ -7,24 +7,32 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! IStd
+
 (** Single abstraction for all the kinds of variables in SIL *)
 
 type t = private
-  | ProgramVar of Pvar.t
   | LogicalVar of Ident.t
+  | ProgramVar of Pvar.t
+[@@deriving compare]
+
+val equal : t -> t -> bool
 
 val of_id : Ident.t -> t
 
 val of_pvar : Pvar.t -> t
 
+(** Create a variable representing the ith formal of the current procedure *)
+val of_formal_index : int -> t
+
 val to_exp : t -> Exp.t
 
-val equal : t -> t -> bool
+val is_global : t -> bool
 
-val compare : t -> t -> int
+val is_return : t -> bool
+
+val is_footprint : t -> bool
 
 val pp : Format.formatter -> t -> unit
 
 module Map : PrettyPrintable.PPMap with type key = t
-
-module Set : PrettyPrintable.PPSet with type elt = t

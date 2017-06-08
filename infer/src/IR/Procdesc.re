@@ -1,7 +1,4 @@
 /*
- * vim: set ft=rust:
- * vim: set ft=reason:
- *
  * Copyright (c) 2009 - 2013 Monoidics ltd.
  * Copyright (c) 2013 - present Facebook, Inc.
  * All rights reserved.
@@ -10,27 +7,32 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
 
-let module L = Logging;
+module Hashtbl = Caml.Hashtbl;
 
-let module F = Format;
+module L = Logging;
+
+module F = Format;
 
 /* =============== START of module Node =============== */
-let module Node = {
-  type id = int;
+module Node = {
+  type id = int [@@deriving compare];
+  let equal_id = [%compare.equal : id];
   type nodekind =
-    | Start_node Procname.t
-    | Exit_node Procname.t
+    | Start_node Typ.Procname.t
+    | Exit_node Typ.Procname.t
     | Stmt_node string
     | Join_node
     | Prune_node bool Sil.if_kind string /** (true/false branch, if_kind, comment) */
-    | Skip_node string;
+    | Skip_node string
+  [@@deriving compare];
+  let equal_nodekind = [%compare.equal : nodekind];
 
   /** a node */
   type t = {
     /** unique id of the node */
-    id: id,
+    id,
     /** distance to the exit node */
     mutable dist_exit: option int,
     /** exception nodes in the cfg */
@@ -44,43 +46,42 @@ let module Node = {
     /** predecessor nodes in the cfg */
     mutable preds: list t,
     /** name of the procedure the node belongs to */
-    pname: option Procname.t,
+    pname_opt: option Typ.Procname.t,
     /** successor nodes in the cfg */
     mutable succs: list t
   };
   let exn_handler_kind = Stmt_node "exception handler";
   let exn_sink_kind = Stmt_node "exceptions sink";
   let throw_kind = Stmt_node "throw";
-  let dummy () => {
+  let dummy pname_opt => {
     id: 0,
     dist_exit: None,
     instrs: [],
     kind: Skip_node "dummy",
     loc: Location.dummy,
-    pname: None,
+    pname_opt,
     succs: [],
     preds: [],
     exn: []
   };
-  let compare node1 node2 => int_compare node1.id node2.id;
+  let compare node1 node2 => Int.compare node1.id node2.id;
   let hash node => Hashtbl.hash node.id;
-  let equal node1 node2 => compare node1 node2 == 0;
+  let equal = [%compare.equal : t];
 
   /** Get the unique id of the node */
   let get_id node => node.id;
-
-  /** compare node ids */
-  let id_compare = int_compare;
   let get_succs node => node.succs;
   type node = t;
-  let module NodeSet = Set.Make {
-    type t = node;
-    let compare = compare;
-  };
-  let module IdMap = Map.Make {
-    type t = id;
-    let compare = id_compare;
-  };
+  module NodeSet =
+    Caml.Set.Make {
+      type t = node;
+      let compare = compare;
+    };
+  module IdMap =
+    Caml.Map.Make {
+      type t = id;
+      let compare = compare_id;
+    };
   let get_sliced_succs node f => {
     let visited = ref NodeSet.empty;
     let rec slice_nodes nodes :NodeSet.t => {
@@ -90,10 +91,10 @@ let module Node = {
           NodeSet.singleton n
         } else {
           NodeSet.union
-            acc (slice_nodes (IList.filter (fun s => not (NodeSet.mem s !visited)) n.succs))
+            acc (slice_nodes (List.filter f::(fun s => not (NodeSet.mem s !visited)) n.succs))
         }
       };
-      IList.fold_left do_node NodeSet.empty nodes
+      List.fold f::do_node init::NodeSet.empty nodes
     };
     NodeSet.elements (slice_nodes node.succs)
   };
@@ -106,10 +107,10 @@ let module Node = {
           NodeSet.singleton n
         } else {
           NodeSet.union
-            acc (slice_nodes (IList.filter (fun s => not (NodeSet.mem s !visited)) n.preds))
+            acc (slice_nodes (List.filter f::(fun s => not (NodeSet.mem s !visited)) n.preds))
         }
       };
-      IList.fold_left do_node NodeSet.empty nodes
+      List.fold f::do_node init::NodeSet.empty nodes
     };
     NodeSet.elements (slice_nodes node.preds)
   };
@@ -117,9 +118,9 @@ let module Node = {
 
   /** Get the name of the procedure the node belongs to */
   let get_proc_name node =>
-    switch node.pname {
+    switch node.pname_opt {
     | None =>
-      L.out "get_proc_name: at node %d@\n" node.id;
+      L.internal_error "get_proc_name: at node %d@\n" node.id;
       assert false
     | Some pname => pname
     };
@@ -133,9 +134,9 @@ let module Node = {
     let visited = ref NodeSet.empty;
     let rec nodes n => {
       visited := NodeSet.add n !visited;
-      let succs = IList.filter (fun n => not (NodeSet.mem n !visited)) (generator n);
-      switch (IList.length succs) {
-      | 1 => [n, ...nodes (IList.hd succs)]
+      let succs = List.filter f::(fun n => not (NodeSet.mem n !visited)) (generator n);
+      switch succs {
+      | [hd] => [n, ...nodes hd]
       | _ => [n]
       }
     };
@@ -144,38 +145,6 @@ let module Node = {
 
   /** Get the node kind */
   let get_kind node => node.kind;
-
-  /** Comparison for node kind */
-  let kind_compare k1 k2 =>
-    switch (k1, k2) {
-    | (Start_node pn1, Start_node pn2) => Procname.compare pn1 pn2
-    | (Start_node _, _) => (-1)
-    | (_, Start_node _) => 1
-    | (Exit_node pn1, Exit_node pn2) => Procname.compare pn1 pn2
-    | (Exit_node _, _) => (-1)
-    | (_, Exit_node _) => 1
-    | (Stmt_node s1, Stmt_node s2) => string_compare s1 s2
-    | (Stmt_node _, _) => (-1)
-    | (_, Stmt_node _) => 1
-    | (Join_node, Join_node) => 0
-    | (Join_node, _) => (-1)
-    | (_, Join_node) => 1
-    | (Prune_node is_true_branch1 if_kind1 descr1, Prune_node is_true_branch2 if_kind2 descr2) =>
-      let n = bool_compare is_true_branch1 is_true_branch2;
-      if (n != 0) {
-        n
-      } else {
-        let n = Pervasives.compare if_kind1 if_kind2;
-        if (n != 0) {
-          n
-        } else {
-          string_compare descr1 descr2
-        }
-      }
-    | (Prune_node _, _) => (-1)
-    | (_, Prune_node _) => 1
-    | (Skip_node s1, Skip_node s2) => string_compare s1 s2
-    };
 
   /** Get the instructions to be executed */
   let get_instrs node => node.instrs;
@@ -191,7 +160,7 @@ let module Node = {
         }
       | _ => callees
       };
-    IList.fold_left collect [] (get_instrs node)
+    List.fold f::collect init::[] (get_instrs node)
   };
 
   /** Get the location of the node */
@@ -199,7 +168,7 @@ let module Node = {
 
   /** Get the source location of the last instruction in the node */
   let get_last_loc n =>
-    switch (IList.rev (get_instrs n)) {
+    switch (List.rev (get_instrs n)) {
     | [instr, ..._] => Sil.instr_get_loc instr
     | [] => n.loc
     };
@@ -225,18 +194,18 @@ let module Node = {
       (Pvar.get_ret_pvar pname, ret_type)
     };
     let construct_decl (x, typ) => (Pvar.mk x pname, typ);
-    let ptl = [ret_var, ...IList.map construct_decl locals];
+    let ptl = [ret_var, ...List.map f::construct_decl locals];
     let instr = Sil.Declare_locals ptl loc;
     prepend_instrs node [instr]
   };
 
   /** Print extended instructions for the node,
       highlighting the given subinstruction if present */
-  let pp_instrs pe0 sub_instrs::sub_instrs instro fmt node => {
+  let pp_instrs pe0 ::sub_instrs instro fmt node => {
     let pe =
       switch instro {
       | None => pe0
-      | Some instr => pe_extend_colormap pe0 (Obj.repr instr) Red
+      | Some instr => Pp.extend_colormap pe0 (Obj.repr instr) Red
       };
     let instrs = get_instrs node;
     let pp_loc fmt () => F.fprintf fmt " %a " Location.pp (get_loc node);
@@ -282,10 +251,8 @@ let module Node = {
   };
 
   /** Dump extended instructions for the node */
-  let d_instrs sub_instrs::(sub_instrs: bool) (curr_instr: option Sil.instr) (node: t) => L.add_print_action (
-    L.PTnode_instrs,
-    Obj.repr (sub_instrs, curr_instr, node)
-  );
+  let d_instrs sub_instrs::(sub_instrs: bool) (curr_instr: option Sil.instr) (node: t) =>
+    L.add_print_action (L.PTnode_instrs, Obj.repr (sub_instrs, curr_instr, node));
 
   /** Return a description of the cfg node */
   let get_description pe node => {
@@ -298,27 +265,27 @@ let module Node = {
       | Start_node _ => "Start"
       | Join_node => "Join"
       };
-    let pp fmt () => F.fprintf fmt "%s\n%a@?" str (pp_instrs pe None sub_instrs::true) node;
-    pp_to_string pp ()
+    let pp fmt => F.fprintf fmt "%s@\n%a@?" str (pp_instrs pe None sub_instrs::true) node;
+    F.asprintf "%t" pp
   };
 };
 
 /* =============== END of module Node =============== */
 
 /** Map over nodes */
-let module NodeMap = Map.Make Node;
+module NodeMap = Caml.Map.Make Node;
 
 
 /** Hash table with nodes as keys. */
-let module NodeHash = Hashtbl.Make Node;
+module NodeHash = Hashtbl.Make Node;
 
 
 /** Set of nodes. */
-let module NodeSet = Node.NodeSet;
+module NodeSet = Node.NodeSet;
 
 
 /** Map with node id keys. */
-let module IdMap = Node.IdMap;
+module IdMap = Node.IdMap;
 
 
 /** procedure description */
@@ -327,16 +294,21 @@ type t = {
   mutable nodes: list Node.t, /** list of nodes of this procedure */
   mutable nodes_num: int, /** number of nodes */
   mutable start_node: Node.t, /** start node of this procedure */
-  mutable exit_node: Node.t /** exit node of ths procedure */
-};
+  mutable exit_node: Node.t, /** exit node of ths procedure */
+  mutable loop_heads: option NodeSet.t /** loop head nodes of this procedure */
+}
+[@@deriving compare];
 
 
 /** Only call from Cfg */
-let from_proc_attributes called_from_cfg::called_from_cfg attributes => {
+let from_proc_attributes ::called_from_cfg attributes => {
   if (not called_from_cfg) {
     assert false
   };
-  {attributes, nodes: [], nodes_num: 0, start_node: Node.dummy (), exit_node: Node.dummy ()}
+  let pname_opt = Some attributes.ProcAttributes.proc_name;
+  let start_node = Node.dummy pname_opt;
+  let exit_node = Node.dummy pname_opt;
+  {attributes, nodes: [], nodes_num: 0, start_node, exit_node, loop_heads: None}
 };
 
 
@@ -352,8 +324,8 @@ let compute_distance_to_exit_node pdesc => {
         node.dist_exit = Some dist;
         next_nodes := node.preds @ !next_nodes
       };
-    IList.iter do_node nodes;
-    if (!next_nodes !== []) {
+    List.iter f::do_node nodes;
+    if (!next_nodes != []) {
       mark_distance (dist + 1) !next_nodes
     }
   };
@@ -419,15 +391,19 @@ let get_slope pdesc => Node.get_generated_slope (get_start_node pdesc) Node.get_
 /** Return [true] iff the procedure is defined, and not just declared */
 let is_defined pdesc => pdesc.attributes.is_defined;
 
+let is_body_empty pdesc => List.is_empty (Node.get_succs (get_start_node pdesc));
+
 let is_java_synchronized pdesc => pdesc.attributes.is_java_synchronized_method;
 
-let iter_nodes f pdesc => IList.iter f (IList.rev (get_nodes pdesc));
+let iter_nodes f pdesc => List.iter ::f (List.rev (get_nodes pdesc));
 
 let fold_calls f acc pdesc => {
   let do_node a node =>
-    IList.fold_left
-      (fun b callee_pname => f b (callee_pname, Node.get_loc node)) a (Node.get_callees node);
-  IList.fold_left do_node acc (get_nodes pdesc)
+    List.fold
+      f::(fun b callee_pname => f b (callee_pname, Node.get_loc node))
+      init::a
+      (Node.get_callees node);
+  List.fold f::do_node init::acc (get_nodes pdesc)
 };
 
 
@@ -435,15 +411,15 @@ let fold_calls f acc pdesc => {
 let iter_calls f pdesc => fold_calls (fun _ call => f call) () pdesc;
 
 let iter_instrs f pdesc => {
-  let do_node node => IList.iter (fun i => f node i) (Node.get_instrs node);
+  let do_node node => List.iter f::(fun i => f node i) (Node.get_instrs node);
   iter_nodes do_node pdesc
 };
 
-let fold_nodes f acc pdesc => IList.fold_left f acc (IList.rev (get_nodes pdesc));
+let fold_nodes f acc pdesc => List.fold ::f init::acc (List.rev (get_nodes pdesc));
 
 let fold_instrs f acc pdesc => {
   let fold_node acc node =>
-    IList.fold_left (fun acc instr => f acc node instr) acc (Node.get_instrs node);
+    List.fold f::(fun acc instr => f acc node instr) init::acc (Node.get_instrs node);
   fold_nodes fold_node acc pdesc
 };
 
@@ -464,7 +440,7 @@ let iter_slope f pdesc => {
 };
 
 let iter_slope_calls f pdesc => {
-  let do_node node => IList.iter (fun callee_pname => f callee_pname) (Node.get_callees node);
+  let do_node node => List.iter f::(fun callee_pname => f callee_pname) (Node.get_callees node);
   iter_slope do_node pdesc
 };
 
@@ -492,7 +468,8 @@ let set_exit_node pdesc node => pdesc.exit_node = node;
 
 
 /** Set a flag for the proc desc */
-let set_flag pdesc key value => proc_flags_add pdesc.attributes.proc_flags key value;
+let set_flag pdesc key value =>
+  ProcAttributes.proc_flags_add pdesc.attributes.proc_flags key value;
 
 
 /** Set the start node of the proc desc */
@@ -508,7 +485,7 @@ let append_locals pdesc new_locals =>
 let set_succs_exn_base (node: Node.t) succs exn => {
   node.succs = succs;
   node.exn = exn;
-  IList.iter (fun (n: Node.t) => n.preds = [node, ...n.preds]) succs
+  List.iter f::(fun (n: Node.t) => n.preds = [node, ...n.preds]) succs
 };
 
 
@@ -523,7 +500,7 @@ let create_node pdesc loc kind instrs => {
     kind,
     loc,
     preds: [],
-    pname: Some pdesc.attributes.proc_name,
+    pname_opt: Some pdesc.attributes.proc_name,
     succs: [],
     exn: []
   };
@@ -544,3 +521,83 @@ let node_set_succs_exn pdesc (node: Node.t) succs exn =>
     set_succs_exn_base node' [exit_node] exn
   | _ => set_succs_exn_base node succs exn
   };
+
+
+/** Get loop heads for widening.
+    It collects all target nodes of back-edges in a depth-first
+    traversal.
+    */
+let get_loop_heads pdesc => {
+  let rec set_loop_head_rec visited heads wl =>
+    switch wl {
+    | [] => heads
+    | [(n, ancester), ...wl'] =>
+      if (NodeSet.mem n visited) {
+        if (NodeSet.mem n ancester) {
+          set_loop_head_rec visited (NodeSet.add n heads) wl'
+        } else {
+          set_loop_head_rec visited heads wl'
+        }
+      } else {
+        let ancester = NodeSet.add n ancester;
+        let succs = List.append (Node.get_succs n) (Node.get_exn n);
+        let works = List.map f::(fun m => (m, ancester)) succs;
+        set_loop_head_rec (NodeSet.add n visited) heads (List.append works wl')
+      }
+    };
+  let start_wl = [(get_start_node pdesc, NodeSet.empty)];
+  let lh = set_loop_head_rec NodeSet.empty NodeSet.empty start_wl;
+  pdesc.loop_heads = Some lh;
+  lh
+};
+
+let is_loop_head pdesc (node: Node.t) => {
+  let lh =
+    switch pdesc.loop_heads {
+    | Some lh => lh
+    | None => get_loop_heads pdesc
+    };
+  NodeSet.mem node lh
+};
+
+let pp_variable_list fmt etl =>
+  if (List.is_empty etl) {
+    Format.fprintf fmt "None"
+  } else {
+    List.iter
+      f::(fun (id, ty) => Format.fprintf fmt " %a:%a" Mangled.pp id (Typ.pp_full Pp.text) ty) etl
+  };
+
+let pp_objc_accessor fmt accessor =>
+  switch accessor {
+  | Some (ProcAttributes.Objc_getter name) => Format.fprintf fmt "Getter of %a, " Fieldname.pp name
+  | Some (ProcAttributes.Objc_setter name) => Format.fprintf fmt "Setter of %a, " Fieldname.pp name
+  | None => ()
+  };
+
+let pp_signature fmt pdesc => {
+  let attributes = get_attributes pdesc;
+  let pname = get_proc_name pdesc;
+  let pname_string = Typ.Procname.to_string pname;
+  let defined_string = is_defined pdesc ? "defined" : "undefined";
+  Format.fprintf
+    fmt
+    "%s [%s, Return type: %s, %aFormals: %a, Locals: %a"
+    pname_string
+    defined_string
+    (Typ.to_string (get_ret_type pdesc))
+    pp_objc_accessor
+    attributes.ProcAttributes.objc_accessor
+    pp_variable_list
+    (get_formals pdesc)
+    pp_variable_list
+    (get_locals pdesc);
+  if (not (List.is_empty (get_captured pdesc))) {
+    Format.fprintf fmt ", Captured: %a" pp_variable_list (get_captured pdesc)
+  };
+  let method_annotation = attributes.ProcAttributes.method_annotation;
+  if (not (Annot.Method.is_empty method_annotation)) {
+    Format.fprintf fmt ", Annotation: %a" (Annot.Method.pp pname_string) method_annotation
+  };
+  Format.fprintf fmt "]@\n"
+};

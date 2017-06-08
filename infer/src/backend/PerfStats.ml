@@ -9,7 +9,7 @@
 
 (** Performance Statistics gathering and reporting *)
 
-open! Utils
+open! IStd
 
 type perf_stats = {
   rtime : float;
@@ -52,7 +52,7 @@ let to_json ps =
   ]
 
 let from_json json =
-  let open Yojson.Basic.Util in
+  let open! Yojson.Basic.Util in
   {
     rtime = json |> member "rtime" |> to_float;
     utime = json |> member "utime" |> to_float;
@@ -69,12 +69,11 @@ let from_json json =
     top_heap_gb = json |> member "top_heap_gb" |> to_float;
     stack_kb = json |> member "stack_kb" |> to_float;
     minor_heap_kb = json |> member "minor_heap_kb" |> to_float;
-    attributes_table =
-      json |> member "attributes_table" |> AttributesTable.from_json;
+    attributes_table = json |> member "attributes_table" |> AttributesTable.from_json;
   }
 
 let aggregate s =
-  let mk_stats f = StatisticsToolbox.compute_statistics (IList.map f s) in
+  let mk_stats f = StatisticsToolbox.compute_statistics (List.map ~f s) in
   let aggr_rtime = mk_stats (fun stats -> stats.rtime) in
   let aggr_utime = mk_stats (fun stats -> stats.utime) in
   let aggr_stime = mk_stats (fun stats -> stats.stime) in
@@ -91,7 +90,7 @@ let aggregate s =
   let aggr_stack_kb = mk_stats (fun stats -> stats.stack_kb) in
   let aggr_minor_heap_kb = mk_stats (fun stats -> stats.minor_heap_kb) in
   let aggr_attributes_table =
-    AttributesTable.aggregate (IList.map (fun stats -> stats.attributes_table) s) in
+    AttributesTable.aggregate (List.map ~f:(fun stats -> stats.attributes_table) s) in
   `Assoc [
     ("rtime", StatisticsToolbox.to_json aggr_rtime);
     ("utime", StatisticsToolbox.to_json aggr_utime);
@@ -123,11 +122,11 @@ let stats () =
   let exit_times = Unix.times () in
   let at = AttributesTable.stats () in
   {
-    rtime = exit_timeofday -. initial_timeofday;
-    utime = exit_times.tms_utime -. initial_times.tms_utime;
-    stime = exit_times.tms_stime -. initial_times.tms_stime;
-    cutime = exit_times.tms_cutime -. initial_times.tms_cutime;
-    cstime = exit_times.tms_cstime -. initial_times.tms_cstime;
+    rtime = exit_timeofday -. Utils.initial_timeofday;
+    utime = exit_times.tms_utime -. Utils.initial_times.tms_utime;
+    stime = exit_times.tms_stime -. Utils.initial_times.tms_stime;
+    cutime = exit_times.tms_cutime -. Utils.initial_times.tms_cutime;
+    cstime = exit_times.tms_cstime -. Utils.initial_times.tms_cstime;
     minor_gb = words_to_gb gc_stats.minor_words;
     promoted_gb = words_to_gb gc_stats.promoted_words;
     major_gb = words_to_gb gc_stats.major_words;
@@ -142,19 +141,22 @@ let stats () =
   }
 
 let register_report_at_exit file =
-  Pervasives.at_exit (fun () ->
+  Epilogues.register ~f:(fun () ->
       try
         let json_stats = to_json (stats ()) in
         try
-          create_path (Filename.dirname file);
+          Unix.mkdir_p (Filename.dirname file);
           let stats_oc = open_out file in
-          Yojson.Basic.pretty_to_channel stats_oc json_stats ;
-          close_out stats_oc
+          let stats_fd = Unix.descr_of_out_channel stats_oc in
+          ignore (Unix.flock stats_fd Unix.Flock_command.lock_exclusive);
+          Yojson.Basic.pretty_to_channel stats_oc json_stats;
+          ignore (Unix.flock stats_fd Unix.Flock_command.unlock);
+          Out_channel.close stats_oc
         with exc ->
           Format.eprintf "Info: failed to write stats to %s@\n%s@\n%s@\n%s@."
-            file (Printexc.to_string exc) (Yojson.Basic.pretty_to_string json_stats)
+            file (Exn.to_string exc) (Yojson.Basic.pretty_to_string json_stats)
             (Printexc.get_backtrace ())
       with exc ->
         Format.eprintf "Info: failed to compute stats for %s@\n%s@\n%s@."
-          file (Printexc.to_string exc) (Printexc.get_backtrace ())
-    )
+          file (Exn.to_string exc) (Printexc.get_backtrace ())
+    ) ("stats reporting in " ^ file)

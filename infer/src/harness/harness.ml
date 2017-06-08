@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module L = Logging
 module F = Format
@@ -18,17 +18,17 @@ module F = Format
     constituting a lifecycle trace *)
 let try_create_lifecycle_trace name lifecycle_name lifecycle_procs tenv =
   match name with
-  | Typename.TN_csu (Class Java, _) ->
+  | Typ.JavaClass _ ->
       if PatternMatch.is_subtype tenv name lifecycle_name &&
          not (AndroidFramework.is_android_lib_class name) then
-        let ptr_to_struct_typ = Some (Typ.Tptr (Tstruct name, Pk_pointer)) in
-        IList.fold_left
-          (fun trace lifecycle_proc ->
-             (* given a lifecycle subclass T, resolve the call T.lifecycle_proc() to the procname
-              * that will actually be called at runtime *)
-             let resolved_proc = SymExec.resolve_method tenv name lifecycle_proc in
-             (resolved_proc, ptr_to_struct_typ) :: trace)
-          []
+        let ptr_to_struct_typ = Some (Typ.mk (Tptr (Typ.mk (Tstruct name), Pk_pointer))) in
+        List.fold
+          ~f:(fun trace lifecycle_proc ->
+              (* given a lifecycle subclass T, resolve the call T.lifecycle_proc() to the procname
+               * that will actually be called at runtime *)
+              let resolved_proc = SymExec.resolve_method tenv name lifecycle_proc in
+              (resolved_proc, ptr_to_struct_typ) :: trace)
+          ~init:[]
           lifecycle_procs
       else
         []
@@ -36,8 +36,8 @@ let try_create_lifecycle_trace name lifecycle_name lifecycle_procs tenv =
 
 (** generate a harness for a lifecycle type in an Android application *)
 let create_harness cfg cg tenv =
-  IList.iter (fun (pkg, clazz, lifecycle_methods) ->
-      let typname = Typename.TN_csu (Class Java, Mangled.from_package_class pkg clazz) in
+  List.iter ~f:(fun (pkg, clazz, lifecycle_methods) ->
+      let typname = Typ.Name.Java.from_package_class pkg clazz in
       let framework_procs =
         AndroidFramework.get_lifecycle_for_framework_typ_opt tenv typname lifecycle_methods in
       (* iterate through the type environment and generate a lifecycle harness for each
@@ -49,14 +49,14 @@ let create_harness cfg cg tenv =
           | [] -> ()
           | lifecycle_trace ->
               let harness_procname =
-                let harness_cls_name = Typename.name name in
+                let harness_cls_name = Typ.Name.name name in
                 let pname =
-                  Procname.Java
-                    (Procname.java
-                       (None, harness_cls_name) None
-                       "InferGeneratedHarness" [] Procname.Static) in
+                  Typ.Procname.Java
+                    (Typ.Procname.java
+                       (Typ.Name.Java.from_string harness_cls_name) None
+                       "InferGeneratedHarness" [] Typ.Procname.Static) in
                 match pname with
-                | Procname.Java harness_procname -> harness_procname
+                | Typ.Procname.Java harness_procname -> harness_procname
                 | _ -> assert false in
               Inhabit.inhabit_trace tenv lifecycle_trace harness_procname cg cfg
         ) tenv

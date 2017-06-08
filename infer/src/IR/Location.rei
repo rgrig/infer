@@ -6,27 +6,30 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
 
 
 /** Location in the original source file */
 type t = {
   line: int, /** The line number. -1 means "do not know" */
   col: int, /** The column number. -1 means "do not know" */
-  file: DB.source_file, /** The name of the source file */
-};
+  file: SourceFile.t /** The name of the source file */
+}
+[@@deriving compare];
 
-let compare: t => t => int;
+let equal: t => t => bool;
 
 
 /** Dump a location. */
 let d: t => unit;
 
 
-/** Dummy location */
-let dummy: t;
+/** Dummy source location for the given file */
+let none: SourceFile.t => t;
 
-let equal: t => t => bool;
+
+/** Dummy location with no source file */
+let dummy: t;
 
 
 /** Pretty print a location. */
@@ -35,3 +38,7 @@ let pp: Format.formatter => t => unit;
 
 /** String representation of a location. */
 let to_string: t => string;
+
+
+/** Pretty print a file-position of a location */
+let pp_file_pos: Format.formatter => t => unit;

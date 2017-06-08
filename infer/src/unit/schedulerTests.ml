@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module F = Format
 
@@ -20,12 +20,13 @@ module MockNode = struct
 
   let instrs _ = []
   let instr_ids _ = []
+  let hash = Hashtbl.hash
   let to_instr_nodes _ = assert false
   let id n = n
   let loc _ = assert false
-  let underlying_id _ = assert false
+  let underlying_node _ = assert false
   let kind _ = Procdesc.Node.Stmt_node ""
-  let id_compare = int_compare
+  let compare_id = Int.compare
   let pp_id fmt i =
     F.fprintf fmt "%i" i
 end
@@ -35,28 +36,26 @@ module MockProcCfg = struct
   include (MockNode : module type of MockNode with type t := node)
   type t = (node * node list) list
 
-  let id_compare = int_compare
+  let equal_id = Int.equal
 
   let succs t n =
-    try
-      let node_id = id n in
-      IList.find
-        (fun (node, _) -> id_compare (id node) node_id = 0)
-        t
-      |> snd
-    with Not_found -> []
+    let node_id = id n in
+    List.find
+      ~f:(fun (node, _) -> equal_id (id node) node_id)
+      t |>
+    Option.value_map ~f:snd ~default:[]
 
   let preds t n =
     try
       let node_id = id n in
-      IList.filter
-        (fun (_, succs) ->
-           IList.exists (fun node -> id_compare (id node) node_id = 0) succs)
+      List.filter
+        ~f:(fun (_, succs) ->
+            List.exists ~f:(fun node -> equal_id (id node) node_id) succs)
         t
-      |> IList.map fst
+      |> List.map ~f:fst
     with Not_found -> []
 
-  let nodes t = IList.map fst t
+  let nodes t = List.map ~f:fst t
 
   let normal_succs = succs
   let normal_preds = preds
@@ -68,6 +67,7 @@ module MockProcCfg = struct
   let exit_node _ = assert false
   let proc_desc _ = assert false
   let from_pdesc _ = assert false
+  let is_loop_head _ = assert false
 end
 
 module S = Scheduler.ReversePostorder (MockProcCfg)
@@ -78,7 +78,7 @@ let create_test test_graph expected_result _ =
     match S.pop q with
     | Some (n, _, q') ->
         pop_schedule_record (S.schedule_succs q' n) (n :: visited_acc)
-    | None -> IList.rev visited_acc in
+    | None -> List.rev visited_acc in
   let pp_diff fmt (exp, actual) =
     let pp_sched fmt l =
       F.pp_print_list ~pp_sep:F.pp_print_space (fun fmt i -> F.fprintf fmt "%d" i) fmt l in
@@ -133,6 +133,6 @@ let tests =
       (3, [7]);],
      [1; 2; 3; 7; 11; 10]);
   ]
-    |> IList.map
-      (fun (name, test, expected) -> name>::create_test test expected) in
+    |> List.map
+      ~f:(fun (name, test, expected) -> name>::create_test test expected) in
   "scheduler_suite">:::test_list

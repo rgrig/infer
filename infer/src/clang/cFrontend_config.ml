@@ -7,15 +7,17 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Module that contains constants and global state used in the frontend *)
 
-type clang_lang = C | CPP | ObjC | ObjCPP
+type clang_lang = C | CPP | ObjC | ObjCPP [@@deriving compare]
+
+let equal_clang_lang = [%compare.equal : clang_lang]
 
 type translation_unit_context = {
   lang : clang_lang;
-  source_file : DB.source_file
+  source_file : SourceFile.t
 }
 
 (** Constants *)
@@ -40,9 +42,9 @@ let ckcomponentcontroller_cl = "CKComponentController"
 
 (** script to run our own clang *)
 let clang_bin xx =
-  Config.bin_dir // Filename.parent_dir_name // Filename.parent_dir_name //
-  "facebook-clang-plugins" //
-  "clang" // "install" // "bin" // "clang" ^ xx
+  Config.bin_dir ^/ Filename.parent_dir_name ^/ Filename.parent_dir_name ^/
+  "facebook-clang-plugins" ^/
+  "clang" ^/ "install" ^/ "bin" ^/ "clang" ^ xx
 let class_method = "class"
 let class_type = "Class"
 let copy = "copy"
@@ -91,21 +93,13 @@ let modeled_function_attributes = [replace_with_deref_first_arg_attr]
 
 (** Global state *)
 
-let enum_map = ref Clang_ast_main.PointerMap.empty
+let enum_map = ref ClangPointers.Map.empty
 let global_translation_unit_decls : Clang_ast_t.decl list ref = ref []
-let ivar_to_property_index = ref Clang_ast_main.PointerMap.empty
 let log_out = ref Format.std_formatter
-let pointer_decl_index = ref Clang_ast_main.PointerMap.empty
-let pointer_stmt_index = ref Clang_ast_main.PointerMap.empty
-let pointer_type_index = ref Clang_ast_main.PointerMap.empty
-let sil_types_map = ref Clang_ast_types.TypePointerMap.empty
+let sil_types_map = ref Clang_ast_extend.TypePointerMap.empty
 
 let reset_global_state () =
-  enum_map := Clang_ast_main.PointerMap.empty;
+  enum_map := ClangPointers.Map.empty;
   global_translation_unit_decls := [];
-  ivar_to_property_index := Clang_ast_main.PointerMap.empty;
   log_out := Format.std_formatter;
-  pointer_decl_index := Clang_ast_main.PointerMap.empty;
-  pointer_stmt_index := Clang_ast_main.PointerMap.empty;
-  pointer_type_index := Clang_ast_main.PointerMap.empty;
-  sil_types_map := Clang_ast_types.TypePointerMap.empty;
+  sil_types_map := Clang_ast_extend.TypePointerMap.empty;

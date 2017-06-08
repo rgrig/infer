@@ -7,13 +7,14 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
+module Hashtbl = Caml.Hashtbl
 
 (** Utility methods to support the translation of clang ast constructs into sil instructions.  *)
 
-open CFrontend_utils
-
 module L = Logging
+
+exception TemplatedCodeException of Clang_ast_t.stmt
 
 (* Extract the element of a singleton list. If the list is not a singleton *)
 (* It stops the computation giving a warning. We use this because we       *)
@@ -22,9 +23,9 @@ module L = Logging
 let extract_item_from_singleton l warning_string failure_val =
   match l with
   | [item] -> item
-  | _ -> Logging.err_debug "%s" warning_string; failure_val
+  | _ -> L.(debug Capture Medium) "%s" warning_string; failure_val
 
-let dummy_exp = (Exp.minus_one, Typ.Tint Typ.IInt)
+let dummy_exp = (Exp.minus_one, Typ.mk (Tint Typ.IInt))
 
 (* Extract the element of a singleton list. If the list is not a singleton *)
 (* Gives a warning and return -1 as standard value indicating something    *)
@@ -58,7 +59,7 @@ struct
 
   let create_prune_node branch e_cond instrs_cond loc ik context =
     let (e_cond', _) = extract_exp_from_list e_cond
-        "\nWARNING: Missing expression for Conditional operator. Need to be fixed" in
+        "@\nWARNING: Missing expression for Conditional operator. Need to be fixed" in
     let e_cond'' =
       if branch then
         Exp.BinOp(Binop.Ne, e_cond', Exp.zero)
@@ -170,22 +171,22 @@ let collect_res_trans pdesc l =
           if rt'.leaf_nodes <> [] then rt'.leaf_nodes
           else rt.leaf_nodes in
         if rt'.root_nodes <> [] then
-          IList.iter
-            (fun n -> Procdesc.node_set_succs_exn pdesc n rt'.root_nodes [])
+          List.iter
+            ~f:(fun n -> Procdesc.node_set_succs_exn pdesc n rt'.root_nodes [])
             rt.leaf_nodes;
         collect l'
           { root_nodes = root_nodes;
             leaf_nodes = leaf_nodes;
-            instrs = IList.rev_append rt'.instrs rt.instrs;
-            exps = IList.rev_append rt'.exps rt.exps;
-            initd_exps = IList.rev_append rt'.initd_exps rt.initd_exps;
+            instrs = List.rev_append rt'.instrs rt.instrs;
+            exps = List.rev_append rt'.exps rt.exps;
+            initd_exps = List.rev_append rt'.initd_exps rt.initd_exps;
             is_cpp_call_virtual = false; } in
   let rt = collect l empty_res_trans in
   {
     rt with
-    instrs = IList.rev rt.instrs;
-    exps = IList.rev rt.exps;
-    initd_exps = IList.rev rt.initd_exps;
+    instrs = List.rev rt.instrs;
+    exps = List.rev rt.exps;
+    initd_exps = List.rev rt.initd_exps;
   }
 
 let extract_var_exp_or_fail transt_state =
@@ -213,11 +214,11 @@ struct
   let try_claim_priority_node trans_state stmt_info =
     match trans_state.priority with
     | Free ->
-        Logging.out_debug "Priority is free. Locking priority node in %d\n@."
+        L.(debug Capture Verbose) "Priority is free. Locking priority node in %d@\n@."
           stmt_info.Clang_ast_t.si_pointer;
         { trans_state with priority = Busy stmt_info.Clang_ast_t.si_pointer }
     | _ ->
-        Logging.out_debug "Priority busy in %d. No claim possible\n@."
+        L.(debug Capture Verbose) "Priority busy in %d. No claim possible@\n@."
           stmt_info.Clang_ast_t.si_pointer;
         trans_state
 
@@ -232,7 +233,7 @@ struct
 
   let own_priority_node pri stmt_info =
     match pri with
-    | Busy p when p = stmt_info.Clang_ast_t.si_pointer -> true
+    | Busy p when Int.equal p stmt_info.Clang_ast_t.si_pointer -> true
     | _ -> false
 
   (* Used by translation functions to handle potenatial cfg nodes. *)
@@ -247,8 +248,8 @@ struct
       let node_kind = Procdesc.Node.Stmt_node (nd_name) in
       let node = Nodes.create_node node_kind res_state.instrs loc trans_state.context in
       Procdesc.node_set_succs_exn trans_state.context.procdesc node trans_state.succ_nodes [];
-      IList.iter
-        (fun leaf -> Procdesc.node_set_succs_exn trans_state.context.procdesc leaf [node] [])
+      List.iter
+        ~f:(fun leaf -> Procdesc.node_set_succs_exn trans_state.context.procdesc leaf [node] [])
         res_state.leaf_nodes;
       (* Invariant: if root_nodes is empty then the params have not created a node.*)
       let root_nodes = (if res_state.root_nodes <> [] then res_state.root_nodes
@@ -293,20 +294,21 @@ end
 (** This function handles ObjC new/alloc and C++ new calls *)
 let create_alloc_instrs sil_loc function_type fname size_exp_opt procname_opt =
   let function_type, function_type_np =
-    match function_type with
-    | Typ.Tptr (styp, Typ.Pk_pointer)
-    | Typ.Tptr (styp, Typ.Pk_objc_weak)
-    | Typ.Tptr (styp, Typ.Pk_objc_unsafe_unretained)
-    | Typ.Tptr (styp, Typ.Pk_objc_autoreleasing) ->
+    match function_type.Typ.desc with
+    | Tptr (styp, Typ.Pk_pointer)
+    | Tptr (styp, Typ.Pk_objc_weak)
+    | Tptr (styp, Typ.Pk_objc_unsafe_unretained)
+    | Tptr (styp, Typ.Pk_objc_autoreleasing) ->
         function_type, styp
-    | _ -> Typ.Tptr (function_type, Typ.Pk_pointer), function_type in
-  let sizeof_exp_ = Exp.Sizeof (function_type_np, None, Subtype.exact) in
+    | _ -> CType.add_pointer_to_typ function_type, function_type in
+  let sizeof_exp_ = Exp.Sizeof {typ=function_type_np; nbytes=None;
+                                dynamic_length=None; subtype=Subtype.exact} in
   let sizeof_exp = match size_exp_opt with
     | Some exp -> Exp.BinOp (Binop.Mult, sizeof_exp_, exp)
     | None -> sizeof_exp_ in
-  let exp = (sizeof_exp, Typ.Tint Typ.IULong) in
+  let exp = (sizeof_exp, Typ.mk (Tint Typ.IULong)) in
   let procname_arg = match procname_opt with
-    | Some procname -> [Exp.Const (Const.Cfun (procname)), Typ.Tvoid]
+    | Some procname -> [Exp.Const (Const.Cfun (procname)), Typ.mk Tvoid]
     | None -> [] in
   let args = exp :: procname_arg in
   let ret_id = Ident.create_fresh Ident.knormal in
@@ -336,8 +338,8 @@ let objc_new_trans trans_state loc stmt_info cls_name function_type =
   let is_instance = true in
   let call_flags = { CallFlags.default with CallFlags.cf_virtual = is_instance; } in
   let pname =
-    General_utils.mk_procname_from_objc_method
-      cls_name CFrontend_config.init Procname.ObjCInstanceMethod in
+    CProcname.NoAstDecl.objc_method_of_string_kind
+      cls_name CFrontend_config.init Typ.Procname.ObjCInstanceMethod in
   CMethod_trans.create_external_procdesc trans_state.context.CContext.cfg pname is_instance None;
   let args = [(alloc_ret_exp, alloc_ret_type)] in
   let ret_id_typ = Some (init_ret_id, alloc_ret_type) in
@@ -350,16 +352,16 @@ let objc_new_trans trans_state loc stmt_info cls_name function_type =
     PriorityNode.compute_results_to_parent trans_state loc nname stmt_info [res_trans_tmp] in
   { res_trans with exps = [(Exp.Var init_ret_id, alloc_ret_type)]}
 
-let new_or_alloc_trans trans_state loc stmt_info type_ptr class_name_opt selector =
+let new_or_alloc_trans trans_state loc stmt_info qual_type class_name_opt selector =
   let tenv = trans_state.context.CContext.tenv in
-  let function_type = CType_decl.type_ptr_to_sil_type tenv type_ptr in
+  let function_type = CType_decl.qual_type_to_sil_type tenv qual_type in
   let class_name =
     match class_name_opt with
     | Some class_name -> class_name
-    | None -> CType.classname_of_type function_type in
-  if selector = CFrontend_config.alloc then
+    | None -> CType.objc_classname_of_type function_type in
+  if String.equal selector CFrontend_config.alloc then
     alloc_trans trans_state loc stmt_info function_type true None
-  else if selector = CFrontend_config.new_str then
+  else if String.equal selector CFrontend_config.new_str then
     objc_new_trans trans_state loc stmt_info class_name function_type
   else assert false
 
@@ -376,9 +378,9 @@ let create_cast_instrs exp cast_from_typ cast_to_typ sil_loc =
   let ret_id = Ident.create_fresh Ident.knormal in
   let ret_id_typ = Some (ret_id, cast_to_typ) in
   let typ = CType.remove_pointer_to_typ cast_to_typ in
-  let sizeof_exp = Exp.Sizeof (typ, None, Subtype.exact) in
+  let sizeof_exp = Exp.Sizeof {typ; nbytes=None; dynamic_length=None; subtype=Subtype.exact} in
   let pname = BuiltinDecl.__objc_cast in
-  let args = [(exp, cast_from_typ); (sizeof_exp, Typ.Tint Typ.IULong)] in
+  let args = [(exp, cast_from_typ); (sizeof_exp, Typ.mk (Tint Typ.IULong))] in
   let stmt_call =
     Sil.Call (ret_id_typ, Exp.Const (Const.Cfun pname), args, sil_loc, CallFlags.default) in
   (stmt_call, Exp.Var ret_id)
@@ -400,9 +402,9 @@ let dereference_var_sil (exp, typ) sil_loc =
     assigned to it *)
 let dereference_value_from_result sil_loc trans_result ~strip_pointer =
   let (obj_sil, class_typ) = extract_exp_from_list trans_result.exps "" in
-  let cast_inst, cast_exp = dereference_var_sil (obj_sil, class_typ) sil_loc in
-  let typ_no_ptr = match class_typ with | Typ.Tptr (typ, _) -> typ | _ -> assert false in
+  let typ_no_ptr = match class_typ.Typ.desc with | Tptr (typ, _) -> typ | _ -> assert false in
   let cast_typ = if strip_pointer then typ_no_ptr else class_typ in
+  let cast_inst, cast_exp = dereference_var_sil (obj_sil, cast_typ) sil_loc in
   { trans_result with
     instrs = trans_result.instrs @ cast_inst;
     exps = [(cast_exp, cast_typ)]
@@ -413,10 +415,10 @@ let cast_operation trans_state cast_kind exps cast_typ sil_loc is_objc_bridged =
   let (exp, typ) = extract_exp_from_list exps "" in
   let is_objc_bridged = Option.is_some trans_state.obj_bridged_cast_typ || is_objc_bridged in
   match cast_kind with
+  | `NoOp
   | `DerivedToBase
   | `UncheckedDerivedToBase ->  (* These casts ignore change of type *)
       ([], (exp, typ))
-  | `NoOp
   | `BitCast
   | `IntegralCast
   | `IntegralToBoolean -> (* This is treated as a nop by returning the same expressions exps*)
@@ -434,17 +436,20 @@ let cast_operation trans_state cast_kind exps cast_typ sil_loc is_objc_bridged =
   | `LValueToRValue ->
       (* Takes an LValue and allow it to use it as RValue. *)
       (* So we assign the LValue to a temp and we pass it to the parent.*)
-      let instrs, deref_exp = dereference_var_sil (exp, typ) sil_loc in
+      let instrs, deref_exp = dereference_var_sil (exp, cast_typ) sil_loc in
       instrs, (deref_exp, cast_typ)
+  | `NullToPointer ->
+      if Exp.is_zero exp then ([], (Exp.null, cast_typ))
+      else ([], (exp, cast_typ))
   | _ ->
-      Logging.err_debug
-        "\nWARNING: Missing translation for Cast Kind %s. The construct has been ignored...\n"
+      L.(debug Capture Verbose)
+        "@\nWARNING: Missing translation for Cast Kind %s. The construct has been ignored...@\n"
         (Clang_ast_j.string_of_cast_kind cast_kind);
       ([], (exp, cast_typ))
 
 let trans_assertion_failure sil_loc (context : CContext.t) =
   let assert_fail_builtin = Exp.Const (Const.Cfun BuiltinDecl.__infer_fail) in
-  let args = [Exp.Const (Const.Cstr Config.default_failure_name), Typ.Tvoid] in
+  let args = [Exp.Const (Const.Cstr Config.default_failure_name), Typ.mk Tvoid] in
   let call_instr = Sil.Call (None, assert_fail_builtin, args, sil_loc, CallFlags.default) in
   let exit_node = Procdesc.get_exit_node (CContext.get_procdesc context)
   and failure_node =
@@ -505,20 +510,14 @@ let cxx_method_builtin_trans trans_state loc params_trans_res pname =
     None
 
 let define_condition_side_effects e_cond instrs_cond sil_loc =
-  let (e', typ) = extract_exp_from_list e_cond "\nWARNING: Missing expression in IfStmt. Need to be fixed\n" in
+  let (e', typ) = extract_exp_from_list e_cond
+      "@\nWARNING: Missing expression in IfStmt. Need to be fixed@\n" in
   match e' with
   | Exp.Lvar pvar ->
       let id = Ident.create_fresh Ident.knormal in
       [(Exp.Var id, typ)],
       [Sil.Load (id, Exp.Lvar pvar, typ, sil_loc)]
   | _ -> [(e', typ)], instrs_cond
-
-let fix_param_exps_mismatch params_stmt exps_param =
-  let diff = IList.length params_stmt - IList.length exps_param in
-  let args = if diff >0 then Array.make diff dummy_exp
-    else assert false in
-  let exps'= exps_param @ (Array.to_list args) in
-  exps'
 
 let is_superinstance mei =
   match mei.Clang_ast_t.omei_receiver_kind with
@@ -554,40 +553,40 @@ let extract_stmt_from_singleton stmt_list warning_string =
 let rec get_type_from_exp_stmt stmt =
   let do_decl_ref_exp i =
     match i.Clang_ast_t.drti_decl_ref with
-    | Some d -> (match d.Clang_ast_t.dr_type_ptr with
+    | Some d -> (match d.Clang_ast_t.dr_qual_type with
         | Some n -> n
         | _ -> assert false )
     | _ -> assert false in
   let open Clang_ast_t in
   match stmt with
   | CXXOperatorCallExpr(_, _, ei)
-  | CallExpr(_, _, ei) -> ei.Clang_ast_t.ei_type_ptr
-  | MemberExpr (_, _, ei, _) -> ei.Clang_ast_t.ei_type_ptr
-  | ParenExpr (_, _, ei) -> ei.Clang_ast_t.ei_type_ptr
-  | ArraySubscriptExpr(_, _, ei) -> ei.Clang_ast_t.ei_type_ptr
-  | ObjCIvarRefExpr (_, _, ei, _) -> ei.Clang_ast_t.ei_type_ptr
-  | ObjCMessageExpr (_, _, ei, _ ) -> ei.Clang_ast_t.ei_type_ptr
-  | PseudoObjectExpr(_, _, ei) -> ei.Clang_ast_t.ei_type_ptr
+  | CallExpr(_, _, ei) -> ei.Clang_ast_t.ei_qual_type
+  | MemberExpr (_, _, ei, _) -> ei.Clang_ast_t.ei_qual_type
+  | ParenExpr (_, _, ei) -> ei.Clang_ast_t.ei_qual_type
+  | ArraySubscriptExpr(_, _, ei) -> ei.Clang_ast_t.ei_qual_type
+  | ObjCIvarRefExpr (_, _, ei, _) -> ei.Clang_ast_t.ei_qual_type
+  | ObjCMessageExpr (_, _, ei, _ ) -> ei.Clang_ast_t.ei_qual_type
+  | PseudoObjectExpr(_, _, ei) -> ei.Clang_ast_t.ei_qual_type
   | CStyleCastExpr(_, stmt_list, _, _, _)
   | UnaryOperator(_, stmt_list, _, _)
   | ImplicitCastExpr(_, stmt_list, _, _) ->
       get_type_from_exp_stmt (extract_stmt_from_singleton stmt_list "WARNING: We expect only one stmt.")
   | DeclRefExpr(_, _, _, info) -> do_decl_ref_exp info
   | _ ->
-      Logging.err_debug "Failing with: %s@\n%!" (Clang_ast_j.string_of_stmt stmt);
+      L.internal_error "Failing with: %s@\n%!" (Clang_ast_j.string_of_stmt stmt);
       assert false
 
 module Self =
 struct
 
-  exception SelfClassException of string
+  exception SelfClassException of Typ.Name.t
 
   let add_self_parameter_for_super_instance context procname loc mei =
     if is_superinstance mei then
       let typ, self_expr, ins =
         let t' =
           CType.add_pointer_to_typ
-            (CType_decl.get_type_curr_class_objc context.CContext.curr_class) in
+            (Typ.mk (Tstruct (CContext.get_curr_class_typename context))) in
         let e = Exp.Lvar (Pvar.mk (Mangled.from_string CFrontend_config.self) procname) in
         let id = Ident.create_fresh Ident.knormal in
         t', Exp.Var id, [Sil.Load (id, e, t', loc)] in
@@ -597,7 +596,7 @@ struct
     else empty_res_trans
 
   let is_var_self pvar is_objc_method =
-    let is_self = Mangled.to_string (Pvar.get_name pvar) = CFrontend_config.self in
+    let is_self = String.equal (Mangled.to_string (Pvar.get_name pvar)) CFrontend_config.self in
     is_self && is_objc_method
 
 end
@@ -613,7 +612,7 @@ let is_owning_name n =
     else (
       let prefix = Str.string_before s' (String.length fam) in
       let suffix = Str.string_after s' (String.length fam) in
-      prefix = fam && not (Str.string_match (Str.regexp "[a-z]") suffix 0)
+      String.equal prefix fam && not (Str.string_match (Str.regexp "[a-z]") suffix 0)
     ) in
   match Str.split (Str.regexp_string ":") n with
   | fst:: _ ->
@@ -664,7 +663,8 @@ let rec contains_opaque_value_expr s =
 
 (* checks if a unary operator is a logic negation applied to integers*)
 let is_logical_negation_of_int tenv ei uoi =
-  match CType_decl.type_ptr_to_sil_type tenv ei.Clang_ast_t.ei_type_ptr, uoi.Clang_ast_t.uoi_kind with
+  match (CType_decl.qual_type_to_sil_type tenv ei.Clang_ast_t.ei_qual_type).desc,
+        uoi.Clang_ast_t.uoi_kind with
   | Typ.Tint _,`LNot -> true
   | _, _ -> false
 
@@ -673,8 +673,8 @@ let rec is_block_stmt stmt =
   match stmt with
   | BlockExpr _ -> true
   | DeclRefExpr (_, _, expr_info, _) ->
-      let tp = expr_info.Clang_ast_t.ei_type_ptr in
-      CType.is_block_type tp
+      let qt = expr_info.Clang_ast_t.ei_qual_type in
+      CType.is_block_type qt
   | _ -> (match snd (Clang_ast_proj.get_stmt_tuple stmt) with
       | [sub_stmt] -> is_block_stmt sub_stmt
       | _ -> false)
@@ -695,7 +695,7 @@ let is_dispatch_function stmt_list =
                    | None -> None
                    | Some (_, block_arg_pos) ->
                        try
-                         let arg_stmt = IList.nth arg_stmts block_arg_pos in
+                         let arg_stmt = List.nth_exn arg_stmts block_arg_pos in
                          if is_block_stmt arg_stmt then Some block_arg_pos else None
                        with Failure _ -> None)
               | _ -> None))
@@ -707,7 +707,7 @@ let is_dispatch_function stmt_list =
   | _ -> None
 
 let is_block_enumerate_function mei =
-  mei.Clang_ast_t.omei_selector = CFrontend_config.enumerateObjectsUsingBlock
+  String.equal mei.Clang_ast_t.omei_selector CFrontend_config.enumerateObjectsUsingBlock
 
 (* This takes a variable of type struct or array and returns a list of expressions *)
 (* for each of its fields (also recursively, such that each field access is of a basic type) *)
@@ -715,42 +715,42 @@ let is_block_enumerate_function mei =
 (* be a list of LField expressions *)
 let var_or_zero_in_init_list tenv e typ ~return_zero:return_zero =
   let rec var_or_zero_in_init_list' e typ tns =
-    let open General_utils in
-    match typ with
-    | Typ.Tstruct tn -> (
+    let open CGeneral_utils in
+    match typ.Typ.desc with
+    | Tstruct tn -> (
         match Tenv.lookup tenv tn with
         | Some { fields } ->
             let lh_exprs =
-              IList.map (fun (fieldname, _, _) -> Exp.Lfield (e, fieldname, typ)) fields in
-            let lh_types = IList.map (fun (_, fieldtype, _) -> fieldtype) fields in
+              List.map ~f:(fun (fieldname, _, _) -> Exp.Lfield (e, fieldname, typ)) fields in
+            let lh_types = List.map ~f:(fun (_, fieldtype, _) -> fieldtype) fields in
             let exp_types = zip lh_exprs lh_types in
-            IList.map (fun (e, t) -> IList.flatten (var_or_zero_in_init_list' e t tns)) exp_types
+            List.map ~f:(fun (e, t) -> List.concat (var_or_zero_in_init_list' e t tns)) exp_types
         | None ->
             assert false
       )
-    | Typ.Tarray (arrtyp, Some n) ->
+    | Tarray (arrtyp, Some n, _) ->
         let size = IntLit.to_int n in
         let indices = list_range 0 (size - 1) in
         let index_constants =
-          IList.map (fun i -> (Exp.Const (Const.Cint (IntLit.of_int i)))) indices in
+          List.map ~f:(fun i -> (Exp.Const (Const.Cint (IntLit.of_int i)))) indices in
         let lh_exprs =
-          IList.map (fun index_expr -> Exp.Lindex (e, index_expr)) index_constants in
+          List.map ~f:(fun index_expr -> Exp.Lindex (e, index_expr)) index_constants in
         let lh_types = replicate size arrtyp in
         let exp_types = zip lh_exprs lh_types in
-        IList.map (fun (e, t) ->
-            IList.flatten (var_or_zero_in_init_list' e t tns)) exp_types
-    | Typ.Tint _ | Typ.Tfloat _  | Typ.Tptr _ ->
+        List.map ~f:(fun (e, t) ->
+            List.concat (var_or_zero_in_init_list' e t tns)) exp_types
+    | Tint _ | Tfloat _  | Tptr _ ->
         let exp = if return_zero then Sil.zero_value_of_numerical_type typ else e in
         [ [(exp, typ)] ]
-    | Typ.Tfun _ | Typ.Tvoid | Typ.Tarray _ -> assert false in
-  IList.flatten (var_or_zero_in_init_list' e typ StringSet.empty)
+    | Tfun _ | Tvoid | Tarray _ | TVar _ -> assert false in
+  List.concat (var_or_zero_in_init_list' e typ String.Set.empty)
 
 (*
 (** Similar to extract_item_from_singleton but for option type *)
 let extract_item_from_option op warning_string =
   match op with
   | Some item -> item
-  | _ -> Logging.err_debug warning_string; assert false
+  | _ -> L.(debug Capture Verbose) warning_string; assert false
 
 let extract_id_from_singleton id_list warning_string =
   extract_item_from_singleton id_list warning_string (dummy_id ())

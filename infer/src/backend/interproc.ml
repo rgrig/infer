@@ -8,7 +8,10 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
+open! PVariant
+
+module Hashtbl = Caml.Hashtbl
 
 (** Interprocedural Analysis *)
 
@@ -24,7 +27,7 @@ type visitednode =
 
 (** Set of nodes with number of visits *)
 module NodeVisitSet =
-  Set.Make(struct
+  Caml.Set.Make(struct
     type t = visitednode
     let compare_ids n1 n2 =
       (* higher id is better *)
@@ -41,10 +44,10 @@ module NodeVisitSet =
             - 1
         | Some d1, Some d2 ->
             (* shorter distance to exit is better *)
-            int_compare d1 d2 in
+            Int.compare d1 d2 in
       if n <> 0 then n else compare_ids n1 n2
     let compare_number_of_visits x1 x2 =
-      let n = int_compare x1.visits x2.visits in (* visited fewer times is better *)
+      let n = Int.compare x1.visits x2.visits in (* visited fewer times is better *)
       if n <> 0 then n else compare_distance_to_exit x1 x2
     let compare x1 x2 =
       if !Config.footprint then
@@ -113,10 +116,9 @@ module Worklist = struct
       wl.visit_map <-
         Procdesc.NodeMap.add min.node (min.visits + 1) wl.visit_map; (* increase the visits *)
       min.node
-    with Not_found -> begin
-        L.out "@\n...Work list is empty! Impossible to remove edge...@\n";
-        assert false
-      end
+    with Not_found ->
+      L.internal_error "@\n...Work list is empty! Impossible to remove edge...@\n";
+      assert false
 end
 (* =============== END of module Worklist =============== *)
 
@@ -159,7 +161,7 @@ let path_set_checkout_todo (wl : Worklist.t) (node: Procdesc.Node.t) : Paths.Pat
     Hashtbl.replace wl.Worklist.path_set_visited node_id new_visited;
     todo
   with Not_found ->
-    L.out "@.@.ERROR: could not find todo for node %a@.@." Procdesc.Node.pp node;
+    L.internal_error "@\n@\nERROR: could not find todo for node %a@\n@." Procdesc.Node.pp node;
     assert false
 
 (* =============== END of the edge_set object =============== *)
@@ -202,7 +204,8 @@ let do_meet_pre tenv pset =
 
 (** Find the preconditions in the current spec table,
     apply meet then join, and return the joined preconditions *)
-let collect_preconditions tenv proc_name : Prop.normal Specs.Jprop.t list =
+let collect_preconditions tenv summary : Prop.normal Specs.Jprop.t list =
+  let proc_name = Specs.get_proc_name summary in
   let collect_do_abstract_one tenv prop =
     if !Config.footprint
     then
@@ -212,37 +215,38 @@ let collect_preconditions tenv proc_name : Prop.normal Specs.Jprop.t list =
     else
       Abs.abstract_no_symop tenv prop in
   let pres =
-    IList.map
-      (fun spec -> Specs.Jprop.to_prop spec.Specs.pre)
-      (Specs.get_specs proc_name) in
+    List.map
+      ~f:(fun spec -> Specs.Jprop.to_prop spec.Specs.pre)
+      (Specs.get_specs_from_payload summary) in
   let pset = Propset.from_proplist tenv pres in
   let pset' =
     let f p = Prop.prop_normal_vars_to_primed_vars tenv p in
     Propset.map tenv f pset in
 
-  L.d_strln ("#### Extracted footprint of " ^ Procname.to_string proc_name ^ ":  ####");
+  L.d_strln ("#### Extracted footprint of " ^ Typ.Procname.to_string proc_name ^ ":  ####");
   L.d_increase_indent 1; Propset.d Prop.prop_emp pset'; L.d_decrease_indent 1; L.d_ln ();
   L.d_ln ();
   let pset'' = collect_do_abstract_pre proc_name tenv pset' in
   let plist_meet = do_meet_pre tenv pset'' in
-  L.d_strln ("#### Footprint of " ^ Procname.to_string proc_name ^ " after Meet  ####");
+  L.d_strln ("#### Footprint of " ^ Typ.Procname.to_string proc_name ^ " after Meet  ####");
   L.d_increase_indent 1; Propgraph.d_proplist Prop.prop_emp plist_meet;
   L.d_decrease_indent 1; L.d_ln ();
   L.d_ln ();
   L.d_increase_indent 2; (* Indent for the join output *)
   let jplist = do_join_pre tenv plist_meet in
   L.d_decrease_indent 2; L.d_ln ();
-  L.d_strln ("#### Footprint of " ^ Procname.to_string proc_name ^ " after Join  ####");
+  L.d_strln ("#### Footprint of " ^ Typ.Procname.to_string proc_name ^ " after Join  ####");
   L.d_increase_indent 1; Specs.Jprop.d_list false jplist; L.d_decrease_indent 1; L.d_ln ();
-  let jplist' = IList.map (Specs.Jprop.map (Prop.prop_rename_primed_footprint_vars tenv)) jplist in
-  L.d_strln ("#### Renamed footprint of " ^ Procname.to_string proc_name ^ ":  ####");
+  let jplist' =
+    List.map ~f:(Specs.Jprop.map (Prop.prop_rename_primed_footprint_vars tenv)) jplist in
+  L.d_strln ("#### Renamed footprint of " ^ Typ.Procname.to_string proc_name ^ ":  ####");
   L.d_increase_indent 1; Specs.Jprop.d_list false jplist'; L.d_decrease_indent 1; L.d_ln ();
   let jplist'' =
     let f p =
       Prop.prop_primed_vars_to_normal_vars tenv
         (collect_do_abstract_one proc_name tenv p) in
-    IList.map (Specs.Jprop.map f) jplist' in
-  L.d_strln ("#### Abstracted footprint of " ^ Procname.to_string proc_name ^ ":  ####");
+    List.map ~f:(Specs.Jprop.map f) jplist' in
+  L.d_strln ("#### Abstracted footprint of " ^ Typ.Procname.to_string proc_name ^ ":  ####");
   L.d_increase_indent 1; Specs.Jprop.d_list false jplist''; L.d_decrease_indent 1; L.d_ln();
   jplist''
 
@@ -288,8 +292,8 @@ let propagate_nodes_divergence
       Propgraph.d_proplist Prop.prop_emp (Paths.PathSet.to_proplist prop_incons); L.d_ln ();
       propagate wl pname ~is_exception:false prop_incons exit_node
     end;
-  IList.iter (propagate wl pname ~is_exception:false pset_ok) succ_nodes;
-  IList.iter (propagate wl pname ~is_exception:true pset_exn) exn_nodes
+  List.iter ~f:(propagate wl pname ~is_exception:false pset_ok) succ_nodes;
+  List.iter ~f:(propagate wl pname ~is_exception:true pset_exn) exn_nodes
 
 (* ===================== END of symbolic execution ===================== *)
 
@@ -303,7 +307,7 @@ let do_symexec_join pname tenv wl curr_node (edgeset_todo : Paths.PathSet.t) =
   let old_dset = Join_table.find wl.Worklist.join_table curr_node_id in
   let old_dset', new_dset' = Dom.pathset_join pname tenv old_dset new_dset in
   Join_table.add wl.Worklist.join_table curr_node_id (Paths.PathSet.union old_dset' new_dset');
-  IList.iter (fun node ->
+  List.iter ~f:(fun node ->
       Paths.PathSet.iter (fun prop path ->
           State.set_path path None;
           propagate wl pname ~is_exception:false
@@ -332,15 +336,14 @@ let reset_prop_metrics () =
 
 exception RE_EXE_ERROR
 
-let do_before_node pname source session node =
-  let loc = Procdesc.Node.get_loc node in
+let do_before_node session node =
   State.set_node node;
   State.set_session session;
   L.reset_delayed_prints ();
-  Printer.node_start_session node loc pname (session :> int) source
+  Printer.node_start_session node (session :> int)
 
-let do_after_node source node =
-  Printer.node_finish_session node source
+let do_after_node node =
+  Printer.node_finish_session node
 
 (** Return the list of normal ids occurring in the instructions *)
 let instrs_get_normal_vars instrs =
@@ -348,8 +351,8 @@ let instrs_get_normal_vars instrs =
   let do_instr instr =
     let do_e e = Sil.exp_fav_add fav e in
     let exps = Sil.instr_get_exps instr in
-    IList.iter do_e exps in
-  IList.iter do_instr instrs;
+    List.iter ~f:do_e exps in
+  List.iter ~f:do_instr instrs;
   Sil.fav_filter_ident fav Ident.is_normal;
   Sil.fav_to_list fav
 
@@ -367,7 +370,7 @@ let check_assignement_guard pdesc node =
     let is_call = function
       | Sil.Call _ -> true
       | _ -> false in
-    IList.exists is_call instrs in
+    List.exists ~f:is_call instrs in
   let is_set_instr i =
     match i with
     | Sil.Store _ -> true
@@ -392,8 +395,8 @@ let check_assignement_guard pdesc node =
   let is_prune_exp e =
     let prune_var n =
       let ins = Procdesc.Node.get_instrs n in
-      let pi = IList.filter is_prune_instr ins in
-      let leti = IList.filter is_load_instr ins in
+      let pi = List.filter ~f:is_prune_instr ins in
+      let leti = List.filter ~f:is_load_instr ins in
       match pi, leti with
       | [Sil.Prune (Exp.Var (e1), _, _, _)], [Sil.Load (e2, e', _, _)]
       | [Sil.Prune (Exp.UnOp (Unop.LNot, Exp.Var e1, _), _, _, _)],
@@ -404,18 +407,18 @@ let check_assignement_guard pdesc node =
             L.d_strln ("Found " ^ (Exp.to_string e') ^ " as prune var");
           [e']
       | _ -> [] in
-    let prune_vars = IList.flatten(IList.map (fun n -> prune_var n) succs) in
-    IList.for_all (fun e' -> Exp.equal e' e) prune_vars in
-  let succs_loc = IList.map (fun n -> Procdesc.Node.get_loc n) succs in
+    let prune_vars = List.concat_map ~f:(fun n -> prune_var n) succs in
+    List.for_all ~f:(fun e' -> Exp.equal e' e) prune_vars in
+  let succs_loc = List.map ~f:(fun n -> Procdesc.Node.get_loc n) succs in
   let succs_are_all_prune_nodes () =
-    IList.for_all (fun n -> match Procdesc.Node.get_kind n with
+    List.for_all ~f:(fun n -> match Procdesc.Node.get_kind n with
         | Procdesc.Node.Prune_node(_) -> true
         | _ -> false) succs in
   let succs_same_loc_as_node () =
     if verbose then
       (L.d_str ("LOCATION NODE: line: " ^ (string_of_int l_node.Location.line));
        L.d_strln " ");
-    IList.for_all (fun l ->
+    List.for_all ~f:(fun l ->
         if verbose then
           (L.d_str ("LOCATION l: line: " ^ (string_of_int l.Location.line));
            L.d_strln " ");
@@ -428,9 +431,9 @@ let check_assignement_guard pdesc node =
       | Sil.Prune _ -> false
       | _ -> true in
     let check_guard n =
-      IList.for_all check_instr (Procdesc.Node.get_instrs n) in
-    IList.for_all check_guard succs in
-  if !Config.curr_language = Config.Clang &&
+      List.for_all ~f:check_instr (Procdesc.Node.get_instrs n) in
+    List.for_all ~f:check_guard succs in
+  if Config.curr_language_is Config.Clang &&
      succs_are_all_prune_nodes () &&
      succs_same_loc_as_node () &&
      succs_have_simple_guards () then
@@ -439,10 +442,10 @@ let check_assignement_guard pdesc node =
      (* at this point all successors are at the same location, so we can take the first*)
      | loc_succ:: _ ->
          let set_instr_at_succs_loc =
-           IList.filter
-             (fun i ->
-                Location.equal (Sil.instr_get_loc i) loc_succ &&
-                is_set_instr i)
+           List.filter
+             ~f:(fun i ->
+                 Location.equal (Sil.instr_get_loc i) loc_succ &&
+                 is_set_instr i)
              instr in
          (match set_instr_at_succs_loc with
           | [Sil.Store (e, _, _, _)] ->
@@ -492,16 +495,16 @@ let add_taint_attrs tenv proc_name proc_desc prop =
   | tainted_param_nums ->
       let formal_params = Procdesc.get_formals proc_desc in
       let formal_params' =
-        IList.map (fun (p, _) -> Pvar.mk p proc_name) formal_params in
+        List.map ~f:(fun (p, _) -> Pvar.mk p proc_name) formal_params in
       Taint.get_params_to_taint tainted_param_nums formal_params'
-      |> IList.fold_left
-        (fun prop_acc (param, taint_kind) ->
-           let attr =
-             PredSymb.Ataint { taint_source = proc_name; taint_kind; } in
-           Taint.add_tainting_attribute tenv attr param prop_acc)
-        prop
+      |> List.fold
+        ~f:(fun prop_acc (param, taint_kind) ->
+            let attr =
+              PredSymb.Ataint { taint_source = proc_name; taint_kind; } in
+            Taint.add_tainting_attribute tenv attr param prop_acc)
+        ~init:prop
 
-let forward_tabulate tenv pdesc wl source =
+let forward_tabulate tenv pdesc wl =
   let pname = Procdesc.get_proc_name pdesc in
   let handle_exn_node curr_node exn =
     Exceptions.print_exception_html "Failure of symbolic execution: " exn;
@@ -529,12 +532,13 @@ let forward_tabulate tenv pdesc wl source =
     let log_string proc_name =
       let summary = Specs.get_summary_unsafe "forward_tabulate" proc_name in
       let phase_string =
-        if Specs.get_phase summary == Specs.FOOTPRINT then "FP" else "RE" in
-      let timestamp = Specs.get_timestamp summary in
-      F.sprintf "[%s:%d] %s" phase_string timestamp (Procname.to_string proc_name) in
+        if Specs.equal_phase (Specs.get_phase summary) Specs.FOOTPRINT then "FP" else "RE" in
+      let status = Specs.get_status summary in
+      F.sprintf
+        "[%s:%s] %s" phase_string (Specs.string_of_status status) (Typ.Procname.to_string proc_name) in
     L.d_strln ("**** " ^ (log_string pname) ^ " " ^
                "Node: " ^ string_of_int (Procdesc.Node.get_id curr_node :> int) ^ ", " ^
-               "Procedure: " ^ Procname.to_string pname ^ ", " ^
+               "Procedure: " ^ Typ.Procname.to_string pname ^ ", " ^
                "Session: " ^ string_of_int session ^ ", " ^
                "Todo: " ^ string_of_int (Paths.PathSet.size pathset_todo) ^ " ****");
     L.d_increase_indent 1;
@@ -588,13 +592,13 @@ let forward_tabulate tenv pdesc wl source =
           handle_exn_node curr_node exn in
         do_node curr_node pathset_todo session handle_exn;
         if !handle_exn_called then Printer.force_delayed_prints ();
-        do_after_node source curr_node
+        do_after_node curr_node
       end
     with
     | exn when Exceptions.handle_exception exn ->
         handle_exn_node curr_node exn;
         Printer.force_delayed_prints ();
-        do_after_node source curr_node;
+        do_after_node curr_node;
         if not !Config.footprint then raise RE_EXE_ERROR in
 
   while not (Worklist.is_empty wl) do
@@ -604,7 +608,7 @@ let forward_tabulate tenv pdesc wl source =
     let session =
       incr summary.Specs.sessions;
       !(summary.Specs.sessions) in
-    do_before_node pname source session curr_node;
+    do_before_node session curr_node;
     do_node_and_handle curr_node session
   done;
   L.d_strln ".... Work list empty. Stop ...."; L.d_ln ()
@@ -614,17 +618,17 @@ let forward_tabulate tenv pdesc wl source =
     [reachable_hpreds]. *)
 let get_fld_typ_path_opt src_exps sink_exp_ reachable_hpreds_ =
   let strexp_matches target_exp = function
-    | (_, Sil.Eexp (e, _)) -> Exp.equal target_exp e
+    | Sil.Eexp (e, _) -> Exp.equal target_exp e
     | _ -> false in
   let extend_path hpred (sink_exp, path, reachable_hpreds) = match hpred with
-    | Sil.Hpointsto (lhs, Sil.Estruct (flds, _), Exp.Sizeof (typ, _, _)) ->
-        (try
-           let fld, _ = IList.find (fun fld -> strexp_matches sink_exp fld) flds in
-           let reachable_hpreds' = Sil.HpredSet.remove hpred reachable_hpreds in
-           (lhs, (Some fld, typ) :: path, reachable_hpreds')
-         with Not_found -> (sink_exp, path, reachable_hpreds))
-    | Sil.Hpointsto (lhs, Sil.Earray (_, elems, _), Exp.Sizeof (typ, _, _)) ->
-        if IList.exists (fun pair -> strexp_matches sink_exp pair) elems
+    | Sil.Hpointsto (lhs, Sil.Estruct (flds, _), Exp.Sizeof {typ}) ->
+        List.find ~f:(function _, se -> strexp_matches sink_exp se) flds |>
+        Option.value_map ~f:(function fld, _ ->
+            let reachable_hpreds' = Sil.HpredSet.remove hpred reachable_hpreds in
+            (lhs, (Some fld, typ) :: path, reachable_hpreds'))
+          ~default:(sink_exp, path, reachable_hpreds)
+    | Sil.Hpointsto (lhs, Sil.Earray (_, elems, _), Exp.Sizeof {typ}) ->
+        if List.exists ~f:(function _, se -> strexp_matches sink_exp se) elems
         then
           let reachable_hpreds' = Sil.HpredSet.remove hpred reachable_hpreds in
           (* None means "no field name" ~=~ nameless array index *)
@@ -652,39 +656,39 @@ let report_context_leaks pname sigma tenv =
     let reachable_hpreds, reachable_exps =
       Prop.compute_reachable_hpreds sigma fld_exps in
     (* raise an error if any Context expression is in [reachable_exps] *)
-    IList.iter
-      (fun (context_exp, name) ->
-         if Exp.Set.mem context_exp reachable_exps then
-           let leak_path =
-             match get_fld_typ_path_opt fld_exps context_exp reachable_hpreds with
-             | Some path -> path
-             | None -> assert false (* a path must exist in order for a leak to be reported *) in
-           let err_desc =
-             Errdesc.explain_context_leak pname (Typ.Tstruct name) fld_name leak_path in
-           let exn = Exceptions.Context_leak (err_desc, __POS__) in
-           Reporting.log_error pname exn)
+    List.iter
+      ~f:(fun (context_exp, name) ->
+          if Exp.Set.mem context_exp reachable_exps then
+            let leak_path =
+              match get_fld_typ_path_opt fld_exps context_exp reachable_hpreds with
+              | Some path -> path
+              | None -> assert false (* a path must exist in order for a leak to be reported *) in
+            let err_desc =
+              Errdesc.explain_context_leak pname (Typ.mk (Tstruct name)) fld_name leak_path in
+            let exn = Exceptions.Context_leak (err_desc, __POS__) in
+            Reporting.log_error pname exn)
       context_exps in
   (* get the set of pointed-to expressions of type T <: Context *)
   let context_exps =
-    IList.fold_left
-      (fun exps hpred -> match hpred with
-         | Sil.Hpointsto (_, Eexp (exp, _), Sizeof (Tptr (Tstruct name, _), _, _))
-           when not (Exp.is_null_literal exp)
-             && AndroidFramework.is_context tenv name
-             && not (AndroidFramework.is_application tenv name) ->
-             (exp, name) :: exps
-         | _ -> exps)
-      []
+    List.fold
+      ~f:(fun exps hpred -> match hpred with
+          | Sil.Hpointsto (_, Eexp (exp, _), Sizeof {typ={desc=Tptr ({desc=Tstruct name}, _)}})
+            when not (Exp.is_null_literal exp)
+              && AndroidFramework.is_context tenv name
+              && not (AndroidFramework.is_application tenv name) ->
+              (exp, name) :: exps
+          | _ -> exps)
+      ~init:[]
       sigma in
-  IList.iter
-    (function
-      | Sil.Hpointsto (Exp.Lvar pv, Sil.Estruct (static_flds, _), _)
-        when Pvar.is_global pv ->
-          IList.iter
-            (fun (f_name, f_strexp) ->
-               check_reachable_context_from_fld (f_name, f_strexp) context_exps)
-            static_flds
-      | _ -> ())
+  List.iter
+    ~f:(function
+        | Sil.Hpointsto (Exp.Lvar pv, Sil.Estruct (static_flds, _), _)
+          when Pvar.is_global pv ->
+            List.iter
+              ~f:(fun (f_name, f_strexp) ->
+                  check_reachable_context_from_fld (f_name, f_strexp) context_exps)
+              static_flds
+        | _ -> ())
     sigma
 
 (** Remove locals and formals,
@@ -698,7 +702,7 @@ let remove_locals_formals_and_check tenv pdesc p =
     let desc = Errdesc.explain_stack_variable_address_escape loc pvar dexp_opt in
     let exn = Exceptions.Stack_variable_address_escape (desc, __POS__) in
     Reporting.log_warning pname exn in
-  IList.iter check_pvar pvars;
+  List.iter ~f:check_pvar pvars;
   p'
 
 (** Collect the analysis results for the exit node. *)
@@ -708,10 +712,10 @@ let collect_analysis_result tenv wl pdesc : Paths.PathSet.t =
   let pathset = htable_retrieve wl.Worklist.path_set_visited exit_node_id in
   Paths.PathSet.map (remove_locals_formals_and_check tenv pdesc) pathset
 
-module Pmap = Map.Make
+module Pmap = Caml.Map.Make
     (struct
       type t = Prop.normal Prop.t
-      let compare = Prop.prop_compare
+      let compare = Prop.compare_prop
     end)
 
 let vset_ref_add_path vset_ref path =
@@ -726,9 +730,9 @@ let compute_visited vset =
   let res = ref Specs.Visitedset.empty in
   let node_get_all_lines n =
     let node_loc = Procdesc.Node.get_loc n in
-    let instrs_loc = IList.map Sil.instr_get_loc (Procdesc.Node.get_instrs n) in
-    let lines = IList.map (fun loc -> loc.Location.line) (node_loc :: instrs_loc) in
-    IList.remove_duplicates int_compare (IList.sort int_compare lines) in
+    let instrs_loc = List.map ~f:Sil.instr_get_loc (Procdesc.Node.get_instrs n) in
+    let lines = List.map ~f:(fun loc -> loc.Location.line) (node_loc :: instrs_loc) in
+    List.remove_consecutive_duplicates ~equal:Int.equal (List.sort ~cmp:Int.compare lines) in
   let do_node n =
     res :=
       Specs.Visitedset.add (Procdesc.Node.get_id n, node_get_all_lines n) !res in
@@ -744,8 +748,8 @@ let extract_specs tenv pdesc pathset : Prop.normal Specs.spec list =
       (fun prop _ -> Prop.prop_fav_add fav prop)
       pathset;
     let sub_list =
-      IList.map
-        (fun id -> (id, Exp.Var (Ident.create_fresh (Ident.knormal))))
+      List.map
+        ~f:(fun id -> (id, Exp.Var (Ident.create_fresh (Ident.knormal))))
         (Sil.fav_to_list fav) in
     Sil.sub_of_list sub_list in
   let pre_post_visited_list =
@@ -755,8 +759,8 @@ let extract_specs tenv pdesc pathset : Prop.normal Specs.spec list =
       let prop'' = Abs.abstract pname tenv prop' in
       let pre, post = Prop.extract_spec prop'' in
       let pre' = Prop.normalize tenv (Prop.prop_sub sub pre) in
-      if !Config.curr_language =
-         Config.Java && Procdesc.get_access pdesc <> PredSymb.Private then
+      if Config.curr_language_is Config.Java &&
+         Procdesc.get_access pdesc <> PredSymb.Private then
         report_context_leaks pname post.Prop.sigma tenv;
       let post' =
         if Prover.check_inconsistency_base tenv prop then None
@@ -766,7 +770,7 @@ let extract_specs tenv pdesc pathset : Prop.normal Specs.spec list =
         vset_ref_add_path vset_ref path;
         compute_visited !vset_ref in
       (pre', post', visited) in
-    IList.map f pplist in
+    List.map ~f pplist in
   let pre_post_map =
     let add map (pre, post, visited) =
       let current_posts, current_visited =
@@ -778,12 +782,12 @@ let extract_specs tenv pdesc pathset : Prop.normal Specs.spec list =
         | Some (post, path) -> Paths.PathSet.add_renamed_prop post path current_posts in
       let new_visited = Specs.Visitedset.union visited current_visited in
       Pmap.add pre (new_posts, new_visited) map in
-    IList.fold_left add Pmap.empty pre_post_visited_list in
+    List.fold ~f:add ~init:Pmap.empty pre_post_visited_list in
   let specs = ref [] in
   let add_spec pre ((posts : Paths.PathSet.t), visited) =
     let posts' =
-      IList.map
-        (fun (p, path) -> (PropUtil.remove_seed_vars tenv p, path))
+      List.map
+        ~f:(fun (p, path) -> (PropUtil.remove_seed_vars tenv p, path))
         (Paths.PathSet.elements (do_join_post pname tenv posts)) in
     let spec =
       { Specs.pre = Specs.Jprop.Prop (1, pre);
@@ -799,8 +803,8 @@ let collect_postconditions wl tenv pdesc : Paths.PathSet.t * Specs.Visitedset.t 
 
   (* Assuming C++ developers use RAII, remove resources from the constructor posts *)
   let pathset = match pname with
-    | Procname.ObjC_Cpp _ ->
-        if (Procname.is_constructor pname) then
+    | Typ.Procname.ObjC_Cpp _ ->
+        if (Typ.Procname.is_constructor pname) then
           Paths.PathSet.map (fun prop ->
               Attribute.remove_resource tenv Racquire (Rmemory Mobjc)
                 (Attribute.remove_resource tenv Racquire (Rmemory Mmalloc)
@@ -810,7 +814,7 @@ let collect_postconditions wl tenv pdesc : Paths.PathSet.t * Specs.Visitedset.t 
     | _ -> pathset in
 
   L.d_strln
-    ("#### [FUNCTION " ^ Procname.to_string pname ^ "] Analysis result ####");
+    ("#### [FUNCTION " ^ Typ.Procname.to_string pname ^ "] Analysis result ####");
   Propset.d Prop.prop_emp (Paths.PathSet.to_propset tenv pathset);
   L.d_ln ();
   let res =
@@ -827,7 +831,7 @@ let collect_postconditions wl tenv pdesc : Paths.PathSet.t * Specs.Visitedset.t 
     | exn when (match exn with Exceptions.Leak _ -> true | _ -> false) ->
         L.d_strln"Leak in post collection"; assert false in
   L.d_strln
-    ("#### [FUNCTION " ^ Procname.to_string pname ^ "] Postconditions after join ####");
+    ("#### [FUNCTION " ^ Typ.Procname.to_string pname ^ "] Postconditions after join ####");
   L.d_increase_indent 1;
   Propset.d Prop.prop_emp (Paths.PathSet.to_propset tenv (fst res));
   L.d_decrease_indent 1;
@@ -839,7 +843,7 @@ let create_seed_vars sigma =
     | Sil.Hpointsto (Exp.Lvar pv, se, typ) when not (Pvar.is_abduced pv) ->
         Sil.Hpointsto(Exp.Lvar (Pvar.to_seed pv), se, typ) :: sigma
     | _ -> sigma in
-  IList.fold_left hpred_add_seed [] sigma
+  List.fold ~f:hpred_add_seed ~init:[] sigma
 
 (** Initialize proposition for execution given formal and global
     parameters. The footprint is initialized according to the
@@ -849,10 +853,12 @@ let prop_init_formals_seed tenv new_formals (prop : 'a Prop.t) : Prop.exposed Pr
   let sigma_new_formals =
     let do_formal (pv, typ) =
       let texp = match !Config.curr_language with
-        | Config.Clang -> Exp.Sizeof (typ, None, Subtype.exact)
-        | Config.Java -> Exp.Sizeof (typ, None, Subtype.subtypes) in
+        | Config.Clang ->
+            Exp.Sizeof {typ; nbytes=None; dynamic_length=None; subtype=Subtype.exact}
+        | Config.Java ->
+            Exp.Sizeof {typ; nbytes=None; dynamic_length=None; subtype=Subtype.subtypes} in
       Prop.mk_ptsto_lvar tenv Prop.Fld_init Sil.inst_formal (pv, texp, None) in
-    IList.map do_formal new_formals in
+    List.map ~f:do_formal new_formals in
   let sigma_seed =
     create_seed_vars
       (* formals already there plus new ones *)
@@ -873,7 +879,7 @@ let initial_prop
     (Pvar.mk x (Procdesc.get_proc_name curr_f), typ) in
   let new_formals =
     if add_formals
-    then IList.map construct_decl (Procdesc.get_formals curr_f)
+    then List.map ~f:construct_decl (Procdesc.get_formals curr_f)
     else [] (* no new formals added *) in
   let prop1 =
     Prop.prop_reset_inst
@@ -892,8 +898,8 @@ let initial_prop_from_pre tenv curr_f pre =
   if !Config.footprint then
     let vars = Sil.fav_to_list (Prop.prop_fav pre) in
     let sub_list =
-      IList.map
-        (fun id -> (id, Exp.Var (Ident.create_fresh (Ident.kfootprint))))
+      List.map
+        ~f:(fun id -> (id, Exp.Var (Ident.create_fresh (Ident.kfootprint))))
         vars in
     let sub = Sil.sub_of_list sub_list in
     let pre2 = Prop.prop_sub sub pre in
@@ -904,11 +910,11 @@ let initial_prop_from_pre tenv curr_f pre =
     initial_prop tenv curr_f pre false
 
 (** Re-execute one precondition and return some spec if there was no re-execution error. *)
-let execute_filter_prop wl tenv pdesc init_node (precondition : Prop.normal Specs.Jprop.t) source
+let execute_filter_prop wl tenv pdesc init_node (precondition : Prop.normal Specs.Jprop.t)
   : Prop.normal Specs.spec option =
   let pname = Procdesc.get_proc_name pdesc in
-  do_before_node pname source 0 init_node;
-  L.d_strln ("#### Start: RE-execution for " ^ Procname.to_string pname ^ " ####");
+  do_before_node 0 init_node;
+  L.d_strln ("#### Start: RE-execution for " ^ Typ.Procname.to_string pname ^ " ####");
   L.d_indent 1;
   L.d_strln "Precond:"; Specs.Jprop.d_shallow precondition;
   L.d_ln (); L.d_ln ();
@@ -919,22 +925,22 @@ let execute_filter_prop wl tenv pdesc init_node (precondition : Prop.normal Spec
       init_prop
       (Paths.Path.start init_node)
       Paths.PathSet.empty in
-  do_after_node source init_node;
+  do_after_node init_node;
   try
     Worklist.add wl init_node;
     ignore (path_set_put_todo wl init_node init_edgeset);
-    forward_tabulate tenv pdesc wl source;
-    do_before_node pname source 0 init_node;
+    forward_tabulate tenv pdesc wl;
+    do_before_node 0 init_node;
     L.d_strln_color Green
-      ("#### Finished: RE-execution for " ^ Procname.to_string pname ^ " ####");
+      ("#### Finished: RE-execution for " ^ Typ.Procname.to_string pname ^ " ####");
     L.d_increase_indent 1;
     L.d_strln "Precond:"; Prop.d_prop (Specs.Jprop.to_prop precondition);
     L.d_ln ();
     let posts, visited =
       let pset, visited = collect_postconditions wl tenv pdesc in
       let plist =
-        IList.map
-          (fun (p, path) -> (PropUtil.remove_seed_vars tenv p, path))
+        List.map
+          ~f:(fun (p, path) -> (PropUtil.remove_seed_vars tenv p, path))
           (Paths.PathSet.elements pset) in
       plist, visited in
     let pre =
@@ -944,38 +950,31 @@ let execute_filter_prop wl tenv pdesc init_node (precondition : Prop.normal Spec
       | Specs.Jprop.Joined (n, _, jp1, jp2) -> Specs.Jprop.Joined (n, p, jp1, jp2) in
     let spec = { Specs.pre = pre; Specs.posts = posts; Specs.visited = visited } in
     L.d_decrease_indent 1;
-    do_after_node source init_node;
+    do_after_node init_node;
     Some spec
   with RE_EXE_ERROR ->
-    do_before_node pname source 0 init_node;
+    do_before_node 0 init_node;
     Printer.force_delayed_prints ();
-    L.d_strln_color Red ("#### [FUNCTION " ^ Procname.to_string pname ^ "] ...ERROR");
+    L.d_strln_color Red ("#### [FUNCTION " ^ Typ.Procname.to_string pname ^ "] ...ERROR");
     L.d_increase_indent 1;
     L.d_strln "when starting from pre:";
     Prop.d_prop (Specs.Jprop.to_prop precondition);
     L.d_strln "This precondition is filtered out.";
     L.d_decrease_indent 1;
-    do_after_node source init_node;
+    do_after_node init_node;
     None
-
-(** get all the nodes in the current call graph with their defined children *)
-let get_procs_and_defined_children call_graph =
-  IList.map
-    (fun (n, ns) ->
-       (n, Procname.Set.elements ns))
-    (Cg.get_nodes_and_defined_children call_graph)
 
 let pp_intra_stats wl proc_desc fmt _ =
   let nstates = ref 0 in
   let nodes = Procdesc.get_nodes proc_desc in
-  IList.iter
-    (fun node ->
-       nstates :=
-         !nstates +
-         Paths.PathSet.size
-           (htable_retrieve wl.Worklist.path_set_visited (Procdesc.Node.get_id node)))
+  List.iter
+    ~f:(fun node ->
+        nstates :=
+          !nstates +
+          Paths.PathSet.size
+            (htable_retrieve wl.Worklist.path_set_visited (Procdesc.Node.get_id node)))
     nodes;
-  F.fprintf fmt "(%d nodes containing %d states)" (IList.length nodes) !nstates
+  F.fprintf fmt "(%d nodes containing %d states)" (List.length nodes) !nstates
 
 type exe_phase = (unit -> unit) * (unit -> Prop.normal Specs.spec list * Specs.phase)
 
@@ -984,57 +983,49 @@ type exe_phase = (unit -> unit) * (unit -> Prop.normal Specs.spec list * Specs.p
     and [get_results ()] returns the results computed.
     This function is architected so that [get_results ()] can be called even after
     [go ()] was interrupted by and exception. *)
-let perform_analysis_phase tenv (pname : Procname.t) (pdesc : Procdesc.t) source
+let perform_analysis_phase tenv (summary : Specs.summary) (pdesc : Procdesc.t)
   : exe_phase =
-  let summary = Specs.get_summary_unsafe "check_recursion_level" pname in
+  let pname = Specs.get_proc_name summary in
   let start_node = Procdesc.get_start_node pdesc in
-
-  let check_recursion_level () =
-    let recursion_level = Specs.get_timestamp summary in
-    if recursion_level > Config.max_recursion then
-      begin
-        L.err "Reached maximum level of recursion, raising a Timeout@.";
-        raise (SymOp.Analysis_failure_exe (FKrecursion_timeout recursion_level))
-      end in
 
   let compute_footprint () : exe_phase =
     let go (wl : Worklist.t) () =
       let init_prop = initial_prop_from_emp tenv pdesc in
       (* use existing pre's (in recursion some might exist) as starting points *)
       let init_props_from_pres =
-        let specs = Specs.get_specs pname in
+        let specs = Specs.get_specs_from_payload summary in
         (* rename spec vars to footrpint vars, and copy current to footprint *)
         let mk_init precondition =
           initial_prop_from_pre tenv pdesc (Specs.Jprop.to_prop precondition) in
-        IList.map (fun spec -> mk_init spec.Specs.pre) specs in
+        List.map ~f:(fun spec -> mk_init spec.Specs.pre) specs in
       let init_props = Propset.from_proplist tenv (init_prop :: init_props_from_pres) in
       let init_edgeset =
         let add pset prop =
           Paths.PathSet.add_renamed_prop prop (Paths.Path.start start_node) pset in
         Propset.fold add Paths.PathSet.empty init_props in
-      L.out "@.#### Start: Footprint Computation for %a ####@." Procname.pp pname;
+      L.(debug Analysis Medium) "@\n#### Start: Footprint Computation for %a ####@."
+        Typ.Procname.pp pname;
       L.d_increase_indent 1;
       L.d_strln "initial props =";
       Propset.d Prop.prop_emp init_props; L.d_ln (); L.d_ln();
       L.d_decrease_indent 1;
-      check_recursion_level ();
       Worklist.add wl start_node;
       Config.arc_mode :=
         Hashtbl.mem
           (Procdesc.get_flags pdesc)
           Mleak_buckets.objc_arc_flag;
       ignore (path_set_put_todo wl start_node init_edgeset);
-      forward_tabulate tenv pdesc wl source in
+      forward_tabulate tenv pdesc wl in
     let get_results (wl : Worklist.t) () =
       State.process_execution_failures Reporting.log_warning pname;
       let results = collect_analysis_result tenv wl pdesc in
-      L.out "#### [FUNCTION %a] ... OK #####@\n" Procname.pp pname;
-      L.out "#### Finished: Footprint Computation for %a %a ####@."
-        Procname.pp pname
+      L.(debug Analysis Medium) "#### [FUNCTION %a] ... OK #####@\n" Typ.Procname.pp pname;
+      L.(debug Analysis Medium) "#### Finished: Footprint Computation for %a %a ####@."
+        Typ.Procname.pp pname
         (pp_intra_stats wl pdesc) pname;
-      L.out "#### [FUNCTION %a] Footprint Analysis result ####@\n%a@."
-        Procname.pp pname
-        (Paths.PathSet.pp pe_text) results;
+      L.(debug Analysis Medium) "#### [FUNCTION %a] Footprint Analysis result ####@\n%a@."
+        Typ.Procname.pp pname
+        (Paths.PathSet.pp Pp.text) results;
       let specs = try extract_specs tenv pdesc results with
         | Exceptions.Leak _ ->
             let exn =
@@ -1048,23 +1039,22 @@ let perform_analysis_phase tenv (pname : Procname.t) (pdesc : Procdesc.t) source
 
   let re_execution () : exe_phase =
     let candidate_preconditions =
-      IList.map
-        (fun spec -> spec.Specs.pre)
-        (Specs.get_specs pname) in
+      List.map
+        ~f:(fun spec -> spec.Specs.pre)
+        (Specs.get_specs_from_payload summary) in
     let valid_specs = ref [] in
     let go () =
-      L.out "@.#### Start: Re-Execution for %a ####@." Procname.pp pname;
-      check_recursion_level ();
+      L.(debug Analysis Medium) "@.#### Start: Re-Execution for %a ####@." Typ.Procname.pp pname;
       let filter p =
         let wl = path_set_create_worklist pdesc in
-        let speco = execute_filter_prop wl tenv pdesc start_node p source in
+        let speco = execute_filter_prop wl tenv pdesc start_node p in
         let is_valid = match speco with
           | None -> false
           | Some spec ->
               valid_specs := !valid_specs @ [spec];
               true in
         let outcome = if is_valid then "pass" else "fail" in
-        L.out "Finished re-execution for precondition %d %a (%s)@."
+        L.(debug Analysis Medium) "Finished re-execution for precondition %d %a (%s)@."
           (Specs.Jprop.to_number p)
           (pp_intra_stats wl pdesc) pname
           outcome;
@@ -1072,27 +1062,30 @@ let perform_analysis_phase tenv (pname : Procname.t) (pdesc : Procdesc.t) source
       if Config.undo_join then
         ignore (Specs.Jprop.filter filter candidate_preconditions)
       else
-        ignore (IList.map filter candidate_preconditions) in
+        ignore (List.map ~f:filter candidate_preconditions) in
     let get_results () =
       let specs = !valid_specs in
-      L.out "#### [FUNCTION %a] ... OK #####@\n" Procname.pp pname;
-      L.out "#### Finished: Re-Execution for %a ####@." Procname.pp pname;
+      L.(debug Analysis Medium) "#### [FUNCTION %a] ... OK #####@\n" Typ.Procname.pp pname;
+      L.(debug Analysis Medium) "#### Finished: Re-Execution for %a ####@." Typ.Procname.pp pname;
       let valid_preconditions =
-        IList.map (fun spec -> spec.Specs.pre) specs in
+        List.map ~f:(fun spec -> spec.Specs.pre) specs in
+      let source = (Procdesc.get_loc pdesc).file in
       let filename =
         DB.Results_dir.path_to_filename
           (DB.Results_dir.Abs_source_dir source)
-          [(Procname.to_filename pname)] in
+          [(Typ.Procname.to_filename pname)] in
       if Config.write_dotty then
         Dotty.pp_speclist_dotty_file filename specs;
-      L.out "@.@.================================================";
-      L.out "@. *** CANDIDATE PRECONDITIONS FOR %a: " Procname.pp pname;
-      L.out "@.================================================@.";
-      L.out "@.%a @.@." (Specs.Jprop.pp_list pe_text false) candidate_preconditions;
-      L.out "@.@.================================================";
-      L.out "@. *** VALID PRECONDITIONS FOR %a: " Procname.pp pname;
-      L.out "@.================================================@.";
-      L.out "@.%a @.@." (Specs.Jprop.pp_list pe_text true) valid_preconditions;
+      L.(debug Analysis Medium) "@\n@\n================================================";
+      L.(debug Analysis Medium) "@\n *** CANDIDATE PRECONDITIONS FOR %a: " Typ.Procname.pp pname;
+      L.(debug Analysis Medium) "@\n================================================@\n";
+      L.(debug Analysis Medium) "@\n%a @\n@\n"
+        (Specs.Jprop.pp_list Pp.text false) candidate_preconditions;
+      L.(debug Analysis Medium) "@\n@\n================================================";
+      L.(debug Analysis Medium) "@\n *** VALID PRECONDITIONS FOR %a: " Typ.Procname.pp pname;
+      L.(debug Analysis Medium) "@\n================================================@\n";
+      L.(debug Analysis Medium) "@\n%a @\n@."
+        (Specs.Jprop.pp_list Pp.text true) valid_preconditions;
       specs, Specs.RE_EXECUTION in
     go, get_results in
 
@@ -1123,8 +1116,8 @@ let exception_preconditions tenv pname summary =
         ((pre, exn_name) :: exns, all_post_exn)
     | _ -> (exns, false) in
   let collect_spec errors spec =
-    IList.fold_left (collect_exceptions spec.Specs.pre) errors spec.Specs.posts in
-  IList.fold_left collect_spec ([], true) (Specs.get_specs_from_payload summary)
+    List.fold ~f:(collect_exceptions spec.Specs.pre) ~init:errors spec.Specs.posts in
+  List.fold ~f:collect_spec ~init:([], true) (Specs.get_specs_from_payload summary)
 
 (* Collect all pairs of the kind (precondition, custom error) from a summary *)
 let custom_error_preconditions summary =
@@ -1133,26 +1126,26 @@ let custom_error_preconditions summary =
     | None -> (errors, false)
     | Some e -> ((pre, e) :: errors, all_post_error) in
   let collect_spec errors spec =
-    IList.fold_left (collect_errors spec.Specs.pre) errors spec.Specs.posts in
-  IList.fold_left collect_spec ([], true) (Specs.get_specs_from_payload summary)
+    List.fold ~f:(collect_errors spec.Specs.pre) ~init:errors spec.Specs.posts in
+  List.fold ~f:collect_spec ~init:([], true) (Specs.get_specs_from_payload summary)
 
 
 (* Remove the constrain of the form this != null which is true for all Java virtual calls *)
 let remove_this_not_null tenv prop =
   let collect_hpred (var_option, hpreds) = function
     | Sil.Hpointsto (Exp.Lvar pvar, Sil.Eexp (Exp.Var var, _), _)
-      when !Config.curr_language = Config.Java && Pvar.is_this pvar ->
+      when Config.curr_language_is Config.Java && Pvar.is_this pvar ->
         (Some var, hpreds)
     | hpred -> (var_option, hpred:: hpreds) in
   let collect_atom var atoms = function
     | Sil.Aneq (Exp.Var v, e)
       when Ident.equal v var && Exp.equal e Exp.null -> atoms
     | a -> a:: atoms in
-  match IList.fold_left collect_hpred (None, []) prop.Prop.sigma with
+  match List.fold ~f:collect_hpred ~init:(None, []) prop.Prop.sigma with
   | None, _ -> prop
   | Some var, filtered_hpreds ->
       let filtered_atoms =
-        IList.fold_left (collect_atom var) [] prop.Prop.pi in
+        List.fold ~f:(collect_atom var) ~init:[] prop.Prop.pi in
       let prop' = Prop.set Prop.prop_emp ~pi:filtered_atoms ~sigma:filtered_hpreds in
       Prop.normalize tenv prop'
 
@@ -1174,33 +1167,30 @@ let is_unavoidable tenv pre =
 let report_runtime_exceptions tenv pdesc summary =
   let pname = Specs.get_proc_name summary in
   let is_public_method =
-    (Specs.get_attributes summary).ProcAttributes.access = PredSymb.Public in
+    PredSymb.equal_access (Specs.get_attributes summary).access PredSymb.Public in
   let is_main =
     is_public_method
     &&
     (match pname with
-     | Procname.Java pname_java ->
-         Procname.java_is_static pname
-         && (Procname.java_get_method pname_java) = "main"
+     | Typ.Procname.Java pname_java ->
+         Typ.Procname.java_is_static pname
+         && String.equal (Typ.Procname.java_get_method pname_java) "main"
      | _ ->
          false) in
-  let is_annotated =
-    let proc_attributes = Specs.pdesc_resolve_attributes pdesc in
-    let annotated_signature = Annotations.get_annotated_signature proc_attributes in
-    let ret_annotation, _ = annotated_signature.Annotations.ret in
-    Annotations.ia_is_verify ret_annotation in
+  let is_annotated pdesc =
+    Annotations.pdesc_has_return_annot pdesc Annotations.ia_is_verify in
   let (exn_preconditions, all_post_exn) =
     exception_preconditions tenv pname summary in
   let should_report pre =
-    all_post_exn || is_main || is_annotated || is_unavoidable tenv pre in
+    all_post_exn || is_main || is_annotated pdesc || is_unavoidable tenv pre in
   let report (pre, runtime_exception) =
     if should_report pre then
       let pre_str =
-        pp_to_string (Prop.pp_prop pe_text) (Specs.Jprop.to_prop pre) in
+        F.asprintf "%a" (Prop.pp_prop Pp.text) (Specs.Jprop.to_prop pre) in
       let exn_desc = Localise.java_unchecked_exn_desc pname runtime_exception pre_str in
       let exn = Exceptions.Java_runtime_exception (runtime_exception, pre_str, exn_desc) in
       Reporting.log_error pname exn in
-  IList.iter report exn_preconditions
+  List.iter ~f:report exn_preconditions
 
 
 let report_custom_errors tenv summary =
@@ -1213,36 +1203,36 @@ let report_custom_errors tenv summary =
       let err_desc = Localise.desc_custom_error loc in
       let exn = Exceptions.Custom_error (custom_error, err_desc) in
       Reporting.log_error pname exn in
-  IList.iter report error_preconditions
+  List.iter ~f:report error_preconditions
 
-module SpecMap = Map.Make (struct
+module SpecMap = Caml.Map.Make (struct
     type t = Prop.normal Specs.Jprop.t
     let compare = Specs.Jprop.compare
   end)
 
 (** Update the specs of the current proc after the execution of one phase *)
-let update_specs tenv proc_name phase (new_specs : Specs.NormSpec.t list)
+let update_specs tenv prev_summary phase (new_specs : Specs.NormSpec.t list)
   : Specs.NormSpec.t list * bool =
   let new_specs = Specs.normalized_specs_to_specs new_specs in
-  let old_specs = Specs.get_specs proc_name in
+  let old_specs = Specs.get_specs_from_payload prev_summary in
   let changed = ref false in
   let current_specs =
     ref
-      (IList.fold_left
-         (fun map spec ->
-            SpecMap.add
-              spec.Specs.pre
-              (Paths.PathSet.from_renamed_list spec.Specs.posts, spec.Specs.visited) map)
-         SpecMap.empty old_specs) in
+      (List.fold
+         ~f:(fun map spec ->
+             SpecMap.add
+               spec.Specs.pre
+               (Paths.PathSet.from_renamed_list spec.Specs.posts, spec.Specs.visited) map)
+         ~init:SpecMap.empty old_specs) in
   let re_exe_filter old_spec = (* filter out pres which failed re-exe *)
-    if phase == Specs.RE_EXECUTION &&
-       not (IList.exists
-              (fun new_spec -> Specs.Jprop.equal new_spec.Specs.pre old_spec.Specs.pre)
+    if Specs.equal_phase phase Specs.RE_EXECUTION &&
+       not (List.exists
+              ~f:(fun new_spec -> Specs.Jprop.equal new_spec.Specs.pre old_spec.Specs.pre)
               new_specs)
     then begin
       changed:= true;
-      L.out "Specs changed: removing pre of spec@\n%a@."
-        (Specs.pp_spec pe_text None) old_spec;
+      L.(debug Analysis Medium) "Specs changed: removing pre of spec@\n%a@."
+        (Specs.pp_spec Pp.text None) old_spec;
       current_specs := SpecMap.remove old_spec.Specs.pre !current_specs end
     else () in
   let add_spec spec = (* add a new spec by doing union of the posts *)
@@ -1255,8 +1245,8 @@ let update_specs tenv proc_name phase (new_specs : Specs.NormSpec.t list)
         Specs.Visitedset.union old_visited spec.Specs.visited in
       if not (Paths.PathSet.equal old_post new_post) then begin
         changed := true;
-        L.out "Specs changed: added new post@\n%a@."
-          (Propset.pp pe_text (Specs.Jprop.to_prop spec.Specs.pre))
+        L.(debug Analysis Medium) "Specs changed: added new post@\n%a@."
+          (Propset.pp Pp.text (Specs.Jprop.to_prop spec.Specs.pre))
           (Paths.PathSet.to_propset tenv new_post);
         current_specs :=
           SpecMap.add spec.Specs.pre (new_post, new_visited)
@@ -1264,8 +1254,8 @@ let update_specs tenv proc_name phase (new_specs : Specs.NormSpec.t list)
 
     with Not_found ->
       changed := true;
-      L.out "Specs changed: added new pre@\n%a@."
-        (Specs.Jprop.pp_short pe_text) spec.Specs.pre;
+      L.(debug Analysis Medium) "Specs changed: added new pre@\n%a@."
+        (Specs.Jprop.pp_short Pp.text) spec.Specs.pre;
       current_specs :=
         SpecMap.add
           spec.Specs.pre
@@ -1278,61 +1268,57 @@ let update_specs tenv proc_name phase (new_specs : Specs.NormSpec.t list)
         { Specs.pre = pre;
           Specs.posts = Paths.PathSet.elements post_set;
           Specs.visited = visited }:: !res in
-  IList.iter re_exe_filter old_specs; (* filter out pre's which failed re-exe *)
-  IList.iter add_spec new_specs; (* add new specs *)
+  List.iter ~f:re_exe_filter old_specs; (* filter out pre's which failed re-exe *)
+  List.iter ~f:add_spec new_specs; (* add new specs *)
   SpecMap.iter convert !current_specs;
   !res,!changed
 
 (** update a summary after analysing a procedure *)
-let update_summary tenv prev_summary specs phase proc_name elapsed res =
-  let normal_specs = IList.map (Specs.spec_normalize tenv) specs in
-  let new_specs, changed = update_specs tenv proc_name phase normal_specs in
-  let timestamp = max 1 (prev_summary.Specs.timestamp + if changed then 1 else 0) in
-  let stats_time = prev_summary.Specs.stats.Specs.stats_time +. elapsed in
+let update_summary tenv prev_summary specs phase res =
+  let normal_specs = List.map ~f:(Specs.spec_normalize tenv) specs in
+  let new_specs, _ = update_specs tenv prev_summary phase normal_specs in
   let symops = prev_summary.Specs.stats.Specs.symops + SymOp.get_total () in
   let stats_failure = match res with
     | None -> prev_summary.Specs.stats.Specs.stats_failure
     | Some _ -> res in
   let stats =
     { prev_summary.Specs.stats with
-      Specs.stats_time;
       symops;
       stats_failure;
     } in
-  let payload =
-    { prev_summary.Specs.payload with
-      Specs.preposts = Some new_specs;
-    } in
+  let preposts =
+    match phase with
+    | Specs.FOOTPRINT ->
+        Some new_specs
+    | Specs.RE_EXECUTION ->
+        Some (List.map ~f:(Specs.NormSpec.erase_join_info_pre tenv) new_specs) in
+  let payload = { prev_summary.Specs.payload with Specs.preposts; } in
   { prev_summary with
     Specs.phase;
     stats;
     payload;
-    timestamp;
   }
 
 
 (** Analyze the procedure and return the resulting summary. *)
-let analyze_proc source exe_env proc_desc : Specs.summary =
+let analyze_proc tenv proc_desc : Specs.summary =
   let proc_name = Procdesc.get_proc_name proc_desc in
-  let init_time = Unix.gettimeofday () in
-  let tenv = Exe_env.get_tenv exe_env proc_name in
   reset_global_values proc_desc;
-  let go, get_results = perform_analysis_phase tenv proc_name proc_desc source in
+  let summary = Specs.get_summary_unsafe "analyze_proc" proc_name in
+  let go, get_results = perform_analysis_phase tenv summary proc_desc in
   let res = Timeout.exe_timeout go () in
   let specs, phase = get_results () in
-  let elapsed = Unix.gettimeofday () -. init_time in
-  let prev_summary = Specs.get_summary_unsafe "analyze_proc" proc_name in
   let updated_summary =
-    update_summary tenv prev_summary specs phase proc_name elapsed res in
-  if !Config.curr_language == Config.Clang && Config.report_custom_error then
+    update_summary tenv summary specs phase res in
+  if Config.curr_language_is Config.Clang && Config.report_custom_error then
     report_custom_errors tenv updated_summary;
-  if !Config.curr_language == Config.Java && Config.report_runtime_exceptions then
+  if Config.curr_language_is Config.Java && Config.tracing then
     report_runtime_exceptions tenv proc_desc updated_summary;
   updated_summary
 
 (** Perform the transition from [FOOTPRINT] to [RE_EXECUTION] in spec table *)
 let transition_footprint_re_exe tenv proc_name joined_pres =
-  L.out "Transition %a from footprint to re-exe@." Procname.pp proc_name;
+  L.(debug Analysis Medium) "Transition %a from footprint to re-exe@." Typ.Procname.pp proc_name;
   let summary = Specs.get_summary_unsafe "transition_footprint_re_exe" proc_name in
   let summary' =
     if Config.only_footprint then
@@ -1341,112 +1327,114 @@ let transition_footprint_re_exe tenv proc_name joined_pres =
       }
     else
       let specs =
-        IList.map
-          (fun jp ->
-             Specs.spec_normalize tenv
-               { Specs.pre = jp;
-                 posts = [];
-                 visited = Specs.Visitedset.empty })
+        List.map
+          ~f:(fun jp ->
+              Specs.spec_normalize tenv
+                { Specs.pre = jp;
+                  posts = [];
+                  visited = Specs.Visitedset.empty })
           joined_pres in
       let payload =
         { summary.Specs.payload with
           Specs.preposts = Some specs; } in
-      let dependency_map =
-        Specs.re_initialize_dependency_map summary.Specs.dependency_map in
       { summary with
-        Specs.timestamp = 0;
-        phase = Specs.RE_EXECUTION;
-        dependency_map;
+        Specs.phase = Specs.RE_EXECUTION;
         payload;
       } in
   Specs.add_summary proc_name summary'
 
 (** Perform phase transition from [FOOTPRINT] to [RE_EXECUTION] for
     the procedures enabled after the analysis of [proc_name] *)
-let perform_transition exe_env tenv proc_name source =
-  let transition () =
+let perform_transition proc_desc tenv proc_name =
+  let transition summary =
     (* disable exceptions for leaks and protect against any other errors *)
     let joined_pres =
       let allow_leak = !Config.allow_leak in
       (* apply the start node to f, and do nothing in case of exception *)
       let apply_start_node f =
         try
-          match Exe_env.get_proc_desc exe_env proc_name with
-          | Some pdesc ->
-              let start_node = Procdesc.get_start_node pdesc in
-              f start_node
-          | None -> ()
+          f (Procdesc.get_start_node proc_desc)
         with exn when SymOp.exn_not_failure exn -> () in
-      apply_start_node (do_before_node proc_name source 0);
+      apply_start_node (do_before_node 0);
       try
         Config.allow_leak := true;
-        let res = collect_preconditions tenv proc_name in
+        let res = collect_preconditions tenv summary in
         Config.allow_leak := allow_leak;
-        apply_start_node (do_after_node source);
+        apply_start_node do_after_node;
         res
       with exn when SymOp.exn_not_failure exn ->
-        apply_start_node (do_after_node source);
+        apply_start_node do_after_node;
         Config.allow_leak := allow_leak;
-        L.err "Error in collect_preconditions for %a@." Procname.pp proc_name;
+        L.(debug Analysis Medium) "Error in collect_preconditions for %a@."
+          Typ.Procname.pp proc_name;
         let err_name, _, ml_loc_opt, _, _, _, _ = Exceptions.recognize_exception exn in
-        let err_str = "exception raised " ^ (Localise.to_string err_name) in
-        L.err "Error: %s %a@." err_str L.pp_ml_loc_opt ml_loc_opt;
+        let err_str = "exception raised " ^ (Localise.to_issue_id err_name) in
+        L.(debug Analysis Medium) "Error: %s %a@." err_str L.pp_ml_loc_opt ml_loc_opt;
         [] in
     transition_footprint_re_exe tenv proc_name joined_pres in
   match Specs.get_summary proc_name with
-  | Some summary when Specs.get_phase summary == Specs.FOOTPRINT ->
-      transition ()
+  | Some summary when Specs.equal_phase (Specs.get_phase summary) Specs.FOOTPRINT ->
+      transition summary
   | _ -> ()
 
 
-let interprocedural_algorithm exe_env : unit =
+(* Create closures for the interprocedural algorithm *)
+let interprocedural_algorithm_closures ~prepare_proc exe_env : Tasks.closure list =
   let call_graph = Exe_env.get_cg exe_env in
-  let filter_initial proc_name =
-    let summary = Specs.get_summary_unsafe "main_algorithm" proc_name in
-    Specs.get_timestamp summary = 0 in
-  let procs_to_analyze =
-    IList.filter filter_initial (Cg.get_defined_nodes call_graph) in
-  let to_analyze proc_name =
-    match Exe_env.get_proc_desc exe_env proc_name with
-    | Some proc_desc ->
-        let reactive_changed =
-          if Config.reactive_mode
-          then (Procdesc.get_attributes proc_desc).ProcAttributes.changed
-          else true in
-        if
-          reactive_changed && (* in reactive mode, only analyze changed procedures *)
-          Ondemand.procedure_should_be_analyzed proc_name
-        then
-          Some proc_desc
-        else
-          None
-    | None ->
-        None in
   let process_one_proc proc_name =
-    match to_analyze proc_name with
-    | Some pdesc ->
-        let tenv = Exe_env.get_tenv ~create:true exe_env proc_name in
-        Ondemand.analyze_proc_name tenv ~propagate_exceptions:false pdesc proc_name
-    | None ->
-        () in
-  IList.iter process_one_proc procs_to_analyze
+    prepare_proc proc_name;
+    let analyze proc_desc =
+      ignore (Ondemand.analyze_proc_desc ~propagate_exceptions:false proc_desc proc_desc) in
+    match Exe_env.get_proc_desc exe_env proc_name with
+    | Some proc_desc
+      when Config.reactive_mode (* in reactive mode, only analyze changed procedures *)
+        && (Procdesc.get_attributes proc_desc).ProcAttributes.changed ->
+        analyze proc_desc
+    | Some proc_desc -> analyze proc_desc
+    | None -> () in
+  let procs_to_analyze = Cg.get_defined_nodes call_graph in
+  let create_closure proc_name =
+    fun () -> process_one_proc proc_name in
+  List.map ~f:create_closure procs_to_analyze
 
-(** Perform the analysis of an exe_env *)
-let do_analysis exe_env =
-  let cg = Exe_env.get_cg exe_env in
-  let procs_and_defined_children = get_procs_and_defined_children cg in
+let analyze_procedure_aux cg_opt tenv proc_desc =
+  let proc_name = Procdesc.get_proc_name proc_desc in
+  if not (Procdesc.did_preanalysis proc_desc)
+  then
+    begin
+      Preanal.do_liveness proc_desc tenv;
+      Preanal.do_abstraction proc_desc;
+      Option.iter cg_opt ~f:(fun cg -> Preanal.do_dynamic_dispatch proc_desc cg tenv);
+    end;
+  let summaryfp =
+    Config.run_in_footprint_mode (analyze_proc tenv) proc_desc in
+  Specs.add_summary proc_name summaryfp;
+  perform_transition proc_desc tenv proc_name;
+  let summaryre =
+    Config.run_in_re_execution_mode (analyze_proc tenv) proc_desc in
+  Specs.add_summary proc_name summaryre;
+  summaryre
+
+let analyze_procedure { Callbacks.summary; proc_desc; tenv } : Specs.summary =
+  let proc_name = Procdesc.get_proc_name proc_desc in
+  Specs.add_summary proc_name summary;
+  ignore (analyze_procedure_aux None tenv proc_desc);
+  Specs.get_summary_unsafe __FILE__ proc_name
+
+(** Create closures to perform the analysis of an exe_env *)
+let do_analysis_closures exe_env : Tasks.closure list =
   let get_calls caller_pdesc =
     let calls = ref [] in
     let f (callee_pname, loc) = calls := (callee_pname, loc) :: !calls in
     Procdesc.iter_calls f caller_pdesc;
-    IList.rev !calls in
-  let init_proc (pname, dep) =
+    List.rev !calls in
+  let init_proc pname =
     let pdesc = match Exe_env.get_proc_desc exe_env pname with
       | Some pdesc ->
           pdesc
       | None ->
           assert false in
-    let nodes = IList.map (fun n -> Procdesc.Node.get_id n) (Procdesc.get_nodes pdesc) in
+    let nodes = List.map ~f:(fun n -> Procdesc.Node.get_id n) (Procdesc.get_nodes pdesc) in
     let proc_flags = Procdesc.get_flags pdesc in
     let static_err_log = Procdesc.get_err_log pdesc in (* err log from translation *)
     let calls = get_calls pdesc in
@@ -1457,52 +1445,40 @@ let do_analysis exe_env =
       if Config.dynamic_dispatch = `Lazy
       then Some pdesc
       else None in
-    Specs.init_summary (dep, nodes, proc_flags, calls, None, attributes, proc_desc_option) in
-
-  IList.iter
-    (fun ((pn, _) as x) ->
-       let should_init () =
-         Config.models_mode ||
-         Specs.get_summary pn = None in
-       if should_init ()
-       then init_proc x)
-    procs_and_defined_children;
+    ignore (Specs.init_summary (nodes, proc_flags, calls, attributes, proc_desc_option)) in
 
   let callbacks =
     let get_proc_desc proc_name =
       match Exe_env.get_proc_desc exe_env proc_name with
       | Some pdesc -> Some pdesc
       | None when Config.dynamic_dispatch = `Lazy ->
-          Option.map_default
+          Option.bind (Specs.get_summary proc_name)
             (fun summary -> summary.Specs.proc_desc_option)
-            None
-            (Specs.get_summary proc_name)
       | None -> None in
-    let analyze_ondemand source proc_desc =
+    let analyze_ondemand _ proc_desc =
       let proc_name = Procdesc.get_proc_name proc_desc in
       let tenv = Exe_env.get_tenv exe_env proc_name in
-      if not (Config.eradicate || Config.checkers)
-      then
-        (* Eradicate and the checkers don't need the Nullify/Remove_temps/Abstract instructions that
-           the preanalysis inserts. *)
-        Preanal.doit proc_desc (Exe_env.get_cg exe_env) tenv;
-      let summaryfp =
-        Config.run_in_footprint_mode (analyze_proc source exe_env) proc_desc in
-      Specs.add_summary proc_name summaryfp;
-
-      perform_transition exe_env tenv proc_name source;
-
-      let summaryre =
-        Config.run_in_re_execution_mode (analyze_proc source exe_env) proc_desc in
-      Specs.add_summary proc_name summaryre in
+      let cg = Exe_env.get_cg exe_env in
+      analyze_procedure_aux (Some cg) tenv proc_desc in
     {
       Ondemand.analyze_ondemand;
       get_proc_desc;
     } in
 
-  Ondemand.set_callbacks callbacks;
-  interprocedural_algorithm exe_env;
-  Ondemand.unset_callbacks ()
+  let prepare_proc pn =
+    let should_init =
+      Config.models_mode ||
+      is_none (Specs.get_summary pn) in
+    if should_init then init_proc pn in
+
+  let closures =
+    List.map
+      ~f:(fun closure () ->
+          Ondemand.set_callbacks callbacks;
+          closure ();
+          Ondemand.unset_callbacks ())
+      (interprocedural_algorithm_closures ~prepare_proc exe_env) in
+  closures
 
 
 let visited_and_total_nodes ~filter cfg =
@@ -1520,7 +1496,7 @@ let visited_and_total_nodes ~filter cfg =
       if filter_node pdesc n then
         begin
           set := Procdesc.NodeSet.add n !set;
-          if snd (Printer.node_is_visited (Procdesc.get_proc_name pdesc) n)
+          if snd (Printer.node_is_visited n)
           then set_visited_re := Procdesc.NodeSet.add n !set_visited_re
         end in
     Cfg.iter_all_nodes add cfg;
@@ -1533,8 +1509,9 @@ let visited_and_total_nodes ~filter cfg =
 let print_stats_cfg proc_shadowed source cfg =
   let err_table = Errlog.create_err_table () in
   let filter pdesc =
-    let pname = Procdesc.get_proc_name pdesc in
-    Specs.summary_exists pname && Specs.get_specs pname != [] in
+    match Specs.get_summary (Procdesc.get_proc_name pdesc) with
+    | None -> false
+    | Some summary -> Specs.get_specs_from_payload summary <> [] in
   let nodes_visited, nodes_total = visited_and_total_nodes ~filter cfg in
   let num_proc = ref 0 in
   let num_nospec_noerror_proc = ref 0 in
@@ -1546,29 +1523,31 @@ let print_stats_cfg proc_shadowed source cfg =
   let num_timeout = ref 0 in
   let compute_stats_proc proc_desc =
     let proc_name = Procdesc.get_proc_name proc_desc in
-    if proc_shadowed proc_desc ||
-       Specs.get_summary proc_name = None then
-      L.out "print_stats: ignoring function %a which is also defined in another file@."
-        Procname.pp proc_name
-    else
-      let summary = Specs.get_summary_unsafe "print_stats_cfg" proc_name in
-      let stats = summary.Specs.stats in
-      let err_log = summary.Specs.attributes.ProcAttributes.err_log in
-      incr num_proc;
-      let specs = Specs.get_specs_from_payload summary in
-      tot_specs := (IList.length specs) + !tot_specs;
-      let () =
-        match specs,
-              Errlog.size
-                (fun ekind in_footprint -> ekind = Exceptions.Kerror && in_footprint)
-                err_log with
-        | [], 0 -> incr num_nospec_noerror_proc
-        | _, 0 -> incr num_spec_noerror_proc
-        | [], _ -> incr num_nospec_error_proc
-        | _, _ -> incr num_spec_error_proc in
-      tot_symops := !tot_symops + stats.Specs.symops;
-      if Option.is_some stats.Specs.stats_failure then incr num_timeout;
-      Errlog.extend_table err_table err_log in
+    match Specs.get_summary proc_name with
+    | None -> ()
+    | Some _ when proc_shadowed proc_desc ->
+        L.(debug Analysis Medium)
+          "print_stats: ignoring function %a which is also defined in another file@."
+          Typ.Procname.pp proc_name
+    | Some summary ->
+        let stats = summary.Specs.stats in
+        let err_log = summary.Specs.attributes.ProcAttributes.err_log in
+        incr num_proc;
+        let specs = Specs.get_specs_from_payload summary in
+        tot_specs := (List.length specs) + !tot_specs;
+        let () =
+          match specs,
+                Errlog.size
+                  (fun ekind in_footprint ->
+                     Exceptions.equal_err_kind ekind Exceptions.Kerror && in_footprint)
+                  err_log with
+          | [], 0 -> incr num_nospec_noerror_proc
+          | _, 0 -> incr num_spec_noerror_proc
+          | [], _ -> incr num_nospec_error_proc
+          | _, _ -> incr num_spec_error_proc in
+        tot_symops := !tot_symops + stats.Specs.symops;
+        if Option.is_some stats.Specs.stats_failure then incr num_timeout;
+        Errlog.extend_table err_table err_log in
   let print_file_stats fmt () =
     let num_errors = Errlog.err_table_size_footprint Exceptions.Kerror err_table in
     let num_warnings = Errlog.err_table_size_footprint Exceptions.Kwarning err_table in
@@ -1577,10 +1556,10 @@ let print_stats_cfg proc_shadowed source cfg =
     (* F.fprintf fmt "VISITED: %a@\n" (pp_seq pp_node) nodes_visited;
        F.fprintf fmt "TOTAL: %a@\n" (pp_seq pp_node) nodes_total; *)
     F.fprintf fmt "@\n++++++++++++++++++++++++++++++++++++++++++++++++++@\n";
-    F.fprintf fmt "+ FILE: %s  VISITED: %d/%d SYMOPS: %d@\n"
-      (DB.source_file_to_string source)
-      (IList.length nodes_visited)
-      (IList.length nodes_total)
+    F.fprintf fmt "+ FILE: %a  VISITED: %d/%d SYMOPS: %d@\n"
+      SourceFile.pp source
+      (List.length nodes_visited)
+      (List.length nodes_total)
       !tot_symops;
     F.fprintf fmt "+  num_procs: %d (%d ok, %d timeouts, %d errors, %d warnings, %d infos)@\n"
       !num_proc num_ok_proc !num_timeout num_errors num_warnings num_infos;
@@ -1602,20 +1581,20 @@ let print_stats_cfg proc_shadowed source cfg =
       let outc = open_out (DB.filename_to_string stats_file) in
       let fmt = F.formatter_of_out_channel outc in
       print_file_stats fmt ();
-      close_out outc
+      Out_channel.close outc
     with Sys_error _ -> () in
-  IList.iter compute_stats_proc (Cfg.get_defined_procs cfg);
-  L.out "%a" print_file_stats ();
+  List.iter ~f:compute_stats_proc (Cfg.get_defined_procs cfg);
+  L.(debug Analysis Medium) "%a" print_file_stats ();
   save_file_stats ()
 
-(** Print the stats for all the files in the exe_env *)
-let print_stats exe_env =
-  if Config.developer_mode then
-    Exe_env.iter_files
-      (fun source cfg ->
-         let proc_shadowed proc_desc =
-           (* return true if a proc with the same name in another module was analyzed instead *)
-           let proc_name = Procdesc.get_proc_name proc_desc in
-           Exe_env.get_source exe_env proc_name <> Some source in
-         print_stats_cfg proc_shadowed source cfg)
-      exe_env
+(** Print the stats for all the files in the cluster *)
+let print_stats cluster =
+  let exe_env = Exe_env.from_cluster cluster in
+  Exe_env.iter_files
+    (fun source cfg ->
+       let proc_shadowed proc_desc =
+         (* return true if a proc with the same name in another module was analyzed instead *)
+         let proc_name = Procdesc.get_proc_name proc_desc in
+         Exe_env.get_source exe_env proc_name <> Some source in
+       print_stats_cfg proc_shadowed source cfg)
+    exe_env

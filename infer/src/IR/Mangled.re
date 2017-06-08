@@ -1,7 +1,4 @@
 /*
- * vim: set ft=rust:
- * vim: set ft=reason:
- *
  * Copyright (c) 2009 - 2013 Monoidics ltd.
  * Copyright (c) 2013 - present Facebook, Inc.
  * All rights reserved.
@@ -10,32 +7,15 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
 
 
 /** Module for Mangled Names */
-let module F = Format;
+module F = Format;
 
-type t = {plain: string, mangled: option string};
+type t = {plain: string, mangled: option string} [@@deriving compare];
 
-let mangled_compare so1 so2 =>
-  switch (so1, so2) {
-  | (None, None) => 0
-  | (None, Some _) => (-1)
-  | (Some _, None) => 1
-  | (Some s1, Some s2) => string_compare s1 s2
-  };
-
-let compare pn1 pn2 => {
-  let n = string_compare pn1.plain pn2.plain;
-  if (n != 0) {
-    n
-  } else {
-    mangled_compare pn1.mangled pn2.mangled
-  }
-};
-
-let equal pn1 pn2 => compare pn1 pn2 == 0;
+let equal = [%compare.equal : t];
 
 
 /** Convert a string to a mangled name */
@@ -69,21 +49,17 @@ let get_mangled pn =>
   };
 
 
-/** Create a mangled type name from a package name and a class name */
-let from_package_class package_name class_name =>
-  if (package_name == "") {
-    from_string class_name
-  } else {
-    from_string (package_name ^ "." ^ class_name)
-  };
-
-
 /** Pretty print a mangled name */
 let pp f pn => F.fprintf f "%s" (to_string pn);
 
-type mangled_t = t;
+module Set =
+  Caml.Set.Make {
+    type nonrec t = t;
+    let compare = compare;
+  };
 
-let module MangledSet = Set.Make {
-  type t = mangled_t;
-  let compare = compare;
-};
+module Map =
+  Caml.Map.Make {
+    type nonrec t = t;
+    let compare = compare;
+  };

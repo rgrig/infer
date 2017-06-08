@@ -7,13 +7,13 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Generate a procedure that calls a given sequence of methods. Useful for harness/test generation. *)
 
-type lifecycle_trace = (Procname.t * Typ.t option) list
+type lifecycle_trace = (Typ.Procname.t * Typ.t option) list
 
 (** create a procedure named harness_name that calls each of the methods in trace add it to the
     cg/cfg *)
-val inhabit_trace : Tenv.t -> lifecycle_trace -> Procname.java -> Cg.t -> Cfg.cfg -> unit
+val inhabit_trace : Tenv.t -> lifecycle_trace -> Typ.Procname.java -> Cg.t -> Cfg.cfg -> unit
 

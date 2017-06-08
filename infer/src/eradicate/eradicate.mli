@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Eradicate NPEs. *)
 
@@ -23,7 +23,7 @@ type parameters = (Exp.t * Typ.t) list
 (** Type for a module that provides a main callback function *)
 module type CallBackT =
 sig
-  val callback : TypeCheck.checks -> Callbacks.proc_callback_args -> unit
+  val callback : TypeCheck.checks -> Callbacks.proc_callback_t
 end (* CallBackT *)
 
 

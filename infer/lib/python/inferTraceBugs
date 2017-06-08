@@ -81,12 +81,14 @@ class Tracer(object):
             return
 
         report_line = node[issues.JSON_INDEX_TRACE_LINE]
+        report_col = node[issues.JSON_INDEX_TRACE_COLUMN]
         fname = node[issues.JSON_INDEX_TRACE_FILENAME]
 
         self.indenter.newline()
-        self.indenter.add('%s:%d: %s' % (
+        self.indenter.add('%s:%d:%d: %s' % (
             fname,
             report_line,
+            report_col,
             node[issues.JSON_INDEX_TRACE_DESCRIPTION],
         ))
         self.indenter.newline()
@@ -96,9 +98,13 @@ class Tracer(object):
             mode = colorize.TERMINAL_FORMATTER
             if self.args.html:
                 mode = colorize.PLAIN_FORMATTER
+            empty_desc = len(node[issues.JSON_INDEX_TRACE_DESCRIPTION]) == 0
             self.indenter.add(source.build_source_context(fname,
                                                           mode,
-                                                          report_line))
+                                                          report_line,
+                                                          report_col,
+                                                          empty_desc
+                                                          ))
             self.indenter.indent_pop()
             self.indenter.newline()
 
@@ -122,6 +128,9 @@ class Tracer(object):
 
     def build_report(self, report):
         self.build_trace(report[issues.JSON_INDEX_TRACE])
+
+    def __unicode__(self):
+        return unicode(self.indenter)
 
     def __str__(self):
         return str(self.indenter)
@@ -278,7 +287,7 @@ def html_bug_trace(args, report, bug_id):
     bug_trace += '%s\n' % issues.text_of_report(report)
     tracer = Tracer(args)
     tracer.build_report(report)
-    bug_trace += str(tracer)
+    bug_trace += unicode(tracer)
     return bug_trace
 
 
@@ -389,7 +398,7 @@ def main():
 
     tracer = Tracer(args, max_level)
     tracer.build_report(report)
-    utils.stdout(str(tracer))
+    utils.stdout(unicode(tracer))
 
 
 if __name__ == '__main__':

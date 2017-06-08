@@ -1,7 +1,4 @@
 /*
- * vim: set ft=rust:
- * vim: set ft=reason:
- *
  * Copyright (c) 2009 - 2013 Monoidics ltd.
  * Copyright (c) 2013 - present Facebook, Inc.
  * All rights reserved.
@@ -10,26 +7,29 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
 
 
 /** node of the control flow graph */
-let module Node: {
+module Node: {
 
   /** type of nodes */
-  type t;
+  type t [@@deriving compare];
 
   /** node id */
-  type id = private int;
+  type id = pri int [@@deriving compare];
+  let equal_id: id => id => bool;
 
   /** kind of cfg node */
   type nodekind =
-    | Start_node Procname.t
-    | Exit_node Procname.t
+    | Start_node Typ.Procname.t
+    | Exit_node Typ.Procname.t
     | Stmt_node string
     | Join_node
     | Prune_node bool Sil.if_kind string /** (true/false branch, if_kind, comment) */
-    | Skip_node string;
+    | Skip_node string
+  [@@deriving compare];
+  let equal_nodekind: nodekind => nodekind => bool;
 
   /** kind of Stmt_node for an exception handler. */
   let exn_handler_kind: nodekind;
@@ -46,23 +46,20 @@ let module Node: {
   /** Append the instructions to the list of instructions to execute */
   let append_instrs: t => list Sil.instr => unit;
 
-  /** Compare two nodes */
-  let compare: t => t => int;
-
   /** Dump extended instructions for the node */
   let d_instrs: sub_instrs::bool => option Sil.instr => t => unit;
 
   /** Create a dummy node */
-  let dummy: unit => t;
+  let dummy: option Typ.Procname.t => t;
 
   /** Check if two nodes are equal */
   let equal: t => t => bool;
 
   /** Get the list of callee procnames from the node */
-  let get_callees: t => list Procname.t;
+  let get_callees: t => list Typ.Procname.t;
 
   /** Return a description of the node */
-  let get_description: printenv => t => string;
+  let get_description: Pp.env => t => string;
 
   /** Get the distance to the exit node, if it has been computed */
   let get_distance_to_exit: t => option int;
@@ -93,7 +90,7 @@ let module Node: {
   let get_preds: t => list t;
 
   /** Get the name of the procedure the node belongs to */
-  let get_proc_name: t => Procname.t;
+  let get_proc_name: t => Typ.Procname.t;
 
   /** Get the predecessor nodes of a node where the given predicate evaluates to true */
   let get_sliced_preds: t => (t => bool) => list t;
@@ -107,12 +104,6 @@ let module Node: {
   /** Hash function for nodes */
   let hash: t => int;
 
-  /** compare node ids */
-  let id_compare: id => id => int;
-
-  /** Comparison for node kind */
-  let kind_compare: nodekind => nodekind => int;
-
   /** Pretty print the node */
   let pp: Format.formatter => t => unit;
 
@@ -121,7 +112,7 @@ let module Node: {
 
   /** Print extended instructions for the node,
       highlighting the given subinstruction if present */
-  let pp_instrs: printenv => sub_instrs::bool => option Sil.instr => Format.formatter => t => unit;
+  let pp_instrs: Pp.env => sub_instrs::bool => option Sil.instr => Format.formatter => t => unit;
 
   /** Replace the instructions to be executed. */
   let replace_instrs: t => list Sil.instr => unit;
@@ -129,25 +120,25 @@ let module Node: {
 
 
 /** Map with node id keys. */
-let module IdMap: Map.S with type key = Node.id;
+module IdMap: Caml.Map.S with type key = Node.id;
 
 
 /** Hash table with nodes as keys. */
-let module NodeHash: Hashtbl.S with type key = Node.t;
+module NodeHash: Caml.Hashtbl.S with type key = Node.t;
 
 
 /** Map over nodes. */
-let module NodeMap: Map.S with type key = Node.t;
+module NodeMap: Caml.Map.S with type key = Node.t;
 
 
 /** Set of nodes. */
-let module NodeSet: Set.S with type elt = Node.t;
+module NodeSet: Caml.Set.S with type elt = Node.t;
 
 
 /** procedure descriptions */
 
 /** proc description */
-type t;
+type t [@@deriving compare];
 
 
 /** append a list of new local variables to the existing list of local variables */
@@ -168,11 +159,15 @@ let did_preanalysis: t => bool;
 
 
 /** fold over the calls from the procedure: (callee, location) pairs */
-let fold_calls: ('a => (Procname.t, Location.t) => 'a) => 'a => t => 'a;
+let fold_calls: ('a => (Typ.Procname.t, Location.t) => 'a) => 'a => t => 'a;
 
 
 /** fold over all nodes and their instructions */
 let fold_instrs: ('a => Node.t => Sil.instr => 'a) => 'a => t => 'a;
+
+
+/** fold over all nodes */
+let fold_nodes: ('a => Node.t => 'a) => 'a => t => 'a;
 
 
 /** Only call from Cfg. */
@@ -196,7 +191,7 @@ let get_exit_node: t => Node.t;
 
 
 /** Get flags for the proc desc */
-let get_flags: t => proc_flags;
+let get_flags: t => ProcAttributes.proc_flags;
 
 
 /** Return name and type of formal parameters */
@@ -212,7 +207,7 @@ let get_locals: t => list (Mangled.t, Typ.t);
 
 let get_nodes: t => list Node.t;
 
-let get_proc_name: t => Procname.t;
+let get_proc_name: t => Typ.Procname.t;
 
 
 /** Return the return type of the procedure and type string */
@@ -235,12 +230,16 @@ let get_start_node: t => Node.t;
 let is_defined: t => bool;
 
 
+/** Return [true] if the body of the procdesc is empty (no instructions) */
+let is_body_empty: t => bool;
+
+
 /** Return [true] if the procedure signature has the Java synchronized keyword */
 let is_java_synchronized: t => bool;
 
 
 /** iterate over the calls from the procedure: (callee, location) pairs */
-let iter_calls: ((Procname.t, Location.t) => unit) => t => unit;
+let iter_calls: ((Typ.Procname.t, Location.t) => unit) => t => unit;
 
 
 /** iterate over all nodes and their instructions */
@@ -256,7 +255,7 @@ let iter_slope: (Node.t => unit) => t => unit;
 
 
 /** iterate over all calls until we reach a branching structure */
-let iter_slope_calls: (Procname.t => unit) => t => unit;
+let iter_slope_calls: (Typ.Procname.t => unit) => t => unit;
 
 
 /** iterate between two nodes or until we reach a branching structure */
@@ -279,3 +278,7 @@ let set_start_node: t => Node.t => unit;
 
 /** indicate that we have performed preanalysis on the CFG assoociated with [t] */
 let signal_did_preanalysis: t => unit;
+
+let is_loop_head: t => Node.t => bool;
+
+let pp_signature: Format.formatter => t => unit;

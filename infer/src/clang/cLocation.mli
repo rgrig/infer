@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Module for function to retrieve the location (file, line, etc) of instructions *)
 
@@ -23,8 +23,6 @@ val should_do_frontend_check : CFrontend_config.translation_unit_context ->
   Clang_ast_t.source_range -> bool
 
 val is_file_blacklisted : string -> bool
-
-val source_file_from_path : string -> DB.source_file
 
 val get_sil_location_from_range : CFrontend_config.translation_unit_context ->
   Clang_ast_t.source_range -> bool -> Location.t

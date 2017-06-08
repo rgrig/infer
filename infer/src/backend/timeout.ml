@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module L = Logging
 module F = Format
@@ -83,7 +83,11 @@ let timeout_action _ =
   unset_alarm ();
   raise (SymOp.Analysis_failure_exe (FKtimeout))
 
-let () = begin
+let () =
+  (* Can't use Core since it wraps signal handlers and alarms with catch-all exception handlers that
+     exit, while we need to propagate the timeout exceptions. *)
+  let module Gc = Caml.Gc in
+  let module Sys = Caml.Sys in
   match Config.os_type with
   | Config.Unix | Config.Cygwin ->
       Sys.set_signal Sys.sigvtalrm (Sys.Signal_handle timeout_action);
@@ -92,7 +96,6 @@ let () = begin
       SymOp.set_wallclock_timeout_handler timeout_action;
       (* use the Gc alarm for periodic timeout checks *)
       ignore (Gc.create_alarm SymOp.check_wallclock_alarm)
-end
 
 let unwind () =
   unset_alarm ();
@@ -106,12 +109,12 @@ let suspend_existing_timeout ~keep_symop_total =
 
 let resume_previous_timeout () =
   let status_opt = unwind () in
-  Option.may set_status status_opt
+  Option.iter ~f:set_status status_opt
 
 let exe_timeout f x =
   let suspend_existing_timeout_and_start_new_one () =
     suspend_existing_timeout ~keep_symop_total:true;
-    set_alarm (SymOp.get_timeout_seconds ());
+    Option.iter (SymOp.get_timeout_seconds ()) ~f:set_alarm;
     SymOp.set_alarm () in
   try
     suspend_existing_timeout_and_start_new_one ();
@@ -121,7 +124,7 @@ let exe_timeout f x =
   with
   | SymOp.Analysis_failure_exe kind ->
       resume_previous_timeout ();
-      L.log_progress_timeout_event kind;
+      L.progressbar_timeout_event kind;
       Errdesc.warning_err (State.get_loc ()) "TIMEOUT: %a@." SymOp.pp_failure_kind kind;
       Some kind
   | exe ->

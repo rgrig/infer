@@ -12,7 +12,11 @@
 
 extern int rand();
 
+// mocking gflags-generated field
+
 namespace execs {
+
+extern char* FLAGS_cli_string;
 
 int callAllSinks(const char* stringSource, char ** arrSource) {
   switch (rand()) {
@@ -71,6 +75,12 @@ int callExecBad() {
       return execv(NULL, arrSource);
     case 11:
       return execvp(NULL, arrSource);
+    case 12:
+      return execve(stringSource, NULL, NULL);
+    case 13:
+      return execve(NULL, arrSource, NULL);
+    case 14:
+      return system(stringSource);
   }
   return 0;
 }
@@ -78,9 +88,10 @@ int callExecBad() {
 extern char* getenv(const char* var);
 
 void execConstantStringOk() { callAllSinks("something.sh", NULL); }
-
 void customGetEnvOk() {
   const char* source = execs::getenv("ENV_VAR");
   return execl(NULL, source);
 }
+
+void exec_flag_bad() { execl(FLAGS_cli_string, NULL); }
 }

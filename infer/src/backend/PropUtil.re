@@ -6,13 +6,13 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
 
 let get_name_of_local (curr_f: Procdesc.t) (x, _) => Pvar.mk x (Procdesc.get_proc_name curr_f);
 
 /* returns a list of local static variables (ie local variables defined static) in a proposition */
 let get_name_of_objc_static_locals (curr_f: Procdesc.t) p => {
-  let pname = Procname.to_string (Procdesc.get_proc_name curr_f);
+  let pname = Typ.Procname.to_string (Procdesc.get_proc_name curr_f);
   let local_static e =>
     switch e {
     /* is a local static if it's a global and it has a static local name */
@@ -24,8 +24,8 @@ let get_name_of_objc_static_locals (curr_f: Procdesc.t) p => {
     | Sil.Hpointsto e _ _ => [local_static e]
     | _ => []
     };
-  let vars_sigma = IList.map hpred_local_static p.Prop.sigma;
-  IList.flatten (IList.flatten vars_sigma)
+  let vars_sigma = List.map f::hpred_local_static p.Prop.sigma;
+  List.concat (List.concat vars_sigma)
 };
 
 /* returns a list of local variables that points to an objc block in a proposition */
@@ -40,8 +40,8 @@ let get_name_of_objc_block_locals p => {
     | Sil.Hpointsto e _ _ => [local_blocks e]
     | _ => []
     };
-  let vars_sigma = IList.map hpred_local_blocks p.Prop.sigma;
-  IList.flatten (IList.flatten vars_sigma)
+  let vars_sigma = List.map f::hpred_local_blocks p.Prop.sigma;
+  List.concat (List.concat vars_sigma)
 };
 
 let remove_abduced_retvars tenv p => {
@@ -53,9 +53,9 @@ let remove_abduced_retvars tenv p => {
       | Sil.Eexp (Exp.Exn e) _ => Exp.Set.add e exps
       | Sil.Eexp e _ => Exp.Set.add e exps
       | Sil.Estruct flds _ =>
-        IList.fold_left (fun exps (_, strexp) => collect_exps exps strexp) exps flds
+        List.fold f::(fun exps (_, strexp) => collect_exps exps strexp) init::exps flds
       | Sil.Earray _ elems _ =>
-        IList.fold_left (fun exps (_, strexp) => collect_exps exps strexp) exps elems;
+        List.fold f::(fun exps (_, strexp) => collect_exps exps strexp) init::exps elems;
     let rec compute_reachable_hpreds_rec sigma (reach, exps) => {
       let add_hpred_if_reachable (reach, exps) =>
         fun
@@ -67,22 +67,24 @@ let remove_abduced_retvars tenv p => {
         | Sil.Hlseg _ _ exp1 exp2 exp_l as hpred => {
             let reach' = Sil.HpredSet.add hpred reach;
             let exps' =
-              IList.fold_left
-                (fun exps_acc exp => Exp.Set.add exp exps_acc) exps [exp1, exp2, ...exp_l];
+              List.fold
+                f::(fun exps_acc exp => Exp.Set.add exp exps_acc)
+                init::exps
+                [exp1, exp2, ...exp_l];
             (reach', exps')
           }
         | Sil.Hdllseg _ _ exp1 exp2 exp3 exp4 exp_l as hpred => {
             let reach' = Sil.HpredSet.add hpred reach;
             let exps' =
-              IList.fold_left
-                (fun exps_acc exp => Exp.Set.add exp exps_acc)
-                exps
+              List.fold
+                f::(fun exps_acc exp => Exp.Set.add exp exps_acc)
+                init::exps
                 [exp1, exp2, exp3, exp4, ...exp_l];
             (reach', exps')
           }
         | _ => (reach, exps);
-      let (reach', exps') = IList.fold_left add_hpred_if_reachable (reach, exps) sigma;
-      if (Sil.HpredSet.cardinal reach == Sil.HpredSet.cardinal reach') {
+      let (reach', exps') = List.fold f::add_hpred_if_reachable init::(reach, exps) sigma;
+      if (Int.equal (Sil.HpredSet.cardinal reach) (Sil.HpredSet.cardinal reach')) {
         (reach, exps)
       } else {
         compute_reachable_hpreds_rec sigma (reach', exps')
@@ -101,13 +103,13 @@ let remove_abduced_retvars tenv p => {
         | Exp.BinOp _ e0 e1
         | Exp.Lindex e0 e1 => exp_contains e0 || exp_contains e1
         | _ => false;
-      IList.filter
-        (
+      List.filter
+        f::(
           fun
           | Sil.Aeq lhs rhs
           | Sil.Aneq lhs rhs => exp_contains lhs || exp_contains rhs
           | Sil.Apred _ es
-          | Sil.Anpred _ es => IList.exists exp_contains es
+          | Sil.Anpred _ es => List.exists f::exp_contains es
         )
         pi
     };
@@ -115,8 +117,8 @@ let remove_abduced_retvars tenv p => {
   };
   /* separate the abduced pvars from the normal ones, deallocate the abduced ones*/
   let (abduceds, normal_pvars) =
-    IList.fold_left
-      (
+    List.fold
+      f::(
         fun pvars hpred =>
           switch hpred {
           | Sil.Hpointsto (Exp.Lvar pvar) _ _ =>
@@ -129,13 +131,13 @@ let remove_abduced_retvars tenv p => {
           | _ => pvars
           }
       )
-      ([], [])
+      init::([], [])
       p.Prop.sigma;
   let (_, p') = Attribute.deallocate_stack_vars tenv p abduceds;
   let normal_pvar_set =
-    IList.fold_left
-      (fun normal_pvar_set pvar => Exp.Set.add (Exp.Lvar pvar) normal_pvar_set)
-      Exp.Set.empty
+    List.fold
+      f::(fun normal_pvar_set pvar => Exp.Set.add (Exp.Lvar pvar) normal_pvar_set)
+      init::Exp.Set.empty
       normal_pvars;
   /* walk forward from non-abduced pvars, keep everything reachable. remove everything else */
   let (sigma_reach, pi_reach) = compute_reachable p' normal_pvar_set;
@@ -143,7 +145,7 @@ let remove_abduced_retvars tenv p => {
 };
 
 let remove_locals tenv (curr_f: Procdesc.t) p => {
-  let names_of_locals = IList.map (get_name_of_local curr_f) (Procdesc.get_locals curr_f);
+  let names_of_locals = List.map f::(get_name_of_local curr_f) (Procdesc.get_locals curr_f);
   let names_of_locals' =
     switch !Config.curr_language {
     | Config.Clang =>
@@ -166,7 +168,7 @@ let remove_locals tenv (curr_f: Procdesc.t) p => {
 
 let remove_formals tenv (curr_f: Procdesc.t) p => {
   let pname = Procdesc.get_proc_name curr_f;
-  let formal_vars = IList.map (fun (n, _) => Pvar.mk n pname) (Procdesc.get_formals curr_f);
+  let formal_vars = List.map f::(fun (n, _) => Pvar.mk n pname) (Procdesc.get_formals curr_f);
   Attribute.deallocate_stack_vars tenv p formal_vars
 };
 
@@ -181,9 +183,8 @@ let remove_ret tenv (curr_f: Procdesc.t) (p: Prop.t Prop.normal) => {
 
 
 /** remove locals and return variable from the prop */
-let remove_locals_ret tenv (curr_f: Procdesc.t) p => snd (
-  remove_locals tenv curr_f (remove_ret tenv curr_f p)
-);
+let remove_locals_ret tenv (curr_f: Procdesc.t) p =>
+  snd (remove_locals tenv curr_f (remove_ret tenv curr_f p));
 
 
 /** Remove locals and formal parameters from the prop.
@@ -202,6 +203,6 @@ let remove_seed_vars tenv (prop: Prop.t 'a) :Prop.t Prop.normal => {
     | Sil.Hpointsto (Exp.Lvar pv) _ _ => not (Pvar.is_seed pv)
     | _ => true;
   let sigma = prop.sigma;
-  let sigma' = IList.filter hpred_not_seed sigma;
+  let sigma' = List.filter f::hpred_not_seed sigma;
   Prop.normalize tenv (Prop.set prop sigma::sigma')
 };

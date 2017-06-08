@@ -9,10 +9,9 @@ TESTS_DIR = ../../..
 
 ANALYZER = infer
 
-# Use the system headers of our own clang. This way, we always use the same system headers
-# regardless of the libraries installed on the machine.
-CLANG_OPTIONS = -x c++ -std=c++11 -nostdinc++ -isystem$(ROOT_DIR) -isystem$(CLANG_INCLUDES)/c++/v1/ -c
-INFER_OPTIONS = --cxx --ml-buckets cpp --no-filtering --debug-exceptions
+CLANG_OPTIONS = -x c++ -std=c++11 -isystem$(ROOT_DIR) -c
+INFER_OPTIONS = --ml-buckets cpp --no-filtering --debug-exceptions --project-root $(TESTS_DIR) \
+                --no-failures-allowed --pmd-xml
 INFERPRINT_OPTIONS = --issues-tests
 
 SOURCES = \
@@ -21,6 +20,8 @@ SOURCES = \
   include_header/include_templ.cpp \
   $(wildcard memory_leaks/*.cpp) \
   $(wildcard models/*.cpp) \
+  $(wildcard generic_models/*.cpp) \
+  $(wildcard mutex/*.cpp) \
   $(wildcard npe/*.cpp) \
   $(wildcard numeric/*.cpp) \
   $(wildcard overwrite_attribute/*.cpp) \
@@ -32,6 +33,7 @@ SOURCES = \
   shared/constructors/constructor_with_body.cpp \
   shared/constructors/copy_move_constructor.cpp \
   shared/constructors/temp_object.cpp \
+  shared/constructors/copy_array_field.cpp \
   shared/exceptions/Exceptions.cpp \
   $(wildcard shared/lambda/*.cpp) \
   shared/methods/conversion_operator.cpp \
@@ -49,6 +51,8 @@ SOURCES = \
   shared/templates/function.cpp \
   shared/templates/function_pack.cpp \
   shared/templates/method.cpp \
+  shared/types/const.cpp \
+  shared/types/inheritance_casts.cpp \
   shared/types/inheritance_field.cpp \
   shared/types/operator_overload.cpp \
   shared/types/return_struct.cpp \

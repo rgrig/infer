@@ -6,35 +6,35 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
+
+open! PVariant;
 
 let aggregated_stats_filename = "aggregated_stats.json";
 
 let aggregated_stats_by_target_filename = "aggregated_stats_by_target.json";
 
-let json_files_to_ignore_regex = Str.regexp (
-  ".*\\(" ^
-  Str.quote aggregated_stats_filename ^
-  "\\|" ^ Str.quote aggregated_stats_by_target_filename ^ "\\)$"
-);
+let json_files_to_ignore_regex =
+  Str.regexp (
+    ".*\\(" ^
+    Str.quote aggregated_stats_filename ^
+    "\\|" ^ Str.quote aggregated_stats_by_target_filename ^ "\\)$"
+  );
 
-let dir_exists dir =>
-  try (Sys.is_directory dir) {
-  | Sys_error _ => false
-  };
+let dir_exists dir => Sys.is_directory dir == `Yes;
 
 let find_json_files_in_dir dir => {
   let is_valid_json_file path => {
     let s = Unix.lstat path;
     let json_regex = Str.regexp_case_fold ".*\\.json$";
     not (Str.string_match json_files_to_ignore_regex path 0) &&
-    Str.string_match json_regex path 0 && s.st_kind == Unix.S_REG
+    Str.string_match json_regex path 0 && Polymorphic_compare.(==) s.st_kind Unix.S_REG
   };
   dir_exists dir ?
     {
       let content = Array.to_list (Sys.readdir dir);
-      let content_with_path = IList.map (fun p => Filename.concat dir p) content;
-      IList.filter is_valid_json_file content_with_path
+      let content_with_path = List.map f::(fun p => Filename.concat dir p) content;
+      List.filter f::is_valid_json_file content_with_path
     } :
     []
 };
@@ -52,9 +52,8 @@ type origin =
 let find_stats_files_in_dir dir => {
   let frontend_paths = find_json_files_in_dir (Filename.concat dir Config.frontend_stats_dir_name);
   let backend_paths = find_json_files_in_dir (Filename.concat dir Config.backend_stats_dir_name);
-  let reporting_paths = find_json_files_in_dir (
-    Filename.concat dir Config.reporting_stats_dir_name
-  );
+  let reporting_paths =
+    find_json_files_in_dir (Filename.concat dir Config.reporting_stats_dir_name);
   {frontend_paths, backend_paths, reporting_paths}
 };
 
@@ -72,7 +71,7 @@ let load_data_from_infer_deps file => {
   let lines = Utils.read_file file;
   try (
     switch lines {
-    | Some l => Ok (IList.map extract_target_and_path l)
+    | Some l => Ok (List.map f::extract_target_and_path l)
     | None => raise (Failure ("Error reading '" ^ file ^ "'"))
     }
   ) {
@@ -91,15 +90,15 @@ let collect_all_stats_files () => {
   switch Config.buck_out {
   | Some p =>
     if (dir_exists p) {
-      let data = load_data_from_infer_deps (
-        Filename.concat infer_out Config.buck_infer_deps_file_name
-      );
+      let data =
+        load_data_from_infer_deps (Filename.concat infer_out Config.buck_infer_deps_file_name);
       switch data {
       | Ok r =>
         let buck_out_parent = Filename.concat p Filename.parent_dir_name;
         let targets_files =
-          IList.map
-            (fun (t, p) => (t, find_stats_files_in_dir (concatenate_paths buck_out_parent p))) r;
+          List.map
+            f::(fun (t, p) => (t, find_stats_files_in_dir (concatenate_paths buck_out_parent p)))
+            r;
         Ok (Buck_out targets_files)
       | Error _ as e => e
       }
@@ -112,7 +111,8 @@ let collect_all_stats_files () => {
 
 let aggregate_stats_files paths => {
   let open_json_file file => Yojson.Basic.from_file file;
-  let load_stats paths => IList.map (fun path => PerfStats.from_json (open_json_file path)) paths;
+  let load_stats paths =>
+    List.map f::(fun path => PerfStats.from_json (open_json_file path)) paths;
   let all_perf_stats = load_stats paths;
   switch all_perf_stats {
   | [] => None
@@ -136,7 +136,7 @@ let aggregate_all_stats origin => {
   let stats_paths =
     switch origin {
     | Buck_out tf =>
-      IList.fold_left (fun acc (_, paths) => accumulate_paths acc paths) empty_stats_paths tf
+      List.fold f::(fun acc (_, paths) => accumulate_paths acc paths) init::empty_stats_paths tf
     | Infer_out paths => paths
     };
   {
@@ -153,7 +153,7 @@ let aggregate_stats_by_target tp => {
       | Some v => [(t, v), ...acc]
       | None => acc
       };
-    let l = IList.fold_left (fun acc (t, p) => collect_valid_stats acc t (f p)) [] aggr_stats;
+    let l = List.fold f::(fun acc (t, p) => collect_valid_stats acc t (f p)) init::[] aggr_stats;
     switch l {
     | [] => None
     | _ as v => Some (`Assoc v)
@@ -176,9 +176,9 @@ let generate_files () => {
   let aggregated_frontend_stats_dir = Filename.concat infer_out Config.frontend_stats_dir_name;
   let aggregated_backend_stats_dir = Filename.concat infer_out Config.backend_stats_dir_name;
   let aggregated_reporting_stats_dir = Filename.concat infer_out Config.reporting_stats_dir_name;
-  create_dir aggregated_frontend_stats_dir;
-  create_dir aggregated_backend_stats_dir;
-  create_dir aggregated_reporting_stats_dir;
+  Utils.create_dir aggregated_frontend_stats_dir;
+  Utils.create_dir aggregated_backend_stats_dir;
+  Utils.create_dir aggregated_reporting_stats_dir;
   let write_to_json_file_opt destfile json =>
     switch json {
     | Some j => Utils.write_json_to_file destfile j

@@ -7,4 +7,6 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-val checker: Callbacks.proc_callback_args -> unit
+open! IStd
+
+val checker: Callbacks.proc_callback_t

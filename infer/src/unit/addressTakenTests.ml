@@ -7,25 +7,22 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module F = Format
 
-module TestInterpreter = AnalyzerTester.Make
-    (ProcCfg.Exceptional)
-    (Scheduler.ReversePostorder)
-    (AddressTaken.TransferFunctions)
+module TestInterpreter = AnalyzerTester.Make (ProcCfg.Exceptional) (AddressTaken.TransferFunctions)
 
 let tests =
   let open OUnit2 in
   let open AnalyzerTester.StructuredSil in
   let assert_empty = invariant "{  }" in
-  let int_typ = Typ.Tint IInt in
-  let int_ptr_typ = Typ.Tptr (int_typ, Pk_pointer) in
-  let fun_ptr_typ = Typ.Tptr (Tfun false, Pk_pointer) in
+  let int_typ = Typ.mk (Tint IInt) in
+  let int_ptr_typ = Typ.mk (Tptr (int_typ, Pk_pointer)) in
+  let fun_ptr_typ = Typ.mk (Tptr (Typ.mk (Tfun false), Pk_pointer)) in
   let closure_exp captureds =
     let mk_captured_var str = (Exp.Var (ident_of_str str), pvar_of_str str, int_ptr_typ) in
-    let captured_vars = IList.map mk_captured_var captureds in
+    let captured_vars = List.map ~f:mk_captured_var captureds in
     let closure = { Exp.name=dummy_procname; captured_vars; } in
     Exp.Closure closure in
   let test_list = [
@@ -96,7 +93,7 @@ let tests =
             );
       invariant "{ &b, &d }";
       var_assign_addrof_var ~rhs_typ:int_ptr_typ "e" "f";
-      invariant "{ &b, &d, &f }"
+      invariant "{ &b, &f, &d }"
     ];
-  ] |> TestInterpreter.create_tests ProcData.empty_extras in
+  ] |> TestInterpreter.create_tests ProcData.empty_extras ~initial:AddressTaken.Domain.empty in
   "address_taken_suite">:::test_list

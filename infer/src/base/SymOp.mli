@@ -10,7 +10,7 @@
 
 (** Symbolic Operations and Failures: the units in which analysis work is measured *)
 
-open! Utils
+open! IStd
 
 (** Internal state of the module *)
 type t
@@ -22,7 +22,7 @@ val check_wallclock_alarm : unit -> unit
 val get_remaining_wallclock_time : unit -> float
 
 (** Timeout in seconds for each function *)
-val get_timeout_seconds : unit -> float
+val get_timeout_seconds : unit -> float option
 
 (** Return the total number of symop's since the beginning *)
 val get_total : unit -> int

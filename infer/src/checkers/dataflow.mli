@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 type throws =
   | DontKnow (** May or may not throw an exception. *)
@@ -29,7 +29,7 @@ module type DFStateType = sig
   val do_node : Tenv.t -> Procdesc.Node.t -> t -> (t list) * (t list)
 
   (** Can proc throw an exception? *)
-  val proc_throws : Procname.t -> throws
+  val proc_throws : Typ.Procname.t -> throws
 end
 
 (** Type for the dataflow API. *)

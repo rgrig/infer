@@ -9,11 +9,14 @@
 
 package codetoanalyze.java.infer;
 
+import android.annotation.SuppressLint;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.text.TextUtils;
+
+import com.facebook.infer.annotation.Assertions;
 
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
@@ -479,7 +482,7 @@ public class NullPointerExceptions {
     derefUndefinedCallee().toString();
   }
 
-  @SuppressWarnings("null") // TODO(#8647398): Add support for @SuppressWarnings with Ant
+  @SuppressLint("NULL_DEREFERENCE")
   void shouldNotReportNPE() {
     Object o = null;
     o.toString();
@@ -602,6 +605,10 @@ public class NullPointerExceptions {
     if(!c1.equals(c2)) {
       s.toString(); // NPE
     }
+  }
+
+  String assertParameterNotNullableOk(@Nullable Object object) {
+    return Assertions.assertNotNull(object).toString();
   }
 
 }

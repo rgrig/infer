@@ -8,7 +8,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Create descriptions of analysis errors *)
 
@@ -42,8 +42,8 @@ val find_boolean_assignment : Procdesc.Node.t -> Pvar.t -> bool -> Procdesc.Node
 val exp_rv_dexp : Tenv.t -> Procdesc.Node.t -> Exp.t -> DecompiledExp.t option
 
 (** Produce a description of a persistent reference to an Android Context *)
-val explain_context_leak : Procname.t -> Typ.t -> Ident.fieldname ->
-  (Ident.fieldname option * Typ.t) list -> Localise.error_desc
+val explain_context_leak : Typ.Procname.t -> Typ.t -> Fieldname.t ->
+  (Fieldname.t option * Typ.t) list -> Localise.error_desc
 
 (** Produce a description of a mismatch between an allocation function and a deallocation function *)
 val explain_allocation_mismatch :
@@ -54,7 +54,7 @@ val explain_array_access : Tenv.t -> Localise.deref_str -> 'a Prop.t -> Location
 
 (** explain a class cast exception *)
 val explain_class_cast_exception :
-  Tenv.t -> Procname.t option -> Exp.t -> Exp.t -> Exp.t ->
+  Tenv.t -> Typ.Procname.t option -> Exp.t -> Exp.t -> Exp.t ->
   Procdesc.Node.t -> Location.t -> Localise.error_desc
 
 (** Explain a deallocate stack variable error *)
@@ -91,6 +91,8 @@ val explain_condition_is_assignment : Location.t -> Localise.error_desc
 val explain_condition_always_true_false :
   Tenv.t -> IntLit.t -> Exp.t -> Procdesc.Node.t -> Location.t -> Localise.error_desc
 
+val explain_unreachable_code_after : Location.t -> Localise.error_desc
+
 (** explain the escape of a stack variable address from its scope *)
 val explain_stack_variable_address_escape :
   Location.t -> Pvar.t -> DecompiledExp.t option -> Localise.error_desc
@@ -103,7 +105,7 @@ val explain_return_statement_missing : Location.t -> Localise.error_desc
 
 (** explain a retain cycle *)
 val explain_retain_cycle :
-  ((Sil.strexp * Typ.t) * Ident.fieldname * Sil.strexp) list ->
+  ((Sil.strexp * Typ.t) * Fieldname.t * Sil.strexp) list ->
   Location.t -> string option -> Localise.error_desc
 
 (** explain unary minus applied to unsigned expression *)
@@ -112,7 +114,7 @@ val explain_unary_minus_applied_to_unsigned_expression :
 
 (** Explain a tainted value error *)
 val explain_tainted_value_reaching_sensitive_function :
-  Prop.normal Prop.t -> Exp.t -> PredSymb.taint_info -> Procname.t -> Location.t ->
+  Prop.normal Prop.t -> Exp.t -> PredSymb.taint_info -> Typ.Procname.t -> Location.t ->
   Localise.error_desc
 
 (** Produce a description of a leak by looking at the current state.
@@ -121,7 +123,7 @@ val explain_tainted_value_reaching_sensitive_function :
     If there is an alloc attribute, print the function call and line number. *)
 val explain_leak :
   Tenv.t -> Sil.hpred -> 'a Prop.t -> PredSymb.t option -> string option ->
-  Exceptions.exception_visibility * Localise.error_desc
+  Exceptions.visibility * Localise.error_desc
 
 (** Produce a description of the memory access performed in the current instruction, if any. *)
 val explain_memory_access : Tenv.t -> Localise.deref_str -> 'a Prop.t -> Location.t -> Localise.error_desc
@@ -130,13 +132,13 @@ val explain_memory_access : Tenv.t -> Localise.deref_str -> 'a Prop.t -> Locatio
 val explain_null_test_after_dereference :
   Tenv.t -> Exp.t -> Procdesc.Node.t -> int -> Location.t -> Localise.error_desc
 
-(** Print a warning to the err stream at the given location (note: only prints in developer mode) *)
+(** warn at the given location *)
 val warning_err : Location.t -> ('a, Format.formatter, unit) format -> 'a
 
 (* offset of an expression found following a program variable *)
 type pvar_off =
   | Fpvar  (* value of a pvar *)
-  | Fstruct of Ident.fieldname list (* value obtained by dereferencing the pvar and following a sequence of fields *)
+  | Fstruct of Fieldname.t list (* value obtained by dereferencing the pvar and following a sequence of fields *)
 
 (** Find a program variable whose value is [exp] or pointing to a struct containing [exp] *)
 val find_with_exp : 'a Prop.t -> Exp.t -> (Pvar.t * pvar_off) option

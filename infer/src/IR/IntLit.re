@@ -1,7 +1,4 @@
 /*
- * vim: set ft=rust:
- * vim: set ft=reason:
- *
  * Copyright (c) 2009 - 2013 Monoidics ltd.
  * Copyright (c) 2013 - present Facebook, Inc.
  * All rights reserved.
@@ -10,9 +7,9 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
 
-let module F = Format;
+module F = Format;
 
 
 /** signed and unsigned integer literals */
@@ -28,7 +25,7 @@ let area u i =>
   };
 
 let to_signed (unsigned, i, ptr) =>
-  if (area unsigned i == 3) {
+  if (Int.equal (area unsigned i) 3) {
     None
   } else {
     Some
@@ -37,7 +34,7 @@ let to_signed (unsigned, i, ptr) =>
   };
 
 let compare (unsigned1, i1, _) (unsigned2, i2, _) => {
-  let n = bool_compare unsigned1 unsigned2;
+  let n = Bool.compare unsigned1 unsigned2;
   if (n != 0) {
     n
   } else {
@@ -45,18 +42,10 @@ let compare (unsigned1, i1, _) (unsigned2, i2, _) => {
   }
 };
 
-let compare_value (unsigned1, i1, _) (unsigned2, i2, _) => {
-  let area1 = area unsigned1 i1;
-  let area2 = area unsigned2 i2;
-  let n = int_compare area1 area2;
-  if (n != 0) {
-    n
-  } else {
-    Int64.compare i1 i2
-  }
-};
+let compare_value (unsigned1, i1, _) (unsigned2, i2, _) =>
+  [%compare : (int, Int64.t)] (area unsigned1 i1, i1) (area unsigned2 i2, i2);
 
-let eq i1 i2 => compare_value i1 i2 == 0;
+let eq i1 i2 => Int.equal (compare_value i1 i2) 0;
 
 let neq i1 i2 => compare_value i1 i2 != 0;
 
@@ -76,7 +65,7 @@ let of_int64_unsigned i unsigned => (unsigned, i, false);
 
 let of_int i => of_int64 (Int64.of_int i);
 
-let to_int (_, i, _) => Int64.to_int i;
+let to_int (_, i, _) => Int64.to_int_exn i;
 
 let null = (false, 0L, true);
 
@@ -88,13 +77,13 @@ let two = of_int 2;
 
 let minus_one = of_int (-1);
 
-let isone (_, i, _) => i == 1L;
+let isone (_, i, _) => Int64.equal i 1L;
 
-let iszero (_, i, _) => i == 0L;
+let iszero (_, i, _) => Int64.equal i 0L;
 
-let isnull (_, i, ptr) => i == 0L && ptr;
+let isnull (_, i, ptr) => Int64.equal i 0L && ptr;
 
-let isminusone (unsigned, i, _) => not unsigned && i == (-1L);
+let isminusone (unsigned, i, _) => not unsigned && Int64.equal i (-1L);
 
 let isnegative (unsigned, i, _) => not unsigned && i < 0L;
 
@@ -108,26 +97,26 @@ let lift binop (unsigned1, i1, ptr1) (unsigned2, i2, ptr2) => (
 
 let lift1 unop (unsigned, i, ptr) => (unsigned, unop i, ptr);
 
-let add i1 i2 => lift Int64.add i1 i2;
+let add i1 i2 => lift Int64.(+) i1 i2;
 
-let mul i1 i2 => lift Int64.mul i1 i2;
+let mul i1 i2 => lift Int64.( * ) i1 i2;
 
-let div i1 i2 => lift Int64.div i1 i2;
+let div i1 i2 => lift Int64.(/) i1 i2;
 
 let rem i1 i2 => lift Int64.rem i1 i2;
 
-let logand i1 i2 => lift Int64.logand i1 i2;
+let logand i1 i2 => lift Int64.bit_and i1 i2;
 
-let logor i1 i2 => lift Int64.logor i1 i2;
+let logor i1 i2 => lift Int64.bit_or i1 i2;
 
-let logxor i1 i2 => lift Int64.logxor i1 i2;
+let logxor i1 i2 => lift Int64.bit_xor i1 i2;
 
-let lognot i => lift1 Int64.lognot i;
+let lognot i => lift1 Int64.bit_not i;
 
 let sub i1 i2 => add i1 (neg i2);
 
 let pp f (unsigned, n, ptr) =>
-  if (ptr && n == 0L) {
+  if (ptr && Int64.equal n 0L) {
     F.fprintf f "null"
   } else if unsigned {
     F.fprintf f "%Lu" n
@@ -135,4 +124,4 @@ let pp f (unsigned, n, ptr) =>
     F.fprintf f "%Ld" n
   };
 
-let to_string i => pp_to_string pp i;
+let to_string i => F.asprintf "%a" pp i;

@@ -7,13 +7,15 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 type 'a t = { pdesc : Procdesc.t; tenv : Tenv.t; extras : 'a; }
 
 type no_extras = unit
 
 let empty_extras = ()
+
+let make_empty_extras _ = ()
 
 let make pdesc tenv extras =
   { pdesc; tenv; extras; }

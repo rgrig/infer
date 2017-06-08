@@ -8,7 +8,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
+module Hashtbl = Caml.Hashtbl
 
 open Javalib_pack
 open Sawja_pack
@@ -35,7 +36,7 @@ type t =
     if_jumps : int NodeTbl.t;
     goto_jumps : (int, jump_kind) Hashtbl.t;
     cn : JBasics.class_name;
-    source_file : DB.source_file;
+    source_file : SourceFile.t;
     program : JClasspath.program;
   }
 
@@ -114,15 +115,15 @@ let is_goto_jump context pc =
     | _ -> false
   with Not_found -> false
 
-let exn_node_table = Procname.Hash.create 100
+let exn_node_table = Typ.Procname.Hash.create 100
 
 let reset_exn_node_table () =
-  Procname.Hash.clear exn_node_table
+  Typ.Procname.Hash.clear exn_node_table
 
 let add_exn_node procname (exn_node : Procdesc.Node.t) =
-  Procname.Hash.add exn_node_table procname exn_node
+  Typ.Procname.Hash.add exn_node_table procname exn_node
 
 let get_exn_node procdesc =
   try
-    Some (Procname.Hash.find exn_node_table (Procdesc.get_proc_name procdesc))
+    Some (Typ.Procname.Hash.find exn_node_table (Procdesc.get_proc_name procdesc))
   with Not_found -> None

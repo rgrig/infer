@@ -1,7 +1,4 @@
 /*
- * vim: set ft=rust:
- * vim: set ft=reason:
- *
  * Copyright (c) 2009 - 2013 Monoidics ltd.
  * Copyright (c) 2013 - present Facebook, Inc.
  * All rights reserved.
@@ -10,25 +7,24 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
 
 
 /** The Smallfoot Intermediate Language: Constants */
-let module L = Logging;
+module L = Logging;
 
-let module F = Format;
+module F = Format;
 
 
 /** Constants */
 type t =
   | Cint IntLit.t /** integer constants */
-  | Cfun Procname.t /** function names */
+  | Cfun Typ.Procname.t /** function names */
   | Cstr string /** string constants */
   | Cfloat float /** float constants */
   | Cclass Ident.name /** class constant */
-  | Cptr_to_fld Ident.fieldname Typ.t /** pointer to field constant, and type of the surrounding Csu.t type */;
-
-let compare: t => t => int;
+  | Cptr_to_fld Fieldname.t Typ.t /** pointer to field constant, and type of the surrounding Csu.t type */
+[@@deriving compare];
 
 let equal: t => t => bool;
 
@@ -38,7 +34,7 @@ let kind_equal: t => t => bool;
 
 
 /** Pretty print a const */
-let pp: printenv => F.formatter => t => unit;
+let pp: Pp.env => F.formatter => t => unit;
 
 let to_string: t => string;
 

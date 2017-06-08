@@ -7,6 +7,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! IStd
+
 type 'a t = { pdesc : Procdesc.t; tenv : Tenv.t; extras : 'a; }
 
 type no_extras
@@ -14,5 +16,7 @@ type no_extras
 val empty_extras : no_extras
 
 val make : Procdesc.t -> Tenv.t -> 'a -> 'a t
+
+val make_empty_extras : Procdesc.t -> no_extras
 
 val make_default : Procdesc.t -> Tenv.t -> no_extras t

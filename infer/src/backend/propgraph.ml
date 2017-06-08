@@ -8,7 +8,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Propositions seen as graphs *)
 
@@ -73,13 +73,17 @@ let get_subl footprint_part g =
 let edge_from_source g n footprint_part is_hpred =
   let edges =
     if is_hpred
-    then IList.map (fun hpred -> Ehpred hpred ) (get_sigma footprint_part g)
-    else IList.map (fun a -> Eatom a) (get_pi footprint_part g) @ IList.map (fun entry -> Esub_entry entry) (get_subl footprint_part g) in
+    then
+      List.map ~f:(fun hpred -> Ehpred hpred ) (get_sigma footprint_part g)
+    else
+      List.map
+        ~f:(fun a -> Eatom a) (get_pi footprint_part g) @
+      List.map ~f:(fun entry -> Esub_entry entry) (get_subl footprint_part g) in
   let starts_from hpred =
     match edge_get_source hpred with
     | Some e -> Exp.equal n e
     | None -> false in
-  match IList.filter starts_from edges with
+  match List.filter ~f:starts_from edges with
   | [] -> None
   | edge:: _ -> Some edge
 
@@ -95,32 +99,33 @@ let get_edges footprint_part g =
   let hpreds = get_sigma footprint_part g in
   let atoms = get_pi footprint_part g in
   let subst_entries = get_subl footprint_part g in
-  IList.map (fun hpred -> Ehpred hpred) hpreds @ IList.map (fun a -> Eatom a) atoms @ IList.map (fun entry -> Esub_entry entry) subst_entries
+  List.map ~f:(fun hpred -> Ehpred hpred) hpreds @
+  List.map ~f:(fun a -> Eatom a) atoms @
+  List.map ~f:(fun entry -> Esub_entry entry) subst_entries
 
 let edge_equal e1 e2 = match e1, e2 with
-  | Ehpred hp1, Ehpred hp2 -> Sil.hpred_equal hp1 hp2
-  | Eatom a1, Eatom a2 -> Sil.atom_equal a1 a2
+  | Ehpred hp1, Ehpred hp2 -> Sil.equal_hpred hp1 hp2
+  | Eatom a1, Eatom a2 -> Sil.equal_atom a1 a2
   | Esub_entry (x1, e1), Esub_entry (x2, e2) -> Ident.equal x1 x2 && Exp.equal e1 e2
   | _ -> false
 
 (** [contains_edge footprint_part g e] returns true if the graph [g] contains edge [e],
     searching the footprint part if [footprint_part] is true. *)
 let contains_edge (footprint_part: bool) (g: t) (e: edge) =
-  try ignore (IList.find (fun e' -> edge_equal e e') (get_edges footprint_part g)); true
-  with Not_found -> false
+  List.exists ~f:(fun e' -> edge_equal e e') (get_edges footprint_part g)
 
 (** [iter_edges footprint_part f g] iterates function [f] on the edges in [g] in the same order as returned by [get_edges];
     if [footprint_part] is true the edges are taken from the footprint part. *)
 let iter_edges footprint_part f g =
-  IList.iter f (get_edges footprint_part g)  (* For now simple iterator; later might use a specific traversal *)
+  List.iter ~f (get_edges footprint_part g)
 
 (** Graph annotated with the differences w.r.t. a previous graph *)
 type diff =
   { diff_newgraph : t; (** the new graph *)
     diff_changed_norm : Obj.t list; (** objects changed in the normal part *)
-    diff_cmap_norm : colormap; (** colormap for the normal part *)
+    diff_cmap_norm : Pp.colormap; (** colormap for the normal part *)
     diff_changed_foot : Obj.t list; (** objects changed in the footprint part *)
-    diff_cmap_foot : colormap (** colormap for the footprint part *) }
+    diff_cmap_foot : Pp.colormap (** colormap for the footprint part *) }
 
 (** Compute the subobjects in [e2] which are different from those in [e1] *)
 let compute_exp_diff (e1: Exp.t) (e2: Exp.t) : Obj.t list =
@@ -138,7 +143,7 @@ let rec compute_sexp_diff (se1: Sil.strexp) (se2: Sil.strexp) : Obj.t list = mat
 
 and compute_fsel_diff fsel1 fsel2 : Obj.t list = match fsel1, fsel2 with
   | ((f1, se1):: fsel1'), (((f2, se2) as x):: fsel2') ->
-      (match Ident.fieldname_compare f1 f2 with
+      (match Fieldname.compare f1 f2 with
        | n when n < 0 -> compute_fsel_diff fsel1' fsel2
        | 0 -> compute_sexp_diff se1 se2 @ compute_fsel_diff fsel1' fsel2'
        | _ -> (Obj.repr x) :: compute_fsel_diff fsel1 fsel2')
@@ -166,7 +171,7 @@ let compute_edge_diff (oldedge: edge) (newedge: edge) : Obj.t list = match olded
       compute_exp_diff e1 e2
   | Eatom (Sil.Apred (_, es1)), Eatom (Sil.Apred (_, es2))
   | Eatom (Sil.Anpred (_, es1)), Eatom (Sil.Anpred (_, es2)) ->
-      IList.flatten (try IList.map2 compute_exp_diff es1 es2 with IList.Fail -> [])
+      List.concat (try List.map2_exn ~f:compute_exp_diff es1 es2 with Invalid_argument _ -> [])
   | Esub_entry (_, e1), Esub_entry (_, e2) ->
       compute_exp_diff e1 e2
   | _ -> [Obj.repr newedge]
@@ -191,9 +196,9 @@ let compute_diff default_color oldgraph newgraph : diff =
           )
         | None ->
             () in
-    IList.iter build_changed newedges;
+    List.iter ~f:build_changed newedges;
     let colormap (o: Obj.t) =
-      if IList.exists (fun x -> x == o) !changed then Red
+      if List.exists ~f:(fun x -> phys_equal x o) !changed then Pp.Red
       else default_color in
     !changed, colormap in
   let changed_norm, colormap_norm = compute_changed false in
@@ -213,34 +218,34 @@ let diff_get_colormap footprint_part diff =
     If !Config.pring_using_diff is true, print the diff w.r.t. the given prop,
     extracting its local stack vars if the boolean is true. *)
 let pp_proplist pe0 s (base_prop, extract_stack) f plist =
-  let num = IList.length plist in
+  let num = List.length plist in
   let base_stack = fst (Prop.sigma_get_stack_nonstack true base_prop.Prop.sigma) in
   let add_base_stack prop =
     if extract_stack then Prop.set prop ~sigma:(base_stack @ prop.Prop.sigma)
     else Prop.expose prop in
-  let update_pe_diff (prop: Prop.normal Prop.t) : printenv =
+  let update_pe_diff (prop: Prop.normal Prop.t) : Pp.env =
     if Config.print_using_diff then
       let diff = compute_diff Blue (from_prop base_prop) (from_prop prop) in
       let cmap_norm = diff_get_colormap false diff in
       let cmap_foot = diff_get_colormap true diff in
-      { pe0 with pe_cmap_norm = cmap_norm; pe_cmap_foot = cmap_foot }
+      { pe0 with cmap_norm; cmap_foot }
     else pe0 in
   let rec pp_seq_newline n f = function
     | [] -> ()
     | [_x] ->
         let pe = update_pe_diff _x in
         let x = add_base_stack _x in
-        (match pe.pe_kind with
-         | PP_TEXT -> F.fprintf f "%s %d of %d:@\n%a" s n num (Prop.pp_prop pe) x
-         | PP_HTML -> F.fprintf f "%s %d of %d:@\n%a@\n" s n num (Prop.pp_prop pe) x
-         | PP_LATEX -> F.fprintf f "@[%a@]@\n" (Prop.pp_prop pe) x)
+        (match pe.kind with
+         | TEXT -> F.fprintf f "%s %d of %d:@\n%a" s n num (Prop.pp_prop pe) x
+         | HTML -> F.fprintf f "%s %d of %d:@\n%a@\n" s n num (Prop.pp_prop pe) x
+         | LATEX -> F.fprintf f "@[%a@]@\n" (Prop.pp_prop pe) x)
     | _x:: l ->
         let pe = update_pe_diff _x in
         let x = add_base_stack _x in
-        (match pe.pe_kind with
-         | PP_TEXT -> F.fprintf f "%s %d of %d:@\n%a@\n%a" s n num (Prop.pp_prop pe) x (pp_seq_newline (n + 1)) l
-         | PP_HTML -> F.fprintf f "%s %d of %d:@\n%a@\n%a" s n num (Prop.pp_prop pe) x (pp_seq_newline (n + 1)) l
-         | PP_LATEX -> F.fprintf f "@[%a@]\\\\@\n\\bigvee\\\\@\n%a" (Prop.pp_prop pe) x (pp_seq_newline (n + 1)) l)
+        (match pe.kind with
+         | TEXT -> F.fprintf f "%s %d of %d:@\n%a@\n%a" s n num (Prop.pp_prop pe) x (pp_seq_newline (n + 1)) l
+         | HTML -> F.fprintf f "%s %d of %d:@\n%a@\n%a" s n num (Prop.pp_prop pe) x (pp_seq_newline (n + 1)) l
+         | LATEX -> F.fprintf f "@[%a@]\\\\@\n\\bigvee\\\\@\n%a" (Prop.pp_prop pe) x (pp_seq_newline (n + 1)) l)
   in pp_seq_newline 1 f plist
 
 (** dump a propset *)

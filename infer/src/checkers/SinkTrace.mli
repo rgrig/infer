@@ -7,6 +7,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! IStd
+
 (** Suffix of a normal trace: just sinks and passthroughs, but no sources *)
 module type S = sig
   include Trace.S
@@ -16,10 +18,15 @@ module type S = sig
   type sink_path = Passthrough.Set.t * (Sink.t * Passthrough.Set.t) list
 
   (** get a path for each of the reportable flows to a sink in this trace *)
-  val get_reportable_sink_paths : t -> trace_of_pname:(Procname.t -> t) -> sink_path list
+  val get_reportable_sink_paths : t -> trace_of_pname:(Typ.Procname.t -> t) -> sink_path list
+
+  (** get a report for a single sink *)
+  val get_reportable_sink_path : Sink.t -> trace_of_pname:(Typ.Procname.t -> t) -> sink_path option
 
   (** update sink with the given call site *)
   val with_callsite : t -> CallSite.t -> t
+
+  val of_sink : Sink.t -> t
 
   val to_sink_loc_trace :
     ?desc_of_sink:(Sink.t -> string) -> ?sink_should_nest:(Sink.t -> bool) ->

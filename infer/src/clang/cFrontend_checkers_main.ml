@@ -7,107 +7,237 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
-open CFrontend_utils
+open! IStd
+
 open Lexing
 open Ctl_lexer
 
-let parse_ctl_file filename =
-  let print_position _ lexbuf =
-    let pos = lexbuf.lex_curr_p in
-    Logging.err "%s:%d:%d" pos.pos_fname
-      pos.pos_lnum (pos.pos_cnum - pos.pos_bol + 1) in
-  let parse_with_error lexbuf =
-    try Some (Ctl_parser.checkers_list token lexbuf) with
-    | SyntaxError msg ->
-        Logging.err "%a: %s\n" print_position lexbuf msg;
-        None
-    | Ctl_parser.Error ->
-        Logging.err "%a: syntax error\n" print_position lexbuf;
-        exit (-1) in
-  let parse_and_print lexbuf =  match parse_with_error lexbuf with
-    | Some l ->
-        IList.iter (fun { Ctl_parser_types.name = s; Ctl_parser_types.definitions = defs } ->
-            Logging.out "Parsed checker definition: %s\n" s;
-            IList.iter (fun d -> match d with
-                | Ctl_parser_types.CSet ("report_when", phi) ->
-                    Logging.out "    Report when:  \n    %a\n"
-                      CTL.Debug.pp_formula phi
-                | _ -> ()) defs
-          ) l;
-    | None -> () in
-  match filename with
-  | Some fn ->
-      let inx = open_in fn in
-      let lexbuf = Lexing.from_channel inx in
-      lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = fn };
-      parse_and_print lexbuf;
-      close_in inx
-  | None ->
-      Logging.out "No linters file specified. Nothing to parse.\n"
+module L = Logging
 
+let parse_al_file fname channel : CTL.al_file option =
+  let pos_str lexbuf =
+    let pos = lexbuf.lex_curr_p in
+    pos.pos_fname ^ ":" ^ (string_of_int pos.pos_lnum) ^ ":" ^
+    (string_of_int  (pos.pos_cnum - pos.pos_bol + 1)) in
+  let parse_with_error lexbuf =
+    try Some (Ctl_parser.al_file token lexbuf) with
+    | Ctl_parser_types.ALParsingException s ->
+        raise (Ctl_parser_types.ALParsingException
+                 (s ^ " at " ^  (pos_str lexbuf)))
+    | SyntaxError _
+    | Ctl_parser.Error ->
+        raise (Ctl_parser_types.ALParsingException
+                 ("SYNTAX ERROR at " ^ (pos_str lexbuf))) in
+  let lexbuf = Lexing.from_channel channel in
+  lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = fname };
+  parse_with_error lexbuf
+
+let already_imported_files = ref []
+
+let rec parse_import_file import_file channel : CTL.clause list =
+  if List.mem !already_imported_files import_file then
+    failwith ("Cyclic imports: file '" ^ import_file ^ "' was already imported.")
+  else (
+    match parse_al_file import_file channel with
+    | Some {import_files = imports; global_macros = curr_file_macros; checkers = _} ->
+        already_imported_files := import_file :: !already_imported_files;
+        collect_all_macros imports curr_file_macros
+    | None -> L.(debug Linters Medium) "No macros found.@\n";[])
+
+and collect_all_macros imports curr_file_macros =
+  L.(debug Linters Medium) "#### Start parsing import macros #####@\n";
+  let import_macros = parse_imports imports in
+  L.(debug Linters Medium) "#### Add global macros to import macros #####@\n";
+  List.append import_macros curr_file_macros
+
+(* Parse import files with macro definitions, and it returns a list of LET clauses *)
+and parse_imports imports_files : CTL.clause list =
+  let parse_one_import_file fimport macros =
+    L.(debug Linters Medium) "  Loading import macros from file %s@\n" fimport;
+    let in_channel = open_in fimport in
+    let parsed_macros = parse_import_file fimport in_channel in
+    In_channel.close in_channel;
+    List.append parsed_macros macros in
+  List.fold_right ~f:parse_one_import_file ~init:[] imports_files
+
+let parse_ctl_file linters_def_file channel : CFrontend_errors.linter list =
+  match parse_al_file linters_def_file channel with
+  | Some {import_files = imports; global_macros = curr_file_macros; checkers = parsed_checkers} ->
+      already_imported_files := [linters_def_file];
+      let macros = collect_all_macros imports curr_file_macros in
+      let macros_map = CFrontend_errors.build_macros_map macros in
+      L.(debug Linters Medium) "#### Start Expanding checkers #####@\n";
+      let exp_checkers = CFrontend_errors.expand_checkers macros_map parsed_checkers in
+      L.(debug Linters Medium) "#### Checkers Expanded #####@\n";
+      if Config.debug_mode then List.iter ~f:CTL.print_checker exp_checkers;
+      CFrontend_errors.create_parsed_linters linters_def_file exp_checkers
+  | None -> L.(debug Linters Medium) "No linters found.@\n";[]
+
+(* Parse the files with linters definitions, and it returns a list of linters *)
+let parse_ctl_files linters_def_files : CFrontend_errors.linter list =
+  let collect_parsed_linters linters_def_file linters =
+    L.(debug Linters Medium) "Loading linters rules from %s@\n" linters_def_file;
+    let in_channel = open_in linters_def_file in
+    let parsed_linters = parse_ctl_file linters_def_file in_channel in
+    In_channel.close in_channel;
+    List.append parsed_linters linters in
+  List.fold_right ~f:collect_parsed_linters ~init:[] linters_def_files
+
+let rec get_responds_to_selector stmt =
+  let open Clang_ast_t in
+  match stmt with
+  | ObjCMessageExpr (_, [_; ObjCSelectorExpr (_, _, _, method_name)], _, mdi)
+  | ObjCMessageExpr (_, [ObjCSelectorExpr (_, _, _, method_name)], _, mdi)
+    when  String.equal mdi.Clang_ast_t.omei_selector "respondsToSelector:" ->
+      [method_name]
+  | BinaryOperator (_, [stmt1;stmt2], _, bo_info)
+    when PVariant.(=) bo_info.Clang_ast_t.boi_kind `LAnd ->
+      List.append (get_responds_to_selector stmt1) (get_responds_to_selector stmt2)
+  | ImplicitCastExpr (_, [stmt], _, _)
+  | ParenExpr (_, [stmt], _)
+  | ExprWithCleanups(_, [stmt], _, _) ->
+      get_responds_to_selector stmt
+  | _ -> []
+
+let rec is_core_foundation_version_number stmt =
+  let open Clang_ast_t in
+  match stmt with
+  | DeclRefExpr (_, _, _, decl_ref_info) ->
+      (match decl_ref_info.drti_decl_ref with
+       | Some decl_ref_info ->
+           let name_info, _, _ = CAst_utils.get_info_from_decl_ref  decl_ref_info in
+           String.equal name_info.ni_name "kCFCoreFoundationVersionNumber"
+       | None -> false)
+  | ImplicitCastExpr (_, [stmt], _, _) ->
+      is_core_foundation_version_number stmt
+  | _ -> false
+
+let rec current_os_version_constant stmt =
+  let open Clang_ast_t in
+  match stmt with
+  | FloatingLiteral (_, _, _, number) ->
+      CiOSVersionNumbers.version_of number
+  | IntegerLiteral (_, _, _, info) ->
+      CiOSVersionNumbers.version_of info.ili_value
+  | ImplicitCastExpr (_, [stmt], _, _) ->
+      current_os_version_constant stmt
+  | _ -> None
+
+let rec get_current_os_version stmt =
+  let open Clang_ast_t in
+  match stmt with
+  | BinaryOperator (_, [stmt1;stmt2], _, bo_info) when
+      PVariant.(=) bo_info.Clang_ast_t.boi_kind `GE &&
+      is_core_foundation_version_number stmt1 ->
+      Option.to_list (current_os_version_constant stmt2)
+  | BinaryOperator (_, [stmt1;stmt2], _, bo_info) when
+      PVariant.(=) bo_info.Clang_ast_t.boi_kind `LE &&
+      is_core_foundation_version_number stmt2 ->
+      Option.to_list (current_os_version_constant stmt1)
+  | BinaryOperator (_, [stmt1;stmt2], _, bo_info) when
+      PVariant.(=) bo_info.Clang_ast_t.boi_kind `LAnd ->
+      List.append (get_current_os_version stmt1) (get_current_os_version stmt2)
+  | ImplicitCastExpr (_, [stmt], _, _)
+  | ParenExpr (_, [stmt], _)
+  | ExprWithCleanups(_, [stmt], _, _) ->
+      get_current_os_version stmt
+  | _ -> []
+
+let compute_if_context (context:CLintersContext.context) stmt =
+  let selector = get_responds_to_selector stmt in
+  let os_version = get_current_os_version stmt in
+  let within_responds_to_selector_block, ios_version_guard =
+    match context.if_context with
+    | Some if_context ->
+        let within_responds_to_selector_block =
+          List.append selector if_context.within_responds_to_selector_block in
+        let ios_version_guard =
+          List.append os_version if_context.ios_version_guard in
+        within_responds_to_selector_block, ios_version_guard
+    | None -> selector, os_version in
+  Some ({within_responds_to_selector_block; ios_version_guard} : CLintersContext.if_context)
+
+let is_factory_method (context: CLintersContext.context) decl =
+  let interface_decl_opt =
+    (match context.current_objc_impl with
+     | Some ObjCImplementationDecl (_, _, _, _, impl_decl_info) ->
+         CAst_utils.get_decl_opt_with_decl_ref impl_decl_info.oidi_class_interface
+     | _ -> None) in
+  (match interface_decl_opt with
+   | Some interface_decl -> CAst_utils.is_objc_factory_method interface_decl decl
+   | _ -> false)
 
 let rec do_frontend_checks_stmt (context:CLintersContext.context) stmt =
   let open Clang_ast_t in
-  let context' = CFrontend_errors.run_frontend_checkers_on_an context (CTL.Stmt stmt) in
-  let do_all_checks_on_stmts stmt =
+  let do_all_checks_on_stmts context stmt =
     (match stmt with
      | DeclStmt (_, _, decl_list) ->
-         IList.iter (do_frontend_checks_decl context') decl_list
+         List.iter ~f:(do_frontend_checks_decl context) decl_list
      | BlockExpr (_, _, _, decl) ->
-         IList.iter (do_frontend_checks_decl context') [decl]
+         List.iter ~f:(do_frontend_checks_decl context) [decl]
      | _ -> ());
-    do_frontend_checks_stmt context' stmt in
-  let stmts = Ast_utils.get_stmts_from_stmt stmt in
-  IList.iter (do_all_checks_on_stmts) stmts
+    do_frontend_checks_stmt context stmt in
+  CFrontend_errors.invoke_set_of_checkers_on_node context (Ctl_parser_types.Stmt stmt);
+  match stmt with
+  | ObjCAtSynchronizedStmt (_, stmt_list) ->
+      let stmt_context = { context with CLintersContext.in_synchronized_block = true } in
+      List.iter ~f:(do_all_checks_on_stmts stmt_context) stmt_list
+  | IfStmt (_, [stmt1; stmt2; cond_stmt; inside_if_stmt; inside_else_stmt]) ->
+      (* here we analyze the children of the if stmt with the standard context,
+         except for inside_if_stmt... *)
+      List.iter ~f:(do_all_checks_on_stmts context) [stmt1; stmt2; cond_stmt; inside_else_stmt];
+      let inside_if_stmt_context =
+        {context with CLintersContext.if_context = compute_if_context context cond_stmt } in
+      (* ...and here we analyze the stmt inside the if with the context
+         extended with the condition of the if *)
+      do_all_checks_on_stmts inside_if_stmt_context inside_if_stmt
+  | OpaqueValueExpr (_, lstmt, _, opaque_value_expr_info) ->
+      let stmts = (match opaque_value_expr_info.Clang_ast_t.ovei_source_expr with
+          | Some stmt -> lstmt @ [stmt]
+          | _ -> lstmt)
+      in
+      List.iter ~f:(do_all_checks_on_stmts context) stmts
+  (* given that this has not been translated, looking up for variables *)
+  (* inside leads to inconsistencies *)
+  | ObjCAtCatchStmt _ ->
+      ()
+  | _ ->
+      let stmts = snd (Clang_ast_proj.get_stmt_tuple stmt) in
+      List.iter ~f:(do_all_checks_on_stmts context) stmts
 
 and do_frontend_checks_decl (context: CLintersContext.context) decl =
   let open Clang_ast_t in
-  let context' =
-    (match decl with
-     | FunctionDecl(_, _, _, fdi)
-     | CXXMethodDecl (_, _, _, fdi, _)
-     | CXXConstructorDecl (_, _, _, fdi, _)
-     | CXXConversionDecl (_, _, _, fdi, _)
-     | CXXDestructorDecl (_, _, _, fdi, _) ->
-         let context' = {context with CLintersContext.current_method = Some decl } in
-         (match fdi.Clang_ast_t.fdi_body with
-          | Some stmt ->
-              do_frontend_checks_stmt context' stmt
-          | None -> ());
-         context'
-     | ObjCMethodDecl (_, _, mdi) ->
-         let if_decl_opt =
-           (match context.current_objc_impl with
-            | Some ObjCImplementationDecl (_, _, _, _, impl_decl_info) ->
-                Ast_utils.get_decl_opt_with_decl_ref impl_decl_info.oidi_class_interface
-            | _ -> None) in
-         let is_factory_method =
-           (match if_decl_opt with
-            | Some if_decl -> Ast_utils.is_objc_factory_method if_decl decl
-            | _ -> false) in
-         let context' = {context with
-                         CLintersContext.current_method = Some decl;
-                         CLintersContext.in_objc_static_factory_method = is_factory_method} in
-         (match mdi.Clang_ast_t.omdi_body with
-          | Some stmt ->
-              do_frontend_checks_stmt context' stmt
-          | None -> ());
-         context'
-     | BlockDecl (_, block_decl_info) ->
-         let context' = {context with CLintersContext.current_method = Some decl } in
-         (match block_decl_info.Clang_ast_t.bdi_body with
-          | Some stmt ->
-              do_frontend_checks_stmt context' stmt
-          | None -> ());
-         context'
-     | _ -> context) in
-  let context'' = CFrontend_errors.run_frontend_checkers_on_an context' (CTL.Decl decl) in
-  let context_with_orig_current_method =
-    {context'' with CLintersContext.current_method = context.current_method } in
-  match Clang_ast_proj.get_decl_context_tuple decl with
-  | Some (decls, _) -> IList.iter (do_frontend_checks_decl context_with_orig_current_method) decls
-  | None -> ()
+  CFrontend_errors.invoke_set_of_checkers_on_node context (Ctl_parser_types.Decl decl);
+  match decl with
+  | FunctionDecl(_, _, _, fdi)
+  | CXXMethodDecl (_, _, _, fdi, _)
+  | CXXConstructorDecl (_, _, _, fdi, _)
+  | CXXConversionDecl (_, _, _, fdi, _)
+  | CXXDestructorDecl (_, _, _, fdi, _) ->
+      let context' = {context with CLintersContext.current_method = Some decl } in
+      (match fdi.Clang_ast_t.fdi_body with
+       | Some stmt -> do_frontend_checks_stmt context' stmt
+       | None -> ())
+  | ObjCMethodDecl (_, _, mdi) ->
+      let context' = {context with
+                      CLintersContext.current_method = Some decl;
+                      CLintersContext.in_objc_static_factory_method =
+                        is_factory_method context decl} in
+      (match mdi.Clang_ast_t.omdi_body with
+       | Some stmt -> do_frontend_checks_stmt context' stmt
+       | None -> ())
+  | BlockDecl (_, block_decl_info) ->
+      let context' = {context with CLintersContext.current_method = Some decl } in
+      (match block_decl_info.Clang_ast_t.bdi_body with
+       | Some stmt -> do_frontend_checks_stmt context' stmt
+       | None -> ())
+  | ObjCImplementationDecl (_, _, decls, _, _) ->
+      let context' = {context with current_objc_impl = Some decl} in
+      List.iter ~f:(do_frontend_checks_decl context') decls
+  | _ -> match Clang_ast_proj.get_decl_context_tuple decl with
+    | Some (decls, _) ->
+        List.iter ~f:(do_frontend_checks_decl context) decls
+    | None -> ()
 
 let context_with_ck_set context decl_list =
   let is_ck = context.CLintersContext.is_ck_translation_unit
@@ -119,17 +249,39 @@ let context_with_ck_set context decl_list =
 
 let store_issues source_file =
   let abbrev_source_file = DB.source_file_encoding source_file in
-  let lint_issues_dir = Config.results_dir // Config.lint_issues_dir_name in
-  create_dir lint_issues_dir;
+  let lint_issues_dir = Config.results_dir ^/ Config.lint_issues_dir_name in
+  Utils.create_dir lint_issues_dir;
   let lint_issues_file =
     DB.filename_from_string (Filename.concat lint_issues_dir (abbrev_source_file ^ ".issue")) in
   LintIssues.store_issues lint_issues_file !LintIssues.errLogMap
 
-let do_frontend_checks trans_unit_ctx ast =
+let find_linters_files () =
+  let rec find_aux init dir_path =
+    let aux base_path files rel_path =
+      let full_path = Filename.concat base_path rel_path in
+      match (Unix.stat full_path).Unix.st_kind with
+      | Unix.S_REG when String.is_suffix ~suffix:".al" full_path -> full_path :: files
+      | Unix.S_DIR -> find_aux files full_path
+      | _ -> files in
+    Sys.fold_dir ~init ~f:(aux dir_path) dir_path in
+  List.concat (List.map ~f:(fun folder -> find_aux [] folder) Config.linters_def_folder)
+
+let linters_files =
+  List.dedup ~compare:String.compare (find_linters_files () @ Config.linters_def_file)
+
+let do_frontend_checks (trans_unit_ctx: CFrontend_config.translation_unit_context) ast =
+  L.(debug Capture Quiet) "Loading the following linters files: %a@\n"
+    (Pp.comma_seq Format.pp_print_string) linters_files;
+  CTL.create_ctl_evaluation_tracker trans_unit_ctx.source_file;
   try
-    parse_ctl_file Config.linters_def_file;
+    let parsed_linters = parse_ctl_files linters_files in
+    let filtered_parsed_linters =
+      CFrontend_errors.filter_parsed_linters parsed_linters trans_unit_ctx.source_file in
+    CFrontend_errors.parsed_linters := filtered_parsed_linters;
     let source_file = trans_unit_ctx.CFrontend_config.source_file in
-    Logging.out "Start linting file %s@\n" (DB.source_file_to_string source_file);
+    L.(debug Linters Medium) "Start linting file %a with rules: @\n%a@\n"
+      SourceFile.pp source_file
+      CFrontend_errors.pp_linters filtered_parsed_linters;
     match ast with
     | Clang_ast_t.TranslationUnitDecl(_, decl_list, _, _) ->
         let context =
@@ -137,14 +289,16 @@ let do_frontend_checks trans_unit_ctx ast =
         let is_decl_allowed decl =
           let decl_info = Clang_ast_proj.get_decl_tuple decl in
           CLocation.should_do_frontend_check trans_unit_ctx decl_info.Clang_ast_t.di_source_range in
-        let allowed_decls = IList.filter is_decl_allowed decl_list in
-        IList.iter (do_frontend_checks_decl context) allowed_decls;
+        let allowed_decls = List.filter ~f:is_decl_allowed decl_list in
+        (* We analyze the top level and then all the allowed declarations *)
+        CFrontend_errors.invoke_set_of_checkers_on_node context (Ctl_parser_types.Decl ast);
+        List.iter ~f:(do_frontend_checks_decl context) allowed_decls;
         if (LintIssues.exists_issues ()) then
           store_issues source_file;
-        Logging.out "End linting file %s@\n" (DB.source_file_to_string source_file);
+        L.(debug Linters Medium) "End linting file %a@\n" SourceFile.pp source_file;
         CTL.save_dotty_when_in_debug_mode trans_unit_ctx.CFrontend_config.source_file;
-    | _ -> assert false (* NOTE: Assumes that an AST alsways starts with a TranslationUnitDecl *)
+    | _ -> assert false (* NOTE: Assumes that an AST always starts with a TranslationUnitDecl *)
   with
   | Assert_failure (file, line, column) as exn ->
-      Logging.err "Fatal error: exception Assert_failure(%s, %d, %d)@\n%!" file line column;
+      L.internal_error "Fatal error: exception Assert_failure(%s, %d, %d)@\n%!" file line column;
       raise exn

@@ -8,7 +8,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 open Javalib_pack
 
@@ -29,12 +29,12 @@ val compute_source_icfg :
   Tenv.t ->
   string ->
   string option ->
-  DB.source_file ->
+  SourceFile.t ->
   Cg.t * Cfg.cfg
 
 (** Compute the CFG for a class *)
 val compute_class_icfg :
-  DB.source_file ->
+  SourceFile.t ->
   Printer.LineReader.t ->
   JClasspath.program ->
   Tenv.t ->

@@ -9,7 +9,7 @@
 
 (** Module for parsing stack traces and using them to guide Infer analysis *)
 
-open! Utils
+open! IStd
 
 module F = Format
 
@@ -43,11 +43,13 @@ let make_frame class_str method_str file_str line_num =
   { class_str; method_str; file_str; line_num; }
 
 let frame_matches_location frame_obj loc =
-  let lfname = DB.source_file_to_string loc.Location.file in
-  let matches_file = Utils.string_is_suffix frame_obj.file_str lfname in
+  let lfname = if SourceFile.is_invalid loc.Location.file then None
+    else Some (SourceFile.to_string loc.Location.file) in
+  let matches_file = Option.value_map lfname ~default:false
+      ~f:(String.is_suffix ~suffix:frame_obj.file_str) in
   let matches_line = match frame_obj.line_num with
     | None -> false
-    | Some line -> line = loc.Location.line in
+    | Some line -> Int.equal line loc.Location.line in
   matches_file && matches_line
 
 let parse_stack_frame frame_str =
@@ -60,7 +62,7 @@ let parse_stack_frame frame_str =
   let class_str = Str.matched_group 1 qualified_procname in
   let method_str = Str.matched_group 2 qualified_procname in
   (* Native methods don't have debugging info *)
-  if string_equal file_and_line "Native Method" then
+  if String.equal file_and_line "Native Method" then
     make_frame class_str method_str "Native Method" None
   else begin
     (* Separate the filename and line number.
@@ -84,7 +86,7 @@ let of_string s =
   match lines with
   | exception_line :: trace ->
       let exception_name = parse_exception_line exception_line in
-      let parsed = IList.map parse_stack_frame trace in
+      let parsed = List.map ~f:parse_stack_frame trace in
       make exception_name parsed
   | [] -> failwith "Empty stack trace"
 
@@ -99,15 +101,15 @@ let of_json filename json =
     Yojson.Basic.Util.to_string (extract_json_member exception_name_key) in
   let frames =
     Yojson.Basic.Util.to_list (extract_json_member frames_key)
-    |> IList.map Yojson.Basic.Util.to_string
-    |> IList.map String.trim
-    |> IList.filter (fun s -> s <> "")
-    |> IList.map parse_stack_frame in
+    |> List.map ~f:Yojson.Basic.Util.to_string
+    |> List.map ~f:String.strip
+    |> List.filter ~f:(fun s -> s <> "")
+    |> List.map ~f:parse_stack_frame in
   make exception_name frames
 
 let of_json_file filename =
   try
     of_json filename (Yojson.Basic.from_file filename)
   with Sys_error msg | Yojson.Json_error msg ->
-    failwithf "Could not read or parse the supplied JSON stacktrace file %s :\n %s"
+    failwithf "Could not read or parse the supplied JSON stacktrace file %s :@\n %s"
       filename msg

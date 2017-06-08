@@ -7,11 +7,11 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
-
 (** Utility module for translating unary and binary operations and compound assignments *)
 
-open CFrontend_utils
+open! IStd
+
+module L = Logging
 
 (* Returns the translation of assignment when ARC mode is enabled in Obj-C *)
 (* For __weak and __unsafe_unretained the translation is the same as non-ARC *)
@@ -28,7 +28,7 @@ let assignment_arc_mode e1 typ e2 loc rhs_owning_method is_e1_decl =
   let mk_call procname e t =
     let bi_retain = Exp.Const (Const.Cfun procname) in
     Sil.Call (None, bi_retain, [(e, t)], loc, CallFlags.default) in
-  match typ with
+  match typ.Typ.desc with
   | Typ.Tptr (_, Typ.Pk_pointer) when not rhs_owning_method && not is_e1_decl ->
       (* for __strong e1 = e2 the semantics is*)
       (* retain(e2); tmp=e1; e1=e2; release(tmp); *)
@@ -131,13 +131,12 @@ let binary_operation_instruction boi e1 typ e2 loc rhs_owning_method =
   (* We should not get here.  *)
   (* These should be treated by compound_assignment_binary_operation_instruction*)
   | bok ->
-      Logging.out
-        "\nWARNING: Missing translation for Binary Operator Kind %s. Construct ignored...\n"
+      L.(debug Capture Medium)
+        "@\nWARNING: Missing translation for Binary Operator Kind %s. Construct ignored...@\n"
         (Clang_ast_j.string_of_binary_operator_kind bok);
       (Exp.minus_one, [])
 
 let unary_operation_instruction translation_unit_context uoi e typ loc =
-  let uok = Clang_ast_j.string_of_unary_operator_kind (uoi.Clang_ast_t.uoi_kind) in
   let un_exp op =
     Exp.UnOp(op, e, Some typ) in
   match uoi.Clang_ast_t.uoi_kind with
@@ -150,7 +149,7 @@ let unary_operation_instruction translation_unit_context uoi e typ loc =
       let id = Ident.create_fresh Ident.knormal in
       let instr1 = Sil.Load (id, e, typ, loc) in
       let e_plus_1 = Exp.BinOp(Binop.PlusA, Exp.Var id, Exp.Const(Const.Cint (IntLit.one))) in
-      let exp = if General_utils.is_cpp_translation translation_unit_context then
+      let exp = if CGeneral_utils.is_cpp_translation translation_unit_context then
           e
         else
           e_plus_1 in
@@ -164,7 +163,7 @@ let unary_operation_instruction translation_unit_context uoi e typ loc =
       let id = Ident.create_fresh Ident.knormal in
       let instr1 = Sil.Load (id, e, typ, loc) in
       let e_minus_1 = Exp.BinOp(Binop.MinusA, Exp.Var id, Exp.Const(Const.Cint (IntLit.one))) in
-      let exp = if General_utils.is_cpp_translation translation_unit_context then
+      let exp = if CGeneral_utils.is_cpp_translation translation_unit_context then
           e
         else
           e_minus_1 in
@@ -178,8 +177,11 @@ let unary_operation_instruction translation_unit_context uoi e typ loc =
       (e, [])
   | `AddrOf -> (e, [])
   | `Real | `Imag | `Extension | `Coawait ->
-      Logging.out
-        "\nWARNING: Missing translation for Unary Operator Kind %s. The construct has been ignored...\n" uok;
+      let uok = Clang_ast_j.string_of_unary_operator_kind (uoi.Clang_ast_t.uoi_kind) in
+      L.(debug Capture Medium)
+        "@\nWARNING: Missing translation for Unary Operator Kind %s. \
+         The construct has been ignored...@\n"
+        uok;
       (e, [])
 
 let bin_op_to_string boi =

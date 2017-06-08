@@ -5,25 +5,29 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-CURDIR = $(shell pwd)
-
 TESTS_DIR = ../..
 ROOT_DIR = $(TESTS_DIR)/../..
 
 ANALYZER = infer
+BUCK_TARGET = //infer/tests/codetoanalyze/java/infer:compile
 SOURCES = $(wildcard $(TESTS_DIR)/codetoanalyze/java/infer/*.java)
-OBJECTS = $(ROOT_DIR)/buck-out/gen/infer/tests/codetoanalyze/java/infer/lib__compile__output/compile.jar
+OBJECTS = $(ROOT_DIR)/buck-out/gen/infer/tests/codetoanalyze/java/infer/lib__compile_compile__output/compile_compile.jar
 INFERPRINT_OPTIONS = --project-root $(ROOT_DIR) --issues-tests
-CLEAN_EXTRA = $(ROOT_DIR)/buck-out/ $(CURDIR)/buck-out/
+CLEAN_EXTRA = $(ROOT_DIR)/buck-out
 
 include $(TESTS_DIR)/java.make
-include $(TESTS_DIR)/base.make
+include $(TESTS_DIR)/infer.make
 
-$(JAR_OUTPUT): $(JAVA_SOURCE_FILES)
-	NO_BUCKD=1 buck build --no-cache //infer/tests/codetoanalyze/java/infer:compile
+$(OBJECTS): $(JAVA_SOURCE_FILES)
+	$(QUIET)cd $(ROOT_DIR) && \
+	$(call silent_on_success,Compiling Buck Java tests,\
+	INFER_BIN=$(INFER_BIN) NO_BUCKD=1 \
+	$(BUCK) build --no-cache $(BUCK_TARGET))
 
-infer-out/report.json: $(INFER_BIN) $(JAVA_SOURCE_FILES)
-	$(call silent_on_success,\
-	  cd $(ROOT_DIR) && \
-	  NO_BUCKD=1 $(INFER_BIN) -a $(ANALYZER) --results-dir $(CURDIR)/infer-out  -- \
-	    buck build --no-cache //infer/tests/codetoanalyze/java/infer:compile)
+infer-out/report.json: $(JAVA_DEPS) $(JAVA_SOURCE_FILES)
+	$(QUIET)cd $(ROOT_DIR) && \
+	$(REMOVE_DIR) buck-out && \
+	$(call silent_on_success,Testing Buck Java integration,\
+	INFER_BIN=$(INFER_BIN) NO_BUCKD=1 \
+	$(INFER_BIN) -a $(ANALYZER) --results-dir $(CURDIR)/infer-out -- \
+	  $(BUCK) build --no-cache $(BUCK_TARGET))

@@ -8,31 +8,31 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Module to handle IO. Includes html and xml modules. *)
 
 module Html : sig
   (** Close an Html file *)
-  val close : Unix.file_descr * Format.formatter -> unit
+  val close : Unix.File_descr.t * Format.formatter -> unit
 
   (** Create a new html file *)
   val create :
-    DB.Results_dir.path_kind -> DB.Results_dir.path -> Unix.file_descr * Format.formatter
+    DB.Results_dir.path_kind -> DB.Results_dir.path -> Unix.File_descr.t * Format.formatter
 
   (** Return true if the html file was modified since the beginning of the analysis *)
-  val modified_during_analysis : DB.source_file -> DB.Results_dir.path -> bool
+  val modified_during_analysis : SourceFile.t -> DB.Results_dir.path -> bool
 
   (** File name for the node, given the procedure name and node id *)
-  val node_filename : Procname.t -> int -> string
+  val node_filename : Typ.Procname.t -> int -> string
 
   (** Open an Html file to append data *)
-  val open_out : DB.source_file -> DB.Results_dir.path -> Unix.file_descr * Format.formatter
+  val open_out : SourceFile.t -> DB.Results_dir.path -> Unix.File_descr.t * Format.formatter
 
   (** Print an html link to the given line number of the current source file *)
   val pp_line_link :
     ?with_name: bool -> ?text: (string option) ->
-    DB.source_file -> DB.Results_dir.path -> Format.formatter -> int -> unit
+    SourceFile.t -> DB.Results_dir.path -> Format.formatter -> int -> unit
 
   (** Print a horizontal line *)
   val pp_hline : Format.formatter -> unit -> unit
@@ -45,20 +45,21 @@ module Html : sig
       [path_to_root] is the path to the dir for the procedure in the spec db.
       [id] is the node identifier. *)
   val pp_node_link :
-    DB.Results_dir.path -> Procname.t ->
+    DB.Results_dir.path -> Typ.Procname.t ->
     description:string -> preds:int list -> succs:int list -> exn:int list ->
     isvisited:bool -> isproof:bool -> Format.formatter -> int -> unit
 
   (** Print an html link to the given proc *)
   val pp_proc_link :
-    DB.Results_dir.path -> Procname.t -> Format.formatter -> string -> unit
+    DB.Results_dir.path -> Typ.Procname.t -> Format.formatter -> string -> unit
 
   (** Print an html link given node id and session *)
   val pp_session_link :
-    ?with_name: bool -> DB.source_file -> string list -> Format.formatter -> int * int * int -> unit
+    ?with_name: bool -> ?proc_name: Typ.Procname.t -> SourceFile.t ->
+    string list -> Format.formatter -> int * int * int -> unit
 
   (** Print start color *)
-  val pp_start_color : Format.formatter -> color -> unit
+  val pp_start_color : Format.formatter -> Pp.color -> unit
 end
 
 (** Create and print xml trees *)

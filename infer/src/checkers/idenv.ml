@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Environment for temporary identifiers used in instructions.
     Lazy implementation: only created when actually used. *)
@@ -26,11 +26,6 @@ let create_ proc_desc =
 
 (* lazy implementation, only create when used *)
 let create proc_desc =
-  let map = lazy (create_ proc_desc) in
-  map
-
-(* create an idenv for another procedure *)
-let create_from_idenv _ proc_desc =
   let map = lazy (create_ proc_desc) in
   map
 

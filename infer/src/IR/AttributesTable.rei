@@ -8,32 +8,33 @@
  */
 
 /** Module to manage the table of attributes. */
-open! Utils;
+open! IStd;
 
 
 /** Save .attr file for the procedure into the attributes database. */
 let store_attributes: ProcAttributes.t => unit;
 
 
-/** Load the attributes for the procedure from the attributes database. */
-let load_attributes: Procname.t => option ProcAttributes.t;
+/** Load the attributes for the procedure from the attributes database.
+    If cache is true, add the attribute to the global cache */
+let load_attributes: cache::bool => Typ.Procname.t => option ProcAttributes.t;
+
+
+/** Load attrubutes for the procedure but only if is_defined is true */
+let load_defined_attributes: cache_none::bool => Typ.Procname.t => option ProcAttributes.t;
 
 
 /** Given the name of an ObjC class, extract the type from the tenv where the class was defined. We
     do this by adding a method that is unique to each class, and then finding the tenv that
     corresponds to the class definition. */
-let get_correct_type_from_objc_class_name: Typename.t => option Typ.t;
-
-
-/** Returns true if the method is defined as a C++ model */
-let pname_is_cpp_model: Procname.t => bool;
+let get_correct_type_from_objc_class_name: Typ.Name.t => option Typ.t;
 
 /* Find the file where the procedure was captured, if a cfg for that file exists.
    Return also a boolean indicating whether the procedure is defined in an
-   include file. */
-let find_file_capturing_procedure: Procname.t => option (DB.source_file, [ | `Include | `Source]);
-
-let is_whitelisted_cpp_method: string => bool;
+   include file.
+   If cache is true, add the attribute to the global cache */
+let find_file_capturing_procedure:
+  cache::bool? => Typ.Procname.t => option (SourceFile.t, [ | `Include | `Source]);
 
 type t;
 

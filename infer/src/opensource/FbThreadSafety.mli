@@ -7,6 +7,8 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
-val is_custom_init : Tenv.t -> Procname.t -> bool
+val is_custom_init : Tenv.t -> Typ.Procname.t -> bool
+
+val is_logging_method : Typ.Procname.t -> bool

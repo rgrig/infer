@@ -1,7 +1,4 @@
 /*
- * vim: set ft=rust:
- * vim: set ft=reason:
- *
  * Copyright (c) 2009 - 2013 Monoidics ltd.
  * Copyright (c) 2013 - present Facebook, Inc.
  * All rights reserved.
@@ -10,47 +7,47 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-open! Utils;
+open! IStd;
 
 
 /** Identifiers: program variables and logical variables */
 
 /** Program and logical variables. */
-type t;
+type t [@@deriving compare];
+
+
+/** Equality for identifiers. */
+let equal: t => t => bool;
 
 
 /** Names used to replace strings. */
-type name;
+type name [@@deriving compare];
 
 
-/** Names for fields of class/struct/union */
-type fieldname;
+/** Equality for names. */
+let equal_name: name => name => bool;
 
 
 /** Kind of identifiers. */
-type kind;
+type kind [@@deriving compare];
+
+
+/** Equality for kind. */
+let equal_kind: kind => kind => bool;
 
 
 /** Set for identifiers. */
-let module IdentSet: Set.S with type elt = t;
+module IdentSet: Caml.Set.S with type elt = t;
 
 
 /** Hash table with ident as key. */
-let module IdentHash: Hashtbl.S with type key = t;
+module IdentHash: Caml.Hashtbl.S with type key = t;
 
 
 /** Map with ident as key. */
-let module IdentMap: Map.S with type key = t;
+module IdentMap: Caml.Map.S with type key = t;
 
-
-/** Set for fieldnames */
-let module FieldSet: Set.S with type elt = fieldname;
-
-
-/** Map for fieldnames */
-let module FieldMap: Map.S with type key = fieldname;
-
-let module NameGenerator: {
+module NameGenerator: {
   type t;
 
   /** Get the current name generator. */
@@ -75,7 +72,7 @@ let kfootprint: kind;
 
 
 /** hash table with names as keys */
-let module NameHash: Hashtbl.S with type key = name;
+module NameHash: Caml.Hashtbl.S with type key = name;
 
 
 /** Name used for primed tmp variables */
@@ -94,52 +91,8 @@ let name_return: Mangled.t;
 let string_to_name: string => name;
 
 
-/** Create a field name at the given position */
-let create_fieldname: Mangled.t => int => fieldname;
-
-
 /** Convert a name to a string. */
 let name_to_string: name => string;
-
-
-/** Convert a field name to a string. */
-let fieldname_to_string: fieldname => string;
-
-
-/** Convert a fieldname to a string, including the mangled part. */
-let fieldname_to_complete_string: fieldname => string;
-
-
-/** Convert a fieldname to a simplified string with at most one-level path. */
-let fieldname_to_simplified_string: fieldname => string;
-
-
-/** Convert a fieldname to a flat string without path. */
-let fieldname_to_flat_string: fieldname => string;
-
-
-/** The class part of the fieldname */
-let java_fieldname_get_class: fieldname => string;
-
-
-/** The last component of the fieldname */
-let java_fieldname_get_field: fieldname => string;
-
-
-/** Check if the field is the synthetic this$n of a nested class, used to access the n-th outher instance. */
-let java_fieldname_is_outer_instance: fieldname => bool;
-
-
-/** get the offset of a fieldname */
-let fieldname_offset: fieldname => int;
-
-
-/** hidded fieldname constant */
-let fieldname_hidden: fieldname;
-
-
-/** hidded fieldname constant */
-let fieldname_is_hidden: fieldname => bool;
 
 
 /** Name of the identifier. */
@@ -210,64 +163,18 @@ let get_stamp: t => int;
 let set_stamp: t => int => t;
 
 
-/** {2 Comparision Functions} */
-
-/** Comparison for names. */
-let name_compare: name => name => int;
-
-
-/** Comparison for field names. */
-let fieldname_compare: fieldname => fieldname => int;
-
-
-/** Equality for names. */
-let name_equal: name => name => bool;
-
-
-/** Equality for field names. */
-let fieldname_equal: fieldname => fieldname => bool;
-
-
-/** Equality for kind. */
-let kind_equal: kind => kind => bool;
-
-
-/** Comparison for identifiers. */
-let compare: t => t => int;
-
-
-/** Equality for identifiers. */
-let equal: t => t => bool;
-
-
-/** Comparison for lists of identities */
-let ident_list_compare: list t => list t => int;
-
-
-/** Equality for lists of identities */
-let ident_list_equal: list t => list t => bool;
-
-
 /** {2 Pretty Printing} */
 
 /** Pretty print a name. */
 let pp_name: Format.formatter => name => unit;
 
 
-/** Pretty print a field name. */
-let pp_fieldname: Format.formatter => fieldname => unit;
-
-
 /** Pretty print a name in latex. */
 let pp_name_latex: Latex.style => Format.formatter => name => unit;
 
 
-/** Pretty print a field name in latex. */
-let pp_fieldname_latex: Latex.style => Format.formatter => fieldname => unit;
-
-
 /** Pretty print an identifier. */
-let pp: printenv => Format.formatter => t => unit;
+let pp: Pp.env => Format.formatter => t => unit;
 
 
 /** Convert an identifier to a string. */
@@ -275,7 +182,7 @@ let to_string: t => string;
 
 
 /** Pretty print a list of identifiers. */
-let pp_list: printenv => Format.formatter => list t => unit;
+let pp_list: Pp.env => Format.formatter => list t => unit;
 
 
 /** Pretty print a list of names. */

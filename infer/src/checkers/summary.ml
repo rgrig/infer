@@ -7,42 +7,36 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
-module type Helper = sig
-  type summary
+module type Payload = sig
+  type payload
 
-  (* update the specs payload with [summary] *)
-  val update_payload : summary -> Specs.payload -> Specs.payload
-  (* extract [summmary] from the specs payload *)
-  val read_from_payload : Specs.payload -> summary option
+  val update_payload : payload -> Specs.summary -> Specs.summary
+
+  val read_payload : Specs.summary -> payload option
+
 end
 
 module type S = sig
-  type summary
+  type payload
 
-  (* write the summary for [name] to persistent storage *)
-  val write_summary : Procname.t -> summary -> unit
-  (* read and return the summary for [callee_pname] called from [caller_pdesc]. does the analysis to
-     create the summary if needed *)
-  val read_summary : Tenv.t -> Procdesc.t -> Procname.t -> summary option
+  val update_summary : payload -> Specs.summary -> Specs.summary
+
+  val read_summary : Procdesc.t -> Typ.Procname.t -> payload option
+
 end
 
-module Make (H : Helper) = struct
-  type summary = H.summary
+module Make (P : Payload) : S with type payload = P.payload = struct
 
-  let write_summary pname summary =
-    match Specs.get_summary pname with
-    | Some global_summary ->
-        let payload = H.update_payload summary global_summary.Specs.payload in
-        let timestamp = global_summary.timestamp + 1 in
-        Specs.add_summary pname { global_summary with payload; timestamp; }
-    | None ->
-        failwithf "Summary for %a should exist, but does not!@." Procname.pp pname
+  type payload = P.payload
 
-  let read_summary tenv caller_pdesc callee_pname =
-    Ondemand.analyze_proc_name tenv ~propagate_exceptions:false caller_pdesc callee_pname;
-    match Specs.get_summary callee_pname with
+  let update_summary payload summary =
+    P.update_payload payload summary
+
+  let read_summary caller_pdesc callee_pname =
+    match Ondemand.analyze_proc_name ~propagate_exceptions:false caller_pdesc callee_pname with
     | None -> None
-    | Some summary -> H.read_from_payload summary.Specs.payload
+    | Some summary -> P.read_payload summary
+
 end

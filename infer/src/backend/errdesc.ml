@@ -8,7 +8,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Create descriptions of analysis errors *)
 
@@ -16,31 +16,37 @@ module L = Logging
 module F = Format
 module DExp = DecompiledExp
 
-let vector_class = ["std"; "vector"]
+let vector_matcher = QualifiedCppName.Match.of_fuzzy_qual_names ["std::vector"]
+let mutex_matcher = QualifiedCppName.Match.of_fuzzy_qual_names [
+    "std::__infer_mutex_model";
+    "std::mutex";
+    "std::timed_mutex";
+  ]
 
-let is_one_of_classes class_name classes =
-  IList.exists (fun wrapper_class ->
-      IList.for_all (fun wrapper_class_substring ->
-          Utils.string_contains wrapper_class_substring class_name) wrapper_class)
-    classes
+let is_one_of_classes = QualifiedCppName.Match.match_qualifiers
 
-let is_method_of_objc_cpp_class pname classes =
+
+let is_method_of_objc_cpp_class pname matcher =
   match pname with
-  | Procname.ObjC_Cpp name ->
-      let class_name = Procname.objc_cpp_get_class_name name in
-      is_one_of_classes class_name classes
+  | Typ.Procname.ObjC_Cpp objc_cpp ->
+      let class_qual_opt = Typ.Procname.objc_cpp_get_class_qualifiers objc_cpp in
+      is_one_of_classes matcher class_qual_opt
   | _ -> false
 
-let is_vector_method pname =
-  is_method_of_objc_cpp_class pname [vector_class]
+let is_mutex_method pname =
+  is_method_of_objc_cpp_class pname mutex_matcher
 
-let is_special_field class_names field_name_opt field =
-  let complete_fieldname = Ident.fieldname_to_complete_string field in
+let is_vector_method pname =
+  is_method_of_objc_cpp_class pname vector_matcher
+
+let is_special_field matcher field_name_opt field =
+  let field_name = Fieldname.to_flat_string field in
+  let class_qual_opt = Fieldname.clang_get_qual_class field in
   let field_ok =
     match field_name_opt with
-    | Some field_name -> Utils.string_contains field_name complete_fieldname
+    | Some field_name' -> String.equal field_name' field_name
     | None -> true in
-  is_one_of_classes complete_fieldname class_names && field_ok
+  field_ok && Option.value_map ~f:(is_one_of_classes matcher) ~default:false class_qual_opt
 
 (** Check whether the hpred is a |-> representing a resource in the Racquire state *)
 let hpred_is_open_resource tenv prop = function
@@ -63,9 +69,9 @@ let explain_deallocate_stack_var pvar ra =
 (** Explain a deallocate constant string error *)
 let explain_deallocate_constant_string s ra =
   let const_str =
-    let pp fmt () =
+    let pp fmt =
       Exp.pp fmt (Exp.Const (Const.Cstr s)) in
-    pp_to_string pp () in
+    F.asprintf "%t" pp in
   Localise.desc_deallocate_static_memory const_str ra.PredSymb.ra_pname ra.PredSymb.ra_loc
 
 let verbose = Config.trace_error
@@ -78,9 +84,9 @@ let find_in_node_or_preds start_node f_node_instr =
       begin
         visited := Procdesc.NodeSet.add node !visited;
         let instrs = Procdesc.Node.get_instrs node in
-        match IList.find_map_opt (f_node_instr node) (IList.rev instrs) with
+        match List.find_map ~f:(f_node_instr node) (List.rev instrs) with
         | Some res -> Some res
-        | None -> IList.find_map_opt find (Procdesc.Node.get_preds node)
+        | None -> List.find_map ~f:find (Procdesc.Node.get_preds node)
       end in
   find start_node
 
@@ -97,10 +103,10 @@ let find_nullify_after_instr node instr pvar : bool =
   let found_instr = ref false in
   let find_nullify = function
     | Sil.Nullify (pv, _) when !found_instr -> Pvar.equal pv pvar
-    | _instr ->
-        if instr = _instr then found_instr := true;
+    | instr_ ->
+        if Sil.equal_instr instr instr_ then found_instr := true;
         false in
-  IList.exists find_nullify node_instrs
+  List.exists ~f:find_nullify node_instrs
 
 (** Find the other prune node of a conditional
     (e.g. the false branch given the true branch of a conditional) *)
@@ -139,10 +145,10 @@ let find_normal_variable_funcall
     (id: Ident.t): (Exp.t * (Exp.t list) * Location.t * CallFlags.t) option =
   let find_declaration _ = function
     | Sil.Call (Some (id0, _), fun_exp, args, loc, call_flags) when Ident.equal id id0 ->
-        Some (fun_exp, IList.map fst args, loc, call_flags)
+        Some (fun_exp, List.map ~f:fst args, loc, call_flags)
     | _ -> None in
   let res = find_in_node_or_preds node find_declaration in
-  if verbose && res == None
+  if verbose && is_none res
   then
     (L.d_str
        ("find_normal_variable_funcall could not find " ^
@@ -172,7 +178,7 @@ let find_struct_by_value_assignment node pvar =
     let find_instr node = function
       | Sil.Call (_, Const (Cfun pname), args, loc, cf) ->
           begin
-            match IList.last args with
+            match List.last args with
             | Some (Exp.Lvar last_arg, _) when Pvar.equal pvar last_arg ->
                 Some (node, pname, loc, cf)
             | _ ->
@@ -198,7 +204,7 @@ let rec find_boolean_assignment node pvar true_branch : Procdesc.Node.t option =
       | Sil.Store (Exp.Lvar _pvar, _, Exp.Const (Const.Cint i), _) when Pvar.equal pvar _pvar ->
           IntLit.iszero i <> true_branch
       | _ -> false in
-    IList.exists filter (Procdesc.Node.get_instrs n) in
+    List.exists ~f:filter (Procdesc.Node.get_instrs n) in
   match Procdesc.Node.get_preds node with
   | [pred_node] -> find_boolean_assignment pred_node pvar true_branch
   | [n1; n2] ->
@@ -210,7 +216,6 @@ let rec find_boolean_assignment node pvar true_branch : Procdesc.Node.t option =
 (** Find the Load instruction used to declare normal variable [id],
     and return the expression dereferenced to initialize [id] *)
 let rec _find_normal_variable_load tenv (seen : Exp.Set.t) node id : DExp.t option =
-  let is_infer = not (Config.checkers || Config.eradicate) in
   let find_declaration node = function
     | Sil.Load (id0, e, _, _) when Ident.equal id id0 ->
         if verbose
@@ -219,7 +224,7 @@ let rec _find_normal_variable_load tenv (seen : Exp.Set.t) node id : DExp.t opti
            Sil.d_exp e; L.d_ln ());
         _exp_lv_dexp tenv seen node e
     | Sil.Call (Some (id0, _), Exp.Const (Const.Cfun pn), (e, _):: _, _, _)
-      when Ident.equal id id0 && Procname.equal pn (Procname.from_string_c_fun "__cast") ->
+      when Ident.equal id id0 && Typ.Procname.equal pn (Typ.Procname.from_string_c_fun "__cast") ->
         if verbose
         then
           (L.d_str "find_normal_variable_load cast on ";
@@ -234,15 +239,15 @@ let rec _find_normal_variable_load tenv (seen : Exp.Set.t) node id : DExp.t opti
 
         let fun_dexp = DExp.Dconst (Const.Cfun pname) in
         let args_dexp =
-          let args_dexpo = IList.map (fun (e, _) -> _exp_rv_dexp tenv seen node e) args in
-          if IList.exists (fun x -> x = None) args_dexpo
+          let args_dexpo = List.map ~f:(fun (e, _) -> _exp_rv_dexp tenv seen node e) args in
+          if List.exists ~f:is_none args_dexpo
           then []
           else
             let unNone = function Some x -> x | None -> assert false in
-            IList.map unNone args_dexpo in
+            List.map ~f:unNone args_dexpo in
         Some (DExp.Dretcall (fun_dexp, args_dexp, loc, call_flags))
     | Sil.Store (Exp.Lvar pvar, _, Exp.Var id0, _)
-      when is_infer && Ident.equal id id0 && not (Pvar.is_frontend_tmp pvar) ->
+      when Config.biabduction && Ident.equal id id0 && not (Pvar.is_frontend_tmp pvar) ->
         (* this case is a hack to make bucketing continue to work in the presence of copy
            propagation. previously, we would have code like:
            n1 = foo(); x = n1; n2 = x; n2.toString(), but copy-propagation will optimize this to:
@@ -251,7 +256,7 @@ let rec _find_normal_variable_load tenv (seen : Exp.Set.t) node id : DExp.t opti
         Some (DExp.Dpvar pvar)
     | _ -> None in
   let res = find_in_node_or_preds node find_declaration in
-  if verbose && res == None
+  if verbose && is_none res
   then
     (L.d_str
        ("find_normal_variable_load could not find " ^
@@ -299,11 +304,11 @@ and _exp_lv_dexp tenv (_seen : Exp.Set.t) node e : DExp.t option =
                   match find_normal_variable_funcall node' id with
                   | Some (fun_exp, eargs, loc, call_flags) ->
                       let fun_dexpo = _exp_rv_dexp tenv seen node' fun_exp in
-                      let blame_args = IList.map (_exp_rv_dexp tenv seen node') eargs in
-                      if IList.exists (fun x -> x = None) (fun_dexpo:: blame_args) then None
+                      let blame_args = List.map ~f:(_exp_rv_dexp tenv seen node') eargs in
+                      if List.exists ~f:is_none (fun_dexpo:: blame_args) then None
                       else
                         let unNone = function Some x -> x | None -> assert false in
-                        let args = IList.map unNone blame_args in
+                        let args = List.map ~f:unNone blame_args in
                         Some (DExp.Dfcall (unNone fun_dexpo, args, loc, call_flags))
                   | None ->
                       _exp_rv_dexp tenv seen node' (Exp.Var id)
@@ -315,7 +320,7 @@ and _exp_lv_dexp tenv (_seen : Exp.Set.t) node e : DExp.t option =
           begin
             L.d_str "exp_lv_dexp: Lfield with var ";
             Sil.d_exp (Exp.Var id);
-            L.d_str (" " ^ Ident.fieldname_to_string f);
+            L.d_str (" " ^ Fieldname.to_string f);
             L.d_ln ()
           end;
         (match _find_normal_variable_load tenv seen node id with
@@ -326,7 +331,7 @@ and _exp_lv_dexp tenv (_seen : Exp.Set.t) node e : DExp.t option =
           begin
             L.d_str "exp_lv_dexp: Lfield ";
             Sil.d_exp e1;
-            L.d_str (" " ^ Ident.fieldname_to_string f);
+            L.d_str (" " ^ Fieldname.to_string f);
             L.d_ln ()
           end;
         (match _exp_lv_dexp tenv seen node e1 with
@@ -374,7 +379,7 @@ and _exp_rv_dexp tenv (_seen : Exp.Set.t) node e : DExp.t option =
           begin
             L.d_str "exp_rv_dexp: Lfield ";
             Sil.d_exp e1;
-            L.d_str (" " ^ Ident.fieldname_to_string f);
+            L.d_str (" " ^ Fieldname.to_string f);
             L.d_ln ()
           end;
         (match _exp_rv_dexp tenv seen node e1 with
@@ -405,9 +410,9 @@ and _exp_rv_dexp tenv (_seen : Exp.Set.t) node e : DExp.t option =
     | Exp.Cast (_, e1) ->
         if verbose then (L.d_str "exp_rv_dexp: Cast "; Sil.d_exp e; L.d_ln ());
         _exp_rv_dexp tenv seen node e1
-    | Exp.Sizeof (typ, len, sub) ->
+    | Exp.Sizeof {typ; dynamic_length; subtype} ->
         if verbose then (L.d_str "exp_rv_dexp: type "; Sil.d_exp e; L.d_ln ());
-        Some (DExp.Dsizeof (typ, Option.map_default (_exp_rv_dexp tenv seen node) None len, sub))
+        Some (DExp.Dsizeof (typ, Option.bind dynamic_length (_exp_rv_dexp tenv seen node), subtype))
     | _ ->
         if verbose then (L.d_str "exp_rv_dexp: no match for  "; Sil.d_exp e; L.d_ln ());
         None
@@ -447,9 +452,9 @@ let leak_from_list_abstraction hpred prop =
     | Some texp' when Exp.equal texp texp' -> found := true
     | _ -> () in
   let check_hpara texp _ hpara =
-    IList.iter (check_hpred texp) hpara.Sil.body in
+    List.iter ~f:(check_hpred texp) hpara.Sil.body in
   let check_hpara_dll texp _ hpara =
-    IList.iter (check_hpred texp) hpara.Sil.body_dll in
+    List.iter ~f:(check_hpred texp) hpara.Sil.body_dll in
   match hpred_type hpred with
   | Some texp ->
       let env = Prop.prop_pred_env prop in
@@ -473,7 +478,7 @@ let find_typ_without_ptr prop pvar =
     | Sil.Hpointsto (e, _, te) when Exp.equal e (Exp.Lvar pvar) ->
         res := Some te
     | _ -> () in
-  IList.iter do_hpred prop.Prop.sigma;
+  List.iter ~f:do_hpred prop.Prop.sigma;
   !res
 
 (** Produce a description of a leak by looking at the current state.
@@ -489,8 +494,8 @@ let explain_leak tenv hpred prop alloc_att_opt bucket =
   let value_str_from_pvars_vpath pvars vpath =
     if pvars <> [] then
       begin
-        let pp = pp_seq (Pvar.pp_value pe_text) in
-        let desc_string = pp_to_string pp pvars in
+        let pp = Pp.seq (Pvar.pp_value Pp.text) in
+        let desc_string = F.asprintf "%a" pp pvars in
         Some desc_string
       end
     else match vpath with
@@ -509,9 +514,9 @@ let explain_leak tenv hpred prop alloc_att_opt bucket =
     (Pvar.is_local pvar || Pvar.is_global pvar) &&
     not (Pvar.is_frontend_tmp pvar) &&
     match hpred_typ_opt, find_typ_without_ptr prop pvar with
-    | Some (Exp.Sizeof (t1, _, _)), Some (Exp.Sizeof (Typ.Tptr (t2, _), _, _)) ->
+    | Some (Exp.Sizeof {typ=t1}), Some (Exp.Sizeof {typ={Typ.desc=Tptr (t2, _)}}) ->
         Typ.equal t1 t2
-    | Some (Exp.Sizeof (Typ.Tint _, _, _)), Some (Exp.Sizeof (Typ.Tint _, _, _))
+    | Some (Exp.Sizeof {typ={Typ.desc=Tint _}}), Some (Exp.Sizeof {typ={Typ.desc=Tint _}})
       when is_file -> (* must be a file opened with "open" *)
         true
     | _ -> false in
@@ -537,11 +542,11 @@ let explain_leak tenv hpred prop alloc_att_opt bucket =
                  Pvar.d pvar; L.d_ln ());
               [pvar]
           | _ -> [] in
-        let nullify_pvars = IList.flatten (IList.map get_nullify node_instrs) in
+        let nullify_pvars = List.concat_map ~f:get_nullify node_instrs in
         let nullify_pvars_notmp =
-          IList.filter (fun pvar -> not (Pvar.is_frontend_tmp pvar)) nullify_pvars in
+          List.filter ~f:(fun pvar -> not (Pvar.is_frontend_tmp pvar)) nullify_pvars in
         value_str_from_pvars_vpath nullify_pvars_notmp vpath
-    | Some (Sil.Store (lexp, _, _, _)) when vpath = None ->
+    | Some (Sil.Store (lexp, _, _, _)) when is_none vpath ->
         if verbose
         then
           (L.d_str "explain_leak: current instruction Set for ";
@@ -560,7 +565,7 @@ let explain_leak tenv hpred prop alloc_att_opt bucket =
     | Some _ -> (* we know it has been allocated *)
         Exceptions.Exn_user, bucket
     | None ->
-        if leak_from_list_abstraction hpred prop && value_str != None
+        if leak_from_list_abstraction hpred prop && value_str <> None
         then
           (* we don't know it's been allocated,
              but it's coming from list abstraction and we have a name *)
@@ -575,17 +580,15 @@ let vpath_find tenv prop _exp : DExp.t option * Typ.t option =
   let rec find sigma_acc sigma_todo exp =
     let do_fse res sigma_acc' sigma_todo' lexp texp (f, se) = match se with
       | Sil.Eexp (e, _) when Exp.equal exp e ->
-          let sigma' = (IList.rev_append sigma_acc' sigma_todo') in
+          let sigma' = (List.rev_append sigma_acc' sigma_todo') in
           (match lexp with
            | Exp.Lvar pv ->
                let typo = match texp with
-                 | Exp.Sizeof (Tstruct name, _, _) -> (
+                 | Exp.Sizeof {typ={Typ.desc=Tstruct name}} -> (
                      match Tenv.lookup tenv name with
-                     | Some {fields} -> (
-                         match IList.find (fun (f', _, _) -> Ident.fieldname_equal f' f) fields with
-                         | _, t, _ -> Some t
-                         | exception Not_found -> None
-                       )
+                     | Some {fields} ->
+                         List.find ~f:(fun (f', _, _) -> Fieldname.equal f' f) fields |>
+                         Option.map ~f:snd3
                      | _ ->
                          None
                    )
@@ -603,11 +606,11 @@ let vpath_find tenv prop _exp : DExp.t option * Typ.t option =
       | _ -> () in
     let do_sexp sigma_acc' sigma_todo' lexp sexp texp = match sexp with
       | Sil.Eexp (e, _) when Exp.equal exp e ->
-          let sigma' = (IList.rev_append sigma_acc' sigma_todo') in
+          let sigma' = (List.rev_append sigma_acc' sigma_todo') in
           (match lexp with
            | Exp.Lvar pv when not (Pvar.is_frontend_tmp pv) ->
                let typo = match texp with
-                 | Exp.Sizeof (typ, _, _) -> Some typ
+                 | Exp.Sizeof {typ} -> Some typ
                  | _ -> None in
                Some (DExp.Dpvar pv), typo
            | Exp.Var id ->
@@ -622,7 +625,7 @@ let vpath_find tenv prop _exp : DExp.t option * Typ.t option =
                None, None)
       | Sil.Estruct (fsel, _) ->
           let res = ref (None, None) in
-          IList.iter (do_fse res sigma_acc' sigma_todo' lexp texp) fsel;
+          List.iter ~f:(do_fse res sigma_acc' sigma_todo' lexp texp) fsel;
           !res
       | _ ->
           None, None in
@@ -631,7 +634,7 @@ let vpath_find tenv prop _exp : DExp.t option * Typ.t option =
         let filter = function
           | (ni, Exp.Var id') -> Ident.is_normal ni && Ident.equal id' id
           | _ -> false in
-        IList.exists filter (Sil.sub_to_list prop.Prop.sub) in
+        List.exists ~f:filter (Sil.sub_to_list prop.Prop.sub) in
       function
       | Sil.Hpointsto (Exp.Lvar pv, sexp, texp)
         when (Pvar.is_local pv || Pvar.is_global pv || Pvar.is_seed pv) ->
@@ -675,16 +678,16 @@ let explain_dexp_access prop dexp is_nullable =
       | Sil.Hpointsto (e', se, _) when Exp.equal e e' ->
           res := Some se
       | _ -> () in
-    IList.iter do_hpred sigma;
+    List.iter ~f:do_hpred sigma;
     !res in
   let rec lookup_fld fsel f = match fsel with
     | [] ->
         if verbose
         then
-          (L.d_strln ("lookup_fld: can't find field " ^ Ident.fieldname_to_string f));
+          (L.d_strln ("lookup_fld: can't find field " ^ Fieldname.to_string f));
         None
     | (f1, se):: fsel' ->
-        if Ident.fieldname_equal f1 f then Some se
+        if Fieldname.equal f1 f then Some se
         else lookup_fld fsel' f in
   let rec lookup_esel esel e = match esel with
     | [] ->
@@ -768,7 +771,7 @@ let explain_dexp_access prop dexp is_nullable =
         Some (Localise.Last_accessed (n, is_nullable))
     | Some (Sil.Ireturn_from_call n) ->
         Some (Localise.Returned_from_call n)
-    | Some Sil.Ialloc when !Config.curr_language = Config.Java ->
+    | Some Sil.Ialloc when Config.curr_language_is Config.Java ->
         Some Localise.Initialized_automatically
     | Some inst ->
         if verbose
@@ -823,7 +826,7 @@ let create_dereference_desc tenv
     | _ -> access_opt in
   let desc = Localise.dereference_string deref_str value_str access_opt' loc in
   let desc =
-    if !Config.curr_language = Config.Clang && not is_premature_nil then
+    if Config.curr_language_is Config.Clang && not is_premature_nil then
       match de_opt with
       | Some (DExp.Dpvar pvar)
       | Some (DExp.Dpvaraddr pvar) ->
@@ -832,12 +835,21 @@ let create_dereference_desc tenv
                Localise.parameter_field_not_null_checked_desc desc vfs
            | _ ->
                desc)
-      | Some (DExp.Dretcall (Dconst (Cfun pname), this_dexp :: _, loc, _ ))
-        when is_vector_method pname ->
-          Localise.desc_empty_vector_access (Some pname) (DExp.to_string this_dexp) loc
+      | Some (DExp.Dretcall (Dconst (Cfun pname), this_dexp :: _, loc, _ )) ->
+          if is_mutex_method pname then
+            Localise.desc_double_lock (Some pname) (DExp.to_string this_dexp) loc
+          else if is_vector_method pname then
+            Localise.desc_empty_vector_access (Some pname) (DExp.to_string this_dexp) loc
+          else
+            desc
       | Some (DExp.Darrow (dexp, fieldname))
-        when is_special_field [vector_class] (Some "beginPtr") fieldname ->
-          Localise.desc_empty_vector_access None (DExp.to_string dexp) loc
+      | Some (DExp.Ddot (dexp, fieldname)) ->
+          if is_special_field mutex_matcher (Some "null_if_locked") fieldname then
+            Localise.desc_double_lock None (DExp.to_string dexp) loc
+          else if is_special_field vector_matcher (Some "beginPtr") fieldname then
+            Localise.desc_empty_vector_access None (DExp.to_string dexp) loc
+          else
+            desc
       | _ -> desc
     else desc in
   if use_buckets then Buckets.classify_access desc access_opt' de_opt is_nullable
@@ -899,7 +911,7 @@ let _explain_access tenv
         if verbose then (L.d_str "explain_dereference Binop.Leteref "; Sil.d_exp e; L.d_ln ());
         Some e
     | Some Sil.Call (_, Exp.Const (Const.Cfun fn), [(e, _)], _, _)
-      when Procname.to_string fn = "free" ->
+      when String.equal (Typ.Procname.to_string fn) "free" ->
         if verbose then (L.d_str "explain_dereference Sil.Call "; Sil.d_exp e; L.d_ln ());
         Some e
     | Some Sil.Call (_, (Exp.Var _ as e), _, _, _) ->
@@ -946,7 +958,7 @@ type pvar_off =
   | Fpvar
 
   (* value obtained by dereferencing the pvar and following a sequence of fields *)
-  | Fstruct of Ident.fieldname list
+  | Fstruct of Fieldname.t list
 
 let dexp_apply_pvar_off dexp pvar_off =
   let rec add_ddot de = function
@@ -966,7 +978,7 @@ let explain_nth_function_parameter tenv use_buckets deref_str prop n pvar_off =
   match State.get_instr () with
   | Some Sil.Call (_, _, args, _, _) ->
       (try
-         let arg = fst (IList.nth args (n - 1)) in
+         let arg = fst (List.nth_exn args (n - 1)) in
          let dexp_opt = exp_rv_dexp tenv node arg in
          let dexp_opt' = match dexp_opt with
            | Some de ->
@@ -983,12 +995,12 @@ let find_with_exp prop exp =
     if not (Pvar.is_abduced pv) && not (Pvar.is_this pv) then
       res := Some (pv, Fpvar) in
   let found_in_struct pv fld_lst = (* found_in_pvar has priority *)
-    if !res = None then res := Some (pv, Fstruct (IList.rev fld_lst)) in
+    if is_none !res then res := Some (pv, Fstruct (List.rev fld_lst)) in
   let rec search_struct pv fld_lst = function
     | Sil.Eexp (e, _) ->
         if Exp.equal e exp then found_in_struct pv fld_lst
     | Sil.Estruct (fsel, _) ->
-        IList.iter (fun (f, se) -> search_struct pv (f:: fld_lst) se) fsel
+        List.iter ~f:(fun (f, se) -> search_struct pv (f:: fld_lst) se) fsel
     | _ -> () in
   let do_hpred_pointed_by_pvar pv e = function
     | Sil.Hpointsto(e1, se, _) ->
@@ -997,9 +1009,9 @@ let find_with_exp prop exp =
   let do_hpred = function
     | Sil.Hpointsto(Exp.Lvar pv, Sil.Eexp (e, _), _) ->
         if Exp.equal e exp then found_in_pvar pv
-        else IList.iter (do_hpred_pointed_by_pvar pv e) prop.Prop.sigma
+        else List.iter ~f:(do_hpred_pointed_by_pvar pv e) prop.Prop.sigma
     | _ -> () in
-  IList.iter do_hpred prop.Prop.sigma;
+  List.iter ~f:do_hpred prop.Prop.sigma;
   !res
 
 (** return a description explaining value [exp] in [prop] in terms of a source expression
@@ -1059,8 +1071,8 @@ let explain_divide_by_zero tenv exp node loc =
 (** explain a return expression required *)
 let explain_return_expression_required loc typ =
   let typ_str =
-    let pp fmt () = Typ.pp_full pe_text fmt typ in
-    pp_to_string pp () in
+    let pp fmt = Typ.pp_full Pp.text fmt typ in
+    F.asprintf "%t" pp in
   Localise.desc_return_expression_required typ_str loc
 
 (** Explain retain cycle value error *)
@@ -1112,6 +1124,9 @@ let explain_condition_always_true_false tenv i cond node loc =
     | None -> None in
   Localise.desc_condition_always_true_false i cond_str_opt loc
 
+let explain_unreachable_code_after loc =
+  Localise.desc_unreachable_code_after loc
+
 (** explain the escape of a stack variable address from its scope *)
 let explain_stack_variable_address_escape loc pvar addr_dexp_opt =
   let addr_dexp_str = match addr_dexp_opt with
@@ -1129,8 +1144,8 @@ let explain_unary_minus_applied_to_unsigned_expression tenv exp typ node loc =
     | Some de -> Some (DExp.to_string de)
     | None -> None in
   let typ_str =
-    let pp fmt () = Typ.pp_full pe_text fmt typ in
-    pp_to_string pp () in
+    let pp fmt = Typ.pp_full Pp.text fmt typ in
+    F.asprintf "%t" pp in
   Localise.desc_unary_minus_applied_to_unsigned_expression exp_str_opt typ_str loc
 
 (** explain a test for NULL of a dereferenced pointer *)
@@ -1141,7 +1156,5 @@ let explain_null_test_after_dereference tenv exp node line loc =
       Localise.desc_null_test_after_dereference expr_str line loc
   | None -> Localise.no_desc
 
-(** Print a warning to the err stream at the given location (note: only prints in developer mode) *)
 let warning_err loc fmt_string =
-  L.err ("%a: Warning: " ^^ fmt_string)
-    Location.pp loc
+  L.(debug Analysis Medium) ("%a: Warning: " ^^ fmt_string) Location.pp loc

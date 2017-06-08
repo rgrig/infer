@@ -8,7 +8,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 (** Execution Paths *)
 
@@ -24,7 +24,10 @@ module Path : sig
   type session = int
 
   (** add a call with its sub-path, the boolean indicates whether the subtrace for the procedure should be included *)
-  val add_call : bool -> t -> Procname.t -> t -> t
+  val add_call : bool -> t -> Typ.Procname.t -> t -> t
+
+  (** add a call to a procname that's had to be skipped, along with the reason *)
+  val add_skipped_call : t -> Typ.Procname.t -> string -> t
 
   (** check whether a path contains another path *)
   val contains : t -> t -> bool
@@ -45,7 +48,7 @@ module Path : sig
   val d_stats : t -> unit
 
   (** extend a path with a new node reached from the given session, with an optional string for exceptions *)
-  val extend : Procdesc.Node.t -> Typename.t option -> session -> t -> t
+  val extend : Procdesc.Node.t -> Typ.Name.t option -> session -> t -> t
 
   (** extend a path with a new node reached from the given session, with an optional string for exceptions *)
   val add_description : t -> string -> t
@@ -54,7 +57,7 @@ module Path : sig
   val iter_all_nodes_nocalls : (Procdesc.Node.t -> unit) -> t -> unit
 
   val iter_shortest_sequence :
-    (int -> t -> int -> Typename.t option -> unit) -> PredSymb.path_pos option -> t -> unit
+    (int -> t -> int -> Typ.Name.t option -> unit) -> PredSymb.path_pos option -> t -> unit
 
   (** join two paths *)
   val join : t -> t -> t
@@ -75,22 +78,35 @@ module Path : sig
   val get_description : t -> string option
 *)
 end = struct
-  type session = int
+  type session = int [@@deriving compare]
   type stats =
     { mutable max_length : int; (* length of the longest linear sequence *)
       mutable linear_num : float; (* number of linear sequences described by the path *) }
 
-  type path =
+  (* type aliases for components of t values that compare should ignore *)
+  type _stats = stats
+  let compare__stats _ _ = 0
+
+  type _procname = Typ.Procname.t
+  let compare__procname _ _ = 0
+
+  type _string_option = string option
+  let compare__string_option _ _ = 0
+
+  type _path_exec =
+    | ExecSkipped of string (** call was skipped with a reason *)
+    | ExecCompleted of t (** call was completed *)
+
+  and t =
     (* INVARIANT: stats are always set to dummy_stats unless we are in the middle of a traversal *)
     (* in particular: a new traversal cannot be initiated during an existing traversal *)
-    | Pstart of Procdesc.Node.t * stats (** start node *)
-    | Pnode of Procdesc.Node.t * Typename.t option * session * path * stats * string option
+    | Pstart of Procdesc.Node.t * _stats (** start node *)
+    | Pnode of Procdesc.Node.t * Typ.Name.t option * session * t * _stats * _string_option
     (** we got to [node] from last [session] perhaps propagating exception [exn_opt],
         and continue with [path].  *)
-    | Pjoin of path * path * stats (** join of two paths *)
-    | Pcall of path * Procname.t * path * stats (** add a sub-path originating from a call *)
-
-  type t = path
+    | Pjoin of t * t * _stats (** join of two paths *)
+    | Pcall of t * _procname * _path_exec * _stats (** add a sub-path originating from a call *)
+  [@@deriving compare]
 
   let get_dummy_stats () =
     { max_length = - 1;
@@ -120,37 +136,9 @@ end = struct
   let rec curr_node = function
     | Pstart (node, _) -> Some node
     | Pnode (node, _, _, _, _, _) -> Some node
-    | Pcall(p1, _, _, _) -> curr_node p1
+    | Pcall(path, _, _, _) -> curr_node path
     | Pjoin _ ->
         None
-
-  let exname_opt_compare eo1 eo2 = match eo1, eo2 with
-    | None, None -> 0
-    | None, _ -> -1
-    | _, None -> 1
-    | Some n1, Some n2 -> Typename.compare n1 n2
-
-  let rec compare p1 p2 : int =
-    if p1 == p2 then 0 else match p1, p2 with
-      | Pstart (n1, _), Pstart (n2, _) ->
-          Procdesc.Node.compare n1 n2
-      | Pstart _, _ -> - 1
-      | _, Pstart _ -> 1
-      | Pnode (n1, eo1, s1, p1, _, _), Pnode (n2, eo2, s2, p2, _, _) ->
-          let n = Procdesc.Node.compare n1 n2 in
-          if n <> 0 then n else let n = exname_opt_compare eo1 eo2 in
-            if n <> 0 then n else let n = int_compare s1 s2 in
-              if n <> 0 then n else compare p1 p2
-      | Pnode _, _ -> - 1
-      | _, Pnode _ -> 1
-      | Pjoin (p1, q1, _), Pjoin (p2, q2, _) ->
-          let n = compare p1 p2 in
-          if n <> 0 then n else compare q1 q2
-      | Pjoin _, _ -> -1
-      | _, Pjoin _ -> 1
-      | Pcall(p1, _, sub1, _), Pcall(p2, _, sub2, _) ->
-          let n = compare p1 p2 in
-          if n <> 0 then n else compare sub1 sub2
 
   let start node = Pstart (node, get_dummy_stats ())
 
@@ -161,15 +149,18 @@ end = struct
     Pjoin (p1, p2, get_dummy_stats ())
 
   let add_call include_subtrace p pname p_sub =
-    if include_subtrace then Pcall(p, pname, p_sub, get_dummy_stats ())
+    if include_subtrace then Pcall(p, pname, ExecCompleted p_sub, get_dummy_stats ())
     else p
+
+  let add_skipped_call p pname reason =
+    Pcall (p, pname, ExecSkipped reason, get_dummy_stats ())
 
   (** functions in this module either do not assume, or do not re-establish, the invariant on dummy
       stats *)
   module Invariant = struct
     (** check whether a stats is the dummy stats *)
     let stats_is_dummy stats =
-      stats.max_length == - 1
+      Int.equal stats.max_length (-1)
 
     (** return the stats of the path, assumes that the stats are computed *)
     let get_stats = function
@@ -184,7 +175,8 @@ end = struct
     let rec reset_stats = function
       | Pstart (_, stats) ->
           if not (stats_is_dummy stats) then set_dummy_stats stats
-      | Pnode (_, _, _, path, stats, _) ->
+      | Pnode (_, _, _, path, stats, _)
+      | Pcall (path, _, ExecSkipped _, stats) ->
           if not (stats_is_dummy stats) then
             begin
               reset_stats path;
@@ -197,7 +189,7 @@ end = struct
               reset_stats path2;
               set_dummy_stats stats
             end
-      | Pcall (path1, _, path2, stats) ->
+      | Pcall (path1, _, ExecCompleted path2, stats) ->
           if not (stats_is_dummy stats) then
             begin
               reset_stats path1;
@@ -240,7 +232,7 @@ end = struct
               stats.max_length <- max stats1.max_length stats2.max_length;
               stats.linear_num <- stats1.linear_num +. stats2.linear_num
             end
-      | Pcall (path1, _, path2, stats) ->
+      | Pcall (path1, _, ExecCompleted path2, stats) ->
           if stats_is_dummy stats then
             begin
               let stats2 = match do_calls with
@@ -260,6 +252,15 @@ end = struct
               stats.max_length <- stats1.max_length + stats2.max_length;
               stats.linear_num <- stats1.linear_num;
             end
+      | Pcall (path, _, ExecSkipped _, stats)  ->
+          if stats_is_dummy stats then
+            begin
+              let stats1 =
+                compute_stats do_calls f path;
+                get_stats path in
+              stats.max_length <- stats1.max_length;
+              stats.linear_num <- stats1.linear_num;
+            end
   end (* End of module Invariant *)
 
   (** iterate over each node in the path, excluding calls, once *)
@@ -275,7 +276,7 @@ end = struct
   let contains_position path pos =
     let found = ref false in
     let f node =
-      if PredSymb.path_pos_equal (get_path_pos node) pos then found := true;
+      if PredSymb.equal_path_pos (get_path_pos node) pos then found := true;
       true in
     Invariant.compute_stats true f path;
     Invariant.reset_stats path;
@@ -286,7 +287,7 @@ end = struct
       If a node is reached via an exception,
       pass the exception information to [f] on the previous node *)
   let iter_shortest_sequence_filter
-      (f : int -> t -> int -> Typename.t option -> unit)
+      (f : int -> t -> int -> Typ.Name.t option -> unit)
       (filter: Procdesc.Node.t -> bool) (path: t) : unit =
     let rec doit level session path prev_exn_opt = match path with
       | Pstart _ -> f level path session prev_exn_opt
@@ -300,10 +301,14 @@ end = struct
             doit level session p1 prev_exn_opt
           else
             doit level session p2 prev_exn_opt
-      | Pcall (p1, _, p2, _) ->
+      | Pcall (p1, _, ExecCompleted p2, _) ->
           let next_exn_opt = None in (* exn must already be inside the call *)
           doit level session p1 next_exn_opt;
-          doit (level +1) session p2 next_exn_opt in
+          doit (level +1) session p2 next_exn_opt
+      | Pcall (p, _, ExecSkipped _, _) ->
+          let next_exn_opt = None in
+          doit level session p next_exn_opt;
+          f level path session prev_exn_opt in
     Invariant.compute_stats true filter path;
     doit 0 0 path None;
     Invariant.reset_stats path
@@ -314,11 +319,11 @@ end = struct
       [f level path session exn_opt] is passed the current nesting [level] and [path]
       and previous [session] and possible exception [exn_opt] *)
   let iter_shortest_sequence
-      (f : int -> t -> int -> Typename.t option -> unit)
+      (f : int -> t -> int -> Typ.Name.t option -> unit)
       (pos_opt : PredSymb.path_pos option) (path: t) : unit =
     let filter node = match pos_opt with
       | None -> true
-      | Some pos -> PredSymb.path_pos_equal (get_path_pos node) pos in
+      | Some pos -> PredSymb.equal_path_pos (get_path_pos node) pos in
     let path_pos_at_path p =
       try
         match curr_node p with
@@ -338,13 +343,13 @@ end = struct
       if !position_seen then
         let rec remove_until_seen = function
           | ((_, p, _, _) as x):: l ->
-              if path_pos_at_path p then IList.rev (x :: l)
+              if path_pos_at_path p then List.rev (x :: l)
               else remove_until_seen l
           | [] -> [] in
         remove_until_seen inverse_sequence
-      else IList.rev inverse_sequence in
-    IList.iter
-      (fun (level, p, session, exn_opt) -> f level p session exn_opt)
+      else List.rev inverse_sequence in
+    List.iter
+      ~f:(fun (level, p, session, exn_opt) -> f level p session exn_opt)
       sequence_up_to_last_seen
 
   (** return the node visited most, and number of visits, in the shortest linear sequence *)
@@ -362,7 +367,7 @@ end = struct
       | None ->
           () in
     iter_shortest_sequence (fun _ p _ _ -> add_node (curr_node p)) None path;
-    let max_rep_node = ref (Procdesc.Node.dummy ()) in
+    let max_rep_node = ref (Procdesc.Node.dummy None) in
     let max_rep_num = ref 0 in
     Procdesc.NodeMap.iter
       (fun node num -> if num > !max_rep_num then (max_rep_node := node; max_rep_num := num))
@@ -386,8 +391,8 @@ end = struct
   let d_stats path =
     L.d_str (stats_string path)
 
-  module PathMap = Map.Make (struct
-      type t = path
+  module PathMap = Caml.Map.Make (struct
+      type nonrec t = t
       let compare = compare
     end)
 
@@ -404,8 +409,9 @@ end = struct
       if not (path_seen path) (* avoid exponential blowup *)
       then match path with (* build a map from delayed paths to a unique number *)
         | Pstart _ -> ()
-        | Pnode (_, _, _, p, _, _) -> add_delayed p
-        | Pjoin (p1, p2, _) | Pcall(p1, _, p2, _) -> (* delay paths occurring in a join *)
+        | Pnode (_, _, _, p, _, _) | Pcall(p, _, ExecSkipped _, _) -> add_delayed p
+        | Pjoin (p1, p2, _) | Pcall(p1, _, ExecCompleted p2, _) ->
+            (* delay paths occurring in a join *)
             add_delayed p1;
             add_delayed p2;
             add_path p1;
@@ -423,8 +429,10 @@ end = struct
           F.fprintf fmt "%a(s%d).n%a" (doit (n - 1)) path (session :> int) Procdesc.Node.pp node
       | Pjoin (path1, path2, _) ->
           F.fprintf fmt "(%a + %a)" (doit (n - 1)) path1 (doit (n - 1)) path2
-      | Pcall (path1, _, path2, _) ->
-          F.fprintf fmt "(%a{%a})" (doit (n - 1)) path1 (doit (n - 1)) path2 in
+      | Pcall (path1, _, ExecCompleted path2, _) ->
+          F.fprintf fmt "(%a{%a})" (doit (n - 1)) path1 (doit (n - 1)) path2
+      | Pcall (path, _, ExecSkipped reason, _) ->
+          F.fprintf fmt "(%a: %s)" (doit (n - 1)) path reason in
     let print_delayed () =
       if not (PathMap.is_empty !delayed) then begin
         let f path num = F.fprintf fmt "P%d = %a@\n" num (doit 1) path in
@@ -441,63 +449,58 @@ end = struct
   let rec contains p1 p2 = match p2 with
     | Pjoin (p2', p2'', _) ->
         contains p1 p2' || contains p1 p2''
-    | _ -> p1 == p2
+    | _ -> phys_equal p1 p2
 
   let create_loc_trace path pos_opt : Errlog.loc_trace =
     let trace = ref [] in
     let g level path _ exn_opt =
-      match curr_node path with
-      | Some curr_node ->
+      match path, curr_node path with
+      | Pcall (_, _, ExecSkipped reason, _), Some curr_node ->
+          let curr_loc = Procdesc.Node.get_loc curr_node in
+          let descr = "Skipped call: " ^ reason in
+          let node_tags = [] in
+          trace := Errlog.make_trace_element level curr_loc descr node_tags :: !trace
+      | _, Some curr_node ->
           begin
             let curr_loc = Procdesc.Node.get_loc curr_node in
             match Procdesc.Node.get_kind curr_node with
             | Procdesc.Node.Join_node -> () (* omit join nodes from error traces *)
             | Procdesc.Node.Start_node pname ->
-                let name = Procname.to_string pname in
-                let name_id = Procname.to_filename pname in
-                let descr = "start of procedure " ^ (Procname.to_simplified_string pname) in
+                let descr = "start of procedure " ^ (Typ.Procname.to_simplified_string pname) in
                 let node_tags =
-                  [(Io_infer.Xml.tag_kind,"procedure_start");
-                   (Io_infer.Xml.tag_name, name);
-                   (Io_infer.Xml.tag_name_id, name_id)] in
+                  [Errlog.Procedure_start pname] in
                 trace := Errlog.make_trace_element level curr_loc descr node_tags :: !trace
             | Procdesc.Node.Prune_node (is_true_branch, if_kind, _) ->
                 let descr = match is_true_branch, if_kind with
-                  | true, Sil.Ik_if -> "Taking true branch"
-                  | false, Sil.Ik_if -> "Taking false branch"
+                  | true, Sil.Ik_if ->
+                      "Taking true branch"
+                  | false, Sil.Ik_if ->
+                      "Taking false branch"
                   | true, (Sil.Ik_for | Sil.Ik_while | Sil.Ik_dowhile) ->
                       "Loop condition is true. Entering loop body"
                   | false, (Sil.Ik_for | Sil.Ik_while | Sil.Ik_dowhile) ->
                       "Loop condition is false. Leaving loop"
                   | true, Sil.Ik_switch -> "Switch condition is true. Entering switch case"
                   | false, Sil.Ik_switch -> "Switch condition is false. Skipping switch case"
-                  | true, (Sil.Ik_bexp | Sil.Ik_land_lor) -> "Condition is true"
-                  | false, (Sil.Ik_bexp | Sil.Ik_land_lor) -> "Condition is false" in
-                let node_tags =
-                  [(Io_infer.Xml.tag_kind,"condition");
-                   (Io_infer.Xml.tag_branch, if is_true_branch then "true" else "false")] in
+                  | true, (Sil.Ik_bexp | Sil.Ik_land_lor)  ->
+                      "Condition is true"
+                  | false, (Sil.Ik_bexp | Sil.Ik_land_lor) ->
+                      "Condition is false" in
+                let node_tags = [Errlog.Condition is_true_branch] in
                 trace := Errlog.make_trace_element level curr_loc descr node_tags :: !trace
             | Procdesc.Node.Exit_node pname ->
-                let descr = "return from a call to " ^ (Procname.to_string pname) in
-                let name = Procname.to_string pname in
-                let name_id = Procname.to_filename pname in
-                let node_tags =
-                  [(Io_infer.Xml.tag_kind,"procedure_end");
-                   (Io_infer.Xml.tag_name, name);
-                   (Io_infer.Xml.tag_name_id, name_id)] in
+                let descr = "return from a call to " ^ (Typ.Procname.to_string pname) in
+                let node_tags = [Errlog.Procedure_end pname] in
                 trace := Errlog.make_trace_element level curr_loc descr node_tags :: !trace
             | _ ->
                 let descr, node_tags =
                   match exn_opt with
                   | None -> "", []
                   | Some exn_name ->
-                      let exn_str = Typename.name exn_name in
-                      if exn_str = ""
-                      then "exception", [(Io_infer.Xml.tag_kind,"exception")]
-                      else
-                        "exception " ^ exn_str,
-                        [(Io_infer.Xml.tag_kind,"exception");
-                         (Io_infer.Xml.tag_name, exn_str)] in
+                      let exn_str = Typ.Name.name exn_name in
+                      let desc =
+                        if String.is_empty exn_str then "exception" else "exception " ^ exn_str in
+                      desc, [Errlog.Exception exn_name] in
                 let descr =
                   match get_description path with
                   | Some path_descr ->
@@ -505,26 +508,21 @@ end = struct
                   | None -> descr in
                 trace := Errlog.make_trace_element level curr_loc descr node_tags :: !trace
           end
-      | None ->
+      | _, None ->
           () in
     iter_shortest_sequence g pos_opt path;
     let compare lt1 lt2 =
-      let n = int_compare lt1.Errlog.lt_level lt2.Errlog.lt_level in
+      let n = Int.compare lt1.Errlog.lt_level lt2.Errlog.lt_level in
       if n <> 0 then n else Location.compare lt1.Errlog.lt_loc lt2.Errlog.lt_loc in
     let relevant lt = lt.Errlog.lt_node_tags <> [] in
-    IList.remove_irrelevant_duplicates compare relevant (IList.rev !trace)
-    (* IList.remove_duplicates compare (IList.sort compare !trace) *)
+    IList.remove_irrelevant_duplicates compare relevant (List.rev !trace)
 
-(*
-  let equal p1 p2 =
-    compare p1 p2 = 0
-*)
 end
 (* =============== END of the Path module ===============*)
 
-module PropMap = Map.Make (struct
+module PropMap = Caml.Map.Make (struct
     type t = Prop.normal Prop.t
-    let compare = Prop.prop_compare
+    let compare = Prop.compare_prop
   end)
 
 (* =============== START of the PathSet module ===============*)
@@ -577,7 +575,7 @@ module PathSet : sig
   val partition : (Prop.normal Prop.t -> bool) -> t -> t * t
 
   (** pretty print the pathset *)
-  val pp : printenv -> Format.formatter -> t -> unit
+  val pp : Pp.env -> Format.formatter -> t -> unit
 
   (** number of elements in the pathset *)
   val size : t -> int
@@ -604,7 +602,7 @@ end = struct
     !plist
 
   let to_proplist ps =
-    IList.map fst (elements ps)
+    List.map ~f:fst (elements ps)
 
   let to_propset tenv ps =
     Propset.from_proplist tenv (to_proplist ps)
@@ -612,16 +610,18 @@ end = struct
   let filter f ps =
     let elements = ref [] in
     PropMap.iter (fun p _ -> elements := p :: !elements) ps;
-    elements := IList.filter (fun p -> not (f p)) !elements;
+    elements := List.filter ~f:(fun p -> not (f p)) !elements;
     let filtered_map = ref ps in
-    IList.iter (fun p -> filtered_map := PropMap.remove p !filtered_map) !elements;
+    List.iter ~f:(fun p -> filtered_map := PropMap.remove p !filtered_map) !elements;
     !filtered_map
 
   let partition f ps =
     let elements = ref [] in
     PropMap.iter (fun p _ -> elements := p :: !elements) ps;
     let el1, el2 = ref ps, ref ps in
-    IList.iter (fun p -> if f p then el2 := PropMap.remove p !el2 else el1 := PropMap.remove p !el1) !elements;
+    List.iter
+      ~f:(fun p -> if f p then el2 := PropMap.remove p !el2 else el1 := PropMap.remove p !el1)
+      !elements;
     !el1, !el2
 
   (** It's the caller's resposibility to ensure that Prop.prop_rename_primed_footprint_vars was called on the prop *)
@@ -701,6 +701,6 @@ end = struct
 
   (** It's the caller's resposibility to ensure that Prop.prop_rename_primed_footprint_vars was called on the list *)
   let from_renamed_list (pl : ('a Prop.t * Path.t) list) : t =
-    IList.fold_left (fun ps (p, pa) -> add_renamed_prop p pa ps) empty pl
+    List.fold ~f:(fun ps (p, pa) -> add_renamed_prop p pa ps) ~init:empty pl
 end
 (* =============== END of the PathSet module ===============*)

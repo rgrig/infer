@@ -7,23 +7,21 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module F = Format
 
-module TestInterpreter = AnalyzerTester.Make
-    (ProcCfg.Backward(ProcCfg.Normal))
-    (Scheduler.ReversePostorder)
-    (Liveness.TransferFunctions)
+module TestInterpreter =
+  AnalyzerTester.Make (ProcCfg.Backward(ProcCfg.Normal)) (Liveness.TransferFunctions)
 
 let tests =
   let open OUnit2 in
   let open AnalyzerTester.StructuredSil in
   let assert_empty = invariant "{  }" in
-  let fun_ptr_typ = Typ.Tptr (Tfun false, Pk_pointer) in
+  let fun_ptr_typ = Typ.mk (Tptr (Typ.mk (Tfun false), Pk_pointer)) in
   let closure_exp captured_pvars =
     let mk_captured_var str = (Exp.Var (ident_of_str str), pvar_of_str str, dummy_typ) in
-    let captured_vars = IList.map mk_captured_var captured_pvars in
+    let captured_vars = List.map ~f:mk_captured_var captured_pvars in
     let closure = { Exp.name=dummy_procname; captured_vars; } in
     Exp.Closure closure in
   let unknown_cond =
@@ -44,7 +42,7 @@ let tests =
     ];
     "iterative_live",
     [
-      invariant "{ &b, &d, &f }";
+      invariant "{ &b, &f, &d }";
       id_assign_var "e" "f";
       invariant "{ &b, &d }";
       id_assign_var "c" "d";
@@ -93,13 +91,13 @@ let tests =
     ];
     "call_params_live",
     [
-      invariant "{ &a, &b, &c }";
+      invariant "{ &b, &a, &c }";
       call_unknown_no_ret ["a"; "b"; "c";]
     ];
     "dead_after_call_with_retval",
     [
       assert_empty;
-      call_unknown (Some ("y", Typ.Tint IInt)) [];
+      call_unknown (Some ("y", Typ.mk (Tint IInt))) [];
       invariant "{ y$0 }";
       id_assign_id "x" "y";
     ];
@@ -191,5 +189,5 @@ let tests =
       invariant "{ &b }";
       id_assign_var "a" "b"
     ];
-  ] |> TestInterpreter.create_tests ProcData.empty_extras in
+  ] |> TestInterpreter.create_tests ProcData.empty_extras ~initial:Liveness.Domain.empty in
   "liveness_test_suite">:::test_list

@@ -7,8 +7,14 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 val commit : string
 val versionString : string
 val versionJson : string
+
+val clang_enabled : bool
+val java_enabled : bool
+val xcode_enabled : bool
+
+val man_pages_last_modify_date : string

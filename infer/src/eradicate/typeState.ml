@@ -7,7 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
-open! Utils
+open! IStd
 
 module L = Logging
 module F = Format
@@ -18,14 +18,14 @@ module P = Printf
 (** Parameters of a call. *)
 type parameters = (Exp.t * Typ.t) list
 
-type get_proc_desc = Procname.t -> Procdesc.t option
+type get_proc_desc = Typ.Procname.t -> Procdesc.t option
 
 (** Extension to a typestate with values of type 'a. *)
 type 'a ext =
   {
     empty : 'a; (** empty extension *)
     check_instr :
-      Tenv.t -> get_proc_desc -> Procname.t ->
+      Tenv.t -> get_proc_desc -> Typ.Procname.t ->
       Procdesc.t -> 'a -> Sil.instr -> parameters ->
       'a; (** check the extension for an instruction *)
     join : 'a -> 'a -> 'a; (** join two extensions *)
@@ -40,17 +40,22 @@ let unit_ext : unit ext = {
 }
 
 
-module M = Map.Make (struct
+module M = Caml.Map.Make (struct
     type t = Exp.t
     let compare = Exp.compare end)
 
-type range = Typ.t * TypeAnnotation.t * (Location.t list)
+type range = Typ.t * TypeAnnotation.t * (Location.t list) [@@deriving compare]
 
 type 'a t =
   {
     map: range M.t;
     extension : 'a;
-  }
+  } [@@deriving compare]
+
+(* Ignore the extension field, which is a pure instrumentation *)
+let compare t1 t2 = compare_t (fun _ _ -> 0) t1 t2
+
+let equal t1 t2 = Int.equal (compare t1 t2) 0
 
 let empty ext =
   {
@@ -58,24 +63,14 @@ let empty ext =
     extension = ext.empty;
   }
 
-let locs_compare = IList.compare Location.compare
-let locs_equal locs1 locs2 = locs_compare locs1 locs2 = 0
-
-let range_equal (typ1, ta1, locs1) (typ2, ta2, locs2) =
-  Typ.equal typ1 typ2 && TypeAnnotation.equal ta1 ta2 && locs_equal locs1 locs2
-
-let equal t1 t2 =
-  (* Ignore the calls field, which is a pure instrumentation *)
-  M.equal range_equal t1.map t2.map
-
 let pp ext fmt typestate =
   let pp_loc fmt loc = F.fprintf fmt "%d" loc.Location.line in
-  let pp_locs fmt locs = F.fprintf fmt " [%a]" (pp_seq pp_loc) locs in
+  let pp_locs fmt locs = F.fprintf fmt " [%a]" (Pp.seq pp_loc) locs in
   let pp_one exp (typ, ta, locs) =
     F.fprintf fmt "  %a -> [%s] %s %a%a@\n"
       Exp.pp exp
       (TypeOrigin.to_string (TypeAnnotation.get_origin ta)) (TypeAnnotation.to_string ta)
-      (Typ.pp_full pe_text) typ
+      (Typ.pp_full Pp.text) typ
       pp_locs locs in
   let pp_map map = M.iter pp_one map in
 
@@ -92,9 +87,13 @@ let range_add_locs (typ, ta, locs1) locs2 =
   let locs' = locs_join locs1 locs2 in
   (typ, ta, locs')
 
-(** Join m2 to m1 if there are no inconsistencies, otherwise return m1. *)
+(** Only keep variables if they are present on both sides of the join. *)
+let only_keep_intersection = true
+
+(** Join two maps.
+    If only_keep_intersection is true, keep only variables present on both sides. *)
 let map_join m1 m2 =
-  let tjoined = ref m1 in
+  let tjoined = ref (if only_keep_intersection then M.empty else m1) in
   let range_join (typ1, ta1, locs1) (typ2, ta2, locs2) =
     match TypeAnnotation.join ta1 ta2 with
     | None -> None
@@ -106,10 +105,11 @@ let map_join m1 m2 =
     try
       let range1 = M.find exp2 m1 in
       (match range_join range1 range2 with
-       | None -> ()
+       | None ->
+           if only_keep_intersection then tjoined := M.add exp2 range1 !tjoined
        | Some range' -> tjoined := M.add exp2 range' !tjoined)
     with Not_found ->
-      tjoined := M.add exp2 range2 !tjoined in
+      if not only_keep_intersection then tjoined := M.add exp2 range2 !tjoined in
   let missing_rhs exp1 range1 = (* handle elements missing in the rhs *)
     try
       ignore (M.find exp1 m2)
@@ -118,8 +118,8 @@ let map_join m1 m2 =
       let range1' =
         let ta1' = TypeAnnotation.with_origin ta1 TypeOrigin.Undef in
         (t1, ta1', locs1) in
-      tjoined := M.add exp1 range1' !tjoined in
-  if m1 == m2 then m1
+      if not only_keep_intersection then tjoined := M.add exp1 range1' !tjoined in
+  if phys_equal m1 m2 then m1
   else (
     M.iter extend_lhs m2;
     M.iter missing_rhs m1;
@@ -127,14 +127,20 @@ let map_join m1 m2 =
   )
 
 let join ext t1 t2 =
-  if Config.eradicate_trace
-  then L.stderr "@.@.**********join@.-------@.%a@.------@.%a@.********@.@."
-      (pp ext) t1
-      (pp ext) t2;
-  {
-    map = map_join t1.map t2.map;
-    extension = ext.join t1.extension t2.extension;
-  }
+  let tjoin =
+    {
+      map = map_join t1.map t2.map;
+      extension = ext.join t1.extension t2.extension;
+    } in
+  if Config.write_html then
+    begin
+      let s = F.asprintf "State 1:@.%a@.State 2:@.%a@.After Join:@.%a@."
+          (pp ext) t1
+          (pp ext) t2
+          (pp ext) tjoin in
+      L.d_strln s;
+    end;
+  tjoin
 
 let lookup_id id typestate =
   try Some (M.find (Exp.Var id) typestate.map)
@@ -146,17 +152,17 @@ let lookup_pvar pvar typestate =
 
 let add_id id range typestate =
   let map' = M.add (Exp.Var id) range typestate.map in
-  if map' == typestate.map then typestate
+  if phys_equal map' typestate.map then typestate
   else { typestate with map = map' }
 
 let add pvar range typestate =
   let map' = M.add (Exp.Lvar pvar) range typestate.map in
-  if map' == typestate.map then typestate
+  if phys_equal map' typestate.map then typestate
   else { typestate with map = map' }
 
 let remove_id id typestate =
   let map' = M.remove (Exp.Var id) typestate.map in
-  if map' == typestate.map then typestate
+  if phys_equal map' typestate.map then typestate
   else { typestate with map = map' }
 
 let get_extension typestate = typestate.extension
