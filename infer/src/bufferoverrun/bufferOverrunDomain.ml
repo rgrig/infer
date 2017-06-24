@@ -274,8 +274,9 @@ struct
   let modify_itv : Itv.t -> t -> t
     = fun i x -> { x with itv = i }
 
-  let make_sym : Typ.Procname.t -> int -> t
-    = fun pname i -> { bot with itv = Itv.make_sym pname i }
+  let make_sym : ?unsigned:bool -> Typ.Procname.t -> (unit -> int) -> t
+    = fun ?(unsigned=false) pname new_sym_num ->
+      { bot with itv = Itv.make_sym ~unsigned pname new_sym_num }
 
   let unknown_bit : t -> t
     = fun x -> { x with itv = Itv.top }
@@ -385,11 +386,6 @@ struct
       then { bot with itv = Itv.top }
       else { bot with itv = ArrayBlk.diff x.arrayblk y.arrayblk }
 
-  let subst : t -> Itv.Bound.t Itv.SubstMap.t -> t
-    = fun x subst_map ->
-      { x with itv = Itv.subst x.itv subst_map;
-               arrayblk = ArrayBlk.subst x.arrayblk subst_map }
-
   let get_symbols : t -> Itv.Symbol.t list
     = fun x ->
       List.append (Itv.get_symbols x.itv) (ArrayBlk.get_symbols x.arrayblk)
@@ -397,6 +393,12 @@ struct
   let normalize : t -> t
     = fun x ->
       { x with itv = Itv.normalize x.itv; arrayblk = ArrayBlk.normalize x.arrayblk }
+
+  let subst : t -> Itv.Bound.t Itv.SubstMap.t -> t
+    = fun x subst_map ->
+      { x with itv = Itv.subst x.itv subst_map;
+               arrayblk = ArrayBlk.subst x.arrayblk subst_map }
+      |> normalize  (* normalize bottom *)
 
   let pp_summary : F.formatter -> t -> unit
     = fun fmt x -> F.fprintf fmt "(%a, %a)" Itv.pp x.itv ArrayBlk.pp x.arrayblk
@@ -619,6 +621,10 @@ struct
   let find_heap_set : PowLoc.t -> t -> Val.t
     = fun k m -> Heap.find_set k m.heap
 
+  let find_set : PowLoc.t -> t -> Val.t
+    = fun k m ->
+      Val.join (find_stack_set k m) (find_heap_set k m)
+
   let find_alias : Ident.t -> t -> Pvar.t option
     = fun k m -> Alias.find k m.alias
 
@@ -709,6 +715,10 @@ module Mem = struct
     = fun k ->
       f_lift_default Val.bot (MemReach.find_heap_set k)
 
+  let find_set : PowLoc.t -> t -> Val.t
+    = fun k ->
+      f_lift_default Val.bot (MemReach.find_set k)
+
   let find_alias : Ident.t -> t -> Pvar.t option
     = fun k ->
       f_lift_default None (MemReach.find_alias k)
@@ -798,6 +808,6 @@ struct
 
   let pp : F.formatter -> t -> unit
     = fun fmt (entry_mem, exit_mem, condition_set) ->
-      F.fprintf fmt "%a@,%a@,%a@"
+      F.fprintf fmt "%a@,%a@,%a@,"
         Mem.pp entry_mem Mem.pp exit_mem ConditionSet.pp condition_set
 end

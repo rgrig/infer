@@ -128,6 +128,9 @@ AC_PROG_MKDIR_P
 if test "x$enable_c_analyzers" = "xyes"; then
   AC_PROG_CPP
   AC_PROG_CXX(clang++ g++)
+  # AC_PROG_CXX doesn't set CXX to "no" in case of failure (I have no words...); from the manual:
+  # "If none of those checks succeed, then as a last resort set CXX to g++. "
+  AS_IF([command -v "$CXX" > /dev/null], [], [AC_MSG_ERROR([no C++ compiler found])])
 
   dnl clang wants either clang version >= 3.1 or gcc version >= 4.7.2 to
   dnl compile itself
@@ -234,8 +237,11 @@ _ACEOF
   fi
   AC_MSG_RESULT([$USER_JAVA_HOME])
   AC_SUBST([USER_JAVA_HOME])
-fi
 
+  AC_CHECK_LIB([z], [inflateEnd], [ZLIB_FOUND=yes], [ZLIB_FOUND=no])
+  AS_IF([test x"$ZLIB_FOUND" = xno], [AC_MSG_ERROR([zlib not found.])])
+fi
+# end if($enable_java_analyzers)
 
 AC_PATH_TOOL([ATDGEN], [atdgen], [no])
 AC_ASSERT_PROG([atdgen], [$ATDGEN])

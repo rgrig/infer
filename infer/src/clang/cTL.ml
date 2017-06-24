@@ -77,10 +77,12 @@ let has_transition phi = match phi with
    set message = "bla"
 
 *)
+
 type clause =
   | CLet of ALVar.formula_id * ALVar.t list * t (* Let clause: let id = definifion;  *)
   | CSet of ALVar.keyword * t (* Set clause: set id = definition *)
   | CDesc of ALVar.keyword * string (* Description clause eg: set message = "..." *)
+  | CPath of [ `WhitelistPath | `BlacklistPath ] * ALVar.t list
 
 type ctl_checker = {
   name : string; (* Checker's name *)
@@ -90,6 +92,7 @@ type ctl_checker = {
 type al_file = {
   import_files : string list;
   global_macros : clause list;
+  global_paths : (string * ALVar.alexp list) list;
   checkers : ctl_checker list
 }
 
@@ -283,7 +286,7 @@ module Debug = struct
             (pp_ast
                ~ast_node_to_highlight ~prettifier:(ANSITerminal.sprintf highlight_style "%s"))
             ast_root in
-        L.(debug Linters Medium)
+        L.progress
           "@\nNode ID: %d\tEvaluation stack level: %d\tSource line-number: %s@\n"
           eval_node.id
           (Stack.length t.eval_stack)
@@ -293,13 +296,13 @@ module Debug = struct
           | Eval_undefined -> true
           | _ -> false in
         if is_last_occurrence && is_eval_result_undefined then
-          L.(debug Linters Medium)
+          L.progress
             "From this step, a transition to a different part of the AST may follow.@\n";
         let phi_str = Format.asprintf "%a" pp_formula eval_node.content.phi in
-        L.(debug Linters Medium) "CTL Formula: %s@\n@\n" phi_str;
-        L.(debug Linters Medium) "%s@\n" ast_str;
+        L.progress "CTL Formula: %s@\n@\n" phi_str;
+        L.progress "%s@\n" ast_str;
         let quit_token = "q" in
-        L.(debug Linters Medium) "Press Enter to continue or type %s to quit... @?" quit_token;
+        L.progress "Press Enter to continue or type %s to quit... @?" quit_token;
         match read_line () |> String.lowercase with
         | s when String.equal s quit_token -> exit 0
         | _ ->
@@ -312,7 +315,7 @@ module Debug = struct
             ) in
       match t.debugger_active, t.breakpoint_line, line_number eval_node.content.ast_node with
       | false, Some break_point_ln, Some ln when ln >= break_point_ln ->
-          L.(debug Linters Medium) "Attaching debugger at line %d" ln;
+          L.progress "Attaching debugger at line %d" ln;
           stop_and_explain_step ();
           {t with debugger_active = true}
       | true, _, _ ->
@@ -441,7 +444,14 @@ let print_checker c =
             cn_str Debug.pp_formula phi
       | CDesc (keyword, s) ->
           let cn_str = ALVar.keyword_to_string keyword in
-          L.(debug Linters Medium) "    %s=  @\n    %s@\n@\n" cn_str s)
+          L.(debug Linters Medium) "    %s=  @\n    %s@\n@\n" cn_str s
+      | CPath (paths_keyword, paths) ->
+          let keyword =
+            (match paths_keyword with
+             | `WhitelistPath -> "whitelist_path"
+             | _ -> "blacklist_path") in
+          let paths_str = String.concat ~sep:"," (List.map ~f:ALVar.alexp_to_string paths) in
+          L.(debug Linters Medium) "    %s=  @\n    %s@\n@\n" keyword paths_str)
     ) c.definitions;
   L.(debug Linters Medium) "@\n-------------------- @\n"
 

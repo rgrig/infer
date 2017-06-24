@@ -35,7 +35,7 @@ DIRECT_TESTS += \
   cpp_bufferoverrun cpp_errors cpp_frontend cpp_quandary cpp_siof cpp_threadsafety \
 
 ifneq ($(BUCK),no)
-BUILD_SYSTEMS_TESTS += buck-clang-db buck_flavors
+BUILD_SYSTEMS_TESTS += buck-clang-db buck_flavors buck_flavors_deterministic
 endif
 ifneq ($(CMAKE),no)
 BUILD_SYSTEMS_TESTS += clang_compilation_db cmake inferconfig
@@ -60,6 +60,7 @@ endif # BUILD_C_ANALYZERS
 
 ifeq ($(BUILD_JAVA_ANALYZERS),yes)
 BUILD_SYSTEMS_TESTS += \
+	differential_interesting_paths_filter \
   differential_resolve_infer_eradicate_conflict \
   differential_skip_anonymous_class_renamings \
   differential_skip_duplicated_types_on_filenames \
@@ -535,7 +536,7 @@ opam.lock: opam
 	$(QUIET)$(call silent_on_success,installing dependencies $(INFER_PKG_OPAMLOCK) opam package,\
 	  OPAMSWITCH=$(OPAMSWITCH); \
 	  $(OPAM) pin add --yes --no-action -k git $(INFER_PKG_OPAMLOCK) .#HEAD; \
-	  $(OPAM) install --deps-only --yes infer)
+	  $(OPAM) install --deps-only --yes $(INFER_PKG_OPAMLOCK))
 	$(QUIET)$(call silent_on_success,generating opam.lock,\
 	  $(OPAM) lock --pkg  $(INFER_PKG_OPAMLOCK) > opam.lock)
 

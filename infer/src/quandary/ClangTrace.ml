@@ -14,7 +14,7 @@ module L = Logging
 
 module SourceKind = struct
   type t =
-    | Endpoint (** source originating from an endpoint *)
+    | Endpoint of (Mangled.t * Typ.desc) (** source originating from formal of an endpoint *)
     | EnvironmentVariable (** source that was read from an environment variable *)
     | File (** source that was read from a file *)
     | Other (** for testing or uncategorized sources *)
@@ -24,7 +24,7 @@ module SourceKind = struct
   let unknown = Unknown
 
   let of_string = function
-    | "Endpoint" -> Endpoint
+    | "Endpoint" -> Endpoint (Mangled.from_string "NONE", Typ.Tvoid)
     | "EnvironmentVariable" -> EnvironmentVariable
     | "File" -> File
     | _ -> Other
@@ -90,15 +90,19 @@ module SourceKind = struct
             (Typ.Procname.objc_cpp_get_class_name objc)
             (Typ.Procname.get_method pname) in
         if String.Set.mem endpoints qualified_pname
-        then List.map ~f:(fun (name, typ) -> name, typ, Some Endpoint) (Procdesc.get_formals pdesc)
-        else Source.all_formals_untainted pdesc
+        then
+          List.map
+            ~f:(fun (name, typ) -> name, typ, Some (Endpoint (name, typ.Typ.desc)))
+            (Procdesc.get_formals pdesc)
+        else
+          Source.all_formals_untainted pdesc
     | _ ->
         Source.all_formals_untainted pdesc
 
   let pp fmt kind =
-    F.fprintf fmt
+    F.fprintf fmt "%s"
       (match kind with
-       | Endpoint -> "Endpoint"
+       | Endpoint (formal_name, _) -> F.sprintf "Endpoint[%s]" (Mangled.to_string formal_name)
        | EnvironmentVariable -> "EnvironmentVariable"
        | File -> "File"
        | Other -> "Other"
@@ -112,12 +116,14 @@ module SinkKind = struct
   type t =
     | Allocation (** memory allocation *)
     | ShellExec (** shell exec function *)
+    | SQL (** SQL query *)
     | Other (** for testing or uncategorized sinks *)
   [@@deriving compare]
 
   let of_string = function
     | "Allocation" -> Allocation
     | "ShellExec" -> ShellExec
+    | "SQL" -> SQL
     | _ -> Other
 
   let external_sinks =
@@ -177,6 +183,7 @@ module SinkKind = struct
       (match kind with
        | Allocation -> "Allocation"
        | ShellExec -> "ShellExec"
+       | SQL -> "SQL"
        | Other -> "Other")
 end
 
@@ -188,14 +195,22 @@ include
     module Sink = CppSink
 
     let should_report source sink =
+      (* using this to match custom string wrappers such as folly::StringPiece *)
+      let is_stringy typ =
+        let lowercase_typ = String.lowercase (Typ.to_string (Typ.mk typ)) in
+        String.is_substring ~substring:"string" lowercase_typ ||
+        String.is_substring ~substring:"char*" lowercase_typ in
       match Source.kind source, Sink.kind sink with
-      | (Endpoint | EnvironmentVariable | File), ShellExec ->
-          (* untrusted data flowing to exec *)
+      | Endpoint (_, typ), (ShellExec | SQL) ->
+          (* untrusted string data flowing to shell exec/SQL *)
+          is_stringy typ
+      | (EnvironmentVariable | File), (ShellExec | SQL) ->
+          (* untrusted environment var or file data flowing to shell exec *)
           true
-      | (Endpoint | EnvironmentVariable | File), Allocation ->
+      | (Endpoint _ | EnvironmentVariable | File), Allocation ->
           (* untrusted data flowing to memory allocation *)
           true
-      | _, (Allocation | Other | ShellExec) when Source.is_footprint source ->
+      | _, (Allocation | Other | ShellExec | SQL) when Source.is_footprint source ->
           (* is this var a command line flag created by the popular gflags library? *)
           let is_gflag pvar =
             String.is_substring ~substring:"FLAGS_" (Pvar.get_simplified_name pvar) in
@@ -212,6 +227,6 @@ include
           true
       | _, Other ->
           true
-      | Unknown, (Allocation | ShellExec) ->
+      | Unknown, (Allocation | ShellExec | SQL) ->
           false
   end)

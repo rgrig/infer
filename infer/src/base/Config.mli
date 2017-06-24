@@ -208,6 +208,7 @@ val copy_propagation : bool
 val crashcontext : bool
 val create_harness : bool
 val cxx : bool
+val cxx_infer_headers : bool
 val debug_level_analysis : int
 val debug_level_capture : int
 val debug_level_linters : int
@@ -215,6 +216,8 @@ val debug_exceptions : bool
 val debug_mode : bool
 val dependency_mode : bool
 val developer_mode : bool
+val differential_filter_files : string option
+val differential_filter_set : [`Introduced | `Fixed | `Preexisting ] list
 val disable_checks : string list
 val dotty_cfg_libs : bool
 val dump_duplicate_symbols : bool
@@ -235,7 +238,6 @@ val fcp_apple_clang : string option
 val fcp_syntax_only : bool
 val file_renamings : string option
 val filter_paths : bool
-val filter_report_paths : string option
 val filtering : bool
 val flavors : bool
 val fragment_retains_view : bool
@@ -250,6 +252,7 @@ val ignore_trivial_traces : bool
 val immutable_cast : bool
 val infer_cache : string option
 val iphoneos_target_sdk_version : string option
+val iphoneos_target_sdk_version_skip_path : string list
 val issues_fields : [`Issue_field_bug_class
                     | `Issue_field_kind
                     | `Issue_field_bug_type
@@ -352,6 +355,7 @@ val trace_error : bool
 val trace_ondemand : bool
 val trace_join : bool
 val trace_rearrange : bool
+val tv_limit : int
 val type_size : bool
 val unsafe_malloc : bool
 val whole_seconds : bool

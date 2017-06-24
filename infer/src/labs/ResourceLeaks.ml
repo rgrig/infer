@@ -55,12 +55,12 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     match instr with
     | Call (_return_opt, Direct callee_procname, _actuals, _, _loc) ->
         (* function call [return_opt] := invoke [callee_procname]([actuals]) *)
-        (* (1)(b) *)
+        (* 1(e) *)
         let astate' =
           if acquires_resource callee_procname tenv
-          then astate + 1 (* 3(a) *)
+          then astate + 1 (* 2(a) *)
           else if releases_resource callee_procname tenv
-          then astate - 1 (* 3(a) *)
+          then astate - 1 (* 2(a) *)
           else astate in
         begin
           match Summary.read_summary pdesc callee_procname with
@@ -92,35 +92,31 @@ module Analyzer =
     (ProcCfg.Normal) (* 5(a) *)
     (LowerHil.Make(TransferFunctions))
 
-(* Lift our intraprocedural abstract interpreter into an interprocedural one that computes
-   summaries of the type we defined earlier *)
-module Interprocedural = AbstractInterpreter.Interprocedural (Summary)
-
 (* Callback for invoking the checker from the outside--registered in RegisterCheckers *)
-let checker ({ Callbacks.summary; } as callback) : Specs.summary =
+let checker { Callbacks.summary; proc_desc; tenv; } : Specs.summary =
   (* Report an error when we have acquired more resources than we have released *)
   let report leak_count (proc_data : extras ProcData.t) =
-    if leak_count > 0 (* 3(a) *)
+    if leak_count > 0 (* 2(a) *)
     then
       let last_loc = Procdesc.Node.get_loc (Procdesc.get_exit_node proc_data.pdesc) in
       let issue_kind = Localise.to_issue_id Localise.resource_leak in
       let message = F.asprintf "Leaked %d resource(s)" leak_count in
       let exn = Exceptions.Checkers (issue_kind, Localise.verbatim_desc message) in
-      Reporting.log_error_from_summary summary ~loc:last_loc exn in
+      Reporting.log_error summary ~loc:last_loc exn in
+
   (* Convert the abstract state to a summary. for now, just the identity function *)
   let convert_to_summary (post : Domain.astate) : Domain.summary =
     (* 4(a) *)
     post in
-  let compute_post (proc_data : extras ProcData.t) =
-    let initial = ResourceLeakDomain.initial, IdAccessPathMapDomain.empty in
-    match Analyzer.compute_post proc_data ~initial ~debug:false with
-    | Some (post, _) ->
-        (* 1(c) *)
-        report post proc_data;
-        Some (convert_to_summary post)
-    | None ->
-        failwithf
-          "Analyzer failed to compute post for %a"
-          Typ.Procname.pp (Procdesc.get_proc_name proc_data.pdesc) in
-
-  Interprocedural.compute_and_store_post ~compute_post ~make_extras:FormalMap.make callback
+  let extras = FormalMap.make proc_desc in
+  let proc_data = ProcData.make proc_desc tenv extras in
+  let initial = ResourceLeakDomain.initial, IdAccessPathMapDomain.empty in
+  match Analyzer.compute_post proc_data ~initial ~debug:false with
+  | Some (post, _) ->
+      (* 1(f) *)
+      report post proc_data;
+      Summary.update_summary (convert_to_summary post) summary
+  | None ->
+      failwithf
+        "Analyzer failed to compute post for %a"
+        Typ.Procname.pp (Procdesc.get_proc_name proc_data.pdesc)

@@ -60,7 +60,16 @@ let error_advice_to_csv_string error_desc => {
 
 let error_desc_to_plain_string error_desc => {
   let pp fmt => F.fprintf fmt "%a" Localise.pp_error_desc error_desc;
-  F.asprintf "%t" pp
+  let s = F.asprintf "%t" pp;
+  let s = String.strip s;
+  let s =
+    /* end error description with a dot */
+    if (String.is_suffix suffix::"." s) {
+      s
+    } else {
+      s ^ "."
+    };
+  s
 };
 
 let error_desc_to_dotty_string error_desc => Localise.error_desc_get_dotty error_desc;
@@ -250,16 +259,6 @@ module ProcsCsv = {
   };
 };
 
-let paths_to_filter =
-  Option.bind Config.filter_report_paths (fun f => Some (In_channel.read_lines f)) |>
-  Option.map f::(List.map f::SourceFile.create);
-
-let report_filter source_file =>
-  switch paths_to_filter {
-  | Some paths => List.mem equal::SourceFile.equal paths source_file
-  | None => true
-  };
-
 let should_report (issue_kind: Exceptions.err_kind) issue_type error_desc eclass =>
   if (not Config.filtering || Exceptions.equal_err_class eclass Exceptions.Linters) {
     true
@@ -368,8 +367,7 @@ module IssuesCsv = {
       if (
         key.in_footprint &&
         error_filter source_file key.err_desc key.err_name &&
-        should_report key.err_kind key.err_name key.err_desc err_data.err_class &&
-        report_filter source_file
+        should_report key.err_kind key.err_name key.err_desc err_data.err_class
       ) {
         let err_desc_string = error_desc_to_csv_string key.err_desc;
         let err_advice_string = error_advice_to_csv_string key.err_desc;
@@ -455,8 +453,7 @@ module IssuesJson = {
         key.in_footprint &&
         error_filter source_file key.err_desc key.err_name &&
         should_report_source_file &&
-        should_report key.err_kind key.err_name key.err_desc err_data.err_class &&
-        report_filter source_file
+        should_report key.err_kind key.err_name key.err_desc err_data.err_class
       ) {
         let kind = Exceptions.err_kind_string key.err_kind;
         let bug_type = Localise.to_issue_id key.err_name;
@@ -506,6 +503,7 @@ module IssuesJson = {
           infer_source_loc: json_ml_loc,
           bug_type_hum: Localise.to_human_readable_string key.err_name,
           linters_def_file: err_data.linters_def_file,
+          doc_url: err_data.doc_url,
           traceview_id: None
         };
         if (not !is_first_item) {
@@ -1029,7 +1027,7 @@ let pp_summary_by_report_kind
 
 let pp_json_report_by_report_kind formats_by_report_kind fname =>
   switch (Utils.read_file fname) {
-  | Some report_lines =>
+  | Ok report_lines =>
     let pp_json_issues format_list report => {
       let pp_json_issue (format_kind, outf: Utils.outfile) =>
         switch format_kind {
@@ -1051,7 +1049,7 @@ let pp_json_report_by_report_kind formats_by_report_kind fname =>
       | _ => ()
       };
     List.iter f::pp_report_by_report_kind formats_by_report_kind
-  | None => failwithf "Error reading %s. Does the file exist?" fname
+  | Error error => failwithf "Error reading '%s': %s" fname error
   };
 
 let pp_lint_issues_by_report_kind formats_by_report_kind error_filter linereader procname error_log => {
@@ -1313,9 +1311,7 @@ let main ::report_csv ::report_json => {
     (Stats, init_stats_format_list ()),
     (Summary, init_summary_format_list ())
   ];
-  if (not Config.buck_cache_mode) {
-    register_perf_stats_report ()
-  };
+  register_perf_stats_report ();
   print_issues formats_by_report_kind
 };
 

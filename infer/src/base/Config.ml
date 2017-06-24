@@ -236,6 +236,7 @@ let whitelisted_cpp_methods = [
   "std::forward";
   "std::min";
   "std::max";
+  "std::swap";
   "google::CheckNotNull";
 ]
 
@@ -767,11 +768,21 @@ and copy_propagation =
   CLOpt.mk_bool ~deprecated:["copy-propagation"] ~long:"copy-propagation"
     "Perform copy-propagation on the IR"
 
-and cxx =
-  CLOpt.mk_bool ~deprecated:["cxx-experimental"] ~long:"cxx"
-    ~default:true
-    ~in_help:CLOpt.[Capture, manual_clang]
-    "Analyze C++ methods"
+and cxx, cxx_infer_headers =
+  let cxx_infer_headers =
+    CLOpt.mk_bool ~long:"cxx-infer-headers"
+      ~default:true
+      ~in_help:CLOpt.[Capture, manual_clang]
+      "Include C++ header models during compilation, set by $(b,--cxx). Infer swaps some C++ \
+       headers for its own in order to get a better model of, eg, the standard library. This \
+       can sometimes cause compilation failures." in
+  let cxx = CLOpt.mk_bool_group ~long:"cxx"
+      ~default:true
+      ~in_help:CLOpt.[Capture, manual_clang]
+      "Analyze C++ methods"
+      [cxx_infer_headers] [] in
+  cxx, cxx_infer_headers
+
 
 and (
   bo_debug,
@@ -928,10 +939,10 @@ and (
     CLOpt.mk_bool_group ~long:"linters-developer-mode"
       ~in_help:CLOpt.[Capture, manual_clang_linters]
       "Debug mode for developing new linters. (Sets the analyzer to $(b,linters); also sets \
-       $(b,--debug), $(b,--debug-level-linters 2), $(b,--developer-mode), $(b,--print-logs), and \
+       $(b,--debug), $(b,--debug-level-linters 2), $(b,--developer-mode), and \
        unsets $(b,--allowed-failures) and $(b,--default-linters)."
       ~f:(fun debug -> debug_level_linters := if debug then 2 else 0; debug)
-      [debug; developer_mode; print_logs] [failures_allowed; default_linters]
+      [debug; developer_mode] [failures_allowed; default_linters]
 
   in (
     bo_debug,
@@ -963,6 +974,20 @@ and dependencies =
     ~in_help:CLOpt.[Capture, manual_java]
     "Translate all the dependencies during the capture. The classes in the given jar file will be \
      translated. No sources needed."
+
+and differential_filter_files =
+  CLOpt.mk_string_opt
+    ~long:"differential-filter-files" ~in_help:CLOpt.[Report, manual_generic]
+    "Specify the file containing the list of source files for which a differential report \
+     is desired. Source files should be specified relative to project root or be absolute"
+
+and differential_filter_set =
+  CLOpt.mk_symbol_seq ~long:"differential-filter-set" ~eq:PVariant.(=)
+    "Specify which set of the differential results is filtered with the modified files provided \
+     through the $(b,--differential-modified-files) argument. By default it is applied to all sets \
+     ($(b,introduced), $(b,fixed), and $(b,preexisting))"
+    ~symbols:[("introduced", `Introduced); ("fixed", `Fixed); ("preexisting", `Preexisting)]
+    ~default:[`Introduced; `Fixed; `Preexisting]
 
 and disable_checks =
   CLOpt.mk_string_list ~deprecated:["disable_checks"] ~long:"disable-checks" ~meta:"error name"
@@ -1044,12 +1069,6 @@ and filter_paths =
   CLOpt.mk_bool ~long:"filter-paths" ~default:true
     "Filters specified in .inferconfig"
 
-and filter_report_paths =
-  CLOpt.mk_string_opt
-    ~long:"filter-report-paths" ~in_help:CLOpt.[Report, manual_generic]
-    "Specify the file containing a newline-separated list of files for which to emit a report. \
-     Source files should be specified relative to project root or be absolute."
-
 and flavors =
   CLOpt.mk_bool ~deprecated:["-use-flavors"] ~long:"flavors"
     ~in_help:CLOpt.[Capture, manual_buck_flavors]
@@ -1117,6 +1136,13 @@ and iphoneos_target_sdk_version =
   CLOpt.mk_string_opt ~long:"iphoneos-target-sdk-version"
     ~in_help:CLOpt.[Capture, manual_clang_linters]
     "Specify the target SDK version to use for iphoneos"
+
+and iphoneos_target_sdk_version_skip_path =
+  CLOpt.mk_string_list ~long:"iphoneos-target-sdk-version-skip-path"
+    ~in_help:CLOpt.[Capture, manual_clang_linters]
+    ~meta:"path prefix OCaml regex"
+    "To be used together with iphoneos-target-sdk-version, \
+     to disable that flag in a particular path (can be specified multiple times)"
 
 and issues_fields =
   CLOpt.mk_symbol_seq ~long:"issues-fields"
@@ -1483,10 +1509,11 @@ and specs_library =
         if Filename.is_relative path then
           failwith ("Failing because path " ^ path ^ " is not absolute") in
       match Utils.read_file (resolve fname) with
-      | Some pathlist ->
+      | Ok pathlist ->
           List.iter ~f:validate_path pathlist;
           pathlist
-      | None -> failwith ("cannot read file " ^ fname ^ " from cwd " ^ (Sys.getcwd ()))
+      | Error error ->
+          failwithf "cannot read file '%s' from cwd '%s': %s" fname (Sys.getcwd ()) error
     in
     (* Add the newline-separated directories listed in <file> to the list of directories to be
        searched for .spec files *)
@@ -1557,6 +1584,10 @@ and tracing =
   CLOpt.mk_bool ~deprecated:["tracing"] ~long:"tracing"
     "Report error traces for runtime exceptions (Java only): generate preconditions for runtime\
      exceptions in Java and report errors for public methods which throw runtime exceptions"
+
+and tv_limit =
+  CLOpt.mk_int ~long:"tv-limit" ~default:100
+    ~meta:"int" "The maximum number of traces to submit to Traceview"
 
 and type_size =
   CLOpt.mk_bool ~deprecated:["type_size"] ~long:"type-size"
@@ -1846,6 +1877,7 @@ and copy_propagation = !copy_propagation
 and crashcontext = !crashcontext
 and create_harness = !android_harness
 and cxx = !cxx
+and cxx_infer_headers = !cxx_infer_headers
 and debug_level_analysis = !debug_level_analysis
 and debug_level_capture = !debug_level_capture
 and debug_level_linters = !debug_level_linters
@@ -1853,6 +1885,8 @@ and debug_exceptions = !debug_exceptions
 and debug_mode = !debug
 and dependency_mode = !dependencies
 and developer_mode = !developer_mode
+and differential_filter_files = !differential_filter_files
+and differential_filter_set = !differential_filter_set
 and disable_checks = !disable_checks
 and dotty_cfg_libs = !dotty_cfg_libs
 and enable_checks = !enable_checks
@@ -1871,7 +1905,6 @@ and fcp_apple_clang = !fcp_apple_clang
 and fcp_syntax_only = !fcp_syntax_only
 and file_renamings = !file_renamings
 and filter_paths = !filter_paths
-and filter_report_paths = !filter_report_paths
 and filtering = !filtering
 and flavors = !flavors
 and fragment_retains_view = !fragment_retains_view
@@ -1884,6 +1917,7 @@ and ignore_trivial_traces = !ignore_trivial_traces
 and immutable_cast = !immutable_cast
 and infer_cache = !infer_cache
 and iphoneos_target_sdk_version = !iphoneos_target_sdk_version
+and iphoneos_target_sdk_version_skip_path = !iphoneos_target_sdk_version_skip_path
 and issues_fields = !issues_fields
 and iterations = !iterations
 and java_jar_compiler = !java_jar_compiler
@@ -1979,6 +2013,7 @@ and trace_ondemand = !trace_ondemand
 and trace_join = !trace_join
 and trace_rearrange = !trace_rearrange
 and tracing = !tracing
+and tv_limit = !tv_limit
 and type_size = !type_size
 and unsafe_malloc = !unsafe_malloc
 and whole_seconds = !whole_seconds

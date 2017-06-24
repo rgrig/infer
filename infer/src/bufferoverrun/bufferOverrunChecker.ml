@@ -152,81 +152,137 @@ struct
             ~inst_num ~dimension:(dimension + 1) mem
       | _ -> mem
 
-  let declare_symbolic_array
-    : Typ.Procname.t -> Tenv.t -> CFG.node -> Loc.t -> Typ.t -> inst_num:int
-    -> sym_num:int -> dimension:int -> Dom.Mem.astate -> Dom.Mem.astate * int
-    = fun pname tenv node loc typ ~inst_num ~sym_num ~dimension mem ->
-      let offset = Itv.make_sym pname sym_num in
-      let size = Itv.make_sym pname (sym_num + 2) in
-      let arr =
-        Sem.eval_array_alloc pname node typ offset size inst_num dimension
-      in
-      let elem_val = Dom.Val.make_sym pname (sym_num + 4) in
-      let arr_loc = arr |> Dom.Val.get_array_blk |> ArrayBlk.get_pow_loc in
-      let mem =
-        mem
-        |> Dom.Mem.add_heap loc arr
-        |> Dom.Mem.strong_update_heap arr_loc elem_val
-      in
-      let decl_fld (mem, sym_num) (fn, typ, _) =
-        let loc =
-          mem |> Dom.Mem.find_heap loc |> Dom.Val.get_array_locs |> PowLoc.choose
+  let counter_gen init =
+    let num_ref = ref init in
+    let get_num () =
+      let v = !num_ref in
+      num_ref := v + 1;
+      v
+    in
+    get_num
+
+  let declare_symbolic_val
+    : Typ.Procname.t -> Tenv.t -> CFG.node -> Loc.t -> Typ.typ
+      -> inst_num:int -> new_sym_num: (unit -> int) -> Domain.t -> Domain.t
+    = fun pname tenv node loc typ ~inst_num ~new_sym_num mem ->
+      let max_depth = 2 in
+      let new_alloc_num = counter_gen 1 in
+      let rec decl_sym_val ~depth loc typ mem =
+        if depth > max_depth then mem else
+          let depth = depth + 1 in
+          match typ.Typ.desc with
+          | Typ.Tint ikind ->
+              let unsigned = Typ.ikind_is_unsigned ikind in
+              let v = Dom.Val.make_sym ~unsigned pname new_sym_num in
+              Dom.Mem.add_heap loc v mem
+          | Typ.Tfloat _ ->
+              let v = Dom.Val.make_sym pname new_sym_num in
+              Dom.Mem.add_heap loc v mem
+          | Typ.Tptr (typ, _) ->
+              decl_sym_arr ~depth loc typ mem
+          | Typ.Tarray (typ, opt_int_lit, _) ->
+              let opt_size = Option.map ~f:Itv.of_int_lit opt_int_lit in
+              let opt_offset = Some Itv.zero in
+              decl_sym_arr ~depth loc typ ~opt_offset ~opt_size mem
+          | Typ.Tstruct typename ->
+              let decl_fld mem (fn, typ, _) =
+                let loc_fld = Loc.append_field loc fn in
+                decl_sym_val ~depth loc_fld typ mem
+              in
+              let decl_flds str =
+                List.fold ~f:decl_fld ~init:mem str.Typ.Struct.fields
+              in
+              let opt_struct = Tenv.lookup tenv typename in
+              Option.value_map opt_struct ~default:mem ~f:decl_flds
+          | _ ->
+              if Config.bo_debug >= 3 then
+                L.(debug BufferOverrun Verbose) "/!\\ decl_fld of unhandled type: %a at %a@."
+                  (Typ.pp Pp.text) typ
+                  Location.pp (CFG.loc node);
+              mem
+
+      and decl_sym_arr ~depth loc typ ?(opt_offset=None) ?(opt_size=None) mem =
+        let option_value opt_x default_f =
+          match opt_x with
+          | Some x -> x
+          | None -> default_f ()
         in
-        let field = Loc.append_field loc fn in
-        match typ.Typ.desc with
-        | Typ.Tint _
-        | Typ.Tfloat _ ->
-            let v = Dom.Val.make_sym pname sym_num in
-            (Dom.Mem.add_heap field v mem, sym_num + 2)
-        | Typ.Tptr (typ, _) ->
-            let offset = Itv.make_sym pname sym_num in
-            let size = Itv.make_sym pname (sym_num + 2) in
-            let v =
-              Sem.eval_array_alloc pname node typ offset size inst_num dimension
-            in
-            (Dom.Mem.add_heap field v mem, sym_num + 4)
-        | _ ->
-            L.(debug BufferOverrun Verbose) "/!\\ decl_fld of unhandled type: %a at %a@."
-              (Typ.pp Pp.text) typ
-              Location.pp (CFG.loc node);
-            (mem, sym_num)
+        let itv_make_sym () = Itv.make_sym pname new_sym_num in
+        let offset = option_value opt_offset itv_make_sym in
+        let size = option_value opt_size itv_make_sym in
+        let alloc_num = new_alloc_num () in
+        let arr =
+          Sem.eval_array_alloc pname node typ offset size inst_num alloc_num
+        in
+        let mem = Dom.Mem.add_heap loc arr mem in
+        let deref_loc =
+          Loc.of_allocsite (Sem.get_allocsite pname node inst_num alloc_num)
+        in
+        decl_sym_val ~depth deref_loc typ mem
       in
-      match typ.Typ.desc with
-      | Typ.Tstruct typename ->
-          (match Tenv.lookup tenv typename with
-           | Some str ->
-               List.fold ~f:decl_fld ~init:(mem, sym_num + 6) str.Typ.Struct.fields
-           | _ -> (mem, sym_num + 6))
-      | _ -> (mem, sym_num + 6)
+      decl_sym_val ~depth:0 loc typ mem
 
   let declare_symbolic_parameter
     : Procdesc.t -> Tenv.t -> CFG.node -> int -> Dom.Mem.astate -> Dom.Mem.astate
     = fun pdesc tenv node inst_num mem ->
       let pname = Procdesc.get_proc_name pdesc in
-      let add_formal (mem, inst_num, sym_num) (pvar, typ) =
-        match typ.Typ.desc with
-        | Typ.Tint _ ->
-            let v = Dom.Val.make_sym pname sym_num in
-            let mem = Dom.Mem.add_heap (Loc.of_pvar pvar) v mem in
-            (mem, inst_num + 1, sym_num + 2)
-        | Typ.Tptr (typ, _) ->
-            let (mem, sym_num) =
-              declare_symbolic_array pname tenv node (Loc.of_pvar pvar) typ
-                ~inst_num ~sym_num ~dimension:1 mem
-            in
-            (mem, inst_num + 1, sym_num)
-        | _ ->
-            L.(debug BufferOverrun Verbose) "declare_symbolic_parameter of unhandled type: %a@."
-              (Typ.pp Pp.text) typ;
-            (mem, inst_num, sym_num) (* TODO: add other cases if necessary *)
+      let new_sym_num = counter_gen 0 in
+      let add_formal (mem, inst_num) (pvar, typ) =
+        let loc = Loc.of_pvar pvar in
+        let mem =
+          declare_symbolic_val pname tenv node loc typ ~inst_num ~new_sym_num mem
+        in
+        (mem, inst_num + 1)
       in
-      List.fold ~f:add_formal ~init:(mem, inst_num, 0) (Sem.get_formals pdesc)
-      |> fst3
+      List.fold ~f:add_formal ~init:(mem, inst_num) (Sem.get_formals pdesc)
+      |> fst
 
-  let instantiate_ret
-    : Tenv.t -> Procdesc.t option -> Typ.Procname.t -> (Exp.t * Typ.t) list
-      -> Dom.Mem.astate -> Dom.Summary.t -> Location.t -> Dom.Val.astate
-    = fun tenv callee_pdesc callee_pname params caller_mem summary loc ->
+  let instantiate_ret ret callee_pname callee_exit_mem subst_map mem =
+    match ret with
+    | Some (id, _) ->
+        let ret_loc = Loc.of_pvar (Pvar.get_ret_pvar callee_pname) in
+        let ret_val = Dom.Mem.find_heap ret_loc callee_exit_mem in
+        let ret_var = Loc.of_var (Var.of_id id) in
+        Dom.Val.subst ret_val subst_map
+        |> Fn.flip (Dom.Mem.add_stack ret_var) mem
+    | None -> mem
+
+  let instantiate_param tenv pdesc params callee_entry_mem callee_exit_mem subst_map location mem =
+    let formals = Sem.get_formals pdesc in
+    let actuals = List.map ~f:(fun (a, _) -> Sem.eval a mem location) params in
+    let f mem formal actual =
+      match (snd formal).Typ.desc with
+      | Typ.Tptr (typ, _) ->
+          (match typ.Typ.desc with
+           | Typ.Tstruct typename ->
+               (match Tenv.lookup tenv typename with
+                | Some str ->
+                    let formal_locs = Dom.Mem.find_heap (Loc.of_pvar (fst formal)) callee_entry_mem
+                                      |> Dom.Val.get_array_blk |> ArrayBlk.get_pow_loc in
+                    let instantiate_fld mem (fn, _, _) =
+                      let formal_fields = PowLoc.append_field formal_locs fn in
+                      let v = Dom.Mem.find_heap_set formal_fields callee_exit_mem in
+                      let actual_fields = PowLoc.append_field (Dom.Val.get_all_locs actual) fn in
+                      Dom.Val.subst v subst_map
+                      |> Fn.flip (Dom.Mem.strong_update_heap actual_fields) mem
+                    in
+                    List.fold ~f:instantiate_fld ~init:mem str.Typ.Struct.fields
+                | _ -> mem)
+           | _ ->
+               let formal_locs = Dom.Mem.find_heap (Loc.of_pvar (fst formal)) callee_entry_mem
+                                 |> Dom.Val.get_array_blk |> ArrayBlk.get_pow_loc in
+               let v = Dom.Mem.find_heap_set formal_locs callee_exit_mem in
+               let actual_locs = Dom.Val.get_all_locs actual in
+               Dom.Val.subst v subst_map
+               |> Fn.flip (Dom.Mem.strong_update_heap actual_locs) mem)
+      | _ -> mem
+    in
+    try List.fold2_exn formals actuals ~init:mem ~f with Invalid_argument _ -> mem
+
+  let instantiate_mem
+    : Tenv.t -> (Ident.t * Typ.t) option -> Procdesc.t option -> Typ.Procname.t
+      -> (Exp.t * Typ.t) list -> Dom.Mem.astate -> Dom.Summary.t -> Location.t -> Dom.Mem.astate
+    = fun tenv ret callee_pdesc callee_pname params caller_mem summary loc ->
       let callee_entry_mem = Dom.Summary.get_input summary in
       let callee_exit_mem = Dom.Summary.get_output summary in
       match callee_pdesc with
@@ -234,11 +290,9 @@ struct
           let subst_map =
             Sem.get_subst_map tenv pdesc params caller_mem callee_entry_mem loc
           in
-          let ret_loc = Loc.of_pvar (Pvar.get_ret_pvar callee_pname) in
-          let ret_val = Dom.Mem.find_heap ret_loc callee_exit_mem in
-          Dom.Val.subst ret_val subst_map
-          |> Dom.Val.normalize    (* normalize bottom *)
-      | _ -> Dom.Val.Itv.top
+          instantiate_ret ret callee_pname callee_exit_mem subst_map caller_mem
+          |> instantiate_param tenv pdesc params callee_entry_mem callee_exit_mem subst_map loc
+      | None -> caller_mem
 
   let print_debug_info : Sil.instr -> Dom.Mem.astate -> Dom.Mem.astate -> unit
     = fun instr pre post ->
@@ -259,8 +313,11 @@ struct
         | Load (id, exp, _, loc) ->
             let locs = Sem.eval exp mem loc |> Dom.Val.get_all_locs in
             let v = Dom.Mem.find_heap_set locs mem in
-            Dom.Mem.add_stack (Loc.of_var (Var.of_id id)) v mem
-            |> Dom.Mem.load_alias id exp
+            if Ident.is_none id then
+              mem
+            else
+              Dom.Mem.add_stack (Loc.of_var (Var.of_id id)) v mem
+              |> Dom.Mem.load_alias id exp
         | Store (exp1, _, exp2, loc) ->
             let locs = Sem.eval exp1 mem loc |> Dom.Val.get_all_locs in
             Dom.Mem.update_mem locs (Sem.eval exp2 mem loc) mem
@@ -270,13 +327,7 @@ struct
             (match Summary.read_summary pdesc callee_pname with
              | Some summary ->
                  let callee = extras callee_pname in
-                 let ret_val =
-                   instantiate_ret tenv callee callee_pname params mem summary loc
-                 in
-                 (match ret with
-                  | Some (id, _) ->
-                      Dom.Mem.add_stack (Loc.of_var (Var.of_id id)) ret_val mem
-                  | _ -> mem)
+                 instantiate_mem tenv ret callee callee_pname params mem summary loc
              | None ->
                  handle_unknown_call pname ret callee_pname params node mem loc)
         | Declare_locals (locals, _) ->
@@ -311,7 +362,6 @@ end
 
 module Analyzer = AbstractInterpreter.Make (ProcCfg.Normal) (TransferFunctions)
 
-module Interprocedural = AbstractInterpreter.Interprocedural (Summary)
 module CFG = Analyzer.TransferFunctions.CFG
 module Sem = BufferOverrunSemantics.Make (CFG)
 
@@ -328,15 +378,17 @@ struct
         | Exp.Var _ ->
             let arr = Sem.eval exp mem loc |> Dom.Val.get_array_blk in
             Some (arr, Itv.zero, true)
-        | Exp.Lindex (e1, e2)
-        | Exp.BinOp (Binop.PlusA, e1, e2) ->
-            let arr = Sem.eval e1 mem loc |> Dom.Val.get_array_blk in
+        | Exp.Lindex (e1, e2) ->
+            let locs = Sem.eval_locs e1 mem loc |> Dom.Val.get_all_locs in
+            let arr = Dom.Mem.find_set locs mem |> Dom.Val.get_array_blk in
             let idx = Sem.eval e2 mem loc |> Dom.Val.get_itv in
             Some (arr, idx, true)
-        | Exp.BinOp (Binop.MinusA, e1, e2) ->
+        | Exp.BinOp (Binop.PlusA as bop, e1, e2)
+        | Exp.BinOp (Binop.MinusA as bop, e1, e2) ->
             let arr = Sem.eval e1 mem loc |> Dom.Val.get_array_blk in
             let idx = Sem.eval e2 mem loc |> Dom.Val.get_itv in
-            Some (arr, idx, false)
+            let is_plus = Binop.equal bop Binop.PlusA in
+            Some (arr, idx, is_plus)
         | _ -> None
       in
       match array_access with
@@ -424,7 +476,7 @@ struct
                      let desc = Errdesc.explain_condition_always_true_false tenv i cond node loc in
                      let exn =
                        Exceptions.Condition_always_true_false (desc, not true_branch, __POS__) in
-                     Reporting.log_warning pname ~loc exn
+                     Reporting.log_warning_deprecated pname ~loc exn
                  | Sil.Call (_, Const (Cfun pname), _, _, _) when
                      String.equal (Typ.Procname.get_method pname) "exit" &&
                      is_last_statement_of_if_branch rem_instrs node -> ()
@@ -432,7 +484,7 @@ struct
                      let loc = Sil.instr_get_loc instr in
                      let desc = Errdesc.explain_unreachable_code_after loc in
                      let exn = Exceptions.Unreachable_code_after (desc, __POS__) in
-                     Reporting.log_error pname ~loc exn)
+                     Reporting.log_error_deprecated pname ~loc exn)
             | _ -> ()
           in
           print_debug_info instr mem' cond_set;
@@ -471,7 +523,7 @@ struct
             let exn =
               Exceptions.Checkers (Localise.to_issue_id Localise.buffer_overrun, error_desc) in
             let trace = [Errlog.make_trace_element 0 loc description []] in
-            Reporting.log_error pname ~loc ~ltr:trace exn
+            Reporting.log_error_deprecated pname ~loc ~ltr:trace exn
         | _ -> ()
       in
       Dom.ConditionSet.iter report1 conds
@@ -505,19 +557,12 @@ let print_summary : Typ.Procname.t -> Dom.Summary.t -> unit
       Dom.Summary.pp_summary s
 
 let checker : Callbacks.proc_callback_args -> Specs.summary
-  = fun ({ summary } as callback) ->
+  = fun { proc_desc; tenv; summary; get_proc_desc; } ->
     let proc_name = Specs.get_proc_name summary in
-    let make_extras _ = callback.get_proc_desc in
-    let updated_summary : Specs.summary =
-      Interprocedural.compute_and_store_post
-        ~compute_post
-        ~make_extras
-        callback in
-    let post =
-      updated_summary.payload.buffer_overrun in
-    begin
-      match post with
-      | Some s when Config.bo_debug >= 1 -> print_summary proc_name s
-      | _ -> ()
-    end;
-    updated_summary
+    let proc_data = ProcData.make proc_desc tenv get_proc_desc in
+    match compute_post proc_data with
+    | Some post ->
+        if Config.bo_debug >= 1 then print_summary proc_name post;
+        Summary.update_summary post summary
+    | None ->
+        summary

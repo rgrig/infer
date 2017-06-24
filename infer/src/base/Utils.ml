@@ -38,10 +38,10 @@ let read_file fname =
   with
   | End_of_file ->
       cleanup ();
-      Some (List.rev !res)
-  | Sys_error _ ->
+      Ok (List.rev !res)
+  | Sys_error error ->
       cleanup ();
-      None
+      Error error
 
 (** copy a source file, return the number of lines, or None in case of error *)
 let copy_file fname_from fname_to =
@@ -255,7 +255,7 @@ let create_dir dir =
 
 let realpath_cache = Hashtbl.create 1023
 
-let realpath path =
+let realpath ?(warn_on_error=true) path =
   match Hashtbl.find realpath_cache path with
   | exception Not_found -> (
       match Filename.realpath path with
@@ -263,8 +263,9 @@ let realpath path =
           Hashtbl.add realpath_cache path (Ok realpath);
           realpath
       | exception Unix.Unix_error (code, f, arg) ->
-          F.eprintf
-            "WARNING: Failed to resolve file %s with \"%s\" @\n@." arg (Unix.error_message code);
+          if warn_on_error then
+            F.eprintf
+              "WARNING: Failed to resolve file %s with \"%s\" @\n@." arg (Unix.error_message code);
           (* cache failures as well *)
           Hashtbl.add realpath_cache path (Error (code, f, arg));
           raise (Unix.Unix_error (code, f, arg))
@@ -296,3 +297,21 @@ let compare_versions v1 v2 =
   let lv1  = int_list_of_version v1 in
   let lv2  = int_list_of_version v2 in
   [%compare : int list] lv1 lv2
+
+let write_file_with_locking ?(delete=false) ~f:do_write fname =
+  Unix.with_file ~mode:Unix.[O_WRONLY; O_CREAT] fname ~f:(fun file_descr ->
+      if Unix.flock file_descr Unix.Flock_command.lock_exclusive then (
+        (* make sure we're not writing over some existing, possibly longer content: some other
+           process may have snagged the file from under us between open(2) and flock(2) so passing
+           O_TRUNC to open(2) above would not be a good substitute for calling ftruncate(2)
+           below. *)
+        Unix.ftruncate file_descr ~len:Int64.zero;
+        let outc = Unix.out_channel_of_descr file_descr in
+        do_write outc;
+        flush outc;
+        ignore (Unix.flock file_descr Unix.Flock_command.unlock)
+      );
+    );
+  if delete then
+    try Unix.unlink fname with
+    | Unix.Unix_error _ -> ()

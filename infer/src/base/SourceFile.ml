@@ -10,6 +10,8 @@
 open! IStd
 open! PVariant
 
+module L = Logging
+
 let count_newlines (path: string): int =
   let f file = In_channel.fold_lines file ~init:0 ~f:(fun i _ -> i + 1) in
   In_channel.with_file path ~f
@@ -34,14 +36,14 @@ module Map = Caml.Map.Make (OrderedSourceFile)
 
 module Set = Caml.Set.Make (OrderedSourceFile)
 
-let from_abs_path fname =
+let from_abs_path ?(warn_on_error=true) fname =
   if Filename.is_relative fname then
     (failwithf
        "ERROR: Path %s is relative, when absolute path was expected .@."
        fname);
   (* try to get realpath of source file. Use original if it fails *)
-  let fname_real = try Utils.realpath fname with Unix.Unix_error _ -> fname in
-  let project_root_real = Utils.realpath Config.project_root in
+  let fname_real = try Utils.realpath ~warn_on_error fname with Unix.Unix_error _ -> fname in
+  let project_root_real = Utils.realpath ~warn_on_error Config.project_root in
   let models_dir_real = Config.models_src_dir in
   match Utils.filename_to_relative ~root:project_root_real fname_real with
   | Some path -> RelativeProjectRoot path
@@ -113,7 +115,7 @@ let path_exists abs_path =
     String.Table.set exists_cache ~key:abs_path ~data:result;
     result
 
-let of_header header_file =
+let of_header ?(warn_on_error=true) header_file =
   let abs_path = to_abs_path header_file in
   let source_exts = ["c"; "cc"; "cpp"; "cxx"; "m"; "mm"] in
   let header_exts = ["h"; "hh"; "hpp"; "hxx"] in
@@ -124,29 +126,32 @@ let of_header header_file =
         List.find ~f:path_exists possible_files
       )
     | _ -> None in
-  Option.map ~f:from_abs_path file_opt
+  Option.map ~f:(from_abs_path ~warn_on_error) file_opt
 
-let create path =
+let create ?(warn_on_error=true) path =
   if Filename.is_relative path then
     (* sources in changed-files-index may be specified relative to project root *)
     RelativeProjectRoot path
   else
-    from_abs_path path
+    from_abs_path ~warn_on_error path
 
 let changed_files_set =
-  Option.bind Config.changed_files_index Utils.read_file |>
-  Option.map ~f:(
-    List.fold
-      ~f:(fun changed_files line ->
-          let source_file = create line in
-          let changed_files' = Set.add source_file changed_files in
-          (* Add source corresponding to changed header if it exists *)
-          match of_header source_file with
-          | Some src -> Set.add src changed_files'
-          | None -> changed_files'
-        )
-      ~init:Set.empty
-  )
+  match Config.changed_files_index with
+  | None ->
+      None
+  | Some index -> match Utils.read_file index with
+    | Ok lines ->
+        Some (List.fold lines ~init:Set.empty ~f:(fun changed_files line ->
+            let source_file = create line in
+            let changed_files' = Set.add source_file changed_files in
+            (* Add source corresponding to changed header if it exists *)
+            match of_header source_file with
+            | Some src -> Set.add src changed_files'
+            | None -> changed_files'
+          ))
+    | Error error ->
+        L.user_error "Error reading the changed files index '%s': %s@." index error ;
+        None
 
 module UNSAFE = struct
   let from_string str =

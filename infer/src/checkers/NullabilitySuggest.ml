@@ -40,15 +40,7 @@ module UseDefChain = struct
 end
 module Domain = AbstractDomain.Map (AccessPath.Raw) (UseDefChain)
 
-(* Right now this is just a placeholder. We'll change it to something useful when necessary *)
-module Summary = Summary.Make(struct
-    type payload = unit
-
-    let update_payload _ summary = summary
-    let read_payload _ = None
-  end)
-
-type extras = unit
+type extras = ProcData.no_extras
 
 module TransferFunctions (CFG : ProcCfg.S) = struct
   module CFG = CFG
@@ -116,7 +108,6 @@ module Analyzer =
   AbstractInterpreter.Make
     (ProcCfg.Exceptional)
     (LowerHil.Make (TransferFunctions))
-module Interprocedural = AbstractInterpreter.Interprocedural (Summary)
 
 let make_error_trace astate ap ud =
   let name_of ap =
@@ -164,10 +155,9 @@ let pretty_field_name proc_data field_name =
       (* This format is subject to change once this checker gets to run on C/Cpp/ObjC *)
       Fieldname.to_string field_name
 
-let checker callback =
+let checker { Callbacks.summary; proc_desc; tenv; } =
   let report astate (proc_data : extras ProcData.t) =
     let report_access_path ap udchain =
-      let pname = Procdesc.get_proc_name proc_data.pdesc in
       let issue_kind = Localise.to_issue_id Localise.field_should_be_nullable in
       match AccessPath.Raw.get_field_and_annotation ap proc_data.tenv with
       | Some (field_name, _) ->
@@ -180,24 +170,22 @@ let checker callback =
           begin
             match make_error_trace astate ap udchain with
             | Some (loc, ltr) ->
-                Reporting.log_warning pname ~loc ~ltr exn
+                Reporting.log_warning summary ~loc ~ltr exn
             | None ->
-                Reporting.log_warning pname exn
+                Reporting.log_warning summary exn
           end
       | _ -> ()
     in
     Domain.iter report_access_path astate
   in
-  let compute_post (proc_data : extras ProcData.t) =
-    (* Assume all fields are not null in the beginning *)
-    let initial = Domain.empty, IdAccessPathMapDomain.empty in
-    match Analyzer.compute_post proc_data ~initial ~debug:false with
-    | Some (post, _) ->
-        report post proc_data;
-        Some ()
-    | None ->
-        failwithf
-          "Analyzer failed to compute post for %a"
-          Typ.Procname.pp (Procdesc.get_proc_name proc_data.pdesc)
-  in
-  Interprocedural.compute_and_store_post ~compute_post ~make_extras:(fun _ -> ()) callback
+  (* Assume all fields are not null in the beginning *)
+  let initial = Domain.empty, IdAccessPathMapDomain.empty in
+  let proc_data = ProcData.make_default proc_desc tenv in
+  match Analyzer.compute_post proc_data ~initial ~debug:false with
+  | Some (post, _) ->
+      report post proc_data;
+      summary
+  | None ->
+      failwithf
+        "Analyzer failed to compute post for %a"
+        Typ.Procname.pp (Procdesc.get_proc_name proc_data.pdesc)

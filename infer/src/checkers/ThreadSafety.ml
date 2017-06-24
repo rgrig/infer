@@ -83,8 +83,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     | _ -> false
 
   let get_lock_model =
-    let is_std_mutex_lock =
-      let matcher = QualifiedCppName.Match.of_fuzzy_qual_names ["std::mutex::lock"] in
+    let is_cpp_lock =
+      let matcher = QualifiedCppName.Match.of_fuzzy_qual_names [
+          "std::mutex::lock"; "std::lock_guard::lock_guard"] in
       fun pname ->
         QualifiedCppName.Match.match_qualifiers matcher (Typ.Procname.get_qualifiers pname)
     and is_std_mutex_unlock =
@@ -123,7 +124,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             | _ ->
                 NoEffect
           end
-    | (Typ.Procname.ObjC_Cpp _ as pname) when is_std_mutex_lock pname ->
+    | (Typ.Procname.ObjC_Cpp _ as pname) when is_cpp_lock pname ->
         Lock
     | (Typ.Procname.ObjC_Cpp _ as pname) when is_std_mutex_unlock pname ->
         Unlock
@@ -156,23 +157,70 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     | _ ->
         attributes
 
-  let propagate_attributes lhs_access_path rhs_access_paths attribute_map formal_map =
-    let rhs_attributes =
-      if List.is_empty rhs_access_paths (* only happens when rhs is a constant *)
-      then
-        (* rhs is a constant, and constants are both owned and functional *)
-        Domain.AttributeSetDomain.of_list
-          [Domain.Attribute.unconditionally_owned; Domain.Attribute.Functional]
-      else
-        let propagate_attributes_ acc rhs_access_path =
-          (try Domain.AttributeMapDomain.find rhs_access_path attribute_map
-           with Not_found -> acc)
-          |> add_conditional_ownership_attribute rhs_access_path formal_map attribute_map in
-        List.fold
-          ~f:propagate_attributes_
-          ~init:Domain.AttributeSetDomain.empty
-          rhs_access_paths in
-    Domain.AttributeMapDomain.add lhs_access_path rhs_attributes attribute_map
+
+  let remove_ownership_attributes attributes =
+    Domain.AttributeSetDomain.filter
+      (function | Domain.Attribute.OwnedIf _ -> false | _ -> true)
+      attributes
+
+  (* propagate attributes from the leaves to the root of an RHS Hil expression.
+     Special casing on ownership. *)
+  let rec attributes_of_expr formal_map attribute_map e =
+    let open HilExp in
+    let open Domain in
+    match e with
+    | Constant _ ->
+        AttributeSetDomain.of_list [Attribute.unconditionally_owned; Attribute.Functional]
+    | AccessPath ap ->
+        begin
+          try AttributeMapDomain.find ap attribute_map
+          with Not_found -> AttributeSetDomain.empty
+        end
+        |> add_conditional_ownership_attribute ap formal_map attribute_map
+    | Exception expr (* treat exceptions as transparent wrt attributes *)
+    | Cast(_, expr) ->
+        attributes_of_expr formal_map attribute_map expr
+    | UnaryOperator(_, expr, _) ->
+        attributes_of_expr formal_map attribute_map expr
+        |> remove_ownership_attributes
+    | BinaryOperator(_, expr1, expr2) ->
+        let attributes1 = attributes_of_expr formal_map attribute_map expr1 in
+        let attributes2 = attributes_of_expr formal_map attribute_map expr2 in
+        AttributeSetDomain.join attributes1 attributes2
+        |> remove_ownership_attributes
+    | Closure _ | Sizeof _ ->
+        AttributeSetDomain.empty
+
+  (* will return true on x.f.g.h when x.f and x.f.g are owned, but not requiring x.f.g.h *)
+  (* must not be called with an empty access list *)
+  let all_prefixes_owned (base, accesses) attribute_map =
+    let but_last_rev = List.rev accesses |> List.tl_exn in
+    let rec aux acc = function
+      | [] -> acc
+      | (_::tail) as all -> aux ((List.rev all)::acc) tail in
+    let prefixes = aux [] but_last_rev in
+    List.for_all ~f:(fun ap -> is_owned (base, ap) attribute_map) prefixes
+
+  let propagate_attributes lhs_access_path rhs_exp attribute_map formal_map =
+    let rhs_attributes = attributes_of_expr formal_map attribute_map rhs_exp in
+    let lhs_root = fst lhs_access_path in
+    let filter_on_globals =
+      (* do not assign ownership to access paths rooted at globals *)
+      if Var.is_global (fst lhs_root)
+      then remove_ownership_attributes else Fn.id
+    in
+    let filter_on_lhs =
+      (* do not assign ownership when lhs is not a single var or
+         a single-field ap whose root is conditionally owned, or,
+         all prefixes are owned *)
+      match snd lhs_access_path with
+      | [] -> Fn.id
+      | [_] when FormalMap.is_formal lhs_root formal_map -> Fn.id
+      | _ when all_prefixes_owned lhs_access_path attribute_map -> Fn.id
+      | _ -> remove_ownership_attributes
+    in
+    let final_attributes = filter_on_globals rhs_attributes |> filter_on_lhs in
+    Domain.AttributeMapDomain.add lhs_access_path final_attributes attribute_map
 
   let propagate_return_attributes ret_opt ret_attributes actuals attribute_map formal_map =
     let open Domain in
@@ -329,7 +377,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             | ("android.app.Activity" | "android.view.View"), "findViewById" ->
                 (* assume findViewById creates fresh View's (note: not always true) *)
                 true
-            | "android.support.v4.util.Pools$SynchronizedPool", "acquire" ->
+            | "android.support.v4.util.Pools$Pool", "acquire" ->
                 (* a pool should own all of its objects *)
                 true
             | _ ->
@@ -349,51 +397,65 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           | ("android.util.SparseArray" | "android.support.v4.util.SparseArrayCompat"),
             ("append" | "clear" | "delete" | "put" | "remove" | "removeAt" | "removeAtRange"
             | "setValueAt") -> true
+          | "android.support.v4.util.SimpleArrayMap",
+            ("clear" | "ensureCapacity" | "put" | "putAll" | "remove" | "removeAt"
+            | "setValueAt") -> true
+          | "android.support.v4.util.Pools$SimplePool",
+            ("acquire" | "release") -> true
           | "java.util.List", ("add" | "addAll" | "clear" | "remove" | "set") -> true
           | "java.util.Map", ("clear" | "put" | "putAll" | "remove") -> true
           | _ -> false in
-        let is_threadsafe_collection typename _ = match Typ.Name.name typename with
-          | "java.util.concurrent.ConcurrentMap" | "java.util.concurrent.CopyOnWriteArrayList" ->
-              true
-          | _ ->
-              false in
-        PatternMatch.supertype_exists tenv is_container_write_ typename &&
-        not (PatternMatch.supertype_exists tenv is_threadsafe_collection typename)
+        PatternMatch.supertype_exists tenv is_container_write_ typename
     | _ ->
         false
 
-  let is_synchronized_container ((_, (base_typ : Typ.t)), accesses) tenv =
-    let is_annotated_synchronized base_typename container_field tenv =
-      match Tenv.lookup tenv base_typename with
-      | Some base_typ ->
-          Annotations.field_has_annot
-            container_field
-            base_typ Annotations.ia_is_synchronized_collection
-      | None ->
-          false in
-    match List.rev accesses with
-    | AccessPath.FieldAccess base_field ::
-      AccessPath.FieldAccess container_field :: _->
-        let base_typename =
-          Typ.Name.Java.from_string (Fieldname.java_get_class base_field) in
-        is_annotated_synchronized base_typename container_field tenv
-    | [AccessPath.FieldAccess container_field] ->
-        begin
-          match base_typ.desc with
-          | Typ.Tstruct base_typename | Tptr ({Typ.desc=Tstruct base_typename}, _) ->
-              is_annotated_synchronized base_typename container_field tenv
-          | _ ->
-              false
-        end
-    | _ ->
-        false
+  let is_threadsafe_collection pn tenv = match pn with
+    | Typ.Procname.Java java_pname ->
+        let typename = Typ.Name.Java.from_string (Typ.Procname.java_get_class_name java_pname) in
+        let aux tn _ =
+          match Typ.Name.name tn with
+          | "java.util.concurrent.ConcurrentMap"
+          | "java.util.concurrent.CopyOnWriteArrayList"
+          | "android.support.v4.util.Pools$SynchronizedPool" -> true
+          | _ -> false in
+        PatternMatch.supertype_exists tenv aux typename
+    | _ -> false
 
-  let add_container_write callee_pname receiver_ap callee_loc tenv =
-    (* return true if field pointing to container is marked @SyncrhonizedContainer *)
+  let is_synchronized_container callee_pname ((_, (base_typ : Typ.t)), accesses) tenv =
+    if is_threadsafe_collection callee_pname tenv
+    then
+      true
+    else
+      let is_annotated_synchronized base_typename container_field tenv =
+        match Tenv.lookup tenv base_typename with
+        | Some base_typ ->
+            Annotations.field_has_annot
+              container_field
+              base_typ Annotations.ia_is_synchronized_collection
+        | None ->
+            false in
+      match List.rev accesses with
+      | AccessPath.FieldAccess base_field ::
+        AccessPath.FieldAccess container_field :: _->
+          let base_typename =
+            Typ.Name.Java.from_string (Fieldname.java_get_class base_field) in
+          is_annotated_synchronized base_typename container_field tenv
+      | [AccessPath.FieldAccess container_field] ->
+          begin
+            match base_typ.desc with
+            | Typ.Tstruct base_typename | Tptr ({Typ.desc=Tstruct base_typename}, _) ->
+                is_annotated_synchronized base_typename container_field tenv
+            | _ ->
+                false
+          end
+      | _ ->
+          false
+
+  let make_container_write callee_pname receiver_ap callee_loc tenv =
     (* create a dummy write that represents mutating the contents of the container *)
     let open Domain in
     let callee_accesses =
-      if is_synchronized_container receiver_ap tenv
+      if is_synchronized_container callee_pname receiver_ap tenv
       then
         AccessDomain.empty
       else
@@ -417,7 +479,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             failwithf
               "Call to %a is marked as a container write, but has no receiver"
               Typ.Procname.pp callee_pname in
-      add_container_write callee_pname receiver_ap callee_loc tenv
+      make_container_write callee_pname receiver_ap callee_loc tenv
     else
       Summary.read_summary caller_pdesc callee_pname
 
@@ -681,8 +743,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
               astate.attribute_map
               proc_data in
         let attribute_map =
-          propagate_attributes
-            lhs_access_path (HilExp.get_access_paths rhs_exp) astate.attribute_map extras in
+          propagate_attributes lhs_access_path rhs_exp astate.attribute_map extras in
         { astate with accesses; attribute_map; }
 
     | Assume (assume_exp, _, _, loc) ->
@@ -745,8 +806,6 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 end
 
 module Analyzer = AbstractInterpreter.Make (ProcCfg.Normal) (LowerHil.Make(TransferFunctions))
-
-module Interprocedural = AbstractInterpreter.Interprocedural (Summary)
 
 (* similarly, we assume that immutable classes safely encapsulate their state *)
 let is_immutable_collection_class class_name tenv =
@@ -851,61 +910,70 @@ let empty_post =
   and return_attrs = ThreadSafetyDomain.AttributeSetDomain.empty in
   (initial_thumbs_up, initial_known_on_ui_thread, has_lock, ThreadSafetyDomain.AccessDomain.empty, return_attrs)
 
-let analyze_procedure callback =
+let analyze_procedure { Callbacks.proc_desc; tenv; summary; } =
   let is_initializer tenv proc_name =
     Typ.Procname.is_constructor proc_name || FbThreadSafety.is_custom_init tenv proc_name in
   let open ThreadSafetyDomain in
   (* convert the abstract state to a summary by dropping the id map *)
-  let compute_post ({ ProcData.pdesc; tenv; extras; } as proc_data) =
-    if should_analyze_proc pdesc tenv
-    then
-      begin
-        if not (Procdesc.did_preanalysis pdesc) then Preanal.do_liveness pdesc tenv;
-        let initial =
-          let threads = runs_on_ui_thread pdesc || is_thread_confined_method tenv pdesc in
-          if is_initializer tenv (Procdesc.get_proc_name pdesc)
-          then
-            let add_owned_formal acc formal_index =
-              match FormalMap.get_formal_base formal_index extras with
-              | Some base ->
-                  AttributeMapDomain.add_attribute (base, []) Attribute.unconditionally_owned acc
-              | None ->
-                  acc in
-            let owned_formals =
-              (* if a constructer is called via DI, all of its formals will be freshly allocated
-                 and therefore owned. we assume that constructors annotated with @Inject will only
-                 be called via DI or using fresh parameters. *)
-              if Annotations.pdesc_has_return_annot pdesc Annotations.ia_is_inject
-              then List.mapi ~f:(fun i _ -> i)  (Procdesc.get_formals pdesc)
-              else [0] (* express that the constructor owns [this] *) in
-            let attribute_map =
-              List.fold
-                ~f:add_owned_formal
-                owned_formals
-                ~init:ThreadSafetyDomain.empty.attribute_map in
-            { ThreadSafetyDomain.empty with attribute_map; threads; }, IdAccessPathMapDomain.empty
-          else
-            { ThreadSafetyDomain.empty with threads; }, IdAccessPathMapDomain.empty in
+  if should_analyze_proc proc_desc tenv
+  then
+    begin
+      if not (Procdesc.did_preanalysis proc_desc) then Preanal.do_liveness proc_desc tenv;
+      let extras = FormalMap.make proc_desc in
+      let proc_data = ProcData.make proc_desc tenv extras in
+      let initial =
+        let threads = runs_on_ui_thread proc_desc || is_thread_confined_method tenv proc_desc in
+        if is_initializer tenv (Procdesc.get_proc_name proc_desc)
+        then
+          let add_owned_formal acc formal_index =
+            match FormalMap.get_formal_base formal_index extras with
+            | Some base ->
+                AttributeMapDomain.add_attribute (base, []) Attribute.unconditionally_owned acc
+            | None ->
+                acc in
+          let owned_formals =
+            (* if a constructer is called via DI, all of its formals will be freshly allocated
+               and therefore owned. we assume that constructors annotated with @Inject will only
+               be called via DI or using fresh parameters. *)
+            if Annotations.pdesc_has_return_annot proc_desc Annotations.ia_is_inject
+            then List.mapi ~f:(fun i _ -> i)  (Procdesc.get_formals proc_desc)
+            else [0] (* express that the constructor owns [this] *) in
+          let attribute_map =
+            List.fold
+              ~f:add_owned_formal
+              owned_formals
+              ~init:ThreadSafetyDomain.empty.attribute_map in
+          { ThreadSafetyDomain.empty with attribute_map; threads; }, IdAccessPathMapDomain.empty
+        else
+          { ThreadSafetyDomain.empty with threads; }, IdAccessPathMapDomain.empty in
 
-        match Analyzer.compute_post proc_data ~initial ~debug:false with
-        | Some ({ thumbs_up; threads; locks; accesses; attribute_map; }, _) ->
-            let return_var_ap =
-              AccessPath.of_pvar
-                (Pvar.get_ret_pvar (Procdesc.get_proc_name pdesc))
-                (Procdesc.get_ret_type pdesc) in
-            let return_attributes =
-              try AttributeMapDomain.find return_var_ap attribute_map
-              with Not_found -> AttributeSetDomain.empty in
-            Some (thumbs_up, threads, locks, accesses, return_attributes)
-        | None ->
-            None
-      end
-    else
-      Some empty_post in
-  Interprocedural.compute_and_store_post
-    ~compute_post
-    ~make_extras:FormalMap.make
-    callback
+      match Analyzer.compute_post proc_data ~initial ~debug:false with
+      | Some ({ thumbs_up; threads; locks; accesses; attribute_map; }, _) ->
+          let return_var_ap =
+            AccessPath.of_pvar
+              (Pvar.get_ret_pvar (Procdesc.get_proc_name proc_desc))
+              (Procdesc.get_ret_type proc_desc) in
+          let return_attributes =
+            try AttributeMapDomain.find return_var_ap attribute_map
+            with Not_found -> AttributeSetDomain.empty in
+          (* A hack for modeling lock_guard by releasing a
+             lock at the end of the procedure, as destructors are not modeled yet *)
+          let update_locks = match Procdesc.get_proc_name proc_desc with
+            | ObjC_Cpp _ when locks ->
+                let matcher = QualifiedCppName.Match.of_fuzzy_qual_names ["std::lock_guard"] in
+                (* Unlock, if the procedure contains a local field of type std::lock_guard *)
+                not (List.exists (Procdesc.get_locals proc_desc) ~f:(fun (_, ft) ->
+                    Option.exists (Typ.name ft) ~f:(fun name ->
+                        QualifiedCppName.Match.match_qualifiers matcher (Typ.Name.qual_name name))
+                  ))
+            | _ -> locks in
+          let post = thumbs_up, threads, update_locks, accesses, return_attributes in
+          Summary.update_summary post summary
+      | None ->
+          summary
+    end
+  else
+    Summary.update_summary empty_post summary
 
 (* we assume two access paths can alias if their access parts are equal (we ignore the base). *)
 let can_alias access_path1 access_path2 =
@@ -1024,7 +1092,7 @@ let make_trace_with_conflicts conflicts original_path pdesc =
   | [] ->
       original_trace
 
-let report_thread_safety_violation tenv pdesc ~make_description ?(conflicts=[]) access =
+let report_thread_safety_violation tenv pdesc ~make_description ~conflicts access =
   let open ThreadSafetyDomain in
   let pname = Procdesc.get_proc_name pdesc in
   let report_one_path ((_, sinks) as path) =
@@ -1037,15 +1105,22 @@ let report_thread_safety_violation tenv pdesc ~make_description ?(conflicts=[]) 
     let msg = Localise.to_issue_id Localise.thread_safety_violation in
     let description = make_description tenv pname final_sink_site initial_sink_site final_sink in
     let exn = Exceptions.Checkers (msg, Localise.verbatim_desc description) in
-    Reporting.log_error ~store_summary:true pname ~loc ~ltr exn in
+    Reporting.log_error_deprecated ~store_summary:true pname ~loc ~ltr exn in
 
   let trace_of_pname = trace_of_pname access pdesc in
   Option.iter ~f:report_one_path (PathDomain.get_reportable_sink_path access ~trace_of_pname)
 
+let pp_procname_short fmt = function
+  | Typ.Procname.Java java ->
+      F.fprintf fmt "%s.%s"
+        (Typ.Procname.java_get_class_name java) (Typ.Procname.java_get_method java)
+  | pname ->
+      Typ.Procname.pp fmt pname
+
 let make_unprotected_write_description tenv pname final_sink_site initial_sink_site final_sink =
   Format.asprintf
-    "Unprotected write. Public method %a%s %s %a outside of synchronization.%s"
-    (MF.wrap_monospaced Typ.Procname.pp) pname
+    "Unprotected write. Non-private method %a%s %s %a outside of synchronization.%s"
+    (MF.wrap_monospaced pp_procname_short) pname
     (if CallSite.equal final_sink_site initial_sink_site then "" else " indirectly")
     (if is_container_write_sink final_sink then "mutates" else "writes to field")
     pp_access final_sink
@@ -1074,8 +1149,8 @@ let make_read_write_race_description
           but the current method is not specified to be. Consider adding synchronization \
           or a @ThreadConfined annotation to the current method."
        else "") in
-  Format.asprintf "Read/Write race. Public method %a%s reads from field %a. %s %s"
-    (MF.wrap_monospaced Typ.Procname.pp) pname
+  Format.asprintf "Read/Write race. Non-private method %a%s reads from field %a. %s %s"
+    (MF.wrap_monospaced pp_procname_short) pname
     (if CallSite.equal final_sink_site initial_sink_site then "" else " indirectly")
     pp_access final_sink
     conflicts_description
@@ -1107,8 +1182,35 @@ let should_report_on_proc proc_desc tenv =
    Procdesc.get_access proc_desc <> PredSymb.Private &&
    not (Annotations.pdesc_return_annot_ends_with proc_desc Annotations.visibleForTesting))
 
-(* report accesses that may race with each other *)
-let report_unsafe_accesses ~is_file_threadsafe aggregated_access_map =
+(** Report accesses that may race with each other.
+
+    Principles for race reporting.
+
+    Two accesses are excluded if they are both protected by the same lock or are known to be on the
+    same thread. Otherwise they are in conflict. We want to report conflicting accesses one of which
+    is a write.
+
+    To cut down on duplication noise we don't always report at both sites (line numbers) involved in
+    a race.
+
+    -- If a protected access races with an unprotected one, we don't report the protected but we do
+       report the unprotected one (and we point to the protected from the unprotected one).  This
+       way the report is at the line number in a race-pair where the programmer should take action.
+
+    -- Similarly, if a threaded and unthreaded (not known to be threaded) access race, we report at
+       the unthreaded site.
+
+    Also, we avoid reporting multiple races at the same line (which can happen a lot in an
+    interprocedural scenario) or multiple accesses to the same field in a single method, expecting
+    that the programmer already gets signal from one report. To report all the races with separate
+    warnings leads to a lot of noise.  But note, we never suppress all the potential issues in a
+    class: if we don't report any races, it means we didn't find any.
+
+    The above is tempered at the moment by abstractions of "same lock" and "same thread": we are
+    currently not distinguishing different locks, and are treating "known to be confined to a
+    thread" as if "known to be confined to UI thread".
+*)
+let report_unsafe_accesses aggregated_access_map =
   let open ThreadSafetyDomain in
   let is_duplicate_report access pname { reported_sites; reported_writes; reported_reads; } =
     CallSite.Set.mem (TraceElem.call_site access) reported_sites ||
@@ -1147,6 +1249,7 @@ let report_unsafe_accesses ~is_file_threadsafe aggregated_access_map =
                       tenv
                       pdesc
                       ~make_description:make_unprotected_write_description
+                      ~conflicts:[]
                       access;
                     update_reported access pname reported_acc
                   end
@@ -1158,11 +1261,16 @@ let report_unsafe_accesses ~is_file_threadsafe aggregated_access_map =
           (* protected write, do nothing *)
           reported_acc
       | Access.Read, AccessPrecondition.Unprotected _ ->
-          (* unprotected read. report all writes as conflicts *)
+          (* unprotected read. report all writes as conflicts for java *)
+          (* for c++ filter out unprotected writes *)
+          let is_cpp_protected_write pre = match pre with
+            | AccessPrecondition.Unprotected _ -> Typ.Procname.is_java pname
+            | AccessPrecondition.Protected _ -> true in
           let all_writes =
             List.filter
-              ~f:(fun (other_access, _, other_threaded, _, _) ->
-                  TraceElem.is_write other_access && not (threaded && other_threaded))
+              ~f:(fun (other_access, pre, other_threaded, _, _) ->
+                  TraceElem.is_write other_access && not (threaded && other_threaded)
+                  && is_cpp_protected_write pre)
               accesses in
           if List.is_empty all_writes
           then
@@ -1210,6 +1318,7 @@ let report_unsafe_accesses ~is_file_threadsafe aggregated_access_map =
                 tenv
                 pdesc
                 ~make_description:(make_read_write_race_description conflicting_writes)
+                ~conflicts:(List.map ~f:(fun (access, _, _, _, _) -> access) conflicting_writes)
                 access;
               update_reported access pname reported_acc
             end in
@@ -1235,14 +1344,32 @@ let report_unsafe_accesses ~is_file_threadsafe aggregated_access_map =
            ) in
        let should_report pdesc tenv =
          match Procdesc.get_proc_name pdesc with
-         | Java _ ->
+         | Java _ as pname ->
              (* report if
                 - the method/class of the access is thread-safe
                   (or an override or superclass is), or
                 - any access is in a field marked thread-safe (or an override) *)
-             ((is_file_threadsafe || accessed_by_threadsafe_method)
-              && should_report_on_proc pdesc tenv)
-             || is_thread_safe_method pdesc tenv
+             (accessed_by_threadsafe_method
+              ||
+              let is_class_threadsafe =
+                not
+                  (let current_class_marked_not_threadsafe =
+                     PatternMatch.check_current_class_attributes
+                       Annotations.ia_is_not_thread_safe tenv pname
+                   in
+                   current_class_marked_not_threadsafe)
+                &&
+                (let current_class_or_super_marked_threadsafe =
+                   match get_current_class_and_threadsafe_superclasses tenv pname with
+                   | Some (_, thread_safe_annotated_classes) ->
+                       not (List.is_empty thread_safe_annotated_classes)
+                   | _ ->
+                       false
+                 in
+                 current_class_or_super_marked_threadsafe)
+              in
+              is_class_threadsafe)
+             && should_report_on_proc pdesc tenv
          | ObjC_Cpp objc_cpp ->
              (* report if the class has a mutex member  *)
              class_has_mutex_member objc_cpp tenv
@@ -1346,50 +1473,7 @@ let make_results_table file_env =
     | None -> acc in
   List.fold ~f:aggregate_posts file_env ~init:AccessListMap.empty |> quotient_access_map
 
-(**
-   Principles for race reporting.
-   Two accesses are excluded if they are both protected by the same lock or
-   are known to be on the same thread. Otherwise they are in conflict. We want to report
-   conflicting accesses one of which is a write.
-
-   To cut down on duplication noise we don't always report at both sites (line numbers)
-   involved in a race.
-   -- If a protected access races with an unprotected one, we don't
-   report the protected but we do report the unprotected one (and we
-   point to the protected from the unprotected one).
-   This way the report is at the line number in a race-pair where the programmer should take action.
-   -- Similarly, if a threaded and unthreaded (not known to be threaded) access race,
-   we report at the unthreaded site.
-
-   Also, we avoid reporting multiple races at the same line (which can happen a lot in
-   an interprocedural scenario) or multiple accesses to the same field in a single method,
-   expecting that the programmer already gets signal from one report. To report all the races
-   with separate warnings leads to a lot of noise.  But note, we never suppress
-   all the potential issues in a class: if we don't report any races, it means we didn't
-   find any.
-
-   The above is tempered at the moment by abstractions of "same lock" and "same thread":
-   we are currently not distinguishing different locks, and are treating "known to be
-   confined to a thread" as if "known to be confined to UI thread".
-*)
-let process_results_table file_env tab =
-  (* Currently we analyze if there is an @ThreadSafe annotation on at least one of the classes in a
-     file. This might be tightened in future or even broadened in future based on other criteria *)
-  let is_file_threadsafe =
-    let current_class_or_super_marked_threadsafe (_, tenv, pname, _) =
-      match get_current_class_and_threadsafe_superclasses tenv pname with
-      | Some (_, thread_safe_annotated_classes) ->
-          not (List.is_empty thread_safe_annotated_classes)
-      | _ ->
-          false in
-    let current_class_marked_not_threadsafe (_, tenv, pname, _) =
-      PatternMatch.check_current_class_attributes Annotations.ia_is_not_thread_safe tenv pname in
-    not (List.exists ~f:current_class_marked_not_threadsafe file_env) &&
-    List.exists ~f:current_class_or_super_marked_threadsafe file_env in
-
-  report_unsafe_accesses ~is_file_threadsafe tab
-
 (* Gathers results by analyzing all the methods in a file, then post-processes the results to check
    an (approximation of) thread safety *)
 let file_analysis _ _ _ file_env =
-  process_results_table file_env (make_results_table file_env)
+  report_unsafe_accesses (make_results_table file_env)

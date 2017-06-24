@@ -61,7 +61,7 @@ JSON_INDEX_VISIBILITY = 'visibility'
 ISSUE_TYPES_URL = 'http://fbinfer.com/docs/infer-issue-types.html#'
 
 
-def _text_of_infer_loc(loc):
+def text_of_infer_loc(loc):
     return ' ({}:{}:{}-{}:)'.format(
         loc[JSON_INDEX_ISL_FILE],
         loc[JSON_INDEX_ISL_LNUM],
@@ -78,7 +78,7 @@ def text_of_report(report):
     msg = report[JSON_INDEX_QUALIFIER]
     infer_loc = ''
     if JSON_INDEX_INFER_SOURCE_LOC in report:
-        infer_loc = _text_of_infer_loc(report[JSON_INDEX_INFER_SOURCE_LOC])
+        infer_loc = text_of_infer_loc(report[JSON_INDEX_INFER_SOURCE_LOC])
     return '%s:%d: %s: %s%s\n  %s' % (
         filename,
         line,
@@ -94,12 +94,14 @@ def _text_of_report_list(project_root, reports, bugs_txt_path, limit=None,
                          formatter=colorize.TERMINAL_FORMATTER):
     n_issues = len(reports)
     if n_issues == 0:
+        msg = 'No issues found'
         if formatter == colorize.TERMINAL_FORMATTER:
-            out = colorize.color('  No issues found  ',
+            msg = colorize.color('  %s  ' % msg,
                                  colorize.SUCCESS, formatter)
-            return out + '\n'
-        else:
-            return 'No issues found'
+        if console_out:
+            utils.stderr(msg)
+        return msg
+
 
     text_errors_list = []
     for report in reports[:limit]:
@@ -137,7 +139,7 @@ def _text_of_report_list(project_root, reports, bugs_txt_path, limit=None,
         # assert failures are not very informative without knowing
         # which assertion failed
         if t == 'Assert_failure' and JSON_INDEX_INFER_SOURCE_LOC in report:
-            t += _text_of_infer_loc(report[JSON_INDEX_INFER_SOURCE_LOC])
+            t += text_of_infer_loc(report[JSON_INDEX_INFER_SOURCE_LOC])
         if t not in error_types_count:
             error_types_count[t] = 1
         else:
@@ -174,7 +176,6 @@ def _text_of_report_list(project_root, reports, bugs_txt_path, limit=None,
     )
 
     if console_out:
-        utils.stderr('')
         utils.stderr(bug_list)
         utils.stdout(summary)
 
@@ -194,6 +195,7 @@ def print_and_save_errors(infer_out, project_root, json_report, bugs_out,
                           pmd_xml):
     errors = utils.load_json_from_path(json_report)
     errors = [e for e in errors if _is_user_visible(project_root, e)]
+    utils.stderr('')
     _text_of_report_list(project_root, errors, bugs_out, console_out=True,
                          limit=10)
     plain_out = _text_of_report_list(project_root, errors, bugs_out,

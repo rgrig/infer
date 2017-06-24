@@ -21,12 +21,13 @@
             ^ "which cannot be used in identifiers:"))
      else ()
 
-  let is_defined_identifier id =
-     if (List.mem ~equal:ALVar.equal !formal_params (ALVar.Var id)) then
-       L.(debug Linters Verbose) "\tParsed exp '%s' as variable" id
-     else
-       raise (Ctl_parser_types.ALParsingException
-                ("ERROR: Variable '" ^ id ^ "' is undefined"))
+   let is_defined_identifier id =
+       if (List.mem ~equal:ALVar.equal !formal_params (ALVar.Var id)) then
+         L.(debug Linters Verbose) "\tParsed exp '%s' as variable" id
+       else
+         raise (Ctl_parser_types.ALParsingException
+                  ("ERROR: Variable '" ^ id ^ "' is undefined"))
+
 %}
 
 %token EU
@@ -40,6 +41,7 @@
 %token EH
 %token DEFINE_CHECKER
 %token GLOBAL_MACROS
+%token GLOBAL_PATHS
 %token HASHIMPORT
 %token LESS_THAN
 %token GREATER_THAN
@@ -67,6 +69,8 @@
 %token <string> IDENTIFIER
 %token <string> FILE_IDENTIFIER
 %token <string> STRING
+%token WHITELIST_PATH
+%token BLACKLIST_PATH
 %token EOF
 
 /* associativity and priority (lower to higher) of operators */
@@ -93,8 +97,8 @@ formal_params:
   | var_list { formal_params := $1; $1}
 
 al_file:
-  | import_files global_macros checkers_list {
-      { CTL.import_files = $1; CTL.global_macros = $2; CTL.checkers = $3 }
+  | import_files global_macros global_paths checkers_list {
+      { CTL.import_files = $1; CTL.global_macros = $2; CTL.global_paths = $3; CTL.checkers = $4 }
     }
   ;
 
@@ -110,6 +114,21 @@ global_macros:
     { L.(debug Linters Verbose) "Parsed global macro definitions...@\n@\n"; $3 }
   ;
 
+global_path_declaration:
+  | LET identifier ASSIGNMENT LEFT_BRACE path_list RIGHT_BRACE SEMICOLON { ($2, $5) }
+;
+
+global_paths_list:
+  | global_path_declaration { [$1] }
+  | global_path_declaration SEMICOLON global_paths_list { $1 :: $3 }
+;
+
+global_paths:
+  | { [] }
+  | GLOBAL_PATHS LEFT_BRACE global_paths_list RIGHT_BRACE SEMICOLON
+    { L.(debug Linters Verbose) "Parsed global path definitions...@\n"; $3 }
+  ;
+
 checkers_list:
   | EOF { [] }
   | checker SEMICOLON checkers_list { $1::$3 }
@@ -123,6 +142,11 @@ checker:
     CTL.print_checker c;
     c
   }
+;
+
+path_list:
+ | alexp_path { [$1] }
+ | alexp_path COMMA path_list { $1 :: $3 }
 ;
 
 clause_list:
@@ -143,6 +167,10 @@ clause:
       | _ -> failwith "string '%s' cannot be set to a variable. \
                        Use the reserverd variable 'report_when'" in
       CTL.CSet (alvar, $4) }
+  | SET WHITELIST_PATH ASSIGNMENT LEFT_BRACE path_list RIGHT_BRACE
+    { CTL.CPath (`WhitelistPath, $5) }
+  | SET BLACKLIST_PATH ASSIGNMENT LEFT_BRACE path_list RIGHT_BRACE
+    { CTL.CPath (`BlacklistPath, $5) }
   | SET identifier ASSIGNMENT STRING
     { L.(debug Linters Verbose) "\tParsed SET clause@\n";
       let alvar = match $2 with
@@ -150,10 +178,10 @@ clause:
       | "suggestion" -> ALVar.Suggestion
       | "severity" -> ALVar.Severity
       | "mode" -> ALVar.Mode
-      | "path" -> ALVar.Path
+      | "doc_url" -> ALVar.Doc_url
       | _ -> failwithf "string '%s' cannot be set in a SET clause. \
                         Use either of: \
-                        'message', 'mode', 'severity', 'suggestion' or 'path'" $2 in
+                        'doc_url', 'message', 'mode', 'severity' or 'suggestion'" $2 in
       CTL.CDesc (alvar, $4) }
     | let_clause { $1 }
     ;
@@ -244,15 +272,28 @@ formula:
 ;
 
 
-alexp:
- | STRING { is_not_infer_reserved_id $1;
-            L.(debug Linters Verbose) "\tParsed string constant '%s'@\n" $1;
-            ALVar.Const $1 }
- | REGEXP LEFT_PAREN STRING RIGHT_PAREN
+alexp_const: STRING
+          { is_not_infer_reserved_id $1;
+           L.(debug Linters Verbose) "\tParsed string constant '%s'@\n" $1;
+           ALVar.Const $1 }
+
+alexp_regex:  REGEXP LEFT_PAREN STRING RIGHT_PAREN
           { L.(debug Linters Verbose) "\tParsed regular expression '%s'@\n" $3;
             ALVar.Regexp $3 }
- | identifier { is_defined_identifier $1; ALVar.Var $1 }
+
+alexp_var: identifier { is_defined_identifier $1; ALVar.Var $1 }
+
+alexp:
+ | alexp_const {$1}
+ | alexp_regex {$1}
+ | alexp_var { $1}
  ;
+
+ alexp_path:
+  | alexp_const {$1}
+  | alexp_regex {$1}
+  | identifier { ALVar.Var $1 }
+  ;
 
  identifier:
   | IDENTIFIER { is_not_infer_reserved_id $1;
