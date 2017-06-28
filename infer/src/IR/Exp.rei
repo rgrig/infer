@@ -46,7 +46,7 @@ and t =
   /** The address of a program variable */
   | Lvar Pvar.t
   /** A field offset, the type is the surrounding struct type */
-  | Lfield t Fieldname.t Typ.t
+  | Lfield t Typ.Fieldname.t Typ.t
   /** An array index offset: [exp1\[exp2\]] */
   | Lindex t t
   | Sizeof sizeof_data
@@ -104,6 +104,10 @@ let get_undefined: bool => t;
 /** Checks whether an expression denotes a location using pointer arithmetic.
     Currently, catches array - indexing expressions such as a[i] only. */
 let pointer_arith: t => bool;
+
+
+/** returns true if the express operates on address of local variable */
+let has_local_addr: t => bool;
 
 
 /** Integer constant 0 */

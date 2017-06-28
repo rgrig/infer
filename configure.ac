@@ -173,7 +173,7 @@ fi
 AC_PROG_OCAML
 AC_ASSERT_PROG([ocamlc], [$OCAMLC])
 # check the version of OCaml
-AC_ASSERT_OCAML_MIN_VERSION([4.04.0])
+AC_ASSERT_OCAML_MIN_VERSION([4.04.2])
 AC_ASSERT_PROG([ocamlopt], [$OCAMLOPT])
 AC_ASSERT_PROG([ocamlbuild], [$OCAMLBUILD])
 AC_PROG_FINDLIB
@@ -202,7 +202,8 @@ AS_IF([test "$OPAM" != "no"], [
   AC_MSG_CHECKING([current opam switch])
   OPAMSWITCH=$("$OPAM" switch show)
   AC_MSG_RESULT([$OPAMSWITCH])
-])
+], [OPAMSWITCH=no])
+AC_SUBST([OPAMSWITCH])
 
 if test "x$enable_java_analyzers" = "xyes"; then
   AC_CHECK_TOOL([JAVA], [java], [no])

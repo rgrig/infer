@@ -424,7 +424,7 @@ let rec fsel_star_fld fsel1 fsel2 = match fsel1, fsel2 with
   | [], fsel2 -> fsel2
   | fsel1,[] -> fsel1
   | (f1, se1):: fsel1', (f2, se2):: fsel2' ->
-      (match Fieldname.compare f1 f2 with
+      (match Typ.Fieldname.compare f1 f2 with
        | 0 -> (f1, sexp_star_fld se1 se2) :: fsel_star_fld fsel1' fsel2'
        | n when n < 0 -> (f1, se1) :: fsel_star_fld fsel1' fsel2
        | _ -> (f2, se2) :: fsel_star_fld fsel1 fsel2')
@@ -467,7 +467,7 @@ let texp_star tenv texp1 texp2 =
     | [], _ -> true
     | _, [] -> false
     | (f1, _, _):: ftal1', (f2, _, _):: ftal2' ->
-        begin match Fieldname.compare f1 f2 with
+        begin match Typ.Fieldname.compare f1 f2 with
           | n when n < 0 -> false
           | 0 -> ftal_sub ftal1' ftal2'
           | _ -> ftal_sub ftal1 ftal2' end in
@@ -1086,7 +1086,7 @@ let exe_spec
             let split = do_split () in
             (* check if a missing_fld hpred is about a hidden field *)
             let hpred_missing_hidden = function
-              | Sil.Hpointsto (_, Sil.Estruct ([(fld, _)], _), _) -> Fieldname.is_hidden fld
+              | Sil.Hpointsto (_, Sil.Estruct ([(fld, _)], _), _) -> Typ.Fieldname.is_hidden fld
               | _ -> false in
             (* missing fields minus hidden fields *)
             let missing_fld_nohidden =
@@ -1134,7 +1134,9 @@ let prop_pure_to_footprint tenv (p: 'a Prop.t) : Prop.normal Prop.t =
   if List.is_empty new_footprint_atoms
   then p
   else (* add pure fact to footprint *)
-    Prop.normalize tenv (Prop.set p ~pi_fp:(p.Prop.pi_fp @ new_footprint_atoms))
+    let filtered_pi_fp = List.filter (p.Prop.pi_fp @ new_footprint_atoms) ~f:(fun a ->
+        not (Sil.atom_has_local_addr a)) in
+    Prop.normalize tenv (Prop.set p ~pi_fp:filtered_pi_fp)
 
 (** post-process the raw result of a function call *)
 let exe_call_postprocess tenv ret_id trace_call callee_pname callee_attrs loc results =
