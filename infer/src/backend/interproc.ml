@@ -827,7 +827,7 @@ let collect_postconditions wl tenv pdesc : Paths.PathSet.t * Specs.Visitedset.t 
         (* nodes from diverging states were also visited *)
         vset_ref_add_pathset vset_ref pathset_diverging;
         compute_visited !vset_ref in
-      do_join_post pname tenv pathset, visited with
+      pathset, visited with
     | exn when (match exn with Exceptions.Leak _ -> true | _ -> false) ->
         L.d_strln"Leak in post collection"; assert false in
   L.d_strln
