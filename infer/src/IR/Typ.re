@@ -167,6 +167,12 @@ let mk ::default=? ::quals=? desc :t => {
   mk_aux ::?default ::?quals desc
 };
 
+let merge_quals quals1 quals2 => {
+  is_const: quals1.is_const || quals2.is_const,
+  is_restrict: quals1.is_restrict || quals2.is_restrict,
+  is_volatile: quals1.is_volatile || quals2.is_volatile
+};
+
 let escape pe =>
   if (Pp.equal_print_kind pe.Pp.kind Pp.HTML) {
     Escape.escape_xml
@@ -244,6 +250,67 @@ let to_string typ => {
   let pp fmt => pp_full Pp.text fmt typ;
   F.asprintf "%t" pp
 };
+
+type type_subst_t = list (string, t) [@@deriving compare];
+
+let is_type_subst_empty = List.is_empty;
+
+
+/** Given the template type mapping and the type, substitute tvars within the type. */
+let rec sub_type subst generic_typ :t =>
+  switch generic_typ.desc {
+  | TVar tname =>
+    switch (List.Assoc.find subst equal::String.equal tname) {
+    | Some t =>
+      /* Type qualifiers may come from original type or be part of substitution. Merge them */
+      mk quals::(merge_quals t.quals generic_typ.quals) t.desc
+    | None => generic_typ
+    }
+  | Tarray typ arg1 arg2 =>
+    let typ' = sub_type subst typ;
+    if (phys_equal typ typ') {
+      generic_typ
+    } else {
+      mk default::generic_typ (Tarray typ' arg1 arg2)
+    }
+  | Tptr typ arg =>
+    let typ' = sub_type subst typ;
+    if (phys_equal typ typ') {
+      generic_typ
+    } else {
+      mk default::generic_typ (Tptr typ' arg)
+    }
+  | Tstruct tname =>
+    let tname' = sub_tname subst tname;
+    if (phys_equal tname tname') {
+      generic_typ
+    } else {
+      mk default::generic_typ (Tstruct tname')
+    }
+  | _ => generic_typ
+  }
+and sub_tname subst tname =>
+  switch tname {
+  | CppClass name (Template spec_info) =>
+    let sub_typ_opt typ_opt =>
+      switch typ_opt {
+      | Some typ =>
+        let typ' = sub_type subst typ;
+        if (phys_equal typ typ') {
+          typ_opt
+        } else {
+          Some typ'
+        }
+      | None => typ_opt
+      };
+    let spec_info' = IList.map_changed sub_typ_opt spec_info;
+    if (phys_equal spec_info spec_info') {
+      tname
+    } else {
+      CppClass name (Template spec_info')
+    }
+  | _ => tname
+  };
 
 module Name = {
   type t = name [@@deriving compare];
@@ -1017,6 +1084,61 @@ module Procname = {
       to_generic_filename pname
     | _ => to_concrete_filename pname
     };
+  let get_template_args_mapping generic_procname concrete_procname => {
+
+    /** given two template arguments, try to generate mapping from generic ones to concrete ones. */
+    let mapping_for_template_args (generic_name, generic_args) (concrete_name, concrete_args) =>
+      switch (generic_args, concrete_args) {
+      | (Template generic_typs, Template concrete_typs)
+          when QualifiedCppName.equal generic_name concrete_name =>
+        try (
+          `Valid (
+            List.fold2_exn
+              generic_typs
+              concrete_typs
+              init::[]
+              f::(
+                /* result will be reversed list. Ordering in template mapping doesn't matter so it's ok */
+                fun result gtyp ctyp =>
+                  switch (gtyp, ctyp) {
+                  | (Some {desc: TVar name}, Some concrete) => [(name, concrete), ...result]
+                  | _ => result
+                  }
+              )
+          )
+        ) {
+        | Invalid_argument _ =>
+          /* fold2_exn throws on length mismatch, we need to handle it */ `Invalid
+        }
+      | (NoTemplate, NoTemplate) => `NoTemplate
+      | _ => `Invalid
+      };
+    let combine_mappings mapping1 mapping2 =>
+      switch (mapping1, mapping2) {
+      | (`Valid m1, `Valid m2) => `Valid (List.append m1 m2)
+      | (`NoTemplate, a)
+      | (a, `NoTemplate) => /* no template is no-op state, simply return the other state */ a
+      | _ => /* otherwise there is no valid mapping */ `Invalid
+      };
+    let extract_mapping =
+      fun
+      | `Invalid
+      | `NoTemplate => None
+      | `Valid m => Some m;
+    let empty_qual = QualifiedCppName.of_qual_string "FIXME" /* TODO we should look at procedure names */;
+    switch (generic_procname, concrete_procname) {
+    | (C {template_args: args1}, C {template_args: args2}) /* template function */ =>
+      mapping_for_template_args (empty_qual, args1) (empty_qual, args2) |> extract_mapping
+    | (
+        ObjC_Cpp {template_args: args1, class_name: CppClass name1 class_args1},
+        ObjC_Cpp {template_args: args2, class_name: CppClass name2 class_args2}
+      ) /* template methods/template classes/both */ =>
+      combine_mappings
+        (mapping_for_template_args (name1, class_args1) (name2, class_args2))
+        (mapping_for_template_args (empty_qual, args1) (empty_qual, args2)) |> extract_mapping
+    | _ => None
+    }
+  };
 };
 
 
@@ -1090,6 +1212,17 @@ module Fieldname = {
     | Java field_name
     | Clang {field_name} => Format.fprintf f "%s" field_name;
   let pp_latex style f fn => Latex.pp_string style f (to_string fn);
+  let class_name_replace fname ::f =>
+    switch fname {
+    | Clang {class_name, field_name} =>
+      let class_name' = f class_name;
+      if (phys_equal class_name class_name') {
+        fname
+      } else {
+        Clang {class_name: class_name', field_name}
+      }
+    | _ => fname
+    };
 
   /** Returns the class part of the fieldname */
   let java_get_class fn => {
