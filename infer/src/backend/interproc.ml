@@ -19,143 +19,141 @@ module L = Logging
 module F = Format
 
 (** A node with a number of visits *)
-type visitednode =
-  {
-    node: Procdesc.Node.t;
-    visits: int;
-  }
+type visitednode = {node: Procdesc.Node.t; visits: int}
 
 (** Set of nodes with number of visits *)
-module NodeVisitSet =
-  Caml.Set.Make(struct
-    type t = visitednode
-    let compare_ids n1 n2 =
-      (* higher id is better *)
-      Procdesc.Node.compare n2 n1
-    let compare_distance_to_exit { node = n1 } { node = n2 } =
-      (* smaller means higher priority *)
-      let n =
-        match Procdesc.Node.get_distance_to_exit n1, Procdesc.Node.get_distance_to_exit n2 with
-        | None, None ->
-            0
-        | None, Some _ ->
-            1
-        | Some _, None ->
-            - 1
-        | Some d1, Some d2 ->
-            (* shorter distance to exit is better *)
-            Int.compare d1 d2 in
-      if n <> 0 then n else compare_ids n1 n2
-    let compare_number_of_visits x1 x2 =
-      let n = Int.compare x1.visits x2.visits in (* visited fewer times is better *)
-      if n <> 0 then n else compare_distance_to_exit x1 x2
-    let compare x1 x2 =
-      if !Config.footprint then
-        match Config.worklist_mode with
-        | 0 -> compare_ids x1.node x2.node
-        | 1 -> compare_distance_to_exit x1 x2
-        | _ -> compare_number_of_visits x1 x2
-      else compare_ids x1.node x2.node
-  end)
+module NodeVisitSet = Caml.Set.Make (struct
+  type t = visitednode
+
+  let compare_ids n1 n2 =
+    (* higher id is better *)
+    Procdesc.Node.compare n2 n1
+
+  let compare_distance_to_exit {node= n1} {node= n2} =
+    (* smaller means higher priority *)
+    let n =
+      match (Procdesc.Node.get_distance_to_exit n1, Procdesc.Node.get_distance_to_exit n2) with
+      | None, None
+       -> 0
+      | None, Some _
+       -> 1
+      | Some _, None
+       -> -1
+      | Some d1, Some d2
+       -> (* shorter distance to exit is better *)
+          Int.compare d1 d2
+    in
+    if n <> 0 then n else compare_ids n1 n2
+
+  let compare_number_of_visits x1 x2 =
+    let n = Int.compare x1.visits x2.visits in
+    (* visited fewer times is better *)
+    if n <> 0 then n else compare_distance_to_exit x1 x2
+
+  let compare x1 x2 =
+    if !Config.footprint then
+      match Config.worklist_mode with
+      | 0
+       -> compare_ids x1.node x2.node
+      | 1
+       -> compare_distance_to_exit x1 x2
+      | _
+       -> compare_number_of_visits x1 x2
+    else compare_ids x1.node x2.node
+end)
 
 (** Table for the results of the join operation on nodes. *)
 module Join_table : sig
   type t
 
   val add : t -> Procdesc.Node.id -> Paths.PathSet.t -> unit
+
   val create : unit -> t
+
   val find : t -> Procdesc.Node.id -> Paths.PathSet.t
 end = struct
   type t = (Procdesc.Node.id, Paths.PathSet.t) Hashtbl.t
 
-  let create () : t =
-    Hashtbl.create 11
+  let create () : t = Hashtbl.create 11
 
   let find table i =
-    try Hashtbl.find table i with
-    | Not_found -> Paths.PathSet.empty
+    try Hashtbl.find table i
+    with Not_found -> Paths.PathSet.empty
 
-  let add table i dset =
-    Hashtbl.replace table i dset
+  let add table i dset = Hashtbl.replace table i dset
 end
 
 (* =============== START of module Worklist =============== *)
 module Worklist = struct
+  type t =
+    { join_table: Join_table.t  (** Table of join results *)
+    ; path_set_todo: (Procdesc.Node.id, Paths.PathSet.t) Hashtbl.t  (** Pathset todo *)
+    ; path_set_visited: (Procdesc.Node.id, Paths.PathSet.t) Hashtbl.t  (** Pathset visited *)
+    ; mutable todo_set: NodeVisitSet.t  (** Set of nodes still to do, with visit count *)
+    ; mutable visit_map: int Procdesc.NodeMap.t  (** Map from nodes done to visit count *) }
 
-  type t = {
-    join_table : Join_table.t; (** Table of join results *)
-    path_set_todo : (Procdesc.Node.id, Paths.PathSet.t) Hashtbl.t; (** Pathset todo *)
-    path_set_visited : (Procdesc.Node.id, Paths.PathSet.t) Hashtbl.t; (** Pathset visited *)
-    mutable todo_set : NodeVisitSet.t; (** Set of nodes still to do, with visit count *)
-    mutable visit_map : int Procdesc.NodeMap.t; (** Map from nodes done to visit count *)
-  }
+  let create () =
+    { join_table= Join_table.create ()
+    ; path_set_todo= Hashtbl.create 11
+    ; path_set_visited= Hashtbl.create 11
+    ; todo_set= NodeVisitSet.empty
+    ; visit_map= Procdesc.NodeMap.empty }
 
-  let create () = {
-    join_table = Join_table.create ();
-    path_set_todo = Hashtbl.create 11;
-    path_set_visited = Hashtbl.create 11;
-    todo_set = NodeVisitSet.empty;
-    visit_map = Procdesc.NodeMap.empty;
-  }
+  let is_empty (wl: t) : bool = NodeVisitSet.is_empty wl.todo_set
 
-  let is_empty (wl : t) : bool =
-    NodeVisitSet.is_empty wl.todo_set
-
-  let add (wl : t) (node : Procdesc.Node.t) : unit =
-    let visits = (* recover visit count if it was visited before *)
-      try Procdesc.NodeMap.find node wl.visit_map with
-      | Not_found -> 0 in
-    wl.todo_set <- NodeVisitSet.add { node; visits } wl.todo_set
+  let add (wl: t) (node: Procdesc.Node.t) : unit =
+    let visits =
+      (* recover visit count if it was visited before *)
+      try Procdesc.NodeMap.find node wl.visit_map
+      with Not_found -> 0
+    in
+    wl.todo_set <- NodeVisitSet.add {node; visits} wl.todo_set
 
   (** remove the minimum element from the worklist, and increase its number of visits *)
-  let remove (wl : t) : Procdesc.Node.t =
+  let remove (wl: t) : Procdesc.Node.t =
     try
       let min = NodeVisitSet.min_elt wl.todo_set in
-      wl.todo_set <-
-        NodeVisitSet.remove min wl.todo_set;
-      wl.visit_map <-
-        Procdesc.NodeMap.add min.node (min.visits + 1) wl.visit_map; (* increase the visits *)
+      wl.todo_set <- NodeVisitSet.remove min wl.todo_set ;
+      wl.visit_map <- Procdesc.NodeMap.add min.node (min.visits + 1) wl.visit_map ;
+      (* increase the visits *)
       min.node
     with Not_found ->
-      L.internal_error "@\n...Work list is empty! Impossible to remove edge...@\n";
+      L.internal_error "@\n...Work list is empty! Impossible to remove edge...@\n" ;
       assert false
 end
+
 (* =============== END of module Worklist =============== *)
 
 
 let path_set_create_worklist pdesc =
-  State.reset ();
-  Procdesc.compute_distance_to_exit_node pdesc;
-  Worklist.create ()
+  State.reset () ; Procdesc.compute_distance_to_exit_node pdesc ; Worklist.create ()
 
-let htable_retrieve
-    (htable : (Procdesc.Node.id, Paths.PathSet.t) Hashtbl.t) (key : Procdesc.Node.id)
-  : Paths.PathSet.t =
-  try
-    Hashtbl.find htable key
-  with Not_found ->
-    Hashtbl.replace htable key Paths.PathSet.empty;
-    Paths.PathSet.empty
+let htable_retrieve (htable: (Procdesc.Node.id, Paths.PathSet.t) Hashtbl.t) (key: Procdesc.Node.id)
+    : Paths.PathSet.t =
+  try Hashtbl.find htable key
+  with Not_found -> Hashtbl.replace htable key Paths.PathSet.empty ; Paths.PathSet.empty
 
 (** Add [d] to the pathset todo at [node] returning true if changed *)
-let path_set_put_todo (wl : Worklist.t) (node: Procdesc.Node.t) (d: Paths.PathSet.t) : bool =
+let path_set_put_todo (wl: Worklist.t) (node: Procdesc.Node.t) (d: Paths.PathSet.t) : bool =
   let changed =
     if Paths.PathSet.is_empty d then false
     else
       let node_id = Procdesc.Node.get_id node in
       let old_todo = htable_retrieve wl.Worklist.path_set_todo node_id in
       let old_visited = htable_retrieve wl.Worklist.path_set_visited node_id in
-      let d' = Paths.PathSet.diff d old_visited in (* differential fixpoint *)
+      let d' = Paths.PathSet.diff d old_visited in
+      (* differential fixpoint *)
       let todo_new = Paths.PathSet.union old_todo d' in
-      Hashtbl.replace wl.Worklist.path_set_todo node_id todo_new;
-      not (Paths.PathSet.equal old_todo todo_new) in
+      Hashtbl.replace wl.Worklist.path_set_todo node_id todo_new ;
+      not (Paths.PathSet.equal old_todo todo_new)
+  in
   changed
 
-let path_set_checkout_todo (wl : Worklist.t) (node: Procdesc.Node.t) : Paths.PathSet.t =
+let path_set_checkout_todo (wl: Worklist.t) (node: Procdesc.Node.t) : Paths.PathSet.t =
   try
     let node_id = Procdesc.Node.get_id node in
     let todo = Hashtbl.find wl.Worklist.path_set_todo node_id in
-    Hashtbl.replace wl.Worklist.path_set_todo node_id Paths.PathSet.empty;
+    Hashtbl.replace wl.Worklist.path_set_todo node_id Paths.PathSet.empty ;
     let visited = Hashtbl.find wl.Worklist.path_set_visited node_id in
     let new_visited = Paths.PathSet.union visited todo in
     Hashtbl.replace wl.Worklist.path_set_visited node_id new_visited;
@@ -825,17 +823,19 @@ let collect_postconditions wl tenv pdesc : Paths.PathSet.t * Specs.Visitedset.t 
         let vset_ref = ref Procdesc.NodeSet.empty in
         vset_ref_add_pathset vset_ref pathset;
         (* nodes from diverging states were also visited *)
-        vset_ref_add_pathset vset_ref pathset_diverging;
-        compute_visited !vset_ref in
-      pathset, visited with
-    | exn when (match exn with Exceptions.Leak _ -> true | _ -> false) ->
-        L.d_strln"Leak in post collection"; assert false in
-  L.d_strln
-    ("#### [FUNCTION " ^ Typ.Procname.to_string pname ^ "] Postconditions after join ####");
-  L.d_increase_indent 1;
-  Propset.d Prop.prop_emp (Paths.PathSet.to_propset tenv (fst res));
-  L.d_decrease_indent 1;
-  L.d_ln ();
+        vset_ref_add_pathset vset_ref pathset_diverging ;
+        compute_visited !vset_ref
+      in
+      (pathset, visited)
+    with exn when match exn with Exceptions.Leak _ -> true | _ -> false ->
+      L.d_strln "Leak in post collection" ;
+      assert false
+  in
+  L.d_strln ("#### [FUNCTION " ^ Typ.Procname.to_string pname ^ "] Postconditions after join ####") ;
+  L.d_increase_indent 1 ;
+  Propset.d Prop.prop_emp (Paths.PathSet.to_propset tenv (fst res)) ;
+  L.d_decrease_indent 1 ;
+  L.d_ln () ;
   res
 
 let create_seed_vars sigma =
