@@ -2016,7 +2016,8 @@ let jprop_list_add_ids jplist =
 
 let proplist_collapse tenv mode plist =
   let jplist = List.map ~f:(fun (p, path) -> (Specs.Jprop.Prop (0, p), path)) plist in
-  let jplist_joined = jplist_collapse tenv mode (jplist_collapse tenv mode jplist) in
+  let f = jplist_collapse tenv mode in
+  let jplist_joined = f (f jplist) in
   jprop_list_add_ids jplist_joined
 
 let proplist_collapse_pre tenv plist =

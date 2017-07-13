@@ -32,6 +32,7 @@ OCAMLBUILD_OPTIONS = \
   -r \
   -use-menhir -menhir '$(MENHIR) --explain --strict'\
   -use-ocamlfind \
+  -cflags -annot \
   -cflags -g -lflags -g \
   -cflags -short-paths \
   -cflags -safe-string \
