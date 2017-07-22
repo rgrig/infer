@@ -11,9 +11,14 @@ open! IStd
 module F = Format
 
 module Access : sig
-  type kind = Read | Write [@@deriving compare]
+  type t =
+    | Read of AccessPath.Raw.t  (** Field read *)
+    | Write of AccessPath.Raw.t  (** Field write *)
+    | InterfaceCall of Typ.Procname.t
+        (** Call to method of interface not annotated with @ThreadSafe *)
+    [@@deriving compare]
 
-  type t = AccessPath.Raw.t * kind [@@deriving compare]
+  val get_access_path : t -> AccessPath.Raw.t option
 
   val pp : F.formatter -> t -> unit
 end
@@ -24,6 +29,8 @@ module TraceElem : sig
   val is_write : t -> bool
 
   val is_read : t -> bool
+
+  val is_interface_call : t -> bool
 end
 
 (** A bool that is true if a lock is definitely held. Note that this is unsound because it assumes
@@ -171,6 +178,8 @@ type summary =
 
 include AbstractDomain.WithBottom with type astate := astate
 
-val make_access : AccessPath.Raw.t -> Access.kind -> Location.t -> TraceElem.t
+val make_field_access : AccessPath.Raw.t -> is_write:bool -> Location.t -> TraceElem.t
+
+val make_unannotated_call_access : Typ.Procname.t -> Location.t -> TraceElem.t
 
 val pp_summary : F.formatter -> summary -> unit

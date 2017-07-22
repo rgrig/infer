@@ -11,16 +11,28 @@ open! IStd
 module F = Format
 
 module Access = struct
-  type kind = Read | Write [@@deriving compare]
+  type t =
+    | Read of AccessPath.Raw.t
+    | Write of AccessPath.Raw.t
+    | InterfaceCall of Typ.Procname.t
+    [@@deriving compare]
 
-  type t = AccessPath.Raw.t * kind [@@deriving compare]
+  let make_field_access access_path ~is_write =
+    if is_write then Write access_path else Read access_path
 
-  let pp fmt (access_path, access_kind) =
-    match access_kind with
-    | Read
+  let get_access_path = function
+    | Read access_path | Write access_path
+     -> Some access_path
+    | InterfaceCall _
+     -> None
+
+  let pp fmt = function
+    | Read access_path
      -> F.fprintf fmt "Read of %a" AccessPath.Raw.pp access_path
-    | Write
+    | Write access_path
      -> F.fprintf fmt "Write to %a" AccessPath.Raw.pp access_path
+    | InterfaceCall pname
+     -> F.fprintf fmt "Call to un-annotated interface method %a" Typ.Procname.pp pname
 end
 
 module TraceElem = struct
@@ -28,9 +40,12 @@ module TraceElem = struct
 
   type t = {site: CallSite.t; kind: Kind.t} [@@deriving compare]
 
-  let is_read {kind} = match snd kind with Read -> true | Write -> false
+  let is_read {kind} = match kind with Read _ -> true | InterfaceCall _ | Write _ -> false
 
-  let is_write {kind} = match snd kind with Read -> false | Write -> true
+  let is_write {kind} = match kind with InterfaceCall _ | Read _ -> false | Write _ -> true
+
+  let is_interface_call {kind} =
+    match kind with InterfaceCall _ -> true | Read _ | Write _ -> false
 
   let call_site {site} = site
 
@@ -51,9 +66,13 @@ module TraceElem = struct
   end)
 end
 
-let make_access access_path access_kind loc =
+let make_field_access access_path ~is_write loc =
   let site = CallSite.make Typ.Procname.empty_block loc in
-  TraceElem.make (access_path, access_kind) site
+  TraceElem.make (Access.make_field_access access_path ~is_write) site
+
+let make_unannotated_call_access pname loc =
+  let site = CallSite.make Typ.Procname.empty_block loc in
+  TraceElem.make (Access.InterfaceCall pname) site
 
 (* In this domain true<=false. The intended denotations [[.]] are
     [[true]] = the set of all states where we know according, to annotations

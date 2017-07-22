@@ -216,9 +216,6 @@ val specs_dir_name : string
 val specs_files_suffix : string
 
 val start_filename : string
-
-val taint_analysis : bool
-
 val trace_absarray : bool
 
 val undo_join : bool
@@ -470,6 +467,8 @@ val linters_def_folder : string list
 val linters_developer_mode : bool
 
 val linters_ignore_clang_failures : bool
+
+val liveness : bool
 
 val load_analysis_results : string option
 

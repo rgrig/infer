@@ -56,5 +56,38 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
      -> astate
 end
 
-module Analyzer =
-  AbstractInterpreter.Make (ProcCfg.Backward (ProcCfg.Exceptional)) (TransferFunctions)
+module CFG = ProcCfg.OneInstrPerNode (ProcCfg.Backward (ProcCfg.Exceptional))
+module Analyzer = AbstractInterpreter.Make (CFG) (TransferFunctions)
+
+let checker {Callbacks.tenv; summary; proc_desc} : Specs.summary =
+  let cfg = CFG.from_pdesc proc_desc in
+  let invariant_map =
+    Analyzer.exec_cfg cfg (ProcData.make_default proc_desc tenv) ~initial:Domain.empty ~debug:true
+  in
+  let report_dead_store live_vars = function
+    | Sil.Store (Lvar pvar, _, _, loc)
+      when not
+             ( Pvar.is_frontend_tmp pvar || Pvar.is_return pvar || Pvar.is_global pvar
+             || Domain.mem (Var.of_pvar pvar) live_vars )
+     -> let issue_id = Localise.to_issue_id Localise.dead_store in
+        let message = F.asprintf "The value written to %a is never used" (Pvar.pp Pp.text) pvar in
+        let ltr = [Errlog.make_trace_element 0 loc "Write of unused value" []] in
+        let exn = Exceptions.Checkers (issue_id, Localise.verbatim_desc message) in
+        Reporting.log_error summary ~loc ~ltr exn
+    | _
+     -> ()
+  in
+  let report_on_node node =
+    List.iter (CFG.instr_ids node) ~f:(fun (instr, node_id_opt) ->
+        match node_id_opt with
+        | Some node_id -> (
+          match Analyzer.extract_pre node_id invariant_map with
+          | Some live_vars
+           -> report_dead_store live_vars instr
+          | None
+           -> () )
+        | None
+         -> () )
+  in
+  List.iter (CFG.nodes cfg) ~f:report_on_node ;
+  summary

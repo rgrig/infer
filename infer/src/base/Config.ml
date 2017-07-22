@@ -234,9 +234,6 @@ let specs_files_suffix = ".specs"
 
 let start_filename = ".start"
 
-(** If true performs taint analysis *)
-let taint_analysis = true
-
 (** Enable detailed tracing information during array abstraction *)
 let trace_absarray = false
 
@@ -257,6 +254,12 @@ let whitelisted_cpp_methods =
   ; "std::max"
   ; "std::min"
   ; "std::move"
+  ; "std::operator!="
+  ; "std::operator<"
+  ; "std::operator<="
+  ; "std::operator=="
+  ; "std::operator>"
+  ; "std::operator>="
   ; "std::swap" ]
 
 let whitelisted_cpp_classes =
@@ -265,6 +268,12 @@ let whitelisted_cpp_classes =
   ; "std::__wrap_iter" (* libc++ internal name of vector iterator *)
   ; "std::__get_pair" (* libc++ internal support class for std::get<std::pair> *)
   ; "std::__pair_get" (* libstdc++ internal support class for std::get<std::pair> *)
+  ; "std::equal_to"
+  ; "std::greater"
+  ; "std::greater_equal"
+  ; "std::less"
+  ; "std::less_equal"
+  ; "std::not_equal_to"
   ; "std::pair" ]
 
 type dynamic_dispatch_policy = [`None | `Interface | `Sound | `Lazy]
@@ -547,6 +556,7 @@ and ( annotation_reachability
     , eradicate
     , fragment_retains_view
     , immutable_cast
+    , liveness
     , printf_args
     , quandary
     , repeated_calls
@@ -584,6 +594,10 @@ and ( annotation_reachability
       ~in_help:CLOpt.([(Analyze, manual_generic)])
       ~default:true
       "the detection of object cast from immutable type to mutable type. For instance, it will detect cast from ImmutableList to List, ImmutableMap to Map, and ImmutableSet to Set."
+  and liveness =
+    CLOpt.mk_bool ~long:"liveness"
+      ~in_help:CLOpt.([(Analyze, manual_generic)])
+      ~default:true "the detection of dead stores and unused variables"
   and printf_args =
     CLOpt.mk_bool ~long:"printf-args"
       ~in_help:CLOpt.([(Analyze, manual_generic)])
@@ -631,6 +645,7 @@ and ( annotation_reachability
   , eradicate
   , fragment_retains_view
   , immutable_cast
+  , liveness
   , printf_args
   , quandary
   , repeated_calls
@@ -799,6 +814,7 @@ and ( bo_debug
     , frontend_tests
     , keep_going
     , linters_developer_mode
+    , models_mode
     , only_cheap_debug
     , print_buckets
     , print_logs
@@ -901,6 +917,9 @@ and ( bo_debug
       ~in_help:CLOpt.([(Capture, manual_clang)])
       "Save filename.ext.test.dot with the cfg in dotty format for frontend tests (also sets $(b,--print-types))"
       [print_types] []
+  and models_mode =
+    CLOpt.mk_bool_group ~long:"models-mode" "Mode for analyzing the models" []
+      [failures_allowed; keep_going]
   and print_logs =
     CLOpt.mk_bool ~long:"print-logs"
       ~in_help:
@@ -937,6 +956,7 @@ and ( bo_debug
   , frontend_tests
   , keep_going
   , linters_developer_mode
+  , models_mode
   , only_cheap_debug
   , print_buckets
   , print_logs
@@ -1211,10 +1231,6 @@ and ml_buckets =
 - $(b,cpp) from C++ code
 |}
     ~symbols:ml_bucket_symbols ~eq:PVariant.( = )
-
-and models_mode =
-  CLOpt.mk_bool ~deprecated:["models_mode"; "-models_mode"] ~long:"models-mode"
-    "Mode for analyzing the models"
 
 and modified_targets =
   CLOpt.mk_path_opt ~deprecated:["modified_targets"] ~long:"modified-targets" ~meta:"file"
@@ -1958,6 +1974,8 @@ and linters_def_folder = !linters_def_folder
 and linters_developer_mode = !linters_developer_mode
 
 and linters_ignore_clang_failures = !linters_ignore_clang_failures
+
+and liveness = !liveness
 
 and load_average =
   match !load_average with None when !buck -> Some (float_of_int ncpu) | _ -> !load_average
