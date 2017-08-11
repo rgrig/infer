@@ -46,6 +46,15 @@ int plus_plus3_bad() {
   return i++;
 }
 
+void FN_capture_no_read_bad() {
+  int x = 0;
+  [x]() { return; }();
+}
+
+void FN_init_capture_no_read_bad() {
+  [i = 0]() { return; };
+}
+
 int return_ok() {
   int x = 5;
   return x;
@@ -98,7 +107,9 @@ int* assign_pointer2_ok() {
   return ptr;
 }
 
-void by_ref_ok(int& ref) { ref = 7; }
+void by_ref1_ok(int& ref) { ref = 7; }
+
+void by_ref2_ok(int& ref) { ref++; }
 
 int plus_plus_ok() {
   int x = 0;
@@ -111,6 +122,53 @@ int plus_plus_loop_ok(int n) {
     i++;
   }
   return i;
+}
+
+void lambda_bad() {
+  int x = []() {
+    int y = 1;
+    y = 2;
+    return y;
+  }();
+  return x;
+}
+
+void capture1_ok() {
+  int x = 1;
+  [x]() { return x; }();
+}
+
+void capture2_ok(int x) {
+  [x]() { return x; }();
+}
+
+int capture_by_ref1_ok() {
+  int x = 0;
+  [&x]() { x++; }();
+  return x;
+}
+
+int capture_by_ref2_ok() {
+  int x = 0;
+  int y = 0;
+  [&]() {
+    x = x + y;
+    y = x;
+  }();
+  return x + y;
+}
+
+int FN_capture_by_ref_reuseBad() {
+  int x = 0;
+  [&x]() {
+    x = 1; // dead, but we won't report
+    x = 2;
+  }();
+  return x;
+}
+
+void init_capture_ok() {
+  [i = 0]() { return i; };
 }
 
 char* global;

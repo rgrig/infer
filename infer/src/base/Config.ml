@@ -21,7 +21,6 @@ type analyzer =
   | BiAbduction
   | CaptureOnly
   | CompileOnly
-  | Eradicate
   | Checkers
   | Crashcontext
   | Linters
@@ -34,7 +33,6 @@ let string_to_analyzer =
   ; ("checkers", Checkers)
   ; ("compile", CompileOnly)
   ; ("crashcontext", Crashcontext)
-  ; ("eradicate", Eradicate)
   ; ("infer", BiAbduction)
   ; ("linters", Linters) ]
 
@@ -82,11 +80,6 @@ let issues_fields_symbols =
 type os_type = Unix | Win32 | Cygwin
 
 (** Constant configuration values *)
-
-(** If true, a precondition with e.g. index 3 in an array does not require the caller to
-    have index 3 too this mimics what happens with direct access to the array without a
-    procedure call, where the index is simply materialized if not there *)
-let allow_missing_index_in_proc_call = true
 
 let anonymous_block_num_sep = "______"
 
@@ -194,6 +187,11 @@ let manual_threadsafety = "THREADSAFETY CHECKER OPTIONS"
 (** Maximum level of recursion during the analysis, after which a timeout is generated *)
 let max_recursion = 5
 
+(** Maximum number of widens that can be performed before the analysis will intentionally crash.
+    Used to guard against divergence in the case that someone has implemented a bad widening
+    operator *)
+let max_widens = 10000
+
 (** Flag to tune the level of applying the meet operator for
     preconditions during the footprint analysis:
     0 = do not use the meet
@@ -246,10 +244,15 @@ let use_jar_cache = true
 
 let weak = "<\"Weak\">"
 
-let whitelisted_cpp_methods =
-  [ "google::CheckNotNull"
+(* Whitelists for C++ library functions *)
+
+let std_whitelisted_cpp_methods =
+  [ "std::back_inserter"
   ; "std::forward"
+  ; "std::front_inserter"
   ; "std::get"
+  ; "std::inserter"
+  ; "std::make_move_iterator"
   ; "std::make_pair"
   ; "std::max"
   ; "std::min"
@@ -262,19 +265,62 @@ let whitelisted_cpp_methods =
   ; "std::operator>="
   ; "std::swap" ]
 
-let whitelisted_cpp_classes =
-  [ "__gnu_cxx::__normal_iterator" (* libstdc++ internal name of vector iterator *)
-  ; "std::__less"
-  ; "std::__wrap_iter" (* libc++ internal name of vector iterator *)
-  ; "std::__get_pair" (* libc++ internal support class for std::get<std::pair> *)
-  ; "std::__pair_get" (* libstdc++ internal support class for std::get<std::pair> *)
+let libstdcxx_whitelisted_cpp_methods =
+  [ "__gnu_cxx::operator!="
+  ; "__gnu_cxx::operator<"
+  ; "__gnu_cxx::operator<="
+  ; "__gnu_cxx::operator=="
+  ; "__gnu_cxx::operator>"
+  ; "__gnu_cxx::operator>="
+  ; "__gnu_cxx::operator+"
+  ; "__gnu_cxx::operator-" ]
+
+let libcxx_whitelisted_cpp_methods = []
+
+let other_whitelisted_cpp_methods = ["google::CheckNotNull"]
+
+let whitelisted_cpp_methods =
+  List.concat
+    [ std_whitelisted_cpp_methods
+    ; libstdcxx_whitelisted_cpp_methods
+    ; libcxx_whitelisted_cpp_methods
+    ; other_whitelisted_cpp_methods ]
+
+(* Whitelists for C++ library classes *)
+
+let std_whitelisted_cpp_classes =
+  [ "std::back_insert_iterator"
   ; "std::equal_to"
+  ; "std::front_insert_iterator"
   ; "std::greater"
   ; "std::greater_equal"
+  ; "std::insert_iterator"
   ; "std::less"
   ; "std::less_equal"
+  ; "std::move_iterator"
   ; "std::not_equal_to"
-  ; "std::pair" ]
+  ; "std::pair"
+  ; "std::reverse_iterator" ]
+
+let libstdcxx_whitelisted_cpp_classes =
+  (* libstdc++ internal support class for std::get<std::pair> *)
+  [ "__gnu_cxx::__normal_iterator" (* libstdc++ internal name of vector iterator *)
+  ; "std::__pair_get" ]
+
+let libcxx_whitelisted_cpp_classes =
+  (* libc++ internal support class for std::get<std::pair> *)
+  [ "std::__less"
+  ; "std::__wrap_iter" (* libc++ internal name of vector iterator *)
+  ; "std::__get_pair" ]
+
+let other_whitelisted_cpp_classes = []
+
+let whitelisted_cpp_classes =
+  List.concat
+    [ std_whitelisted_cpp_classes
+    ; libstdcxx_whitelisted_cpp_classes
+    ; libcxx_whitelisted_cpp_classes
+    ; other_whitelisted_cpp_classes ]
 
 type dynamic_dispatch_policy = [`None | `Interface | `Sound | `Lazy]
 
@@ -374,7 +420,7 @@ let startup_action =
     match initial_command with
     | Some Clang
      -> NoParse
-    | None | Some (Analyze | Capture | Compile | Diff | Report | ReportDiff | Run)
+    | None | Some (Analyze | Capture | Compile | Diff | Explore | Report | ReportDiff | Run)
      -> InferCommand
 
 let exe_usage =
@@ -428,7 +474,7 @@ let () =
      -> assert false (* filtered out *)
     | Report
      -> `Add
-    | Analyze | Capture | Compile | Diff | ReportDiff | Run
+    | Analyze | Capture | Compile | Diff | Explore | ReportDiff | Run
      -> `Reject
   in
   (* make sure we generate doc for all the commands we know about *)
@@ -492,11 +538,11 @@ and ( analysis_blacklist_files_containing_options
   , mk_filtering_options ~suffix:"blacklist-path-regex" ~deprecated_suffix:["blacklist"]
       ~help:
         "blacklist the analysis of files whose relative path matches the specified OCaml-style regex (to whitelist: $(b,--<analyzer>-whitelist-path-regex))"
-      ~meta:"path regex"
+      ~meta:"path_regex"
   , mk_filtering_options ~suffix:"whitelist-path-regex" ~deprecated_suffix:["whitelist"] ~help:""
-      ~meta:"path regex"
+      ~meta:"path_regex"
   , mk_filtering_options ~suffix:"suppress-errors" ~deprecated_suffix:["suppress_errors"]
-      ~help:"do not report a type of errors" ~meta:"error name" )
+      ~help:"do not report a type of errors" ~meta:"error_name" )
 
 and analysis_stops =
   CLOpt.mk_bool ~deprecated:["analysis_stops"] ~long:"analysis-stops"
@@ -511,7 +557,6 @@ and analyzer =
     BiAbduction
     | CaptureOnly
     | CompileOnly
-    | Eradicate
     | Checkers
     | Crashcontext
     | Linters
@@ -521,7 +566,7 @@ and analyzer =
     ~in_help:CLOpt.([(Analyze, manual_generic); (Run, manual_generic)])
     {|Specify which analyzer to run (only one at a time is supported):
 - $(b,infer): run the bi-abduction based checker, in particular to check for memory errors (activated by default)
-- $(b,checkers), $(b,eradicate): run the specified analysis
+- $(b,checkers): run the checkers
 - $(b,capture): similar to specifying the $(b,capture) subcommand (DEPRECATED)
 - $(b,compile): similar to specifying the $(b,compile) subcommand (DEPRECATED)
 - $(b,crashcontext): experimental (see $(b,--crashcontext))
@@ -552,7 +597,6 @@ and ( annotation_reachability
     , biabduction
     , bufferoverrun
     , crashcontext
-    , default_checkers
     , eradicate
     , fragment_retains_view
     , immutable_cast
@@ -563,85 +607,71 @@ and ( annotation_reachability
     , siof
     , threadsafety
     , suggest_nullable ) =
+  let all_checkers = ref [] in
+  let default_checkers = ref [] in
+  let mk_checker ?(default= false) ~long doc =
+    let var = CLOpt.mk_bool ~long ~in_help:CLOpt.([(Analyze, manual_generic)]) ~default doc in
+    all_checkers := (var, long) :: !all_checkers ;
+    if default then default_checkers := (var, long) :: !default_checkers ;
+    var
+  in
   let annotation_reachability =
-    CLOpt.mk_bool ~long:"annotation-reachability"
-      ~in_help:CLOpt.([(Analyze, manual_generic)])
-      ~default:true
+    mk_checker ~default:true ~long:"annotation-reachability"
       "the annotation reachability checker. Given a pair of source and sink annotation, e.g. @PerformanceCritical and @Expensive, this checker will warn whenever some method annotated with @PerformanceCritical calls, directly or indirectly, another method annotated with @Expensive"
   and biabduction =
-    CLOpt.mk_bool ~long:"biabduction"
-      ~in_help:CLOpt.([(Analyze, manual_generic)])
+    mk_checker ~long:"biabduction"
       "the separation logic based bi-abduction analysis using the checkers framework"
-  and bufferoverrun =
-    CLOpt.mk_bool ~long:"bufferoverrun"
-      ~in_help:CLOpt.([(Analyze, manual_generic)])
-      "the buffer overrun analysis"
+  and bufferoverrun = mk_checker ~long:"bufferoverrun" "the buffer overrun analysis"
   and crashcontext =
-    CLOpt.mk_bool ~long:"crashcontext"
-      ~in_help:CLOpt.([(Analyze, manual_generic)])
+    mk_checker ~long:"crashcontext"
       "the crashcontext checker for Java stack trace context reconstruction"
   and eradicate =
-    CLOpt.mk_bool ~long:"eradicate"
-      ~in_help:CLOpt.([(Analyze, manual_generic)])
-      "the eradicate @Nullable checker for Java annotations"
+    mk_checker ~long:"eradicate" "the eradicate @Nullable checker for Java annotations"
   and fragment_retains_view =
-    CLOpt.mk_bool ~long:"fragment-retains-view"
-      ~in_help:CLOpt.([(Analyze, manual_generic)])
-      ~default:true
+    mk_checker ~long:"fragment-retains-view" ~default:true
       "detects when Android fragments are not explicitly nullified before becoming unreabable"
   and immutable_cast =
-    CLOpt.mk_bool ~long:"immutable-cast"
-      ~in_help:CLOpt.([(Analyze, manual_generic)])
-      ~default:true
+    mk_checker ~long:"immutable-cast" ~default:true
       "the detection of object cast from immutable type to mutable type. For instance, it will detect cast from ImmutableList to List, ImmutableMap to Map, and ImmutableSet to Set."
   and liveness =
-    CLOpt.mk_bool ~long:"liveness"
-      ~in_help:CLOpt.([(Analyze, manual_generic)])
-      ~default:true "the detection of dead stores and unused variables"
+    mk_checker ~long:"liveness" ~default:true "the detection of dead stores and unused variables"
   and printf_args =
-    CLOpt.mk_bool ~long:"printf-args"
-      ~in_help:CLOpt.([(Analyze, manual_generic)])
-      ~default:true
+    mk_checker ~long:"printf-args" ~default:true
       "the detection of mismatch between the Java printf format strings and the argument types For, example, this checker will warn about the type error in `printf(\"Hello %d\", \"world\")`"
-  and repeated_calls =
-    CLOpt.mk_bool ~long:"repeated-calls"
-      ~in_help:CLOpt.([(Analyze, manual_generic)])
-      "check for repeated calls"
-  and quandary =
-    CLOpt.mk_bool ~long:"quandary"
-      ~in_help:CLOpt.([(Analyze, manual_generic)])
-      ~default:true "the quandary taint analysis"
+  and repeated_calls = mk_checker ~long:"repeated-calls" "check for repeated calls"
+  and quandary = mk_checker ~long:"quandary" ~default:true "the quandary taint analysis"
   and siof =
-    CLOpt.mk_bool ~long:"siof"
-      ~in_help:CLOpt.([(Analyze, manual_generic)])
-      ~default:true "the Static Initialization Order Fiasco analysis (C++ only)"
-  and threadsafety =
-    CLOpt.mk_bool ~long:"threadsafety"
-      ~in_help:CLOpt.([(Analyze, manual_generic)])
-      ~default:true "the thread safety analysis"
+    mk_checker ~long:"siof" ~default:true
+      "the Static Initialization Order Fiasco analysis (C++ only)"
+  and threadsafety = mk_checker ~long:"threadsafety" ~default:true "the thread safety analysis"
   and suggest_nullable =
-    CLOpt.mk_bool ~long:"suggest-nullable" ~default:false
+    mk_checker ~long:"suggest-nullable" ~default:false
       "Nullable annotation sugesstions analysis (experimental)"
   in
-  (* IMPORTANT: keep in sync with the checkers that have ~default:true above *)
-  let default_checkers =
+  let mk_only (var, long) =
+    let _ : bool ref =
+      CLOpt.mk_bool_group ~long:(long ^ "-only")
+        ~in_help:CLOpt.([(Analyze, manual_generic)])
+        (Printf.sprintf "Enable $(b,--%s) and disable all other checkers" long) [var]
+        (List.map ~f:fst !all_checkers)
+    in
+    ()
+  in
+  List.iter ~f:mk_only !all_checkers ;
+  let _default_checkers : bool ref =
     CLOpt.mk_bool_group ~long:"default-checkers"
       ~in_help:CLOpt.([(Analyze, manual_generic)])
       ~default:true
-      "Default checkers: $(b,--annotation-reachability), $(b,--fragments-retains-view), $(b,--immutable-cast), $(b,--printf-args), $(b,--quandary), $(b,--siof), $(b,--threadsafety)"
-      [ annotation_reachability
-      ; fragment_retains_view
-      ; immutable_cast
-      ; printf_args
-      ; quandary
-      ; siof
-      ; threadsafety ] []
+      ( "Default checkers: "
+      ^ ( List.map ~f:(fun (_, s) -> Printf.sprintf "$(b,--%s)" s) !default_checkers
+        |> String.concat ~sep:", " ) )
+      (List.map ~f:fst !default_checkers)
+      []
   in
   ( annotation_reachability
   , biabduction
   , bufferoverrun
   , crashcontext
-  , default_checkers
   , eradicate
   , fragment_retains_view
   , immutable_cast
@@ -659,6 +689,11 @@ and annotation_reachability_custom_pairs =
     {|Specify custom sources/sink for the annotation reachability checker
 Example format: for custom annotations com.my.annotation.{Source1,Source2,Sink1}
 { "sources" : ["Source1", "Source2"], "sink" : "Sink1" }|}
+
+and append_buck_flavors =
+  CLOpt.mk_string_list ~long:"append-buck-flavors"
+    ~in_help:CLOpt.([(Capture, manual_buck_flavors)])
+    "Additional Buck flavors to append to targets discovered by the $(b,--buck-compilation-database) option."
 
 and array_level =
   CLOpt.mk_int ~deprecated:["arraylevel"] ~long:"array-level" ~default:0 ~meta:"int"
@@ -714,7 +749,7 @@ and bugs_tests =
 and bugs_txt =
   CLOpt.mk_path_opt ~deprecated:["bugs_txt"] ~long:"issues-txt"
     ~in_help:CLOpt.([(Report, manual_generic)])
-    ~meta:"file" "Write a list of issues in text format to $(i,file)"
+    ~meta:"file" "Write a list of issues in text format to $(i,file) (default: infer-out/bugs.txt)"
 
 and calls_csv =
   CLOpt.mk_path_opt ~deprecated:["calls"] ~long:"calls-csv"
@@ -723,7 +758,7 @@ and calls_csv =
 
 and changed_files_index =
   CLOpt.mk_path_opt ~long:"changed-files-index"
-    ~in_help:CLOpt.([(Analyze, manual_generic)])
+    ~in_help:CLOpt.([(Analyze, manual_generic); (Diff, manual_generic)])
     ~meta:"file"
     "Specify the file containing the list of source files from which reactive analysis should start. Source files should be specified relative to project root or be absolute"
 
@@ -742,11 +777,11 @@ and clang_frontend_action =
 
 and clang_include_to_override_regex =
   CLOpt.mk_string_opt ~long:"clang-include-to-override-regex"
-    ~deprecated:["-clang-include-to-override"] ~meta:"dir OCaml regex"
+    ~deprecated:["-clang-include-to-override"] ~meta:"dir_OCaml_regex"
     "Use this option in the uncommon case where the normal compilation process overrides the location of internal compiler headers. This option should specify regular expression with the path to those headers so that infer can use its own clang internal headers instead."
 
 and clang_ignore_regex =
-  CLOpt.mk_string_opt ~long:"clang-ignore-regex" ~meta:"dir OCaml regex"
+  CLOpt.mk_string_opt ~long:"clang-ignore-regex" ~meta:"dir_OCaml_regex"
     "The files in this regex will be ignored in the compilation process and an empty file will be passed to clang instead. This is to be used with the buck flavour infer-capture-all to work around missing generated files."
 
 and classpath = CLOpt.mk_string_opt ~long:"classpath" "Specify the Java classpath"
@@ -778,10 +813,6 @@ and continue =
     ~in_help:CLOpt.([(Analyze, manual_generic)])
     "Continue the capture for the reactive analysis, increasing the changed files/procedures. (If a procedure was changed beforehand, keep the changed marking.)"
 
-and copy_propagation =
-  CLOpt.mk_bool ~deprecated:["copy-propagation"] ~long:"copy-propagation"
-    "Perform copy-propagation on the IR"
-
 and current_to_previous_script =
   CLOpt.mk_string_opt ~long:"current-to-previous-script"
     ~in_help:CLOpt.([(Diff, manual_generic)])
@@ -809,7 +840,6 @@ and ( bo_debug
     , debug_level_capture
     , debug_level_linters
     , default_linters
-    , failures_allowed
     , filtering
     , frontend_tests
     , keep_going
@@ -827,7 +857,8 @@ and ( bo_debug
     , write_dotty ) =
   let all_generic_manuals =
     List.filter_map CLOpt.all_commands ~f:(fun cmd ->
-        if CLOpt.(equal_command cmd Clang) then None else Some (cmd, manual_generic) )
+        if List.mem ~equal:CLOpt.equal_command CLOpt.([Clang; Explore]) cmd then None
+        else Some (cmd, manual_generic) )
   in
   let bo_debug =
     CLOpt.mk_int ~default:0 ~long:"bo-debug"
@@ -847,9 +878,6 @@ and ( bo_debug
     CLOpt.mk_bool ~long:"developer-mode"
       ~default:(Option.value_map ~default:false ~f:CLOpt.(equal_command Report) initial_command)
       "Show internal exceptions"
-  and failures_allowed =
-    CLOpt.mk_bool ~deprecated_no:["-no_failures_allowed"] ~long:"failures-allowed" ~default:true
-      "Fail if at least one of the translations fails (clang only)"
   and filtering =
     CLOpt.mk_bool ~deprecated_no:["nf"] ~long:"filtering" ~short:'f' ~default:true
       ~in_help:CLOpt.([(Report, manual_generic)])
@@ -862,7 +890,7 @@ and ( bo_debug
   and print_types =
     CLOpt.mk_bool ~long:"print-types" ~default:false "Print types in symbolic heaps"
   and keep_going =
-    CLOpt.mk_bool ~long:"keep-going"
+    CLOpt.mk_bool ~deprecated_no:["-no-failures-allowed"] ~long:"keep-going"
       ~in_help:CLOpt.([(Analyze, manual_generic)])
       ~default:true "Keep going when the analysis encounters a failure"
   and reports_include_ml_loc =
@@ -918,8 +946,7 @@ and ( bo_debug
       "Save filename.ext.test.dot with the cfg in dotty format for frontend tests (also sets $(b,--print-types))"
       [print_types] []
   and models_mode =
-    CLOpt.mk_bool_group ~long:"models-mode" "Mode for analyzing the models" []
-      [failures_allowed; keep_going]
+    CLOpt.mk_bool_group ~long:"models-mode" "Mode for analyzing the models" [] [keep_going]
   and print_logs =
     CLOpt.mk_bool ~long:"print-logs"
       ~in_help:
@@ -941,7 +968,7 @@ and ( bo_debug
       ~f:(fun debug ->
         debug_level_linters := if debug then 2 else 0 ;
         debug)
-      [debug; developer_mode] [failures_allowed; default_linters]
+      [debug; developer_mode] [default_linters; keep_going]
   in
   ( bo_debug
   , developer_mode
@@ -951,7 +978,6 @@ and ( bo_debug
   , debug_level_capture
   , debug_level_linters
   , default_linters
-  , failures_allowed
   , filtering
   , frontend_tests
   , keep_going
@@ -985,7 +1011,7 @@ and differential_filter_set =
     ~default:[`Introduced; `Fixed; `Preexisting]
 
 and disable_checks =
-  CLOpt.mk_string_list ~deprecated:["disable_checks"] ~long:"disable-checks" ~meta:"error name"
+  CLOpt.mk_string_list ~deprecated:["disable_checks"] ~long:"disable-checks" ~meta:"error_name"
     ~in_help:CLOpt.([(Report, manual_generic)])
     ~default:
       [ "ANALYSIS_STOPS"
@@ -1020,7 +1046,7 @@ and dynamic_dispatch =
     ~symbols:[("none", `None); ("interface", `Interface); ("sound", `Sound); ("lazy", `Lazy)]
 
 and enable_checks =
-  CLOpt.mk_string_list ~deprecated:["enable_checks"] ~long:"enable-checks" ~meta:"error name"
+  CLOpt.mk_string_list ~deprecated:["enable_checks"] ~long:"enable-checks" ~meta:"error_name"
     "Show reports coming from this type of errors. This option has higher precedence than $(b,--disable-checks)"
 
 and eradicate_condition_redundant =
@@ -1087,6 +1113,12 @@ and frontend_stats =
   CLOpt.mk_bool ~deprecated:["fs"] ~deprecated_no:["nfs"] ~long:"frontend-stats"
     "Output statistics about the capture phase to *.o.astlog (clang only)"
 
+and gen_previous_build_command_script =
+  CLOpt.mk_string_opt ~long:"gen-previous-build-command-script"
+    ~in_help:CLOpt.([(Diff, manual_generic)])
+    ~meta:"shell"
+    "Specify a script that outputs the build command to capture in the previous version of the project. The script should output the command on stdout. For example \"echo make\"."
+
 and generated_classes =
   CLOpt.mk_path_opt ~long:"generated-classes"
     ~in_help:CLOpt.([(Capture, manual_java)])
@@ -1114,6 +1146,9 @@ and help_format =
     ~in_help:(List.map CLOpt.all_commands ~f:(fun command -> (command, manual_generic)))
     "Show this help in the specified format. $(b,auto) sets the format to $(b,plain) if the environment variable $(b,TERM) is \"dumb\" or undefined, and to $(b,pager) otherwise."
 
+and html =
+  CLOpt.mk_bool ~long:"html" ~in_help:CLOpt.([(Explore, manual_generic)]) "Generate html report."
+
 and icfg_dotty_outfile =
   CLOpt.mk_path_opt ~long:"icfg-dotty-outfile" ~meta:"path"
     "If set, specifies path where .dot file should be written, it overrides the path for all other options that would generate icfg file otherwise"
@@ -1134,7 +1169,7 @@ and iphoneos_target_sdk_version =
 and iphoneos_target_sdk_version_skip_path =
   CLOpt.mk_string_list ~long:"iphoneos-target-sdk-version-skip-path"
     ~in_help:CLOpt.([(Capture, manual_clang_linters)])
-    ~meta:"path prefix OCaml regex"
+    ~meta:"path_prefix_OCaml_regex"
     "To be used together with iphoneos-target-sdk-version, to disable that flag in a particular path (can be specified multiple times)"
 
 and issues_fields =
@@ -1188,9 +1223,16 @@ and linters_def_file =
     ~meta:"file" "Specify the file containing linters definition (e.g. 'linters.al')"
 
 and linters_def_folder =
-  CLOpt.mk_path_list ~default:[] ~long:"linters-def-folder"
-    ~in_help:CLOpt.([(Capture, manual_clang_linters)])
-    ~meta:"dir" "Specify the folder containing linters files with extension .al"
+  let linters_def_folder =
+    CLOpt.mk_path_list ~default:[] ~long:"linters-def-folder"
+      ~in_help:CLOpt.([(Capture, manual_clang_linters)])
+      ~meta:"dir" "Specify the folder containing linters files with extension .al"
+  in
+  let () =
+    CLOpt.mk_set linters_def_folder [] ~long:"reset-linters-def-folder"
+      "Reset the list of folders containing linters definitions to be empty (see $(b,linters-def-folder))."
+  in
+  linters_def_folder
 
 and linters_ignore_clang_failures =
   CLOpt.mk_bool ~long:"linters-ignore-clang-failures"
@@ -1214,6 +1256,11 @@ and makefile = CLOpt.mk_path ~deprecated:["makefile"] ~long:"makefile" ~default:
 and margin =
   CLOpt.mk_int ~deprecated:["set_pp_margin"] ~long:"margin" ~default:100 ~meta:"int"
     "Set right margin for the pretty printing functions"
+
+and max_nesting =
+  CLOpt.mk_int_opt ~long:"max-nesting"
+    ~in_help:CLOpt.([(Explore, manual_generic)])
+    "Level of nested procedure calls to show. Trace elements beyond the maximum nesting level are skipped. If omitted, all levels are shown."
 
 and merge =
   CLOpt.mk_bool ~deprecated:["merge"] ~long:"merge"
@@ -1248,6 +1295,11 @@ and objc_memory_model =
 
 and only_footprint =
   CLOpt.mk_bool ~deprecated:["only_footprint"] ~long:"only-footprint" "Skip the re-execution phase"
+
+and only_show =
+  CLOpt.mk_bool ~long:"only-show"
+    ~in_help:CLOpt.([(Explore, manual_generic)])
+    "Show the list of reports and exit"
 
 and passthroughs =
   CLOpt.mk_bool ~long:"passthroughs" ~default:false
@@ -1388,6 +1440,7 @@ and report_formatter =
 
 and report_hook =
   CLOpt.mk_string_opt ~long:"report-hook"
+    ~in_help:CLOpt.([(Analyze, manual_generic); (Run, manual_generic)])
     ~default:(lib_dir ^/ "python" ^/ "report.py")
     ~meta:"script"
     "Specify a script to be executed after the analysis results are written.  This script will be passed $(b,--issues-csv), $(b,--issues-json), $(b,--issues-txt), $(b,--issues-xml), $(b,--project-root), and $(b,--results-dir)."
@@ -1399,11 +1452,6 @@ and report_previous =
 
 and resource_leak =
   CLOpt.mk_bool ~long:"resource-leak" ~default:false "the resource leak analysis (experimental)"
-
-and resolve_infer_eradicate_conflict =
-  CLOpt.mk_bool ~long:"resolve-infer-eradicate-conflict" ~default:false
-    ~in_help:CLOpt.([(ReportDiff, manual_generic)])
-    "Filter out Null Dereferences reported by Infer if Eradicate is enabled"
 
 and rest =
   CLOpt.mk_rest_actions ~in_help:CLOpt.([(Capture, manual_generic); (Run, manual_generic)])
@@ -1418,6 +1466,7 @@ and results_dir =
       (CLOpt.(
         [ (Analyze, manual_generic)
         ; (Capture, manual_generic)
+        ; (Explore, manual_generic)
         ; (Run, manual_generic)
         ; (Report, manual_generic) ]))
     ~meta:"dir" "Write results and internal files in the specified directory"
@@ -1431,6 +1480,11 @@ and seconds_per_iteration =
   CLOpt.mk_float_opt ~deprecated:["seconds_per_iteration"] ~long:"seconds-per-iteration"
     ~meta:"float" "Set the number of seconds per iteration (see $(b,--iterations))"
 
+and select =
+  CLOpt.mk_int_opt ~long:"select" ~meta:"N"
+    ~in_help:CLOpt.([(Explore, manual_generic)])
+    "Select bug number $(i,N). If omitted, prompt for input."
+
 and siof_safe_methods =
   CLOpt.mk_string_list ~long:"siof-safe-methods"
     ~in_help:CLOpt.([(Analyze, manual_siof)])
@@ -1439,7 +1493,7 @@ and siof_safe_methods =
 and skip_analysis_in_path =
   CLOpt.mk_string_list ~deprecated:["-skip-clang-analysis-in-path"] ~long:"skip-analysis-in-path"
     ~in_help:CLOpt.([(Capture, manual_generic); (Run, manual_generic)])
-    ~meta:"path prefix OCaml regex"
+    ~meta:"path_prefix_OCaml_regex"
     "Ignore files whose path matches the given prefix (can be specified multiple times)"
 
 and skip_analysis_in_path_skips_compilation =
@@ -1455,7 +1509,12 @@ and skip_duplicated_types =
 and skip_translation_headers =
   CLOpt.mk_string_list ~deprecated:["skip_translation_headers"] ~long:"skip-translation-headers"
     ~in_help:CLOpt.([(Capture, manual_clang)])
-    ~meta:"path prefix" "Ignore headers whose path matches the given prefix"
+    ~meta:"path_prefix" "Ignore headers whose path matches the given prefix"
+
+and source_preview =
+  CLOpt.mk_bool ~long:"source-preview" ~default:true
+    ~in_help:CLOpt.([(Explore, manual_generic)])
+    "print code excerpts around trace elements"
 
 and sources = CLOpt.mk_string_list ~long:"sources" "Specify the list of source files"
 
@@ -1473,7 +1532,7 @@ and specs_library =
     CLOpt.mk_path_list ~deprecated:["lib"] ~long:"specs-library" ~short:'L' ~meta:"dir|jar"
       "Search for .spec files in given directory or jar file"
   in
-  let _ =
+  let _ : string ref =
     (* Given a filename with a list of paths, convert it into a list of string iff they are
        absolute *)
     let read_specs_dir_list_file fname =
@@ -1744,8 +1803,6 @@ let post_parsing_initialization command_opt =
    -> biabduction := true
   | Some Crashcontext
    -> crashcontext := true
-  | Some Eradicate
-   -> eradicate := true
   | Some (CaptureOnly | CompileOnly | Checkers | Linters)
    -> ()
   | None
@@ -1801,6 +1858,8 @@ and annotation_reachability = !annotation_reachability
 
 and annotation_reachability_custom_pairs = !annotation_reachability_custom_pairs
 
+and append_buck_flavors = !append_buck_flavors
+
 and array_level = !array_level
 
 and ast_file = !ast_file
@@ -1829,6 +1888,8 @@ and bugs_csv = !bugs_csv
 
 and frontend_tests = !frontend_tests
 
+and gen_previous_build_command_script = !gen_previous_build_command_script
+
 and generated_classes = !generated_classes
 
 and bugs_tests = !bugs_tests
@@ -1856,8 +1917,6 @@ and compute_analytics = !compute_analytics
 and continue_capture = !continue
 
 and current_to_previous_script = !current_to_previous_script
-
-and copy_propagation = !copy_propagation
 
 and crashcontext = !crashcontext
 
@@ -1913,8 +1972,6 @@ and eradicate_verbose = !eradicate_verbose
 
 and fail_on_bug = !fail_on_bug
 
-and failures_allowed = !failures_allowed
-
 and fcp_apple_clang = !fcp_apple_clang
 
 and fcp_syntax_only = !fcp_syntax_only
@@ -1936,6 +1993,8 @@ and frontend_debug = !frontend_debug
 and frontend_stats = !frontend_stats
 
 and headers = !headers
+
+and html = !html
 
 and icfg_dotty_outfile = !icfg_dotty_outfile
 
@@ -1986,6 +2045,8 @@ and log_file = !log_file
 
 and makefile_cmdline = !makefile
 
+and max_nesting = !max_nesting
+
 and merge = !merge
 
 and ml_buckets = !ml_buckets
@@ -2007,6 +2068,8 @@ and objc_memory_model_on = !objc_memory_model
 and only_cheap_debug = !only_cheap_debug
 
 and only_footprint = !only_footprint
+
+and only_show = !only_show
 
 and passthroughs = !passthroughs
 
@@ -2062,7 +2125,7 @@ and quandary_sinks = !quandary_sinks
 
 and quiet = !quiet
 
-and reactive_mode = !reactive
+and reactive_mode = !reactive || CLOpt.(equal_command Diff) command
 
 and reactive_capture = !reactive_capture
 
@@ -2082,8 +2145,6 @@ and report_previous = !report_previous
 
 and reports_include_ml_loc = !reports_include_ml_loc
 
-and resolve_infer_eradicate_conflict = !resolve_infer_eradicate_conflict
-
 and resource_leak = !resource_leak
 
 and results_dir = !results_dir
@@ -2091,6 +2152,8 @@ and results_dir = !results_dir
 and save_analysis_results = !save_results
 
 and seconds_per_iteration = !seconds_per_iteration
+
+and select = !select
 
 and show_buckets = !print_buckets
 
@@ -2107,6 +2170,8 @@ and skip_analysis_in_path_skips_compilation = !skip_analysis_in_path_skips_compi
 and skip_duplicated_types = !skip_duplicated_types
 
 and skip_translation_headers = !skip_translation_headers
+
+and source_preview = !source_preview
 
 and sources = !sources
 

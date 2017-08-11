@@ -18,7 +18,6 @@ type analyzer =
   | BiAbduction
   | CaptureOnly
   | CompileOnly
-  | Eradicate
   | Checkers
   | Crashcontext
   | Linters
@@ -71,11 +70,11 @@ val env_inside_maven : Unix.env
 
 (** Constant configuration values *)
 
-val allow_missing_index_in_proc_call : bool
-
 val anonymous_block_num_sep : string
 
 val anonymous_block_prefix : string
+
+val append_buck_flavors : string list
 
 val assign : string
 
@@ -155,6 +154,8 @@ val log_dir_name : string
 
 val max_recursion : int
 
+val max_widens : int
+
 val meet_level : int
 
 val models_dir : string
@@ -216,6 +217,7 @@ val specs_dir_name : string
 val specs_files_suffix : string
 
 val start_filename : string
+
 val trace_absarray : bool
 
 val undo_join : bool
@@ -319,8 +321,6 @@ val compute_analytics : bool
 
 val continue_capture : bool
 
-val copy_propagation : bool
-
 val crashcontext : bool
 
 val create_harness : bool
@@ -381,8 +381,6 @@ val eradicate_verbose : bool
 
 val fail_on_bug : bool
 
-val failures_allowed : bool
-
 val fcp_apple_clang : string option
 
 val fcp_syntax_only : bool
@@ -405,9 +403,13 @@ val frontend_tests : bool
 
 val frontend_stats : bool
 
+val gen_previous_build_command_script : string option
+
 val generated_classes : string option
 
 val headers : bool
+
+val html : bool
 
 val icfg_dotty_outfile : string option
 
@@ -478,6 +480,8 @@ val makefile_cmdline : string
 
 val maven : bool
 
+val max_nesting : int option
+
 val merge : bool
 
 val ml_buckets :
@@ -498,6 +502,8 @@ val objc_memory_model_on : bool
 val only_cheap_debug : bool
 
 val only_footprint : bool
+
+val only_show : bool
 
 val pmd_xml : bool
 
@@ -555,8 +561,6 @@ val tracing : bool
 
 val reports_include_ml_loc : bool
 
-val resolve_infer_eradicate_conflict : bool
-
 val resource_leak : bool
 
 val results_dir : string
@@ -564,6 +568,8 @@ val results_dir : string
 val save_analysis_results : string option
 
 val seconds_per_iteration : float option
+
+val select : int option
 
 val show_buckets : bool
 
@@ -580,6 +586,8 @@ val skip_analysis_in_path_skips_compilation : bool
 val skip_duplicated_types : bool
 
 val skip_translation_headers : string list
+
+val source_preview : bool
 
 val spec_abs_level : int
 

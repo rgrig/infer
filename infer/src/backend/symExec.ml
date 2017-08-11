@@ -53,7 +53,7 @@ let get_blocks_nullified node =
     List.concat_map
       ~f:(fun i ->
         match i with Sil.Nullify (pvar, _) when Sil.is_block_pvar pvar -> [pvar] | _ -> [])
-      (Procdesc.Node.get_instrs node)
+      (ProcCfg.Exceptional.instrs node)
   in
   null_blocks
 
@@ -331,7 +331,7 @@ let prune_ineq tenv ~is_strict ~positive prop e1 e2 =
       Propset.singleton tenv prop_with_ineq
 
 let rec prune tenv ~positive condition prop =
-  match condition with
+  match Prop.exp_normalize_prop ~destructive:true tenv prop condition with
   | Exp.Var _ | Exp.Lvar _
    -> prune_ne tenv ~positive condition Exp.zero prop
   | Exp.Const Const.Cint i when IntLit.iszero i
@@ -463,6 +463,17 @@ let check_already_dereferenced tenv pname cond prop =
     | Exp.BinOp ((Binop.Eq | Binop.Ne), Exp.Const Const.Cint i, Exp.Var id)
     | Exp.BinOp ((Binop.Eq | Binop.Ne), Exp.Var id, Exp.Const Const.Cint i)
       when IntLit.iszero i
+     -> Some id
+    (* These two patterns appear frequently in Prune nodes *)
+    | Exp.BinOp
+        ( (Binop.Eq | Binop.Ne)
+        , Exp.BinOp (Binop.Eq, Exp.Var id, Exp.Const Const.Cint i)
+        , Exp.Const Const.Cint j )
+    | Exp.BinOp
+        ( (Binop.Eq | Binop.Ne)
+        , Exp.BinOp (Binop.Eq, Exp.Const Const.Cint i, Exp.Var id)
+        , Exp.Const Const.Cint j )
+      when IntLit.iszero i && IntLit.iszero j
      -> Some id
     | _
      -> None
@@ -902,14 +913,14 @@ let add_constraints_on_retval tenv pdesc prop ret_exp ~has_nullable_annot typ ca
       (* TODO: (t7147096) extend this to detect mutual recursion *)
       Typ.Procname.equal pname (Procdesc.get_proc_name pdesc)
     in
-    let already_has_abduced_retval p abduced_ret_pv =
-      List.exists
+    let lookup_abduced_expression p abduced_ret_pv =
+      List.find_map
         ~f:(fun hpred ->
           match hpred with
-          | Sil.Hpointsto (Exp.Lvar pv, _, _)
-           -> Pvar.equal pv abduced_ret_pv
+          | Sil.Hpointsto (Exp.Lvar pv, _, exp) when Pvar.equal pv abduced_ret_pv
+           -> Some exp
           | _
-           -> false)
+           -> None)
         p.Prop.sigma_fp
     in
     (* find an hpred [abduced] |-> A in [prop] and add [exp] = A to prop *)
@@ -931,19 +942,24 @@ let add_constraints_on_retval tenv pdesc prop ret_exp ~has_nullable_annot typ ca
     in
     if Config.angelic_execution && not (is_rec_call callee_pname) then
       (* introduce a fresh program variable to allow abduction on the return value *)
-      let abduced_ret_pv = Pvar.mk_abduced_ret callee_pname callee_loc in
-      (* prevent introducing multiple abduced retvals for a single call site in a loop *)
-      if already_has_abduced_retval prop abduced_ret_pv then prop
-      else
-        let prop' =
-          if !Config.footprint then
-            let prop', fresh_fp_var = add_to_footprint tenv abduced_ret_pv typ prop in
-            Prop.conjoin_eq tenv ~footprint:true ret_exp fresh_fp_var prop'
-          else
-            (* bind return id to the abduced value pointed to by the pvar we introduced *)
-            bind_exp_to_abduced_val ret_exp abduced_ret_pv prop
+      let prop_with_abduced_var =
+        let abduced_ret_pv =
+          (* in Java, always re-use the same abduced ret var to prevent false alarms with repeated method calls *)
+          let loc = if Typ.Procname.is_java callee_pname then Location.dummy else callee_loc in
+          Pvar.mk_abduced_ret callee_pname loc
         in
-        add_ret_non_null ret_exp typ prop'
+        if !Config.footprint then
+          match lookup_abduced_expression prop abduced_ret_pv with
+          | None
+           -> let p, fp_var = add_to_footprint tenv abduced_ret_pv typ prop in
+              Prop.conjoin_eq tenv ~footprint:true ret_exp fp_var p
+          | Some exp
+           -> Prop.conjoin_eq tenv ~footprint:true ret_exp exp prop
+        else
+          (* bind return id to the abduced value pointed to by the pvar we introduced *)
+          bind_exp_to_abduced_val ret_exp abduced_ret_pv prop
+      in
+      add_ret_non_null ret_exp typ prop_with_abduced_var
     else add_ret_non_null ret_exp typ prop
 
 let execute_load ?(report_deref_errors= true) pname pdesc tenv id rhs_exp typ loc prop_ =
@@ -989,33 +1005,17 @@ let execute_load ?(report_deref_errors= true) pname pdesc tenv id rhs_exp typ lo
     match check_constant_string_dereference n_rhs_exp' with
     | Some value
      -> [Prop.conjoin_eq tenv (Exp.Var id) value prop]
-    | None
-     -> let exp_get_undef_attr exp =
-          let fold_undef_pname callee_opt atom =
-            match (callee_opt, atom) with
-            | None, Sil.Apred (Aundef _, _)
-             -> Some atom
-            | _
-             -> callee_opt
-          in
-          List.fold ~f:fold_undef_pname ~init:None (Attribute.get_for_exp tenv prop exp)
-        in
-        let prop' =
-          if Config.angelic_execution && not (Exp.is_stack_addr n_rhs_exp') then
-            (* when we try to deref an undefined value, add it to the footprint *)
-            match exp_get_undef_attr n_rhs_exp' with
-            | Some Apred (Aundef (callee_pname, ret_annots, callee_loc, _), _)
-             -> let has_nullable_annot = Annotations.ia_is_nullable ret_annots in
-                add_constraints_on_retval tenv pdesc prop n_rhs_exp' ~has_nullable_annot typ
-                  callee_pname callee_loc
-            | _
-             -> prop
-          else prop
-        in
+    | None ->
+      try
         let iter_list =
-          Rearrange.rearrange ~report_deref_errors pdesc tenv n_rhs_exp' typ prop' loc
+          Rearrange.rearrange ~report_deref_errors pdesc tenv n_rhs_exp' typ prop loc
         in
         List.rev (List.fold ~f:(execute_load_ pdesc tenv id loc) ~init:[] iter_list)
+      with Exceptions.Symexec_memory_error _ ->
+        (* This should normally be a real alarm and should not be caught but currently happens
+           when the normalization drops hpreds of the form ident |-> footprint var. *)
+        let undef = Exp.get_undefined !Config.footprint in
+        [Prop.conjoin_eq tenv (Exp.Var id) undef prop]
   with Rearrange.ARRAY_ACCESS ->
     if Int.equal Config.array_level 0 then assert false
     else
@@ -1684,24 +1684,6 @@ and proc_call callee_summary
     {Builtin.pdesc; tenv; prop_= pre; path; ret_id; args= actual_pars; loc} =
   let caller_pname = Procdesc.get_proc_name pdesc in
   let callee_pname = Specs.get_proc_name callee_summary in
-  let ret_typ = Specs.get_ret_type callee_summary in
-  let check_return_value_ignored () =
-    (* check if the return value of the call is ignored, and issue a warning *)
-    let is_ignored =
-      match (ret_typ.Typ.desc, ret_id) with
-      | Typ.Tvoid, _
-       -> false
-      | _, None
-       -> true
-      | _, Some (id, _)
-       -> Errdesc.id_is_assigned_then_dead (State.get_node ()) id
-    in
-    if is_ignored && is_none (Specs.get_flag callee_summary ProcAttributes.proc_flag_ignore_return)
-    then
-      let err_desc = Localise.desc_return_value_ignored callee_pname loc in
-      let exn = Exceptions.Return_value_ignored (err_desc, __POS__) in
-      Reporting.log_warning_deprecated caller_pname exn
-  in
   check_inherently_dangerous_function caller_pname callee_pname ;
   let formal_types = List.map ~f:snd (Specs.get_formals callee_summary) in
   let rec comb actual_pars formal_types =
@@ -1733,12 +1715,11 @@ and proc_call callee_summary
         L.d_ln () ;
         raise (Exceptions.Wrong_argument_number __POS__)
   in
-  let actual_params = comb actual_pars formal_types in
   (* Actual parameters are associated to their formal
        parameter type if there are enough formal parameters, and
        to their actual type otherwise. The latter case happens
        with variable - arguments functions *)
-  check_return_value_ignored () ;
+  let actual_params = comb actual_pars formal_types in
   (* In case we call an objc instance method we add and extra spec *)
   (* were the receiver is null and the semantics of the call is nop*)
   (* let callee_attrs = Specs.get_attributes callee_summary in *)
@@ -1753,9 +1734,9 @@ and proc_call callee_summary
       pre path
 
 (** perform symbolic execution for a single prop, and check for junk *)
-and sym_exec_wrapper handle_exn tenv pdesc instr ((prop: Prop.normal Prop.t), path)
+and sym_exec_wrapper handle_exn tenv proc_cfg instr ((prop: Prop.normal Prop.t), path)
     : Paths.PathSet.t =
-  let pname = Procdesc.get_proc_name pdesc in
+  let pname = Procdesc.get_proc_name (ProcCfg.Exceptional.proc_desc proc_cfg) in
   let prop_primed_to_normal p =
     (* Rename primed vars with fresh normal vars, and return them *)
     let fav = Prop.prop_fav p in
@@ -1795,10 +1776,10 @@ and sym_exec_wrapper handle_exn tenv pdesc instr ((prop: Prop.normal Prop.t), pa
       State.set_path path None ;
       let node_has_abstraction node =
         let instr_is_abstraction = function Sil.Abstract _ -> true | _ -> false in
-        List.exists ~f:instr_is_abstraction (Procdesc.Node.get_instrs node)
+        List.exists ~f:instr_is_abstraction (ProcCfg.Exceptional.instrs node)
       in
       let curr_node = State.get_node () in
-      match Procdesc.Node.get_kind curr_node with
+      match ProcCfg.Exceptional.kind curr_node with
       | Procdesc.Node.Prune_node _ when not (node_has_abstraction curr_node)
        -> (* don't check for leaks in prune nodes, unless there is abstraction anyway,*)
           (* but force them into either branch *)
@@ -1813,7 +1794,7 @@ and sym_exec_wrapper handle_exn tenv pdesc instr ((prop: Prop.normal Prop.t), pa
     let res_list =
       Config.run_with_abs_val_equal_zero
         (* no exp abstraction during sym exe *)
-          (fun () -> sym_exec tenv pdesc instr prop' path)
+          (fun () -> sym_exec tenv (ProcCfg.Exceptional.proc_desc proc_cfg) instr prop' path)
         ()
     in
     let res_list_nojunk =
@@ -1835,12 +1816,13 @@ and sym_exec_wrapper handle_exn tenv pdesc instr ((prop: Prop.normal Prop.t), pa
 
 (** {2 Lifted Abstract Transfer Functions} *)
 
-let node handle_exn tenv pdesc node (pset: Paths.PathSet.t) : Paths.PathSet.t =
-  let pname = Procdesc.get_proc_name pdesc in
+let node handle_exn tenv proc_cfg (node: ProcCfg.Exceptional.node) (pset: Paths.PathSet.t)
+    : Paths.PathSet.t =
+  let pname = Procdesc.get_proc_name (ProcCfg.Exceptional.proc_desc proc_cfg) in
   let exe_instr_prop instr p tr (pset1: Paths.PathSet.t) =
     let pset2 =
       if Tabulation.prop_is_exn pname p && not (Sil.instr_is_auxiliary instr)
-         && Procdesc.Node.get_kind node <> Procdesc.Node.exn_handler_kind
+         && ProcCfg.Exceptional.kind node <> Procdesc.Node.exn_handler_kind
          (* skip normal instructions if an exception was thrown,
             unless this is an exception handler node *)
       then (
@@ -1848,11 +1830,11 @@ let node handle_exn tenv pdesc node (pset: Paths.PathSet.t) : Paths.PathSet.t =
         Sil.d_instr instr ;
         L.d_strln " due to exception" ;
         Paths.PathSet.from_renamed_list [(p, tr)] )
-      else sym_exec_wrapper handle_exn tenv pdesc instr (p, tr)
+      else sym_exec_wrapper handle_exn tenv proc_cfg instr (p, tr)
     in
     Paths.PathSet.union pset2 pset1
   in
   let exe_instr_pset pset instr =
     Paths.PathSet.fold (exe_instr_prop instr) pset Paths.PathSet.empty
   in
-  List.fold ~f:exe_instr_pset ~init:pset (Procdesc.Node.get_instrs node)
+  List.fold ~f:exe_instr_pset ~init:pset (ProcCfg.Exceptional.instrs node)

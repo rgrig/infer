@@ -14,6 +14,8 @@ module F = Format
 (** signed and unsigned integer literals *)
 type t
 
+exception OversizedShift
+
 val add : t -> t -> t
 
 val compare : t -> t -> int
@@ -77,6 +79,15 @@ val one : t
 val pp : F.formatter -> t -> unit
 
 val rem : t -> t -> t
+
+val shift_left : t -> t -> t
+
+(* shift_right performs arithmetic shift, for the following reasons: *)
+(* In C++, whether right shift is logical or arithmetical is implementation defined.
+ * Usually an arithmetic shift is implemented. *)
+(* In Java, the current frontend refuses to translate logical right shift. *)
+
+val shift_right : t -> t -> t
 
 val sub : t -> t -> t
 

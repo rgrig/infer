@@ -12,7 +12,7 @@ ANALYZER = infer
 BUCK_TARGET = //src:hello
 SOURCES = $(wildcard src/hello.c)
 OBJECTS = buck-out/gen/src/hello\#compile-hello.c.o1f717d69,default/hello.c.o
-INFER_OPTIONS = --report-custom-error --developer-mode --project-root $(TESTS_DIR) --no-failures-allowed
+INFER_OPTIONS = --report-custom-error --developer-mode --project-root $(TESTS_DIR) --no-keep-going
 INFERPRINT_OPTIONS = --project-root $(TESTS_DIR) --issues-tests
 CLEAN_EXTRA = buck-out capture_hash-1.sha capture_hash-2.sha
 
@@ -44,6 +44,9 @@ differences.exp.test: $(CLANG_DEPS) $(SOURCES) $(MAKEFILE_LIST)
 	  echo "capture is not deterministic!" > $@; \
 	)
 	$(QUIET)$(REMOVE) capture_hash-1.sha capture_hash-2.sha
+
+.PHONY: print
+print: differences.exp.test
 
 .PHONY: test
 test: differences.exp.test

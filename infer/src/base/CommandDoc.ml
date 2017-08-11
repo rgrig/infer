@@ -24,6 +24,7 @@ let command_to_name =
   ; (Capture, "capture")
   ; (Compile, "compile")
   ; (Diff, "diff")
+  ; (Explore, "explore")
   ; (Report, "report")
   ; (ReportDiff, "reportdiff")
   ; (Run, "run") ]
@@ -38,8 +39,8 @@ let command_of_exe_name exe_name =
   List.find_map command_to_name ~f:(fun (cmd, name) ->
       if String.equal exe_name (exe_name_of_command_name name) then Some cmd else None )
 
-let mk_command_doc ~see_also:see_also_commands ?and_also ?environment:environment_opt
-    ?files:files_opt ~synopsis =
+let mk_command_doc ~see_also:see_also_commands ?environment:environment_opt ?files:files_opt
+    ~synopsis =
   let section = 1 in
   let see_also =
     let exe_names =
@@ -47,8 +48,7 @@ let mk_command_doc ~see_also:see_also_commands ?and_also ?environment:environmen
           let exe = exe_name_of_command cmd in
           Printf.sprintf "$(b,%s)(%d)" (Cmdliner.Manpage.escape exe) section )
     in
-    let suffix = Option.value ~default:"" and_also in
-    [`P (String.concat ~sep:", " exe_names ^ suffix)]
+    [`P (String.concat ~sep:", " exe_names)]
   in
   let environment =
     Option.value environment_opt
@@ -133,6 +133,16 @@ let diff =
     ~description:[`P "EXPERIMENTAL AND IN NO WAY READY TO USE"]
     ~see_also:CLOpt.([ReportDiff; Run])
 
+let explore =
+  mk_command_doc ~title:"Infer Explore"
+    ~short_description:"explore the error traces in infer reports"
+    ~synopsis:{|$(b,infer) $(b,explore) $(i,[options])|}
+    ~description:
+      [ `P
+          "Show the list of bugs on the console and explore symbolic program traces emitted by infer to explain a report. Can also generate an HTML report from a JSON report."
+      ]
+    ~see_also:CLOpt.([Report; Run])
+
 let infer =
   mk_command_doc ~title:"Infer Static Analyzer"
     ~short_description:"static analysis for Java and C/C++/Objective-C/Objective-C++"
@@ -151,12 +161,12 @@ $(b,infer) $(i,[options])|}
           "Infer is a static analyzer. Given a collection of source files written in Java or in languages of the C family, and a command to build them, infer produces a list of potential issues."
       ; `P
           "Infer consists of a collection of tools referenced in the $(i,SEE ALSO) section of this manual. See their respective manuals for more information about each."
+      ; `P
+          "If a compilation command is specified via the $(b,--) option or one of the $(b,--clang-compilation-database[-escaped]) options, $(b,infer) behaves as $(b,infer-run)(1). Otherwise, $(b,infer) behaves as $(b,infer-analyze)(1)."
       ]
     ~options:
       (`Prepend
         [ `P
-            "If a compilation command is specified via the $(b,--) option or one of the $(b,--clang-compilation-database[-escaped]) options, $(b,infer) behaves as $(b,infer-run)(1). Otherwise, $(b,infer) behaves as $(b,infer-analyze)(1)."
-        ; `P
             "Every infer command accepts the arguments from all the other infer commands. The same option may affect and thus be list in the manual of several commands."
         ; `P
             (Printf.sprintf
@@ -165,6 +175,8 @@ $(b,infer) $(i,[options])|}
                CLOpt.args_env_var Cmdliner.Manpage.s_environment Cmdliner.Manpage.s_files)
         ; `P
             "Options can be specified inside an argument file $(i,file) by passing $(b,@)$(i,file) as argument. The format is one option per line, and enclosing single ' and double \" quotes are ignored."
+        ; `P
+            "Options without a default value (e.g., $(b,--linter)) and options with list-like values (e.g., $(b,--Xbuck)) all have a corresponding $(b,--option-reset) flag that resets their values to nothing or the empty list, respectively. For instance, $(b,--Xbuck-reset) will cancel any previous $(b,--Xbuck) option passed to infer."
         ; `P
             "See the manuals of individual infer commands for details about their supported options. The following is a list of all the supported options (see also $(b,--help-full) for options reserved for internal use)."
         ])
@@ -211,7 +223,7 @@ $(b,infer) $(i,[options])|}
   }|}
       ]
     ~see_also:(List.filter ~f:(function CLOpt.Clang -> false | _ -> true) CLOpt.all_commands)
-    ~and_also:", $(b,inferTraceBugs)" "infer"
+    "infer"
 
 let report =
   mk_command_doc ~title:"Infer Reporting" ~short_description:"compute and manipulate infer results"
@@ -267,6 +279,7 @@ let command_to_data =
   ; mk Capture capture
   ; mk Compile compile
   ; mk Diff diff
+  ; mk Explore explore
   ; mk Report report
   ; mk ReportDiff reportdiff
   ; mk Run run ]

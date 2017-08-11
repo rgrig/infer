@@ -291,6 +291,50 @@ module Loops = struct
     with For (_, _, cond, _, _) | While (_, cond, _) | DoWhile (cond, _) -> cond
 end
 
+module Scope = struct
+  module StmtMap = ClangPointers.Map
+
+  let add_scope_vars_to_destroy var_map stmt_info vars =
+    let ptr = stmt_info.Clang_ast_t.si_pointer in
+    StmtMap.add var_map ~key:ptr ~data:vars
+
+  let rec compute_vars vars_in_scope var_map stmt =
+    (* vars_in_scope corresponds to the list of all variables existing in the current scope *)
+    let open Clang_ast_t in
+    let get_var_info_from_decl = function VarDecl _ as decl -> Some decl | _ -> None in
+    let get_new_vars = function
+      | DeclStmt (_, _, decl_list)
+       -> List.filter_map ~f:get_var_info_from_decl decl_list
+      | _
+       -> []
+    in
+    let rec handle_instructions_block var_map vars_in_scope instrs =
+      match instrs with
+      | []
+       -> (vars_in_scope, var_map)
+      | stmt :: rest
+       -> let new_var_map = compute_vars vars_in_scope var_map stmt in
+          let new_vars_in_stmt = get_new_vars stmt in
+          handle_instructions_block new_var_map (new_vars_in_stmt @ vars_in_scope) rest
+    in
+    (* TODO handle following stmts: *)
+    (* BreakStmt _ | ContinueStmt _ | GotoStmt _ | ForStmt _ | WhileStmt _ |
+       DoStmt _ | IfStmt _ | SwitchStmt _ | CXXForRangeStmt _  | LabelStmt_ *)
+    match stmt with
+    | CompoundStmt (stmt_info, stmt_list)
+     -> let vars, new_var_map = handle_instructions_block var_map vars_in_scope stmt_list in
+        (* vars contains the variables defined in the current compound statement + vars_in_scope *)
+        let vars_to_destroy = List.take vars (List.length vars - List.length vars_in_scope) in
+        add_scope_vars_to_destroy new_var_map stmt_info vars_to_destroy
+    | ReturnStmt (stmt_info, _)
+     -> add_scope_vars_to_destroy var_map stmt_info vars_in_scope
+    | _
+     -> let stmt_list = snd (Clang_ast_proj.get_stmt_tuple stmt) in
+        List.fold_left ~f:(compute_vars vars_in_scope) stmt_list ~init:var_map
+
+  let compute_vars_to_destroy body = List.fold_left ~f:(compute_vars []) ~init:StmtMap.empty [body]
+end
+
 (** This function handles ObjC new/alloc and C++ new calls *)
 let create_alloc_instrs sil_loc function_type fname size_exp_opt procname_opt =
   let function_type, function_type_np =
@@ -486,6 +530,11 @@ let trans_builtin_expect params_trans_res =
   (* for simpler symbolic execution *)
   match params_trans_res with [_; fst_arg_res; _] -> Some fst_arg_res | _ -> None
 
+let trans_std_addressof params_trans_res =
+  (* Translate call to std::addressof as the first argument *)
+  (* for simpler symbolic execution. *)
+  match params_trans_res with [_; fst_arg_res] -> Some fst_arg_res | _ -> assert false
+
 let trans_replace_with_deref_first_arg sil_loc params_trans_res ~cxx_method_call =
   let first_arg_res_trans =
     match params_trans_res with
@@ -510,6 +559,7 @@ let builtin_trans trans_state loc stmt_info function_type params_trans_res pname
   else if CTrans_models.is_builtin_expect pname then trans_builtin_expect params_trans_res
   else if CTrans_models.is_replace_with_deref_first_arg pname then
     Some (trans_replace_with_deref_first_arg loc params_trans_res ~cxx_method_call:false)
+  else if CTrans_models.is_std_addressof pname then trans_std_addressof params_trans_res
   else None
 
 let cxx_method_builtin_trans trans_state loc params_trans_res pname =
@@ -740,47 +790,6 @@ let is_dispatch_function stmt_list =
 
 let is_block_enumerate_function mei =
   String.equal mei.Clang_ast_t.omei_selector CFrontend_config.enumerateObjectsUsingBlock
-
-(* This takes a variable of type struct or array and returns a list of expressions *)
-(* for each of its fields (also recursively, such that each field access is of a basic type) *)
-(* If the flag return_zero is true, the list will be a list of zero values, otherwise it will *)
-(* be a list of LField expressions *)
-let var_or_zero_in_init_list tenv e typ ~return_zero =
-  let rec var_or_zero_in_init_list' e typ tns =
-    let open CGeneral_utils in
-    match typ.Typ.desc with
-    | Tstruct tn -> (
-      match Tenv.lookup tenv tn with
-      | Some {fields}
-       -> let lh_exprs =
-            List.filter_map fields ~f:(fun (fieldname, _, _) ->
-                if Typ.Fieldname.is_hidden fieldname then None
-                else Some (Exp.Lfield (e, fieldname, typ)) )
-          in
-          let lh_types = List.map ~f:(fun (_, fieldtype, _) -> fieldtype) fields in
-          let exp_types = zip lh_exprs lh_types in
-          List.map ~f:(fun (e, t) -> List.concat (var_or_zero_in_init_list' e t tns)) exp_types
-      | None
-       -> assert false )
-    | Tarray (arrtyp, Some n, _)
-     -> let size = IntLit.to_int n in
-        let indices = list_range 0 (size - 1) in
-        let index_constants =
-          List.map ~f:(fun i -> Exp.Const (Const.Cint (IntLit.of_int i))) indices
-        in
-        let lh_exprs =
-          List.map ~f:(fun index_expr -> Exp.Lindex (e, index_expr)) index_constants
-        in
-        let lh_types = replicate size arrtyp in
-        let exp_types = zip lh_exprs lh_types in
-        List.map ~f:(fun (e, t) -> List.concat (var_or_zero_in_init_list' e t tns)) exp_types
-    | Tint _ | Tfloat _ | Tptr _
-     -> let exp = if return_zero then Sil.zero_value_of_numerical_type typ else e in
-        [[(exp, typ)]]
-    | Tfun _ | Tvoid | Tarray _ | TVar _
-     -> assert false
-  in
-  List.concat (var_or_zero_in_init_list' e typ String.Set.empty)
 
 (*
 (** Similar to extract_item_from_singleton but for option type *)

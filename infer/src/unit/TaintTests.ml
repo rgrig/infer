@@ -33,8 +33,6 @@ module MockTrace = Trace.Make (struct
       if String.is_prefix ~prefix:"SINK" (Typ.Procname.to_string pname) then
         Some (CallSite.make pname Location.dummy, IntSet.singleton 0)
       else None
-
-    let indexes _ = IntSet.empty
   end)
 
   let should_report _ _ = false
@@ -58,7 +56,7 @@ module MockTaintAnalysis = TaintAnalysis.Make (struct
 end)
 
 module TestInterpreter =
-  AnalyzerTester.Make (ProcCfg.Normal) (LowerHil.Make (MockTaintAnalysis.TransferFunctions))
+  AnalyzerTester.Make (ProcCfg.Normal) (LowerHil.MakeDefault (MockTaintAnalysis.TransferFunctions))
 
 let tests =
   let open OUnit2 in
@@ -85,7 +83,7 @@ let tests =
       F.fprintf fmt "(%a -> %a)" pp_sources (MockTrace.sources trace) pp_sinks
         (MockTrace.sinks trace)
     in
-    let pp_item fmt (ap, trace) = F.fprintf fmt "%a => %a" AccessPath.pp ap pp_trace trace in
+    let pp_item fmt (ap, trace) = F.fprintf fmt "%a => %a" AccessPath.Abs.pp ap pp_trace trace in
     (* flatten access tree into list of access paths with associated traces *)
     let trace_assocs =
       MockTaintAnalysis.TaintDomain.trace_fold

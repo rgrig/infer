@@ -144,6 +144,8 @@ class BuckAnalyzer:
             [x for x in buck_results_cmd if x != KEEP_GOING_OPTION]
         proc = subprocess.Popen(buck_results_cmd, stdout=subprocess.PIPE)
         (buck_output, _) = proc.communicate()
+        if proc.returncode != 0:
+            return None
         # remove target name prefixes from each line and split them into a list
         out = [x.split(None, 1)[1] for x in buck_output.strip().split('\n')]
         return [os.path.dirname(x)
@@ -240,6 +242,9 @@ class BuckAnalyzer:
         if not ret == os.EX_OK and not self.keep_going:
             return ret
         result_paths = self._get_analysis_result_paths()
+        if result_paths is None:
+            # huho, the Buck command to extract results paths failed
+            return os.EX_SOFTWARE
         merged_reports_path = os.path.join(
             self.args.infer_out, config.JSON_REPORT_FILENAME)
         merged_deps_path = os.path.join(
@@ -253,7 +258,8 @@ class BuckAnalyzer:
         json_report = os.path.join(infer_out, config.JSON_REPORT_FILENAME)
         bugs_out = os.path.join(infer_out, config.BUGS_FILENAME)
         issues.print_and_save_errors(infer_out, self.args.project_root,
-                                     json_report, bugs_out, self.args.pmd_xml)
+                                     json_report, bugs_out, self.args.pmd_xml,
+                                     console_out=not self.args.quiet)
         return os.EX_OK
 
     def capture_without_flavors(self):

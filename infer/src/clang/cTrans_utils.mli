@@ -197,6 +197,13 @@ module Loops : sig
   val get_body : loop_kind -> Clang_ast_t.stmt
 end
 
+(** Module that provides utilities for scopes *)
+module Scope : sig
+  module StmtMap = ClangPointers.Map
+
+  val compute_vars_to_destroy : Clang_ast_t.stmt -> Clang_ast_t.decl list StmtMap.t
+end
+
 (** This module handles the translation of the variable self which is challenging because self is
     used both as a variable in instance method calls and also as a type in class method calls. *)
 module Self : sig
@@ -215,5 +222,3 @@ val is_logical_negation_of_int :
 val is_dispatch_function : Clang_ast_t.stmt list -> int option
 
 val is_block_enumerate_function : Clang_ast_t.obj_c_message_expr_info -> bool
-
-val var_or_zero_in_init_list : Tenv.t -> Exp.t -> Typ.t -> return_zero:bool -> (Exp.t * Typ.t) list

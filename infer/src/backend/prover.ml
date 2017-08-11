@@ -473,11 +473,11 @@ end = struct
     match (e1, e2) with
     | Exp.Const Const.Cint n1, Exp.Const Const.Cint n2
      -> IntLit.leq n1 n2
-    | ( Exp.BinOp
-          ( Binop.MinusA
-          , Exp.Sizeof {typ= t1; dynamic_length= None}
-          , Exp.Sizeof {typ= t2; dynamic_length= None} )
+    | ( Exp.BinOp (Binop.MinusA, Exp.Sizeof {nbytes= Some nb1}, Exp.Sizeof {nbytes= Some nb2})
       , Exp.Const Const.Cint n2 )
+     -> (* [ sizeof(t1) - sizeof(t2) <= n2 ] *)
+        IntLit.(leq (sub (of_int nb1) (of_int nb2)) n2)
+    | Exp.BinOp (Binop.MinusA, Exp.Sizeof {typ= t1}, Exp.Sizeof {typ= t2}), Exp.Const Const.Cint n2
       when IntLit.isminusone n2 && type_size_comparable t1 t2
      -> (* [ sizeof(t1) - sizeof(t2) <= -1 ] *)
         check_type_size_lt t1 t2
@@ -550,6 +550,8 @@ end = struct
     match e1 with
     | Exp.Const Const.Cint n1
      -> Some (n1 -- IntLit.one)
+    | Exp.Sizeof {nbytes= Some n1}
+     -> Some (IntLit.of_int n1 -- IntLit.one)
     | Exp.Sizeof _
      -> Some IntLit.zero
     | _
@@ -597,9 +599,9 @@ end
 (* End of module Inequalities *)
 
 (** Check [prop |- e1=e2]. Result [false] means "don't know". *)
-let check_equal tenv prop e1 e2 =
-  let n_e1 = Prop.exp_normalize_prop tenv prop e1 in
-  let n_e2 = Prop.exp_normalize_prop tenv prop e2 in
+let check_equal tenv prop e1_0 e2_0 =
+  let n_e1 = Prop.exp_normalize_prop ~destructive:true tenv prop e1_0 in
+  let n_e2 = Prop.exp_normalize_prop ~destructive:true tenv prop e2_0 in
   let check_equal () = Exp.equal n_e1 n_e2 in
   let check_equal_const () =
     match (n_e1, n_e2) with
@@ -651,8 +653,8 @@ let is_root tenv prop base_exp exp =
   f [] exp
 
 (** Get upper and lower bounds of an expression, if any *)
-let get_bounds tenv prop _e =
-  let e_norm = Prop.exp_normalize_prop tenv prop _e in
+let get_bounds tenv prop e0 =
+  let e_norm = Prop.exp_normalize_prop ~destructive:true tenv prop e0 in
   let e_root, off =
     match e_norm with
     | Exp.BinOp (Binop.PlusA, e, Exp.Const Const.Cint n1)
@@ -671,8 +673,8 @@ let get_bounds tenv prop _e =
 (** Check whether [prop |- e1!=e2]. *)
 let check_disequal tenv prop e1 e2 =
   let spatial_part = prop.Prop.sigma in
-  let n_e1 = Prop.exp_normalize_prop tenv prop e1 in
-  let n_e2 = Prop.exp_normalize_prop tenv prop e2 in
+  let n_e1 = Prop.exp_normalize_prop ~destructive:true tenv prop e1 in
+  let n_e2 = Prop.exp_normalize_prop ~destructive:true tenv prop e2 in
   let rec check_expr_disequal ce1 ce2 =
     match (ce1, ce2) with
     | Exp.Const c1, Exp.Const c2
@@ -874,7 +876,7 @@ let check_le tenv prop e1 e2 =
 
 (** Check whether [prop |- allocated(e)]. *)
 let check_allocatedness tenv prop e =
-  let n_e = Prop.exp_normalize_prop tenv prop e in
+  let n_e = Prop.exp_normalize_prop ~destructive:true tenv prop e in
   let spatial_part = prop.Prop.sigma in
   let f = function
     | Sil.Hpointsto (base, _, _)
@@ -915,7 +917,7 @@ let check_inconsistency_two_hpreds tenv prop =
           let prop' = Prop.normalize tenv (Prop.from_sigma (sigma_seen @ sigma_rest)) in
           let prop_new = Prop.conjoin_eq tenv e1 e2 prop' in
           let sigma_new = prop_new.Prop.sigma in
-          let e_new = Prop.exp_normalize_prop tenv prop_new e in
+          let e_new = Prop.exp_normalize_prop ~destructive:true tenv prop_new e in
           f e_new [] sigma_new
         else f e (hpred :: sigma_seen) sigma_rest
     | (Sil.Hdllseg (Sil.Lseg_PE, _, e1, _, Exp.Const Const.Cint i, _, _) as hpred) :: sigma_rest
@@ -926,7 +928,7 @@ let check_inconsistency_two_hpreds tenv prop =
           let prop' = Prop.normalize tenv (Prop.from_sigma (sigma_seen @ sigma_rest)) in
           let prop_new = Prop.conjoin_eq tenv e1 e3 prop' in
           let sigma_new = prop_new.Prop.sigma in
-          let e_new = Prop.exp_normalize_prop tenv prop_new e in
+          let e_new = Prop.exp_normalize_prop ~destructive:true tenv prop_new e in
           f e_new [] sigma_new
         else f e (hpred :: sigma_seen) sigma_rest
   in
@@ -1310,11 +1312,18 @@ let exp_imply tenv calc_missing (subs: subst2) e1_in e2_in : subst2 =
     match (e1, e2) with
     | Exp.Var v1, Exp.Var v2
      -> var_imply subs v1 v2
+    | Exp.BinOp ((PlusA | PlusPI | MinusA | MinusPI), Exp.Var v1, e2), Exp.Var v2
+      when Ident.equal v1 v2
+     -> do_imply subs e2 Exp.zero
+    | Exp.BinOp ((PlusA | PlusPI), e2, Exp.Var v1), Exp.Var v2 when Ident.equal v1 v2
+     -> do_imply subs e2 Exp.zero
     | e1, Exp.Var v2
      -> let occurs_check v e =
           (* check whether [v] occurs in normalized [e] *)
           if Sil.fav_mem (Sil.exp_fav e) v
-             && Sil.fav_mem (Sil.exp_fav (Prop.exp_normalize_prop tenv Prop.prop_emp e)) v
+             && Sil.fav_mem
+                  (Sil.exp_fav (Prop.exp_normalize_prop ~destructive:true tenv Prop.prop_emp e))
+                  v
           then raise (IMPL_EXC ("occurs check", subs, EXC_FALSE_EXPS (e1, e2)))
         in
         if Ident.is_primed v2 then
@@ -1478,8 +1487,8 @@ let rec sexp_imply tenv source calc_index_frame calc_missing subs se1 se2 typ2
         if index_frame <> [] then Some (Sil.Earray (len1, index_frame, inst1)) else None
       in
       let index_missing_opt =
-        if index_missing <> [] && (Config.allow_missing_index_in_proc_call || !Config.footprint)
-        then Some (Sil.Earray (len1, index_missing, inst1))
+        if index_missing <> [] && !Config.footprint then
+          Some (Sil.Earray (len1, index_missing, inst1))
         else None
       in
       (subs'', index_frame_opt, index_missing_opt)

@@ -59,9 +59,20 @@ T* __infer_skip__get_nondet_val() {}
 template <class T>
 void __infer_deref_first_arg(T* ptr) INFER_MODEL_AS_DEREF_FIRST_ARG;
 
+#define INFER_EXCLUDE_CONDITION(cond) \
+  if (cond)                           \
+    while (1)
+
 // WARNING: do not add any new fields to std::vector model. sizeof(std::vector)
 // = 24 !!
+#ifdef INFER_USE_LIBCPP
+// if using libcpp, then this template will have already a default _Allocator
+// set (see include/c++/v1/iosfwd, where vector's declaration has a template
+// with a default allocator<_Tp>, like the commented section below)
+template <class _Tp, class _Allocator /* = allocator<_Tp> */>
+#else
 template <class _Tp, class _Allocator = allocator<_Tp>>
+#endif
 class vector {
 
  public:
@@ -226,15 +237,22 @@ class vector {
   const_reverse_iterator crend() const noexcept { return rend(); }
 
   size_type size() const noexcept {
-    if (beginPtr) {
-      return 10;
+    if (empty()) {
+      return 0;
     }
-    return 0;
+    return 10;
   }
 
   size_type capacity() const noexcept {}
 
-  bool empty() const noexcept { return beginPtr == nullptr; }
+  bool empty() const noexcept {
+    if (beginPtr == nullptr) {
+      // prune branch where beginPtr is nullptr and endPtr isn't
+      INFER_EXCLUDE_CONDITION(endPtr != nullptr);
+      return true;
+    }
+    return false;
+  }
   size_type max_size() const noexcept;
   void reserve(size_type __n);
   void shrink_to_fit() noexcept;

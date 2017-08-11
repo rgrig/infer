@@ -25,13 +25,30 @@ module FileRenamings = struct
   let from_json input : t =
     let j = Yojson.Basic.from_string input in
     let renaming_of_assoc assoc : renaming =
-      match assoc with
-      | `Assoc [("current", `String current); ("previous", `String previous)]
-       -> {current; previous}
-      | _
-       -> failwithf "Expected JSON object of the following form: '%s', but instead got: '%s'"
-            "{\"current\": \"aaa.java\", \"previous\": \"BBB.java\"}"
-            (Yojson.Basic.to_string assoc)
+      try
+        match assoc with
+        | `Assoc l
+         -> (
+            let current_opt = List.Assoc.find ~equal:String.equal l "current" in
+            let previous_opt = List.Assoc.find ~equal:String.equal l "previous" in
+            match (current_opt, previous_opt) with
+            | Some `String current, Some `String previous
+             -> {current; previous}
+            | None, _
+             -> raise (Yojson.Json_error "\"current\" field missing")
+            | Some _, None
+             -> raise (Yojson.Json_error "\"previous\" field missing")
+            | Some _, Some `String _
+             -> raise (Yojson.Json_error "\"current\" field is not a string")
+            | Some _, Some _
+             -> raise (Yojson.Json_error "\"previous\" field is not a string") )
+        | _
+         -> raise (Yojson.Json_error "not a record")
+      with Yojson.Json_error err ->
+        failwithf
+          "Error parsing file renamings: %s@\nExpected JSON object of the following form: '%s', but instead got: '%s'"
+          err "{\"current\": \"aaa.java\", \"previous\": \"BBB.java\"}"
+          (Yojson.Basic.to_string assoc)
     in
     match j with
     | `List json_renamings
@@ -101,9 +118,9 @@ let skip_duplicated_types_on_filenames renamings (diff: Differential.t) : Differ
     String.compare f1 f2
   in
   let cmp (issue1, _ as issue_with_previous_file1) (issue2, _ as issue_with_previous_file2) =
-    [%compare : string * issue_file_with_renaming]
-      (issue1.Jsonbug_t.bug_type, issue_with_previous_file1)
-      (issue2.Jsonbug_t.bug_type, issue_with_previous_file2)
+    [%compare : int * string * issue_file_with_renaming]
+      (issue1.Jsonbug_t.key, issue1.Jsonbug_t.bug_type, issue_with_previous_file1)
+      (issue2.Jsonbug_t.key, issue2.Jsonbug_t.bug_type, issue_with_previous_file2)
   in
   let introduced, preexisting, fixed =
     (* All comparisons will be made against filenames *before* renamings.
@@ -206,26 +223,6 @@ let skip_anonymous_class_renamings (diff: Differential.t) : Differential.t =
   in
   {introduced; fixed; preexisting= preexisting @ diff.preexisting}
 
-(* Filter out null dereferences reported by infer if file has eradicate
-   enabled, to avoid double reporting. *)
-let resolve_infer_eradicate_conflict (analyzer: Config.analyzer)
-    (filters_of_analyzer: Config.analyzer -> Inferconfig.filters) (diff: Differential.t)
-    : Differential.t =
-  let should_discard_issue (issue: Jsonbug_t.jsonbug) =
-    let file_is_whitelisted () =
-      let source_file = SourceFile.UNSAFE.from_string issue.file in
-      let filters = filters_of_analyzer Config.Eradicate in
-      filters.path_filter source_file
-    in
-    Config.equal_analyzer analyzer Config.BiAbduction
-    && String.equal issue.bug_type (Localise.to_issue_id Localise.null_dereference)
-    && file_is_whitelisted ()
-  in
-  let filter issues = List.filter ~f:(Fn.non should_discard_issue) issues in
-  { introduced= filter diff.introduced
-  ; fixed= filter diff.fixed
-  ; preexisting= filter diff.preexisting }
-
 (* Strip issues whose paths are not among those we're interested in *)
 let interesting_paths_filter (interesting_paths: SourceFile.t list option) =
   match interesting_paths with
@@ -259,10 +256,7 @@ let do_filter (diff: Differential.t) (renamings: FileRenamings.t) ~(skip_duplica
            skip_anonymous_class_renamings
        else Fn.id )
     |> (if skip_duplicated_types then skip_duplicated_types_on_filenames renamings else Fn.id)
-    |>
-    if Config.resolve_infer_eradicate_conflict then
-      resolve_infer_eradicate_conflict Config.analyzer Inferconfig.create_filters
-    else Fn.id
+    |> Fn.id
   in
   { introduced= apply_paths_filter_if_needed `Introduced diff'.introduced
   ; fixed= apply_paths_filter_if_needed `Fixed diff'.fixed
@@ -278,8 +272,6 @@ module VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY = struct
   let value_of_qualifier_tag = value_of_qualifier_tag
 
   let skip_anonymous_class_renamings = skip_anonymous_class_renamings
-
-  let resolve_infer_eradicate_conflict = resolve_infer_eradicate_conflict
 
   let interesting_paths_filter = interesting_paths_filter
 end
