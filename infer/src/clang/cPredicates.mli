@@ -21,6 +21,8 @@ val call_class_method : Ctl_parser_types.ast_node -> ALVar.alexp -> ALVar.alexp 
 
 val call_instance_method : Ctl_parser_types.ast_node -> ALVar.alexp -> ALVar.alexp -> bool
 
+val declaration_name : Clang_ast_t.decl -> string option
+
 val is_enum_constant : Ctl_parser_types.ast_node -> ALVar.alexp -> bool
 
 val is_objc_interface_named : Ctl_parser_types.ast_node -> ALVar.alexp -> bool
@@ -45,6 +47,18 @@ val is_ivar_atomic : Ctl_parser_types.ast_node -> bool
 
 val is_method_property_accessor_of_ivar :
   Ctl_parser_types.ast_node -> CLintersContext.context -> bool
+
+val is_in_block : CLintersContext.context -> bool
+
+val is_in_cxx_constructor : CLintersContext.context -> ALVar.alexp -> bool
+
+val is_in_cxx_destructor : CLintersContext.context -> ALVar.alexp -> bool
+
+val is_in_cxx_method : CLintersContext.context -> ALVar.alexp -> bool
+
+val is_in_function : CLintersContext.context -> ALVar.alexp -> bool
+
+val is_in_objc_method : CLintersContext.context -> ALVar.alexp -> bool
 
 val is_objc_constructor : CLintersContext.context -> bool
 
@@ -85,6 +99,8 @@ val has_type_subprotocol_of : Ctl_parser_types.ast_node -> ALVar.alexp -> bool
 
 val get_available_attr_ios_sdk : Ctl_parser_types.ast_node -> string option
 
+val get_selector : Ctl_parser_types.ast_node -> string option
+
 val within_responds_to_selector_block :
   CLintersContext.context -> Ctl_parser_types.ast_node -> bool
 
@@ -92,6 +108,10 @@ val objc_method_has_nth_parameter_of_type :
   Ctl_parser_types.ast_node -> ALVar.alexp -> ALVar.alexp -> bool
 
 val using_namespace : Ctl_parser_types.ast_node -> ALVar.alexp -> bool
+
+val receiver_class_method_call : Ctl_parser_types.ast_node -> Clang_ast_t.decl option
+
+val receiver_instance_method_call : Ctl_parser_types.ast_node -> Clang_ast_t.decl option
 
 val receiver_method_call : Ctl_parser_types.ast_node -> Clang_ast_t.decl option
 
@@ -101,3 +121,7 @@ val is_at_selector_with_name : Ctl_parser_types.ast_node -> ALVar.alexp -> bool
 val has_visibility_attribute : Ctl_parser_types.ast_node -> ALVar.alexp -> bool
 
 val has_used_attribute : Ctl_parser_types.ast_node -> bool
+
+val iphoneos_target_sdk_version_greater_or_equal : CLintersContext.context -> string -> bool
+
+val within_available_class_block : CLintersContext.context -> Ctl_parser_types.ast_node -> bool

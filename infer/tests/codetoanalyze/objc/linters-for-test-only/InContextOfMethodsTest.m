@@ -6,27 +6,22 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
+@interface InContextOfMethodsTest
 
-int* basic_escape_local_bad() {
-  int a;
-  return &a;
+@end
+
+@implementation InContextOfMethodsTest
+
+- (void)method {
+  int x = 0;
 }
 
-int* basic_escape_param_bad(int a) { return &a; }
-
-struct EscapeTest {
-  int x;
-};
-
-int* escape_local_struct_member_bad() {
-  EscapeTest esc;
-  return &(esc.x);
+- (void)method_with_block {
+  ^{
+    int x = 0;
+  }();
 }
 
-struct A {
-  A() {}
-};
+@end
 
-struct B {
-  const A& return_ref() { return A(); }
-};
+void function() { int x = 0; }

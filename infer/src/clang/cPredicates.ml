@@ -29,12 +29,21 @@ let rec objc_class_of_pointer_type type_ptr =
   | _
    -> None
 
-let receiver_method_call an =
+let receiver_class_method_call an =
   match an with
-  | Ctl_parser_types.Stmt ObjCMessageExpr (_, args, _, obj_c_message_expr_info) -> (
+  | Ctl_parser_types.Stmt ObjCMessageExpr (_, _, _, obj_c_message_expr_info) -> (
     match obj_c_message_expr_info.omei_receiver_kind with
     | `Class qt
      -> CAst_utils.get_decl_from_typ_ptr qt.qt_type_ptr
+    | _
+     -> None )
+  | _
+   -> None
+
+let receiver_instance_method_call an =
+  match an with
+  | Ctl_parser_types.Stmt ObjCMessageExpr (_, args, _, obj_c_message_expr_info) -> (
+    match obj_c_message_expr_info.omei_receiver_kind with
     | `Instance -> (
       match args with
       | receiver :: _ -> (
@@ -48,6 +57,20 @@ let receiver_method_call an =
     | _
      -> None )
   | _
+   -> None
+
+let receiver_method_call an =
+  match receiver_class_method_call an with
+  | Some decl
+   -> Some decl
+  | None
+   -> receiver_instance_method_call an
+
+let declaration_name decl =
+  match Clang_ast_proj.get_named_decl_tuple decl with
+  | Some (_, ndi)
+   -> Some ndi.ni_name
+  | None
    -> None
 
 let get_available_attr_ios_sdk an =
@@ -137,11 +160,18 @@ let is_object_of_class_named receiver cname =
   | _
    -> false
 
-(* an |= call_method(m) where the name must be exactly m *)
-let call_method an m =
+let get_selector an =
   match an with
   | Ctl_parser_types.Stmt Clang_ast_t.ObjCMessageExpr (_, _, _, omei)
-   -> ALVar.compare_str_with_alexp omei.omei_selector m
+   -> Some omei.omei_selector
+  | _
+   -> None
+
+(* an |= call_method(m) where the name must be exactly m *)
+let call_method an m =
+  match get_selector an with
+  | Some selector
+   -> ALVar.compare_str_with_alexp selector m
   | _
    -> false
 
@@ -300,33 +330,63 @@ let is_method_property_accessor_of_ivar an context =
   | _
    -> false
 
-let is_objc_constructor context =
+let get_method_name_from_context context =
   match context.CLintersContext.current_method with
-  | Some method_decl
-   -> let method_name =
-        match Clang_ast_proj.get_named_decl_tuple method_decl with
-        | Some (_, mnd)
-         -> mnd.Clang_ast_t.ni_name
-        | _
-         -> ""
-      in
-      Typ.Procname.is_objc_constructor method_name
+  | Some method_decl -> (
+    match Clang_ast_proj.get_named_decl_tuple method_decl with
+    | Some (_, mnd)
+     -> mnd.Clang_ast_t.ni_name
+    | _
+     -> "" )
+  | _
+   -> ""
+
+let is_objc_constructor context =
+  Typ.Procname.is_objc_constructor (get_method_name_from_context context)
+
+let is_objc_dealloc context = Typ.Procname.is_objc_dealloc (get_method_name_from_context context)
+
+let is_in_method context name =
+  let current_method_name = get_method_name_from_context context in
+  ALVar.compare_str_with_alexp current_method_name name
+
+let is_in_objc_method context name =
+  match context.CLintersContext.current_method with
+  | Some ObjCMethodDecl _
+   -> is_in_method context name
   | _
    -> false
 
-let is_objc_dealloc context =
+let is_in_function context name =
   match context.CLintersContext.current_method with
-  | Some method_decl
-   -> let method_name =
-        match Clang_ast_proj.get_named_decl_tuple method_decl with
-        | Some (_, mnd)
-         -> mnd.Clang_ast_t.ni_name
-        | _
-         -> ""
-      in
-      Typ.Procname.is_objc_dealloc method_name
+  | Some FunctionDecl _
+   -> is_in_method context name
   | _
    -> false
+
+let is_in_cxx_method context name =
+  match context.CLintersContext.current_method with
+  | Some CXXMethodDecl _
+   -> is_in_method context name
+  | _
+   -> false
+
+let is_in_cxx_constructor context name =
+  match context.CLintersContext.current_method with
+  | Some CXXConstructorDecl _
+   -> is_in_method context name
+  | _
+   -> false
+
+let is_in_cxx_destructor context name =
+  match context.CLintersContext.current_method with
+  | Some CXXDestructorDecl _
+   -> is_in_method context name
+  | _
+   -> false
+
+let is_in_block context =
+  match context.CLintersContext.current_method with Some BlockDecl _ -> true | _ -> false
 
 let captures_cxx_references an = List.length (captured_variables_cxx_ref an) > 0
 
@@ -432,25 +492,28 @@ let is_class an re =
   | _
    -> false
 
-let should_use_iphoneos_target_sdk_version =
-  let f =
-    ( lazy
-    ( match Config.iphoneos_target_sdk_version_skip_path with
-    | []
-     -> fun _ -> true
-    | _ :: _ as skip_paths
-     -> (* pre-compute the regexp because it is expensive *)
-        let paths_regexp = String.concat ~sep:"\\|" skip_paths |> Str.regexp in
-        (* return a closure so that the regexp is computed only once *)
-        fun {CLintersContext.translation_unit_context= {source_file}} ->
-          not (ALVar.str_match_forward (SourceFile.to_rel_path source_file) paths_regexp) ) )
+let iphoneos_target_sdk_version_by_path (cxt: CLintersContext.context) =
+  let source_file = cxt.translation_unit_context.source_file in
+  let regex_version_opt =
+    List.find Config.iphoneos_target_sdk_version_path_regex ~f:
+      (fun (version_path_regex: Config.iphoneos_target_sdk_version_path_regex) ->
+        ALVar.str_match_forward (SourceFile.to_rel_path source_file) version_path_regex.path )
   in
-  fun ctx -> Lazy.force f ctx
+  match regex_version_opt with
+  | Some version_by_regex
+   -> Some version_by_regex.version
+  | None (* no version by path specified, use default version *)
+   -> Config.iphoneos_target_sdk_version
+
+let iphoneos_target_sdk_version_greater_or_equal (cxt: CLintersContext.context) version =
+  match iphoneos_target_sdk_version_by_path cxt with
+  | Some target_version
+   -> Utils.compare_versions target_version version >= 0
+  | None
+   -> false
 
 let decl_unavailable_in_supported_ios_sdk (cxt: CLintersContext.context) an =
-  let config_iphoneos_target_sdk_version =
-    if should_use_iphoneos_target_sdk_version cxt then Config.iphoneos_target_sdk_version else None
-  in
+  let config_iphoneos_target_sdk_version = iphoneos_target_sdk_version_by_path cxt in
   let allowed_os_versions =
     match
       (config_iphoneos_target_sdk_version, (cxt.if_context : CLintersContext.if_context option))
@@ -592,6 +655,19 @@ let within_responds_to_selector_block (cxt: CLintersContext.context) an =
         List.mem ~equal:String.equal in_selector_block named_decl_info.ni_name
     | None
      -> false )
+  | _
+   -> false
+
+let within_available_class_block (cxt: CLintersContext.context) an =
+  match (receiver_method_call an, cxt.if_context) with
+  | Some receiver, Some if_context
+   -> (
+      let in_available_class_block = if_context.within_available_class_block in
+      match declaration_name receiver with
+      | Some receiver_name
+       -> List.mem ~equal:String.equal in_available_class_block receiver_name
+      | None
+       -> false )
   | _
    -> false
 

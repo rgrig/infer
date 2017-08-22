@@ -117,14 +117,15 @@ DEFINE-CHECKER REGISTERED_OBSERVER_BEING_DEALLOCATED = {
 		HOLDS-EVENTUALLY;
 
  	LET eventually_removeObserver =
-		IN-NODE ObjCImplementationDecl, ObjCProtocolDecl WITH-TRANSITION _
+		IN-NODE ObjCImplementationDecl, ObjCProtocolDecl WITH-TRANSITION Any
 		 		(remove_observer_in_method  OR
 					remove_observer_in_method HOLDS-IN-SOME-SUPERCLASS-OF ObjCImplementationDecl)
   	HOLDS-EVENTUALLY;
 
   SET report_when =
 			WHEN
-	    	NOT (eventually_addObserver IMPLIES eventually_removeObserver)
+	    	NOT (eventually_addObserver IMPLIES eventually_removeObserver) AND
+				NOT iphoneos_target_sdk_version_greater_or_equal("9.0") //this is not needed after iOS SDK 9.0
 			HOLDS-IN-NODE ObjCImplementationDecl, ObjCProtocolDecl;
 
 	SET message =
@@ -225,7 +226,10 @@ DEFINE-CHECKER CXX_REFERENCE_CAPTURED_IN_OBJC_BLOCK = {
 
 	DEFINE-CHECKER UNAVAILABLE_CLASS_IN_SUPPORTED_IOS_SDK = {
 		SET report_when =
-				 WHEN (class_unavailable_in_supported_ios_sdk())
+				 WHEN ((class_unavailable_in_supported_ios_sdk()) AND
+				       NOT within_available_class_block() AND
+							 (call_class_method(REGEXP(".*"), "alloc") OR
+							 call_class_method(REGEXP(".*"), "new")))
 				 HOLDS-IN-NODE ObjCMessageExpr;
 
 			SET message =
@@ -233,7 +237,7 @@ DEFINE-CHECKER CXX_REFERENCE_CAPTURED_IN_OBJC_BLOCK = {
 						 %iphoneos_target_sdk_version% (only available from version %class_available_ios_sdk%)";
 			SET name = "Unavailable API In Supported iOS SDK";
 			SET severity = "ERROR";
-			SET mode = "OFF";
+			SET mode = "ON";
 		};
 
 
