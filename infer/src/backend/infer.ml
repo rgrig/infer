@@ -77,6 +77,12 @@ let setup_results_dir () =
    -> assert_results_dir "please run an infer analysis first"
 
 let () =
+  ( if Config.linters_validate_syntax_only then
+      match CTLParserHelper.validate_al_files () with
+      | Ok ()
+       -> exit 0
+      | Error e
+       -> print_endline e ; exit 3 ) ;
   if Config.print_builtins then Builtin.print_and_exit () ;
   setup_results_dir () ;
   if Config.debug_mode then L.progress "Logs in %s@." (Config.results_dir ^/ Config.log_file) ;
@@ -112,7 +118,8 @@ let () =
    -> (* at least one report must be passed in input to compute differential *)
       ( match (Config.report_current, Config.report_previous) with
       | None, None
-       -> failwith "Expected at least one argument among 'report-current' and 'report-previous'\n"
+       -> L.(die UserError)
+            "Expected at least one argument among 'report-current' and 'report-previous'"
       | _
        -> () ) ;
       ReportDiff.reportdiff ~current_report:Config.report_current

@@ -42,10 +42,7 @@ module Make (TaintSpecification : TaintSpec.S) = struct
        -> node_opt
       | None
        -> let make_footprint_trace footprint_ap =
-            let trace =
-              TraceDomain.of_source
-                (TraceDomain.Source.make_footprint footprint_ap proc_data.pdesc)
-            in
+            let trace = TraceDomain.of_footprint footprint_ap in
             Some (TaintDomain.make_normal_leaf trace)
           in
           let root, _ = AccessPath.Abs.extract access_path in
@@ -91,17 +88,23 @@ module Make (TaintSpecification : TaintSpec.S) = struct
           TaintDomain.add_trace actual_ap (TraceDomain.add_source source trace) access_tree
       | _
        -> access_tree
-      | exception Failure _
-       -> failwithf "Bad source specification: index %d out of bounds" index
+      | exception Failure s
+       -> L.(die InternalError)
+            "Bad source specification: index %d out of bounds (%s) for source %a, actuals %a" index
+            s TraceDomain.Source.pp source (PrettyPrintable.pp_collection ~pp_item:HilExp.pp)
+            actuals
 
     let endpoints =
       (lazy (String.Set.of_list (QuandaryConfig.Endpoint.of_json Config.quandary_endpoints)))
 
-    let is_endpoint source =
-      match CallSite.pname (TraceDomain.Source.call_site source) with
-      | Typ.Procname.Java java_pname
-       -> String.Set.mem (Lazy.force endpoints) (Typ.Procname.java_get_class_name java_pname)
-      | _
+    let is_endpoint = function
+      | TraceDomain.Known source -> (
+        match CallSite.pname (TraceDomain.Source.call_site source) with
+        | Typ.Procname.Java java_pname
+         -> String.Set.mem (Lazy.force endpoints) (Typ.Procname.java_get_class_name java_pname)
+        | _
+         -> false )
+      | TraceDomain.Footprint _
        -> false
 
     (** log any new reportable source-sink flows in [trace] *)
@@ -117,12 +120,12 @@ module Make (TaintSpecification : TaintSpec.S) = struct
           | None
            -> TaintDomain.empty
       in
-      let get_short_trace_string original_source final_sink =
-        F.asprintf "%a -> %a%s" TraceDomain.Source.pp original_source TraceDomain.Sink.pp
+      let get_short_trace_string original_path_source final_sink =
+        F.asprintf "%a -> %a%s" TraceDomain.pp_path_source original_path_source TraceDomain.Sink.pp
           final_sink
-          (if is_endpoint original_source then ". Note: source is an endpoint." else "")
+          (if is_endpoint original_path_source then ". Note: source is an endpoint." else "")
       in
-      let report_one (source, sink, _) =
+      let report_one (path_source, sink, _) =
         let open TraceDomain in
         let rec expand_source source0 (report_acc, seen_acc as acc) =
           let kind = Source.kind source0 in
@@ -138,7 +141,7 @@ module Make (TaintSpecification : TaintSpec.S) = struct
                     ~f:(fun source ->
                       [%compare.equal : Source.Kind.t] kind (Source.kind source)
                       && not (is_recursive source))
-                    (Sources.elements (sources trace))
+                    (Sources.Known.elements (sources trace).Sources.known)
                 with
                 | Some matching_source
                  -> (Some access_path, matching_source) :: acc
@@ -193,7 +196,14 @@ module Make (TaintSpecification : TaintSpec.S) = struct
             | []
              -> acc
         in
-        let expanded_sources, _ = expand_source source ([(None, source)], CallSite.Set.empty) in
+        let expanded_sources, _ =
+          match path_source with
+          | Known source
+           -> let sources, calls = expand_source source ([(None, source)], CallSite.Set.empty) in
+              (List.map ~f:(fun (ap_opt, source) -> (ap_opt, Known source)) sources, calls)
+          | Footprint _
+           -> ([(None, path_source)], CallSite.Set.empty)
+        in
         let expanded_sinks, _ = expand_sink sink sink_indexes ([sink], CallSite.Set.empty) in
         let source_trace =
           let pp_access_path_opt fmt = function
@@ -208,13 +218,18 @@ module Make (TaintSpecification : TaintSpec.S) = struct
                   else access_path )
           in
           List.map
-            ~f:(fun (access_path_opt, source) ->
-              let call_site = Source.call_site source in
-              let desc =
-                Format.asprintf "Return from %a%a" Typ.Procname.pp (CallSite.pname call_site)
-                  pp_access_path_opt access_path_opt
+            ~f:(fun (access_path_opt, path_source) ->
+              let desc, loc =
+                match path_source with
+                | Known source
+                 -> let call_site = Source.call_site source in
+                    ( Format.asprintf "Return from %a%a" Typ.Procname.pp (CallSite.pname call_site)
+                        pp_access_path_opt access_path_opt
+                    , CallSite.loc call_site )
+                | Footprint access_path
+                 -> (Format.asprintf "Read from %a" AccessPath.Abs.pp access_path, Location.dummy)
               in
-              Errlog.make_trace_element 0 (CallSite.loc call_site) desc [])
+              Errlog.make_trace_element 0 loc desc [])
             expanded_sources
         in
         let sink_trace =
@@ -226,9 +241,9 @@ module Make (TaintSpecification : TaintSpec.S) = struct
             expanded_sinks
         in
         let msg = IssueType.quandary_taint_error.unique_id in
-        let _, original_source = List.hd_exn expanded_sources in
+        let _, original_path_source = List.hd_exn expanded_sources in
         let final_sink = List.hd_exn expanded_sinks in
-        let trace_str = get_short_trace_string original_source final_sink in
+        let trace_str = get_short_trace_string original_path_source final_sink in
         let ltr = source_trace @ List.rev sink_trace in
         let exn = Exceptions.Checkers (msg, Localise.verbatim_desc trace_str) in
         Reporting.log_error proc_data.extras.summary ~loc:(CallSite.loc cur_site) ~ltr exn
@@ -254,8 +269,8 @@ module Make (TaintSpecification : TaintSpec.S) = struct
             | None
              -> access_tree_acc )
         | None
-         -> failwithf
-              "Taint is supposed to flow into sink %a at index %d, but the index is out of bounds@\n"
+         -> L.(die InternalError)
+              "Taint is supposed to flow into sink %a at index %d, but the index is out of bounds"
               CallSite.pp callee_site sink_index
         | _
          -> access_tree_acc
@@ -270,8 +285,9 @@ module Make (TaintSpecification : TaintSpec.S) = struct
           | Some base_var
            -> Some (AccessPath.Abs.with_base base_var ret_ap)
           | None
-           -> Logging.internal_error "Have summary for retval, but no ret id to bind it to: %a@\n"
-                AccessPath.Abs.pp ret_ap ;
+           -> L.internal_error
+                "Have summary for retval %a of callee %a, but no ret id to bind it to@\n"
+                AccessPath.Abs.pp ret_ap Typ.Procname.pp (CallSite.pname callee_site) ;
               None
         in
         let get_actual_ap formal_index =
@@ -312,19 +328,17 @@ module Make (TaintSpecification : TaintSpec.S) = struct
         Option.map (get_caller_ap ap) ~f:get_caller_node
       in
       let replace_footprint_sources callee_trace caller_trace access_tree =
-        let replace_footprint_source source acc =
-          match TraceDomain.Source.get_footprint_access_path source with
-          | Some footprint_access_path -> (
+        let replace_footprint_source acc footprint_access_path (is_mem, _) =
+          if is_mem then
             match get_caller_ap_node_opt footprint_access_path access_tree with
             | Some (_, (caller_ap_trace, _))
              -> TraceDomain.join caller_ap_trace acc
             | None
-             -> acc )
-          | None
-           -> acc
+             -> acc
+          else acc
         in
-        TraceDomain.Sources.fold replace_footprint_source (TraceDomain.sources callee_trace)
-          caller_trace
+        let {TraceDomain.Sources.footprint} = TraceDomain.sources callee_trace in
+        TraceDomain.Sources.Footprint.fold replace_footprint_source footprint caller_trace
       in
       let instantiate_and_report callee_trace caller_trace access_tree =
         let caller_trace' = replace_footprint_sources callee_trace caller_trace access_tree in
@@ -427,18 +441,19 @@ module Make (TaintSpecification : TaintSpec.S) = struct
               let trace_with_propagation =
                 List.fold ~f:exp_join_traces ~init:initial_trace actuals
               in
-              let filtered_sources =
-                TraceDomain.Sources.filter
-                  (fun source ->
-                    match TraceDomain.Source.get_footprint_access_path source with
-                    | Some access_path
-                     -> Option.exists
-                          (AccessPath.get_typ (AccessPath.Abs.extract access_path) proc_data.tenv)
-                          ~f:should_taint_typ
-                    | None
-                     -> true)
-                  (TraceDomain.sources trace_with_propagation)
+              let sources = TraceDomain.sources trace_with_propagation in
+              let filtered_footprint =
+                TraceDomain.Sources.Footprint.fold
+                  (fun acc access_path (is_mem, _) ->
+                    if is_mem
+                       && Option.exists
+                            (AccessPath.get_typ (AccessPath.Abs.extract access_path) proc_data.tenv)
+                            ~f:should_taint_typ
+                    then TraceDomain.Sources.Footprint.add_trace access_path true acc
+                    else acc)
+                  sources.footprint TraceDomain.Sources.Footprint.empty
               in
+              let filtered_sources = {sources with footprint= filtered_footprint} in
               if TraceDomain.Sources.is_empty filtered_sources then access_tree
               else
                 let trace' = TraceDomain.update_sources trace_with_propagation filtered_sources in
@@ -482,8 +497,9 @@ module Make (TaintSpecification : TaintSpec.S) = struct
                   exec_write lhs_access_path rhs_exp access_tree
                   |> exec_write dummy_ret_access_path rhs_exp
               | _
-               -> failwithf "Unexpected call to operator= %a in %a" HilInstr.pp instr
-                    Typ.Procname.pp callee_pname )
+               -> L.(die InternalError)
+                    "Unexpected call to operator= %a in %a" HilInstr.pp instr Typ.Procname.pp
+                    callee_pname )
             | _
              -> let model =
                   TaintSpecification.handle_unknown_call callee_pname (Option.map ~f:snd ret_opt)
@@ -510,16 +526,14 @@ module Make (TaintSpecification : TaintSpec.S) = struct
           in
           let analyze_call astate_acc callee_pname =
             let call_site = CallSite.make callee_pname callee_loc in
-            let sink =
-              if List.is_empty actuals then None
-              else TraceDomain.Sink.get call_site actuals proc_data.ProcData.tenv
-            in
             let astate_with_sink =
-              match sink with
-              | Some sink
-               -> add_sink sink actuals astate proc_data call_site
-              | None
-               -> astate
+              if List.is_empty actuals then astate
+              else
+                match TraceDomain.Sink.get call_site actuals proc_data.ProcData.tenv with
+                | Some sink
+                 -> add_sink sink actuals astate proc_data call_site
+                | None
+                 -> astate
             in
             let source = TraceDomain.Source.get call_site actuals proc_data.tenv in
             let astate_with_source =
@@ -534,8 +548,8 @@ module Make (TaintSpecification : TaintSpec.S) = struct
                -> astate_with_sink
             in
             let astate_with_summary =
-              if Option.is_some source || Option.is_some sink then
-                (* don't use a summary for a procedure that is a direct source or sink *)
+              if Option.is_some source then
+                (* don't use a summary for a procedure that is a direct source *)
                 astate_with_source
               else
                 match Summary.read_summary proc_data.pdesc callee_pname with
@@ -551,8 +565,8 @@ module Make (TaintSpecification : TaintSpec.S) = struct
                     | Some model
                      -> handle_model callee_pname astate_with_source model
                     | None
-                     -> apply_summary ret_opt actuals access_tree astate_with_source proc_data
-                          call_site
+                     -> apply_summary dummy_ret_opt actuals access_tree astate_with_source
+                          proc_data call_site
             in
             let astate_with_sanitizer =
               match dummy_ret_opt with
@@ -608,21 +622,19 @@ module Make (TaintSpecification : TaintSpec.S) = struct
             (* if this trace has no sinks, we don't need to attach it to anything *)
             access_tree_acc
           else
-            TraceDomain.Sources.fold
-              (fun source acc ->
-                match TraceDomain.Source.get_footprint_access_path source with
-                | Some footprint_access_path
-                 -> let node' =
-                      match TaintDomain.get_node footprint_access_path acc with
-                      | Some n
-                       -> TaintDomain.node_join node n
-                      | None
-                       -> node
-                    in
-                    TaintDomain.add_node footprint_access_path node' acc
-                | None
-                 -> acc)
-              (TraceDomain.sources trace) access_tree_acc)
+            TraceDomain.Sources.Footprint.fold
+              (fun acc footprint_access_path (is_mem, _) ->
+                if is_mem then
+                  let node' =
+                    match TaintDomain.get_node footprint_access_path acc with
+                    | Some n
+                     -> TaintDomain.node_join node n
+                    | None
+                     -> node
+                  in
+                  TaintDomain.add_node footprint_access_path node' acc
+                else acc)
+              (TraceDomain.sources trace).TraceDomain.Sources.footprint access_tree_acc)
         access_tree access_tree
     in
     (* should only be used on nodes associated with a footprint base *)
@@ -704,6 +716,8 @@ module Make (TaintSpecification : TaintSpec.S) = struct
      -> Summary.update_summary (make_summary proc_data access_tree) summary
     | None
      -> if Procdesc.Node.get_succs (Procdesc.get_start_node proc_desc) <> [] then
-          failwith "Couldn't compute post"
+          L.(die InternalError)
+            "Couldn't compute post for %a. Broken CFG suspected" Typ.Procname.pp
+            (Procdesc.get_proc_name proc_desc)
         else summary
 end

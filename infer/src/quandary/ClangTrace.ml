@@ -17,10 +17,7 @@ module SourceKind = struct
     | EnvironmentVariable  (** source that was read from an environment variable *)
     | File  (** source that was read from a file *)
     | Other  (** for testing or uncategorized sources *)
-    | Unknown
     [@@deriving compare]
-
-  let unknown = Unknown
 
   let of_string = function
     | "Endpoint"
@@ -79,7 +76,7 @@ module SourceKind = struct
     | Typ.Procname.Block _
      -> None
     | pname
-     -> failwithf "Non-C++ procname %a in C++ analysis@." Typ.Procname.pp pname
+     -> L.(die InternalError) "Non-C++ procname %a in C++ analysis" Typ.Procname.pp pname
 
   let get_tainted_formals pdesc _ =
     let get_tainted_formals_ qualified_pname =
@@ -111,9 +108,7 @@ module SourceKind = struct
       | File
        -> "File"
       | Other
-       -> "Other"
-      | Unknown
-       -> "Unknown" )
+       -> "Other" )
 end
 
 module CppSource = Source.Make (SourceKind)
@@ -181,11 +176,12 @@ module SinkKind = struct
     match pname with
     | Typ.Procname.ObjC_Cpp cpp_name -> (
       match Typ.Procname.get_method pname with
-      | "operator[]" when is_buffer_class cpp_name
+      | "operator[]" when Config.developer_mode && is_buffer_class cpp_name
        -> taint_nth 1 BufferAccess actuals
       | _
        -> get_external_sink pname actuals )
-    | Typ.Procname.C _ when Typ.Procname.equal pname BuiltinDecl.__array_access
+    | Typ.Procname.C _
+      when Config.developer_mode && Typ.Procname.equal pname BuiltinDecl.__array_access
      -> taint_all BufferAccess actuals
     | Typ.Procname.C _ when Typ.Procname.equal pname BuiltinDecl.__set_array_length
      -> (* called when creating a stack-allocated array *)
@@ -196,14 +192,26 @@ module SinkKind = struct
        -> taint_all ShellExec actuals
       | "popen"
        -> taint_nth 0 ShellExec actuals
-      | "brk" | "calloc" | "malloc" | "realloc" | "sbrk"
+      | ("brk" | "calloc" | "malloc" | "realloc" | "sbrk") when Config.developer_mode
        -> taint_all Allocation actuals
+      | "strcpy" when Config.developer_mode
+       -> (* warn if source array is tainted *)
+          taint_nth 1 BufferAccess actuals
+      | "memcpy"
+      | "memmove"
+      | "memset"
+      | "strncpy"
+      | "wmemcpy"
+      | "wmemmove"
+        when Config.developer_mode
+       -> (* warn if count argument is tainted *)
+          taint_nth 2 BufferAccess actuals
       | _
        -> get_external_sink pname actuals )
     | Typ.Procname.Block _
      -> None
     | pname
-     -> failwithf "Non-C++ procname %a in C++ analysis@." Typ.Procname.pp pname
+     -> L.(die InternalError) "Non-C++ procname %a in C++ analysis" Typ.Procname.pp pname
 
   let pp fmt kind =
     F.fprintf fmt
@@ -246,23 +254,27 @@ include Trace.Make (struct
     | (Endpoint _ | EnvironmentVariable | File), Allocation
      -> (* untrusted data flowing to memory allocation *)
         true
-    | _, (Allocation | Other | ShellExec | SQL) when Source.is_footprint source
-     -> (
-        (* is this var a command line flag created by the popular gflags library? *)
-        let is_gflag pvar =
-          String.is_substring ~substring:"FLAGS_" (Pvar.get_simplified_name pvar)
-        in
-        match Option.map ~f:AccessPath.Abs.extract (Source.get_footprint_access_path source) with
-        | Some ((Var.ProgramVar pvar, _), _) when Pvar.is_global pvar && is_gflag pvar
-         -> (* gflags globals come from the environment; treat them as sources *)
-            true
-        | _
-         -> false )
     | Other, _
      -> (* Other matches everything *)
         true
     | _, Other
      -> true
-    | Unknown, (Allocation | BufferAccess | ShellExec | SQL)
-     -> false
+
+  let should_report_footprint footprint_access_path sink =
+    (* is this var a command line flag created by the popular C++ gflags library for creating
+       command-line flags (https://github.com/gflags/gflags)? *)
+    let is_gflag access_path =
+      let pvar_is_gflag pvar =
+        String.is_substring ~substring:"FLAGS_" (Pvar.get_simplified_name pvar)
+      in
+      match AccessPath.Abs.extract access_path with
+      | (Var.ProgramVar pvar, _), _
+       -> Pvar.is_global pvar && pvar_is_gflag pvar
+      | _
+       -> false
+    in
+    match Sink.kind sink
+    with Allocation | BufferAccess | Other | ShellExec | SQL ->
+      (* gflags globals come from the environment; treat them as sources for everything *)
+      is_gflag footprint_access_path
 end)

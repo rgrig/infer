@@ -15,9 +15,6 @@ val all_formals_untainted : Procdesc.t -> (Mangled.t * Typ.t * 'a option) list
 module type Kind = sig
   include TraceElem.Kind
 
-  val unknown : t
-  (** kind of an unknown source *)
-
   val get : Typ.Procname.t -> HilExp.t list -> Tenv.t -> (t * int option) option
   (** return Some (kind) if the procedure with the given actuals is a taint source, None otherwise *)
 
@@ -32,15 +29,6 @@ module type S = sig
   type spec =
     { source: t  (** type of the returned source *)
     ; index: int option  (** index of the returned source if Some; return value if None *) }
-
-  val is_footprint : t -> bool
-  (** return true if the current source is a footprint source *)
-
-  val make_footprint : AccessPath.Abs.t -> Procdesc.t -> t
-  (** create a footprint source for the value read from the given access path. *)
-
-  val get_footprint_access_path : t -> AccessPath.Abs.t option
-  (** return Some(access path) if the current source is a footprint source, None otherwise *)
 
   val get : CallSite.t -> HilExp.t list -> Tenv.t -> spec option
   (** return Some (taint spec) if the call site with the given actuals is a taint source, None otherwise *)

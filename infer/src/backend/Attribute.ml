@@ -29,24 +29,23 @@ let attributes_in_same_category attr1 attr2 =
   PredSymb.equal_category cat1 cat2
 
 (** Replace an attribute associated to the expression *)
-let add_or_replace_check_changed tenv check_attribute_change prop atom0 =
-  match atom0 with
+let add_or_replace_check_changed tenv check_attribute_change prop atom =
+  match atom with
   | Sil.Apred (att0, (_ :: _ as exps0)) | Anpred (att0, (_ :: _ as exps0))
    -> let pairs = List.map ~f:(fun e -> (e, Prop.exp_normalize_prop tenv prop e)) exps0 in
       let _, nexp = List.hd_exn pairs in
       (* len exps0 > 0 by match *)
-      let natom = Sil.atom_replace_exp pairs atom0 in
       let atom_map = function
         | Sil.Apred (att, exp :: _)
         | Anpred (att, exp :: _)
           when Exp.equal nexp exp && attributes_in_same_category att att0
-         -> check_attribute_change att att0 ; natom
-        | atom
-         -> atom
+         -> check_attribute_change att att0 ; atom
+        | atom'
+         -> atom'
       in
       let pi = prop.Prop.pi in
       let pi' = IList.map_changed atom_map pi in
-      if phys_equal pi pi' then Prop.prop_atom_and tenv prop natom
+      if phys_equal pi pi' then Prop.prop_atom_and tenv prop atom
       else Prop.normalize tenv (Prop.set prop ~pi:pi')
   | _
    -> prop
@@ -194,17 +193,30 @@ let rec nullify_exp_with_objc_null tenv prop exp =
   | _
    -> prop
 
-(** mark Exp.Var's or Exp.Lvar's as undefined *)
-let mark_vars_as_undefined tenv prop vars_to_mark callee_pname ret_annots loc path_pos =
-  let att_undef = PredSymb.Aundef (callee_pname, ret_annots, loc, path_pos) in
-  let mark_var_as_undefined exp prop =
+(** mark Exp.Var's or Exp.Lvar's as undefined
+The annotations of the return type of the method get propagated to the return id,
+with the exception of when the return type is a struct, and we translate it as passing a reference
+to the method.  *)
+let mark_vars_as_undefined tenv prop ~ret_exp_opt ~undefined_actuals_by_ref callee_pname ret_annots
+    loc path_pos =
+  let mark_var_as_undefined ~annot exp prop =
     match exp with
     | Exp.Var _ | Lvar _
-     -> add_or_replace tenv prop (Apred (att_undef, [exp]))
+     -> let att_undef = PredSymb.Aundef (callee_pname, annot, loc, path_pos) in
+        add_or_replace tenv prop (Apred (att_undef, [exp]))
     | _
      -> prop
   in
-  List.fold ~f:(fun prop id -> mark_var_as_undefined id prop) ~init:prop vars_to_mark
+  let prop_with_ret_attr =
+    match ret_exp_opt with
+    | Some ret_exp
+     -> mark_var_as_undefined ~annot:ret_annots ret_exp prop
+    | None
+     -> prop
+  in
+  List.fold
+    ~f:(fun prop id -> mark_var_as_undefined ~annot:[] id prop)
+    ~init:prop_with_ret_attr undefined_actuals_by_ref
 
 (** type for arithmetic problems *)
 type arith_problem =

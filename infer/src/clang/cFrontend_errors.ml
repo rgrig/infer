@@ -24,7 +24,7 @@ let filter_parsed_linters_developer parsed_linters =
   if List.length parsed_linters > 1 && Config.linters_developer_mode then
     match Config.linter with
     | None
-     -> failwith
+     -> L.(die UserError)
           "In linters developer mode you should debug only one linter at a time. This is important for debugging the rule. Pass the flag --linter <name> to specify the linter you want to debug."
     | Some lint
      -> List.filter ~f:(fun (rule: linter) -> String.equal rule.issue_desc.id lint) parsed_linters
@@ -93,7 +93,7 @@ let stmt_checkers_list = List.map ~f:single_to_multi stmt_single_checkers_list
    input the linter def files *)
 let parsed_linters = ref []
 
-let evaluate_place_holder ph an =
+let evaluate_place_holder context ph an =
   match ph with
   | "%ivar_name%"
    -> MF.monospaced_to_string (CFrontend_checkers.ivar_name an)
@@ -106,7 +106,7 @@ let evaluate_place_holder ph an =
   | "%receiver_method_call%"
    -> MF.monospaced_to_string (CFrontend_checkers.receiver_method_call an)
   | "%iphoneos_target_sdk_version%"
-   -> MF.monospaced_to_string (CFrontend_checkers.iphoneos_target_sdk_version an)
+   -> MF.monospaced_to_string (CFrontend_checkers.iphoneos_target_sdk_version context an)
   | "%available_ios_sdk%"
    -> MF.monospaced_to_string (CFrontend_checkers.available_ios_sdk an)
   | "%class_available_ios_sdk%"
@@ -127,19 +127,19 @@ let evaluate_place_holder ph an =
    other place-holders exist and repeats the process until there are
     no place-holder left.
 *)
-let rec expand_message_string message an =
+let rec expand_message_string context message an =
   (* reg exp should match alphanumeric id with possibly somee _ *)
   let re = Str.regexp "%[a-zA-Z0-9_]+%" in
   try
     let _ = Str.search_forward re message 0 in
     let ms = Str.matched_string message in
-    let res = evaluate_place_holder ms an in
+    let res = evaluate_place_holder context ms an in
     L.(debug Linters Medium) "@\nMatched string '%s'@\n" ms ;
     let re_ms = Str.regexp_string ms in
     let message' = Str.replace_first re_ms res message in
     L.(debug Linters Medium) "Replacing %s in message: @\n %s @\n" ms message ;
     L.(debug Linters Medium) "Resulting message: @\n %s @\n" message' ;
-    expand_message_string message' an
+    expand_message_string context message' an
   with Not_found -> message
 
 let remove_new_lines message = String.substr_replace_all ~pattern:"\n" ~with_:" " message
@@ -266,7 +266,7 @@ let rec apply_substitution f sub =
 
 let expand_formula phi _map _error_msg =
   let fail_with_circular_macro_definition name error_msg =
-    failwithf "Macro '%s' has a circular definition.@\n Cycle:@\n%s" name error_msg
+    L.(die ExternalError) "Macro '%s' has a circular definition.@\n Cycle:@\n%s" name error_msg
   in
   let open CTL in
   let rec expand acc map error_msg =
@@ -289,9 +289,8 @@ let expand_formula phi _map _error_msg =
                 let map' = ALVar.FormulaIdMap.add av (true, fparams, f1) map in
                 expand f1_sub map' error_msg'
             | None
-             -> failwith
-                  ( "Formula identifier '" ^ name
-                  ^ "' is not called with the right number of parameters" )
+             -> L.(die ExternalError)
+                  "Formula identifier '%s' is not called with the right number of parameters" name
         with Not_found -> acc
         (* in this case it should be a predicate *) )
     | Not f1
@@ -337,7 +336,7 @@ let rec expand_path paths path_map =
     try
       let paths = ALVar.VarMap.find path_var path_map in
       List.append paths (expand_path rest path_map)
-    with Not_found -> failwithf "Path variable %s not found. " path_var )
+    with Not_found -> L.(die ExternalError) "Path variable %s not found. " path_var )
   | path :: rest
    -> path :: expand_path rest path_map
 
@@ -348,8 +347,8 @@ let _build_macros_map macros init_map =
         match data with
         | CTL.CLet (key, params, formula)
          -> if ALVar.FormulaIdMap.mem key map' then
-              failwith
-                ("Macro '" ^ ALVar.formula_id_to_string key ^ "' has more than one definition.")
+              L.(die ExternalError)
+                "Macro '%s' has more than one definition." (ALVar.formula_id_to_string key)
             else ALVar.FormulaIdMap.add key (false, params, formula) map'
         | _
          -> map')
@@ -369,7 +368,7 @@ let build_paths_map paths =
           match data
           with path_name, paths ->
             if ALVar.VarMap.mem path_name map' then
-              failwith ("Path '" ^ path_name ^ "' has more than one definition.")
+              L.(die ExternalError) "Path '%s' has more than one definition." path_name
             else ALVar.VarMap.add path_name paths map')
         ~init:init_map paths
     in
@@ -442,7 +441,7 @@ let get_current_method context (an: Ctl_parser_types.ast_node) =
    -> context.CLintersContext.current_method
 
 let fill_issue_desc_info_and_log context an key issue_desc linters_def_file loc =
-  let desc = remove_new_lines (expand_message_string issue_desc.CIssue.description an) in
+  let desc = remove_new_lines (expand_message_string context issue_desc.CIssue.description an) in
   let issue_desc' = {issue_desc with CIssue.description= desc; CIssue.loc= loc} in
   log_frontend_issue context.CLintersContext.translation_unit_context
     (get_current_method context an) key issue_desc' linters_def_file

@@ -64,29 +64,6 @@ let get_location source_file impl pc =
   in
   {Location.line= line_number; col= -1; file= source_file}
 
-let get_undefined_method_call ovt =
-  let get_undefined_method ovt =
-    match ovt with
-    | None
-     -> JConfig.void ^ "_undefined"
-    | Some vt ->
-      match vt with
-      | JBasics.TBasic bt
-       -> JTransType.string_of_basic_type bt ^ "_undefined"
-      | JBasics.TObject ot ->
-        match ot with
-        | JBasics.TArray _
-         -> assert false
-        | JBasics.TClass cn
-         -> if String.equal (JBasics.cn_name cn) JConfig.string_cl then "string_undefined"
-            else if JBasics.cn_equal cn JBasics.java_lang_object then "object_undefined"
-            else assert false
-  in
-  let undef_cn = JBasics.make_cn JConfig.infer_undefined_cl in
-  let undef_name = get_undefined_method ovt in
-  let undef_ms = JBasics.make_ms undef_name [] ovt in
-  (undef_cn, undef_ms)
-
 let retrieve_fieldname fieldname =
   try
     let subs = Str.split (Str.regexp (Str.quote ".")) (Typ.Fieldname.to_string fieldname) in
@@ -213,7 +190,7 @@ let get_binop binop =
   | JBir.IXor
    -> Binop.BXor
   | JBir.IUshr
-   -> raise (Frontend_error "Unsigned right shift operator")
+   -> Binop.Shiftrt
   | JBir.LShl
    -> Binop.Shiftlt
   | JBir.LShr
@@ -225,9 +202,9 @@ let get_binop binop =
   | JBir.LXor
    -> Binop.BXor
   | JBir.LUshr
-   -> raise (Frontend_error "Unsigned right shift operator")
+   -> Binop.Shiftrt
   | JBir.CMP _
-   -> raise (Frontend_error "Unsigned right shift operator")
+   -> raise (Frontend_error "Comparison operators")
   | JBir.ArrayLoad _
    -> raise (Frontend_error "Array load operator")
 
@@ -255,7 +232,8 @@ let get_implementation cm =
   | Javalib.Native
    -> let cms = cm.Javalib.cm_class_method_signature in
       let cn, ms = JBasics.cms_split cms in
-      failwithf "native method %s found in %s@." (JBasics.ms_name ms) (JBasics.cn_name cn)
+      L.(die InternalError)
+        "native method %s found in %s@." (JBasics.ms_name ms) (JBasics.cn_name cn)
   | Javalib.Java t
    -> (* Sawja doesn't handle invokedynamic, and it will crash with a Match_failure if we give it
          bytecode with this instruction. hack around this problem by converting all invokedynamic's
@@ -297,6 +275,16 @@ let trans_access = function
   | `Protected
    -> PredSymb.Protected
 
+let create_empty_cfg proc_name source_file procdesc =
+  let start_kind = Procdesc.Node.Start_node proc_name in
+  let start_node = Procdesc.create_node procdesc (Location.none source_file) start_kind [] in
+  let exit_kind = Procdesc.Node.Exit_node proc_name in
+  let exit_node = Procdesc.create_node procdesc (Location.none source_file) exit_kind [] in
+  Procdesc.node_set_succs_exn procdesc start_node [exit_node] [exit_node] ;
+  Procdesc.set_start_node procdesc start_node ;
+  Procdesc.set_exit_node procdesc exit_node ;
+  procdesc
+
 let create_am_procdesc source_file program icfg am proc_name : Procdesc.t =
   let cfg = icfg.JContext.cfg in
   let tenv = icfg.JContext.tenv in
@@ -312,7 +300,6 @@ let create_am_procdesc source_file program icfg am proc_name : Procdesc.t =
       ; formals
       ; is_abstract= true
       ; is_bridge_method= am.Javalib.am_bridge
-      ; is_defined= true
       ; is_model= Config.models_mode
       ; is_synthetic_method= am.Javalib.am_synthetic
       ; method_annotation
@@ -321,14 +308,7 @@ let create_am_procdesc source_file program icfg am proc_name : Procdesc.t =
     in
     Cfg.create_proc_desc cfg proc_attributes
   in
-  let start_kind = Procdesc.Node.Start_node proc_name in
-  let start_node = Procdesc.create_node procdesc (Location.none source_file) start_kind [] in
-  let exit_kind = Procdesc.Node.Exit_node proc_name in
-  let exit_node = Procdesc.create_node procdesc (Location.none source_file) exit_kind [] in
-  Procdesc.node_set_succs_exn procdesc start_node [exit_node] [exit_node] ;
-  Procdesc.set_start_node procdesc start_node ;
-  Procdesc.set_exit_node procdesc exit_node ;
-  procdesc
+  create_empty_cfg proc_name source_file procdesc
 
 let create_native_procdesc source_file program icfg cm proc_name =
   let cfg = icfg.JContext.cfg in
@@ -337,19 +317,22 @@ let create_native_procdesc source_file program icfg cm proc_name =
   let cn, ms = JBasics.cms_split (Javalib.get_class_method_signature m) in
   let formals = formals_from_signature program tenv cn ms (JTransType.get_method_kind m) in
   let method_annotation = JAnnotation.translate_method cm.Javalib.cm_annotations in
-  let proc_attributes =
-    { (ProcAttributes.default proc_name Config.Java) with
-      ProcAttributes.access= trans_access cm.Javalib.cm_access
-    ; exceptions= List.map ~f:JBasics.cn_name cm.Javalib.cm_exceptions
-    ; formals
-    ; is_bridge_method= cm.Javalib.cm_bridge
-    ; is_model= Config.models_mode
-    ; is_synthetic_method= cm.Javalib.cm_synthetic
-    ; method_annotation
-    ; ret_type= JTransType.return_type program tenv ms
-    ; loc= Location.none source_file }
+  let procdesc =
+    let proc_attributes =
+      { (ProcAttributes.default proc_name Config.Java) with
+        ProcAttributes.access= trans_access cm.Javalib.cm_access
+      ; exceptions= List.map ~f:JBasics.cn_name cm.Javalib.cm_exceptions
+      ; formals
+      ; is_bridge_method= cm.Javalib.cm_bridge
+      ; is_model= Config.models_mode
+      ; is_synthetic_method= cm.Javalib.cm_synthetic
+      ; method_annotation
+      ; ret_type= JTransType.return_type program tenv ms
+      ; loc= Location.none source_file }
+    in
+    Cfg.create_proc_desc cfg proc_attributes
   in
-  Cfg.create_proc_desc cfg proc_attributes
+  create_empty_cfg proc_name source_file procdesc
 
 (** Creates a procedure description. *)
 let create_cm_procdesc source_file program linereader icfg cm proc_name =
@@ -706,16 +689,6 @@ type translation =
   | Prune of Procdesc.Node.t * Procdesc.Node.t
   | Loop of Procdesc.Node.t * Procdesc.Node.t * Procdesc.Node.t
 
-let instruction_array_call ms obj_type obj args var_opt =
-  if is_clone ms then
-    let cn = JBasics.make_cn JConfig.infer_array_cl in
-    let vt = JBasics.TObject obj_type in
-    let ms = JBasics.make_ms JConfig.clone_name [vt] (Some vt) in
-    JBir.InvokeStatic (var_opt, cn, ms, obj :: args)
-  else
-    let undef_cn, undef_ms = get_undefined_method_call (JBasics.ms_rtype ms) in
-    JBir.InvokeStatic (var_opt, undef_cn, undef_ms, [])
-
 let is_this expr =
   match expr with
   | JBir.Var (_, var) -> (
@@ -734,7 +707,7 @@ let assume_not_null loc sil_expr =
   let call_args = [(not_null_expr, Typ.mk (Tint Typ.IBool))] in
   Sil.Call (None, builtin_infer_assume, call_args, loc, assume_call_flag)
 
-let rec instruction (context: JContext.t) pc instr : translation =
+let instruction (context: JContext.t) pc instr : translation =
   let tenv = JContext.get_tenv context in
   let cg = JContext.get_cg context in
   let program = context.program in
@@ -942,13 +915,15 @@ let rec instruction (context: JContext.t) pc instr : translation =
           Instr call_node
         in
         match call_kind with
-        | JBir.VirtualCall obj_type -> (
-          match obj_type with
-          | JBasics.TClass cn
-           -> trans_virtual_call cn I_Virtual
-          | JBasics.TArray _
-           -> let instr = instruction_array_call ms obj_type obj args var_opt in
-              instruction context pc instr )
+        | JBir.VirtualCall obj_type
+         -> let cn =
+              match obj_type with
+              | JBasics.TClass cn
+               -> cn
+              | JBasics.TArray _
+               -> JBasics.java_lang_object
+            in
+            trans_virtual_call cn I_Virtual
         | JBir.InterfaceCall cn
          -> trans_virtual_call cn I_Interface )
     | JBir.InvokeNonVirtual (var_opt, obj, cn, ms, args)

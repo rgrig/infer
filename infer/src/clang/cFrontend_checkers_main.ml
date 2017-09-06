@@ -8,34 +8,15 @@
  *)
 
 open! IStd
-open Lexing
-open Ctl_lexer
 module L = Logging
-
-let parse_al_file fname channel : CTL.al_file option =
-  let pos_str lexbuf =
-    let pos = lexbuf.lex_curr_p in
-    pos.pos_fname ^ ":" ^ string_of_int pos.pos_lnum ^ ":"
-    ^ string_of_int (pos.pos_cnum - pos.pos_bol + 1)
-  in
-  let parse_with_error lexbuf =
-    try Some (Ctl_parser.al_file token lexbuf) with
-    | Ctl_parser_types.ALParsingException s
-     -> raise (Ctl_parser_types.ALParsingException (s ^ " at " ^ pos_str lexbuf))
-    | SyntaxError _ | Ctl_parser.Error
-     -> raise (Ctl_parser_types.ALParsingException ("SYNTAX ERROR at " ^ pos_str lexbuf))
-  in
-  let lexbuf = Lexing.from_channel channel in
-  lexbuf.lex_curr_p <- {lexbuf.lex_curr_p with pos_fname= fname} ;
-  parse_with_error lexbuf
 
 let already_imported_files = ref []
 
 let rec parse_import_file import_file channel =
   if List.mem ~equal:String.equal !already_imported_files import_file then
-    failwith ("Cyclic imports: file '" ^ import_file ^ "' was already imported.")
+    L.(die ExternalError) "Cyclic imports: file '%s' was already imported." import_file
   else
-    match parse_al_file import_file channel with
+    match CTLParserHelper.parse_al_file import_file channel with
     | Some
         { import_files= imports
         ; global_macros= curr_file_macros
@@ -68,7 +49,7 @@ and parse_imports imports_files =
   List.fold_right ~f:parse_one_import_file ~init:([], []) imports_files
 
 let parse_ctl_file linters_def_file channel : CFrontend_errors.linter list =
-  match parse_al_file linters_def_file channel with
+  match CTLParserHelper.parse_al_file linters_def_file channel with
   | Some
       { import_files= imports
       ; global_macros= curr_file_macros

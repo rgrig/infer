@@ -30,7 +30,7 @@ val string_to_analyzer : (string * analyzer) list
 
 val string_of_analyzer : analyzer -> string
 
-type language = Clang | Java [@@deriving compare]
+type language = Clang | Java | Python [@@deriving compare]
 
 val equal_language : language -> language -> bool
 
@@ -184,6 +184,8 @@ val passthroughs : bool
 val patterns_modeled_expensive : string * Yojson.Basic.json
 
 val patterns_never_returning_null : string * Yojson.Basic.json
+
+val patterns_skip_implementation : string * Yojson.Basic.json
 
 val patterns_skip_translation : string * Yojson.Basic.json
 
@@ -400,8 +402,6 @@ val fragment_retains_view : bool
 
 val from_json_report : string option
 
-val frontend_debug : bool
-
 val frontend_tests : bool
 
 val frontend_stats : bool
@@ -474,6 +474,8 @@ val linters_def_folder : string list
 val linters_developer_mode : bool
 
 val linters_ignore_clang_failures : bool
+
+val linters_validate_syntax_only : bool
 
 val liveness : bool
 

@@ -33,6 +33,9 @@ module type WithBottom = sig
   (** The bottom value of the domain.
       Naming it empty instead of bottom helps to bind the empty
       value for sets and maps to the natural definition for bottom *)
+
+  val is_empty : astate -> bool
+  (** Return true if this is the bottom value *)
 end
 
 (** A domain with an explicit top value *)
@@ -99,4 +102,4 @@ module BooleanAnd : S with type astate = bool
 
 (** Boolean domain ordered by ~p || q. Useful when you want a boolean that's true only when it's
     true in one conditional branch. *)
-module BooleanOr : S with type astate = bool
+module BooleanOr : WithBottom with type astate = bool

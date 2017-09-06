@@ -83,8 +83,6 @@ let rec ast_node_name an =
 
 let infer_prefix = "__infer_ctl_"
 
-exception ALParsingException of string
-
 (** Data structures for type parser.
     Correspondence with clang types inferred from
     StringRef BuiltinType::getName in
@@ -321,6 +319,8 @@ and c_type_equal c_type abs_ctype =
   | ObjCObjectType _, ObjCGenProt _
    -> objc_object_type_equal c_type abs_ctype
   | ObjCInterfaceType (_, pointer), TypeName ae
+   -> typename_equal pointer ae
+  | RecordType (_, pointer), TypeName ae
    -> typename_equal pointer ae
   | TypedefType (_, tdi), TypeName ae
    -> typename_equal tdi.tti_decl_ptr ae

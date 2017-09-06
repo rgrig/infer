@@ -13,7 +13,7 @@ module L = Logging
 
 include TaintAnalysis.Make (struct
   module Trace = ClangTrace
-  module AccessTree = AccessTree.Make (Trace)
+  module AccessTree = AccessTree.Make (Trace) (AccessTree.DefaultConfig)
 
   let to_summary_access_tree tree = QuandarySummary.AccessTree.Clang tree
 
@@ -65,6 +65,9 @@ include TaintAnalysis.Make (struct
      -> [TaintSpec.Propagate_to_receiver; TaintSpec.Propagate_to_return]
     | "sprintf"
      -> [TaintSpec.Propagate_to_receiver]
+    | "strlen"
+     -> (* don't propagate taint for strlen *)
+        []
     | _
      -> handle_generic_unknown ret_typ_opt actuals
 

@@ -12,9 +12,7 @@ module L = Logging
 module F = Format
 
 module MockTraceElem = struct
-  type t = Kind1 | Kind2 | Footprint | Unknown [@@deriving compare]
-
-  let unknown = Unknown
+  type t = Kind1 | Kind2 | Footprint [@@deriving compare]
 
   let call_site _ = CallSite.dummy
 
@@ -29,8 +27,6 @@ module MockTraceElem = struct
      -> F.fprintf fmt "Kind2"
     | Footprint
      -> F.fprintf fmt "Footprint"
-    | Unknown
-     -> F.fprintf fmt "Unknown"
 
   module Kind = struct
     type nonrec t = t
@@ -81,7 +77,18 @@ module MockTrace = Trace.Make (struct
 
   let should_report source sink =
     [%compare.equal : MockTraceElem.t] (Source.kind source) (Sink.kind sink)
+
+  let should_report_footprint _ _ = false
 end)
+
+let trace_equal t1 t2 = MockTrace.( <= ) ~lhs:t1 ~rhs:t2 && MockTrace.( <= ) ~lhs:t2 ~rhs:t1
+
+let source_equal path_source source =
+  match path_source with
+  | MockTrace.Known s
+   -> MockSource.equal s source
+  | MockTrace.Footprint _
+   -> false
 
 let tests =
   let source1 = MockSource.make MockTraceElem.Kind1 CallSite.dummy in
@@ -99,13 +106,11 @@ let tests =
       assert_equal (List.length reports) 2 ;
       assert_bool "Reports should contain source1 -> sink1"
         (List.exists
-           ~f:(fun (source, sink, _) ->
-             MockSource.equal source source1 && MockSink.equal sink sink1)
+           ~f:(fun (source, sink, _) -> source_equal source source1 && MockSink.equal sink sink1)
            reports) ;
       assert_bool "Reports should contain source2 -> sink2"
         (List.exists
-           ~f:(fun (source, sink, _) ->
-             MockSource.equal source source2 && MockSink.equal sink sink2)
+           ~f:(fun (source, sink, _) -> source_equal source source2 && MockSink.equal sink sink2)
            reports)
     in
     "get_reports" >:: get_reports_
@@ -116,16 +121,11 @@ let tests =
       let footprint_ap =
         AccessPath.Abs.Exact (AccessPath.of_id (Ident.create_none ()) (Typ.mk Tvoid))
       in
-      let dummy_pdesc =
-        Cfg.create_proc_desc (Cfg.create_cfg ())
-          (ProcAttributes.default Typ.Procname.empty_block !Config.curr_language)
-      in
-      let footprint_source = MockSource.make_footprint footprint_ap dummy_pdesc in
       let source_trace = MockTrace.of_source source1 in
-      let footprint_trace = MockTrace.of_source footprint_source |> MockTrace.add_sink sink1 in
+      let footprint_trace = MockTrace.of_footprint footprint_ap |> MockTrace.add_sink sink1 in
       let expected_trace = MockTrace.of_source source1 |> MockTrace.add_sink sink1 in
       assert_bool "Appended trace should contain source and sink"
-        (MockTrace.equal (MockTrace.append source_trace footprint_trace call_site) expected_trace)
+        (trace_equal (MockTrace.append source_trace footprint_trace call_site) expected_trace)
     in
     "append" >:: append_
   in

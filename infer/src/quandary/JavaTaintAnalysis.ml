@@ -13,7 +13,7 @@ module L = Logging
 
 include TaintAnalysis.Make (struct
   module Trace = JavaTrace
-  module AccessTree = AccessTree.Make (Trace)
+  module AccessTree = AccessTree.Make (Trace) (AccessTree.DefaultConfig)
 
   let to_summary_access_tree access_tree = QuandarySummary.AccessTree.Java access_tree
 
@@ -73,7 +73,7 @@ include TaintAnalysis.Make (struct
     | pname when BuiltinDecl.is_declared pname
      -> []
     | pname
-     -> failwithf "Non-Java procname %a in Java analysis@." Typ.Procname.pp pname
+     -> L.(die InternalError) "Non-Java procname %a in Java analysis" Typ.Procname.pp pname
 
   let get_model _ _ _ _ _ = None
 

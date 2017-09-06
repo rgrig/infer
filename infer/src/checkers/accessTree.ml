@@ -49,10 +49,21 @@ module type S = sig
 
   val trace_fold : ('a -> AccessPath.Abs.t -> TraceDomain.astate -> 'a) -> t -> 'a -> 'a
 
+  val depth : t -> int
+
   val pp_node : F.formatter -> node -> unit
 end
 
-module Make (TraceDomain : AbstractDomain.WithBottom) = struct
+module type Config = sig
+  val max_depth : int
+end
+
+module DefaultConfig = struct
+  (* arbitrarily chosen large value *)
+  let max_depth = Int.max_value / 2
+end
+
+module Make (TraceDomain : AbstractDomain.WithBottom) (Config : Config) = struct
   module TraceDomain = TraceDomain
 
   module AccessMap = PrettyPrintable.MakePPMap (struct
@@ -80,23 +91,44 @@ module Make (TraceDomain : AbstractDomain.WithBottom) = struct
 
   let empty = BaseMap.empty
 
+  let is_empty = BaseMap.is_empty
+
   let make_node trace subtree = (trace, Subtree subtree)
 
   let empty_node = make_node TraceDomain.empty AccessMap.empty
+
+  let is_empty_tree = function Star -> false | Subtree node_map -> AccessMap.is_empty node_map
 
   let make_normal_leaf trace = make_node trace AccessMap.empty
 
   let make_starred_leaf trace = (trace, Star)
 
+  let empty_normal_leaf = make_normal_leaf TraceDomain.empty
+
+  let empty_starred_leaf = make_starred_leaf TraceDomain.empty
+
+  (* no need to make it tail-recursive, trees shouldn't be big enough to blow up the call stack *)
+  let rec node_depth (_, tree) = 1 + tree_depth tree
+
+  and tree_depth = function
+    | Star
+     -> 0
+    | Subtree node_map
+     -> AccessMap.fold (fun _ node acc -> max_depth node acc) node_map 0
+
+  and max_depth node max_depth_acc = Int.max (node_depth node) max_depth_acc
+
+  let depth access_tree = BaseMap.fold (fun _ node acc -> max_depth node acc) access_tree 0
+
   let make_access_node base_trace access trace =
     make_node base_trace (AccessMap.singleton access (make_normal_leaf trace))
 
   (** find all of the traces in the subtree and join them with [orig_trace] *)
-  let rec join_all_traces orig_trace = function
+  let rec join_all_traces ?(join_traces= TraceDomain.join) orig_trace = function
     | Subtree subtree
      -> let join_all_traces_ orig_trace tree =
           let node_join_traces _ (trace, node) trace_acc =
-            join_all_traces (TraceDomain.join trace_acc trace) node
+            join_all_traces (join_traces trace_acc trace) node
           in
           AccessMap.fold node_join_traces tree orig_trace
         in
@@ -194,18 +226,39 @@ module Make (TraceDomain : AbstractDomain.WithBottom) = struct
     | None, node_opt | node_opt, None
      -> node_opt
 
+  (* truncate [node] to a tree of depth <= [depth]. [depth] must be positive *)
+  let node_depth_truncate (_, tree as node) depth =
+    let rec node_depth_truncate_ depth (trace, tree as node) =
+      match tree with
+      | Star
+       -> node
+      | Subtree subtree
+       -> if Int.( <= ) depth 0 then
+            let trace' = join_all_traces trace tree in
+            make_starred_leaf trace'
+          else
+            let subtree' = AccessMap.map (node_depth_truncate_ (depth - 1)) subtree in
+            (trace, Subtree subtree')
+    in
+    if tree_depth tree > depth then node_depth_truncate_ depth node
+    else (* already short enough; don't bother truncating *)
+      node
+
   (* helper for [add_access]. [last_trace] is the trace associated with [tree] in the parent. *)
   let access_tree_add_trace ~node_to_add ~seen_array_access ~is_exact accesses node =
-    let rec access_tree_add_trace_ ~seen_array_access accesses node =
+    let rec access_tree_add_trace_ ~seen_array_access accesses node depth =
       match (accesses, node) with
       | [], (trace, tree) -> (
         match (is_exact, seen_array_access) with
         | true, false
          -> (* adding x.f, do strong update on both subtree and its traces *)
-            node_to_add
+            node_depth_truncate node_to_add (Config.max_depth - depth)
         | true, true
-         -> (* adding x[_], do weak update on subtree and on its immediate trace *)
-            node_join node_to_add node
+         -> (* adding x[_], do weak update on subtree and on its immediate trace. note : [node]
+               already satisfies the depth invariant because it's already in the tree; no need to
+               truncate it. *)
+            let truncated_node = node_depth_truncate node_to_add (Config.max_depth - depth) in
+            node_join truncated_node node
         | _
          -> (* adding x.f* or x[_]*, join with traces of subtree and replace it with * *)
             let node_trace, node_tree = node_to_add in
@@ -214,34 +267,42 @@ module Make (TraceDomain : AbstractDomain.WithBottom) = struct
       | _, (_, Star)
        -> node_join node_to_add node
       | access :: accesses, (trace, Subtree subtree)
-       -> let access_node =
-            try AccessMap.find access subtree
-            with Not_found -> make_normal_leaf TraceDomain.empty
+       -> let depth' = depth + 1 in
+          let access_node' =
+            if depth' >= Config.max_depth then
+              access_tree_add_trace_ ~seen_array_access accesses empty_starred_leaf depth'
+            else
+              let access_node =
+                try AccessMap.find access subtree
+                with Not_found -> empty_normal_leaf
+              in
+              (* once we encounter a subtree rooted in an array access, we have to do weak updates in
+               the entire subtree. the reason: if I do x[i].f.g = <interesting trace>, then
+               x[j].f.g = <empty trace>, I don't want to overwrite <interesting trace>. instead, I
+               should get <interesting trace> |_| <empty trace> *)
+              let seen_array_access =
+                seen_array_access
+                ||
+                match access with
+                | AccessPath.ArrayAccess _
+                 -> true
+                | AccessPath.FieldAccess _
+                 -> false
+              in
+              access_tree_add_trace_ ~seen_array_access accesses access_node depth'
           in
-          (* once we encounter a subtree rooted in an array access, we have to do weak updates in
-             the entire subtree. the reason: if I do x[i].f.g = <interesting trace>, then
-             x[j].f.g = <empty trace>, I don't want to overwrite <interesting trace>. instead, I
-             should get <interesting trace> |_| <empty trace> *)
-          let seen_array_access =
-            seen_array_access
-            ||
-            match access with
-            | AccessPath.ArrayAccess _
-             -> true
-            | AccessPath.FieldAccess _
-             -> false
-          in
-          let access_node' = access_tree_add_trace_ ~seen_array_access accesses access_node in
           (trace, Subtree (AccessMap.add access access_node' subtree))
     in
-    access_tree_add_trace_ ~seen_array_access accesses node
+    access_tree_add_trace_ ~seen_array_access accesses node 1
 
   let add_node ap node_to_add tree =
     let base, accesses = AccessPath.Abs.extract ap in
     let is_exact = AccessPath.Abs.is_exact ap in
     let base_node =
       try BaseMap.find base tree
-      with Not_found -> make_normal_leaf TraceDomain.empty
+      with Not_found ->
+        (* note: we interpret max_depth <= 0 as max_depth = 1 *)
+        if Config.max_depth > 1 then empty_normal_leaf else empty_starred_leaf
     in
     let base_node' =
       access_tree_add_trace ~node_to_add ~seen_array_access:false ~is_exact accesses base_node
@@ -276,21 +337,23 @@ module Make (TraceDomain : AbstractDomain.WithBottom) = struct
     let f_ acc ap (trace, _) = f acc ap trace in
     fold f_
 
-  (* replace the normal leaves of [node] with starred leaves *)
-  let rec node_add_stars (trace, tree as node) =
-    match tree with
-    | Subtree subtree
-     -> if AccessMap.is_empty subtree then make_starred_leaf trace
-        else
-          let subtree' = AccessMap.map node_add_stars subtree in
-          if phys_equal subtree' subtree then node else (trace, Subtree subtree')
-    | Star
-     -> node
+  (* try for a bit to reach a fixed point before widening aggressively *)
+  let joins_before_widen = 3
 
   let widen ~prev ~next ~num_iters =
     if phys_equal prev next then prev
+    else if Int.( <= ) num_iters joins_before_widen then join prev next
     else
       let trace_widen prev next = TraceDomain.widen ~prev ~next ~num_iters in
+      (* turn [node] into a starred node by vacuuming up its sub-traces *)
+      let node_add_stars (trace, tree as node) =
+        match tree with
+        | Subtree _
+         -> let trace' = join_all_traces ~join_traces:trace_widen trace tree in
+            make_starred_leaf trace'
+        | Star
+         -> node
+      in
       let rec node_widen prev_node_opt next_node_opt =
         match (prev_node_opt, next_node_opt) with
         | Some prev_node, Some next_node
@@ -307,13 +370,27 @@ module Make (TraceDomain : AbstractDomain.WithBottom) = struct
       BaseMap.merge (fun _ prev_node next_node -> node_widen prev_node next_node) prev next
 
   let rec pp_node fmt (trace, subtree) =
-    let pp_subtree fmt = function
+    let pp_subtree fmt tree =
+      match tree with
       | Subtree access_map
        -> AccessMap.pp ~pp_value:pp_node fmt access_map
       | Star
        -> F.fprintf fmt "*"
     in
-    F.fprintf fmt "(%a, %a)" TraceDomain.pp trace pp_subtree subtree
+    if not (TraceDomain.is_empty trace) then
+      if not (is_empty_tree subtree) then
+        F.fprintf fmt "(%a, %a)" TraceDomain.pp trace pp_subtree subtree
+      else F.fprintf fmt "%a" TraceDomain.pp trace
+    else F.fprintf fmt "%a" pp_subtree subtree
 
   let pp fmt base_tree = BaseMap.pp ~pp_value:pp_node fmt base_tree
+end
+
+module PathSet (Config : Config) = struct
+  include Make (AbstractDomain.BooleanOr) (Config)
+
+  (* print as a set of paths rather than a map of paths to bools *)
+  let pp fmt tree =
+    let collect_path acc access_path (is_mem, _) = if is_mem then access_path :: acc else acc in
+    fold collect_path tree [] |> PrettyPrintable.pp_collection ~pp_item:AccessPath.Abs.pp fmt
 end

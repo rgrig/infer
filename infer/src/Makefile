@@ -12,13 +12,7 @@ include $(ROOT_DIR)/Makefile.config
 
 ETC_DIR = $(INFER_DIR)/etc
 # paths to BUILD_DIR are relative because that's how jbuilder likes it
-JBUILDER_BUILD_DEFAULT = _build/default
-JBUILDER_BUILD_TEST = _build/test
-ifeq ($(TEST),1)
-INFER_BUILD_DIR = $(JBUILDER_BUILD_TEST)
-else
-INFER_BUILD_DIR = $(JBUILDER_BUILD_DEFAULT)
-endif
+INFER_BUILD_DIR = _build/default
 
 ATDGEN_SUFFIXES = _t.ml _t.mli _j.ml _j.mli
 
@@ -28,13 +22,13 @@ INFER_MAIN = infer
 
 #### Checkers declarations ####
 
-STACKTREE_ATDGEN_STUB_BASE = checkers/stacktree
+STACKTREE_ATDGEN_STUB_BASE = atd/stacktree
 STACKTREE_ATDGEN_STUB_ATD = $(STACKTREE_ATDGEN_STUB_BASE).atd
 STACKTREE_ATDGEN_STUBS = $(addprefix $(STACKTREE_ATDGEN_STUB_BASE), $(ATDGEN_SUFFIXES))
 
 #### InferPrint declarations ####
 
-INFERPRINT_ATDGEN_STUB_BASE = backend/jsonbug
+INFERPRINT_ATDGEN_STUB_BASE = atd/jsonbug
 INFERPRINT_ATDGEN_STUB_ATD = $(INFERPRINT_ATDGEN_STUB_BASE).atd
 INFERPRINT_ATDGEN_STUBS = $(addprefix $(INFERPRINT_ATDGEN_STUB_BASE), $(ATDGEN_SUFFIXES))
 
@@ -46,19 +40,11 @@ INFER_CREATE_TRACEVIEW_LINKS_MAIN = $(INFER_CREATE_TRACEVIEW_LINKS_MODULE)
 
 ### InferUnit declarations ###
 
-UNIT_SOURCES = unit
-
 INFERUNIT_MAIN = inferunit
-
-#### Java declarations ####
-
-JAVA_SOURCES = java
 
 #### Clang declarations ####
 
-CLANG_SOURCES = clang
-
-CLANG_PLUGIN_MIRROR = clang_plugin
+CLANG_PLUGIN_MIRROR = atd
 
 FCP_CLANG_OCAML_BUILD_DIR = $(FCP_CLANG_OCAML_DIR)/build
 
@@ -81,8 +67,6 @@ CLANG_BINIOU_DICT = $(ETC_DIR)/clang_ast.dict
 
 #### scripts declarations ####
 
-SCRIPT_SOURCES = scripts
-
 CHECKCOPYRIGHT_BIN = $(SCRIPT_DIR)/checkCopyright
 CHECKCOPYRIGHT_MAIN = checkCopyright
 
@@ -96,10 +80,6 @@ endif
 INFER_CONFIG_TARGETS = $(INFER_BUILD_DIR)/$(INFER_MAIN).exe
 ifeq ($(IS_FACEBOOK_TREE),yes)
 INFER_CONFIG_TARGETS += $(INFER_BUILD_DIR)/$(INFER_CREATE_TRACEVIEW_LINKS_MAIN).exe
-endif
-
-ifeq ($(TEST),1)
-INFER_CONFIG_TARGETS += $(INFER_BUILD_DIR)/$(INFERUNIT_MAIN).exe
 endif
 
 OCAML_GENERATED_SOURCES = \
@@ -116,15 +96,11 @@ OCAML_SOURCES = \
 .PHONY: all
 all: infer
 
-$(INFER_BUILD_DIR)/.ppx/ppx_compare/ppx.exe: jbuild jbuild-workspace $(OCAML_GENERATED_SOURCES)
-#      some voodoo to make jbuilder tolerate being run in parallel: force jbuilder to build its
-#      jbuild files and some files that have been seen to race otherwise
-	jbuilder build \
-	  $(JBUILDER_BUILD_DEFAULT)/.ppx/ppx_compare/ppx.exe \
-	  $(JBUILDER_BUILD_TEST)/.ppx/ppx_compare/ppx.exe
-	touch $@
+GENERATED_FROM_AUTOCONF = jbuild.common jbuild-workspace base/Version.ml
 
-SRC_BUILD_COMMON = $(INFER_BUILD_DIR)/.ppx/ppx_compare/ppx.exe $(OCAML_SOURCES)
+GENERATED_JBUILDS = jbuild atd/jbuild istd/jbuild scripts/jbuild
+
+SRC_BUILD_COMMON = $(GENERATED_FROM_AUTOCONF) $(GENERATED_JBUILDS) $(OCAML_SOURCES)
 ifeq ($(BUILD_C_ANALYZERS),yes)
 SRC_BUILD_COMMON += $(CLANG_BINIOU_DICT)
 endif
@@ -135,9 +111,15 @@ src_build_common: $(SRC_BUILD_COMMON)
 # single out infer.exe as the source of truth for make, knowing that in fact several targets are
 # produced by the build
 $(INFER_BUILD_DIR)/$(INFER_MAIN).exe: $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
-	jbuilder build $(INFER_CONFIG_TARGETS)
+	$(QUIET)jbuilder build $(INFER_CONFIG_TARGETS)
 #	let make know that the target is up-to-date even if ocamlbuild cached it
 	$(QUIET)touch $@
+
+.PHONY: test
+test: $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
+	$(QUIET)jbuilder build \
+	  $(patsubst _build/default/%.exe,_build/test/%.bc,$(INFER_CONFIG_TARGETS)) \
+	  _build/test/scripts/checkCopyright.bc _build/test/$(INFERUNIT_MAIN).bc _build/test/infertop.bc
 
 INFER_BIN_ALIASES = $(foreach alias,$(INFER_COMMANDS),$(BIN_DIR)/$(alias))
 
@@ -166,9 +148,6 @@ $(INFER_BUILD_DIR)/$(INFER_MAIN).bc: $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
 $(INFER_BIN).bc: $(INFER_BUILD_DIR)/$(INFER_MAIN).bc $(INFER_BIN_ALIASES)
 	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFER_MAIN).bc $(INFER_BIN)
 	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFER_MAIN).bc $(INFER_BIN).bc
-ifeq ($(TEST),1)
-	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFERUNIT_MAIN).bc $(INFERUNIT_BIN)
-endif
 ifeq ($(IS_FACEBOOK_TREE),yes)
 	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFER_CREATE_TRACEVIEW_LINKS_MAIN).bc \
 		$(INFER_CREATE_TRACEVIEW_LINKS_BIN)
@@ -176,9 +155,6 @@ endif
 
 .PHONY: byte
 byte: $(INFER_BIN).bc
-
-.PHONY: byte_no_install
-byte_no_install: $(INFER_BUILD_DIR)/$(INFER_MAIN).bc
 
 roots:=Infer
 ifeq ($(IS_FACEBOOK_TREE),yes)
@@ -215,7 +191,7 @@ toplevel: $(INFER_BUILD_DIR)/infertop.bc
 .PHONY: checkCopyright
 checkCopyright: $(CHECKCOPYRIGHT_BIN)
 
-$(CHECKCOPYRIGHT_BIN): scripts/$(CHECKCOPYRIGHT_MAIN).ml $(MAKEFILE_LIST)
+$(CHECKCOPYRIGHT_BIN): $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
 	jbuilder build $(INFER_BUILD_DIR)/scripts/$(CHECKCOPYRIGHT_MAIN).exe
 	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/scripts/$(CHECKCOPYRIGHT_MAIN).exe $(CHECKCOPYRIGHT_BIN)
 
@@ -264,7 +240,7 @@ $(CLANG_BINIOU_DICT): $(CLANG_ATDGEN_STUB_ATD)
 	  | sort | uniq  \
 	  > $@
 
-jbuild jbuild-workspace base/Version.ml: $(MAKEFILE_LIST)
+$(GENERATED_FROM_AUTOCONF): $(MAKEFILE_LIST)
 	TMPFILE=$$(mktemp $@.tmp.XXXX); \
 	INFER_GIT_COMMIT=$$(git --work-tree=$(ROOT_DIR) --git-dir=$(ROOT_DIR)/.git rev-parse --short HEAD || printf "unknown"); \
 	INFER_GIT_BRANCH=$$(git --work-tree=$(ROOT_DIR) --git-dir=$(ROOT_DIR)/.git rev-parse --abbrev-ref HEAD || printf "unknown"); \
@@ -279,15 +255,24 @@ jbuild jbuild-workspace base/Version.ml: $(MAKEFILE_LIST)
 	  -e "s|@INFER_GIT_BRANCH[@]|$$INFER_GIT_BRANCH|g" \
 	  -e "s|@BUILD_C_ANALYZERS[@]|$(BUILD_C_ANALYZERS)|g" \
 	  -e "s|@BUILD_JAVA_ANALYZERS[@]|$(BUILD_JAVA_ANALYZERS)|g" \
+	  -e "s|@BUILD_PYTHON_ANALYZERS[@]|$(BUILD_PYTHON_ANALYZERS)|g" \
 	  -e "s|@OPAMSWITCH[@]|$(OPAMSWITCH)|g" \
 	  -e "s|@XCODE_SELECT[@]|$(XCODE_SELECT)|g" \
 	  -e "s|@INFER_MAN_LAST_MODIFIED[@]|$(INFER_MAN_LAST_MODIFIED)|g" \
 	  $@.in > "$$TMPFILE"; \
 	cat "$$TMPFILE" > $@; \
 	$(REMOVE) "$$TMPFILE"
-jbuild: jbuild.in
+jbuild.common: jbuild.common.in
 jbuild-workspace: jbuild-workspace.in
 base/Version.ml: base/Version.ml.in
+
+$(GENERATED_JBUILDS): jbuild.common
+	$(QUIET)cat $+ > $@
+
+jbuild: jbuild.in
+atd/jbuild: atd/jbuild.in
+istd/jbuild: istd/jbuild.in
+scripts/jbuild: scripts/jbuild.in
 
 .PHONY: clean
 clean:
@@ -295,16 +280,15 @@ clean:
 	$(REMOVE) toplevel.mlpack
 	$(REMOVE_DIR) $(BUILD_DIR)
 	$(REMOVE) $(ETC_DIR)/clang_ast.dict
-	$(REMOVE) base/Version.ml jbuild jbuild-workspace
+	$(REMOVE) $(GENERATED_FROM_AUTOCONF)
+	$(REMOVE) $(GENERATED_JBUILDS)
 	$(REMOVE) base/Version.ml.tmp.* jbuild.tmp.* jbuild-workspace.tmp.*
-	$(REMOVE) backend/jsonbug_{j,t}.ml{,i}
-	$(REMOVE) checkers/stacktree_{j,t}.ml{,i}
 #	be a bit more aggressive than needed with what we remove here so that stale binaries that
 #	only existed in previous versions get removed as well
 	$(REMOVE) $(BIN_DIR)/Infer* $(BIN_DIR)/infer-* $(INFER_BIN){,.bc,.exe} $(INFER_BIN_ALIASES) \
 	  $(INFERUNIT_BIN) $(CHECKCOPYRIGHT_BIN)
 	$(REMOVE) $(INFER_CREATE_TRACEVIEW_LINKS_BIN)
-	$(REMOVE) $(CLANG_PLUGIN_MIRROR)/*
+	$(REMOVE) atd/*_{j,t,v}.ml{,i} atd/clang_*
 	$(REMOVE) mod_dep.dot
 	$(REMOVE) mod_dep.pdf
 

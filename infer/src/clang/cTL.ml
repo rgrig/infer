@@ -433,7 +433,7 @@ module Debug = struct
               | Eval_false
                -> "red"
               | _
-               -> failwith "Tree is not fully evaluated"
+               -> L.(die InternalError) "Tree is not fully evaluated"
             in
             let label =
               let string_of_lcxt c =
@@ -527,7 +527,7 @@ let create_ctl_evaluation_tracker source_file =
   | true, None
    -> ctl_evaluation_tracker := Some (Debug.EvaluationTracker.create source_file)
   | true, _
-   -> failwith "A CTL evaluation tracker has already been created"
+   -> L.(die InternalError) "A CTL evaluation tracker has already been created"
   | _
    -> ()
 
@@ -697,11 +697,13 @@ let transition_stmt_to_decl_via_pointer stmt =
   | _
    -> []
 
-let transition_decl_to_decl_via_parameters dec =
+let transition_via_parameters an =
   let open Clang_ast_t in
-  match dec with
-  | ObjCMethodDecl (_, _, omdi)
+  match an with
+  | Decl ObjCMethodDecl (_, _, omdi)
    -> List.map ~f:(fun d -> Decl d) omdi.omdi_parameters
+  | Stmt ObjCMessageExpr (_, stmt_list, _, _)
+   -> List.map ~f:(fun stmt -> Stmt stmt) stmt_list
   | _
    -> []
 
@@ -739,8 +741,8 @@ let next_state_via_transition an trans =
   match (an, trans) with
   | Decl d, Super
    -> transition_decl_to_decl_via_super d
-  | Decl d, Parameters
-   -> transition_decl_to_decl_via_parameters d
+  | _, Parameters
+   -> transition_via_parameters an
   | Decl d, InitExpr | Decl d, Body
    -> transition_decl_to_stmt d trans
   | Decl d, Protocol
@@ -796,6 +798,8 @@ let rec eval_Atomic _pred_name args an lcxt =
    -> CPredicates.is_const_expr_var an
   | "is_enum_constant", [cname], an
    -> CPredicates.is_enum_constant an cname
+  | "is_enum_constant_of_enum", [name], an
+   -> CPredicates.is_enum_constant_of_enum an name
   | "is_global_var", [], an
    -> CPredicates.is_syntactically_global_var an
   | "is_in_block", [], _
@@ -851,7 +855,7 @@ let rec eval_Atomic _pred_name args an lcxt =
   | "within_available_class_block", [], an
    -> CPredicates.within_available_class_block lcxt an
   | _
-   -> failwith ("ERROR: Undefined Predicate or wrong set of arguments: '" ^ pred_name ^ "'")
+   -> L.(die ExternalError) "Undefined Predicate or wrong set of arguments: '%s'" pred_name
 
 (* an, lcxt |= EF phi  <=>
    an, lcxt |= phi or exists an' in Successors(st): an', lcxt |= EF phi

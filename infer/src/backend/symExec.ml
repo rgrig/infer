@@ -399,10 +399,8 @@ let check_inherently_dangerous_function caller_pname callee_pname =
     Reporting.log_warning_deprecated caller_pname exn
 
 let call_should_be_skipped callee_summary =
-  (* check skip flag *)
-  Specs.get_flag callee_summary ProcAttributes.proc_flag_skip <> None
   (* skip abstract methods *)
-  || callee_summary.Specs.attributes.ProcAttributes.is_abstract
+  callee_summary.Specs.attributes.ProcAttributes.is_abstract
   (* treat calls with no specs as skip functions in angelic mode *)
   || Config.angelic_execution && List.is_empty (Specs.get_specs_from_payload callee_summary)
 
@@ -654,7 +652,7 @@ let resolve_virtual_pname tenv prop actuals callee_pname call_flags : Typ.Procna
          -> (* default mode for Java virtual calls: resolution only *)
             [resolved_target] )
   | _
-   -> failwith "A virtual call must have a receiver"
+   -> L.(die InternalError) "A virtual call must have a receiver"
 
 (** Resolve the name of the procedure to call based on the type of the arguments *)
 let resolve_java_pname tenv prop args pname_java call_flags : Typ.Procname.java =
@@ -1413,7 +1411,7 @@ and add_constraints_on_actuals_by_ref tenv prop actuals_by_ref callee_pname call
       | Exp.Lvar _ | Exp.Var _
        -> Pvar.mk_abduced_ref_param callee_pname actual_index callee_loc
       | _
-       -> failwithf "Unexpected variable expression %a" Exp.pp actual
+       -> L.(die InternalError) "Unexpected variable expression %a" Exp.pp actual
     in
     let already_has_abduced_retval p =
       List.exists
@@ -1439,7 +1437,8 @@ and add_constraints_on_actuals_by_ref tenv prop actuals_by_ref callee_pname call
             let prop', fresh_fp_var = add_to_footprint tenv abduced typ prop in
             (prop', Sil.Eexp (fresh_fp_var, Sil.Inone))
         | _
-         -> failwith ("No need for abduction on non-pointer type " ^ Typ.to_string actual_typ)
+         -> L.(die InternalError)
+              "No need for abduction on non-pointer type %s" (Typ.to_string actual_typ)
       in
       let filtered_sigma =
         List.map
@@ -1577,16 +1576,12 @@ and unknown_or_scan_call ~is_scan ret_type_option ret_annots
     [(Tabulation.remove_constant_string_class tenv pre_final, path)]
   else
     (* otherwise, add undefined attribute to retvals and actuals passed by ref *)
-    let exps_to_mark =
-      let ret_exps = Option.value_map ~f:(fun (id, _) -> [Exp.Var id]) ~default:[] ret_id in
-      List.fold
-        ~f:(fun exps_to_mark (exp, _, _) -> exp :: exps_to_mark)
-        ~init:ret_exps actuals_by_ref
-    in
+    let undefined_actuals_by_ref = List.map ~f:(fun (exp, _, _) -> exp) actuals_by_ref in
+    let ret_exp_opt = Option.map ~f:(fun (id, _) -> Exp.Var id) ret_id in
     let prop_with_undef_attr =
       let path_pos = State.get_path_pos () in
-      Attribute.mark_vars_as_undefined tenv pre_final exps_to_mark callee_pname ret_annots loc
-        path_pos
+      Attribute.mark_vars_as_undefined tenv pre_final ~ret_exp_opt ~undefined_actuals_by_ref
+        callee_pname ret_annots loc path_pos
     in
     let reason = "function or method not found" in
     let skip_path = Paths.Path.add_skipped_call path callee_pname reason in

@@ -16,8 +16,6 @@ module MockTrace = Trace.Make (struct
   module Source = Source.Make (struct
     include MockTraceElem
 
-    let unknown = CallSite.dummy
-
     let get pname _ _ =
       if String.is_prefix ~prefix:"SOURCE" (Typ.Procname.to_string pname) then
         Some (CallSite.make pname Location.dummy, None)
@@ -36,11 +34,13 @@ module MockTrace = Trace.Make (struct
   end)
 
   let should_report _ _ = false
+
+  let should_report_footprint _ _ = false
 end)
 
 module MockTaintAnalysis = TaintAnalysis.Make (struct
   module Trace = MockTrace
-  module AccessTree = AccessTree.Make (Trace)
+  module AccessTree = AccessTree.Make (Trace) (AccessTree.DefaultConfig)
 
   let of_summary_access_tree _ = assert false
 
@@ -69,9 +69,9 @@ let tests =
     let pp_sources fmt sources =
       if MockTrace.Sources.is_empty sources then F.fprintf fmt "?"
       else
-        MockTrace.Sources.iter
+        MockTrace.Sources.Known.iter
           (fun source -> pp_call_site fmt (MockTrace.Source.call_site source))
-          sources
+          sources.MockTrace.Sources.known
     in
     let pp_sinks fmt sinks =
       if MockTrace.Sinks.is_empty sinks then F.fprintf fmt "?"

@@ -22,7 +22,16 @@ let sanitize_name = Str.global_replace (Str.regexp "[/ ]") "_"
 let get_qual_name qual_name_list =
   List.map ~f:sanitize_name qual_name_list |> QualifiedCppName.of_rev_list
 
-let get_qualified_name name_info = get_qual_name name_info.Clang_ast_t.ni_qual_name
+let get_qualified_name ?(linters_mode= false) name_info =
+  if not linters_mode then get_qual_name name_info.Clang_ast_t.ni_qual_name
+  else
+    (* Because we are in linters mode, we can't get precise info about templates,
+        so we strip the template characters to not upset invariants in the system. *)
+    let replace_template_chars qual_name =
+      String.tr ~target:'<' ~replacement:'_' qual_name |> String.tr ~target:'>' ~replacement:'_'
+    in
+    let qual_names = List.map ~f:replace_template_chars name_info.Clang_ast_t.ni_qual_name in
+    get_qual_name qual_names
 
 let get_unqualified_name name_info =
   let name =
@@ -329,7 +338,7 @@ let rec is_objc_if_descendant ?(blacklist= default_blacklist) if_decl ancestors 
   (* List of ancestors to check for and list of classes to short-circuit to
      false can't intersect *)
   if not String.Set.(is_empty (inter (of_list blacklist) (of_list ancestors))) then
-    failwith "Blacklist and ancestors must be mutually exclusive."
+    L.(die InternalError) "Blacklist and ancestors must be mutually exclusive."
   else
     match if_decl with
     | Some Clang_ast_t.ObjCInterfaceDecl (_, ndi, _, _, _)
@@ -451,3 +460,22 @@ let type_of_decl decl =
    -> Some qual_type.qt_type_ptr
   | _
    -> None
+
+let get_record_fields decl =
+  let open Clang_ast_t in
+  match decl with
+  | ClassTemplateSpecializationDecl (_, _, _, _, decl_list, _, _, _, _)
+  | CXXRecordDecl (_, _, _, _, decl_list, _, _, _)
+  | RecordDecl (_, _, _, _, decl_list, _, _)
+   -> List.filter ~f:(function FieldDecl _ -> true | _ -> false) decl_list
+  | _
+   -> []
+
+let get_cxx_base_classes decl =
+  let open Clang_ast_t in
+  match decl with
+  | CXXRecordDecl (_, _, _, _, _, _, _, cxx_record_info)
+  | ClassTemplateSpecializationDecl (_, _, _, _, _, _, _, cxx_record_info, _)
+   -> cxx_record_info.xrdi_bases
+  | _
+   -> []

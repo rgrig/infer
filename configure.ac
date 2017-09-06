@@ -18,7 +18,7 @@ AC_INIT([Infer],
         [0.13.0],
         [https://github.com/facebook/infer/issues/])
 
-AC_CONFIG_SRCDIR([infer/src/base/IStd.ml])
+AC_CONFIG_SRCDIR([infer/src/istd/IStd.ml])
 
 # WARNING: keep in sync with above
 INFER_MAJOR=0
@@ -69,6 +69,15 @@ AC_ARG_ENABLE(java-analyzers,
 
 BUILD_JAVA_ANALYZERS=$enable_java_analyzers
 AC_SUBST([BUILD_JAVA_ANALYZERS])
+
+AC_ARG_ENABLE(python-analyzers,
+  AS_HELP_STRING([--disable-python-analyzers],
+    [do not build the Python analyzers (default is to build them)]),
+  ,
+  enable_python_analyzers=yes)
+
+BUILD_PYTHON_ANALYZERS=$enable_python_analyzers
+AC_SUBST([BUILD_PYTHON_ANALYZERS])
 
 AC_ARG_WITH(fcp-clang,
   AS_HELP_STRING([--without-fcp-clang],

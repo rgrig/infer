@@ -1734,7 +1734,8 @@ let expand_hpred_pointer =
                   Exp.Sizeof {sizeof_data with typ= Typ.mk (Tstruct name)}
               | _
                -> (* type of struct at adr_base and of contents are both unknown: give up *)
-                  raise (Failure "expand_hpred_pointer: Unexpected non-sizeof type in Lfield")
+                  L.(die InternalError)
+                    "expand_hpred_pointer: Unexpected non-sizeof type in Lfield"
           in
           let hpred' =
             Sil.Hpointsto (adr_base, Estruct ([(fld, cnt)], Sil.inst_none), cnt_texp')
@@ -1746,7 +1747,7 @@ let expand_hpred_pointer =
             | Exp.Sizeof ({typ= t_} as sizeof_data)
              -> Exp.Sizeof {sizeof_data with typ= Typ.mk (Tarray (t_, None, None))}
             | _
-             -> raise (Failure "expand_hpred_pointer: Unexpected non-sizeof type in Lindex")
+             -> L.(die InternalError) "expand_hpred_pointer: Unexpected non-sizeof type in Lindex"
           in
           let len =
             match t' with
@@ -2305,6 +2306,8 @@ and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : subst2 * 
             ; "java.lang.String.value" ]
           in
           Sil.Estruct (List.map ~f:mk_fld_sexp fields, Sil.inst_none)
+      | Config.Python
+       -> L.die InternalError "mk_constant_string_hpred not implemented for Python"
     in
     let const_string_texp =
       match !Config.curr_language with
@@ -2321,6 +2324,8 @@ and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : subst2 * 
             ; nbytes= None
             ; dynamic_length= None
             ; subtype= Subtype.exact }
+      | Config.Python
+       -> L.die InternalError "const_string_texp not implemented for Python"
     in
     Sil.Hpointsto (root, sexp, const_string_texp)
   in

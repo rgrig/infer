@@ -44,11 +44,11 @@ let test_file_renamings_from_json =
            []) )
   ; ( "test_file_renamings_from_json_with_well_formed_but_unexpected_input"
     , "{}"
-    , Raise (Failure "Expected JSON list but got '{}'") )
+    , Raise (Logging.InferUserError "Expected JSON list but got '{}'") )
   ; ( "test_file_renamings_from_json_with_well_formed_but_unexpected_value"
     , "[{\"current\": 1, \"previous\": \"BBB.java\"}]"
     , Raise
-        (Failure
+        (Logging.InferUserError
            ( "Error parsing file renamings: \"current\" field is not a string"
            ^ "\nExpected JSON object of the following form: "
            ^ "'{\"current\": \"aaa.java\", \"previous\": \"BBB.java\"}', "

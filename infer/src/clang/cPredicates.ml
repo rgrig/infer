@@ -8,7 +8,6 @@
  *)
 
 open! IStd
-open Lexing
 open Types_lexer
 module L = Logging
 
@@ -253,6 +252,29 @@ let is_enum_constant an name =
   | _
    -> false
 
+let is_enum_constant_of_enum an name =
+  match an with
+  | Ctl_parser_types.Stmt Clang_ast_t.DeclRefExpr (_, _, _, drti) -> (
+    match drti.drti_decl_ref with
+    | Some dr
+     -> (
+        let ndi, _, _ = CAst_utils.get_info_from_decl_ref dr in
+        let qual_name = CAst_utils.get_qualified_name ndi in
+        match QualifiedCppName.extract_last qual_name with
+        | Some (_, stripped_qual_name) -> (
+          match QualifiedCppName.extract_last stripped_qual_name with
+          | Some (enum_name, _)
+           -> PVariant.( = ) dr.Clang_ast_t.dr_kind `EnumConstant
+              && ALVar.compare_str_with_alexp enum_name name
+          | _
+           -> false )
+        | _
+         -> false )
+    | _
+     -> false )
+  | _
+   -> false
+
 let is_strong_property an =
   match an with
   | Ctl_parser_types.Decl Clang_ast_t.ObjCPropertyDecl (_, _, pdi)
@@ -393,7 +415,7 @@ let captures_cxx_references an = List.length (captured_variables_cxx_ref an) > 0
 let is_binop_with_kind an alexp_kind =
   let str_kind = ALVar.alexp_to_string alexp_kind in
   if not (Clang_ast_proj.is_valid_binop_kind_name str_kind) then
-    failwith ("Binary operator kind " ^ str_kind ^ " is not valid") ;
+    L.(die ExternalError) "Binary operator kind '%s' is not valid" str_kind ;
   match an with
   | Ctl_parser_types.Stmt Clang_ast_t.BinaryOperator (_, _, _, boi)
    -> ALVar.compare_str_with_alexp (Clang_ast_proj.string_of_binop_kind boi.boi_kind) alexp_kind
@@ -403,7 +425,7 @@ let is_binop_with_kind an alexp_kind =
 let is_unop_with_kind an alexp_kind =
   let str_kind = ALVar.alexp_to_string alexp_kind in
   if not (Clang_ast_proj.is_valid_unop_kind_name str_kind) then
-    failwith ("Unary operator kind " ^ str_kind ^ " is not valid") ;
+    L.(die ExternalError) "Unary operator kind '%s' is not valid" str_kind ;
   match an with
   | Ctl_parser_types.Stmt Clang_ast_t.UnaryOperator (_, _, _, uoi)
    -> ALVar.compare_str_with_alexp (Clang_ast_proj.string_of_unop_kind uoi.uoi_kind) alexp_kind
@@ -426,7 +448,7 @@ let has_cast_kind an alexp_kind =
 let is_node an nodename =
   let nodename_str = ALVar.alexp_to_string nodename in
   if not (Clang_ast_proj.is_valid_astnode_kind nodename_str) then
-    failwith ("Node " ^ nodename_str ^ " is not a valid AST node") ;
+    L.(die ExternalError) "Node '%s' is not a valid AST node" nodename_str ;
   let an_str =
     match an with
     | Ctl_parser_types.Stmt s
@@ -542,19 +564,16 @@ let class_unavailable_in_supported_ios_sdk (cxt: CLintersContext.context) an =
 
 (* Check whether a type_ptr and a string denote the same type *)
 let type_ptr_equal_type type_ptr type_str =
-  let pos_str lexbuf =
-    let pos = lexbuf.lex_curr_p in
-    pos.pos_fname ^ ":" ^ string_of_int pos.pos_lnum ^ ":"
-    ^ string_of_int (pos.pos_cnum - pos.pos_bol + 1)
-  in
   let parse_type_string str =
     L.(debug Linters Medium) "Starting parsing type string '%s'@\n" str ;
     let lexbuf = Lexing.from_string str in
     try Types_parser.abs_ctype token lexbuf with
-    | Ctl_parser_types.ALParsingException s
-     -> raise (Ctl_parser_types.ALParsingException ("Syntax Error when defining type" ^ s))
+    | CTLExceptions.ALParserInvariantViolationException s
+     -> raise
+          (CTLExceptions.(
+            ALFileException (create_exc_info ("Syntax Error when defining type " ^ s) lexbuf)))
     | SyntaxError _ | Types_parser.Error
-     -> raise (Ctl_parser_types.ALParsingException ("SYNTAX ERROR at " ^ pos_str lexbuf))
+     -> raise CTLExceptions.(ALFileException (create_exc_info "SYNTAX ERROR" lexbuf))
   in
   let abs_ctype =
     match String.Map.find !parsed_type_map type_str with
