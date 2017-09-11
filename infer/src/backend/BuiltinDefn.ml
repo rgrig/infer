@@ -879,8 +879,8 @@ let execute_scan_function skip_n_arguments ({Builtin.args} as call_args) : Built
   | _ when List.length args >= skip_n_arguments
    -> let varargs = ref args in
       varargs := List.drop !varargs skip_n_arguments ;
-      SymExec.unknown_or_scan_call ~is_scan:true None Annot.Item.empty
-        {call_args with args= !varargs}
+      SymExec.unknown_or_scan_call ~is_scan:true ~reason:"execute scan function" None
+        Annot.Item.empty {call_args with args= !varargs}
   | _
    -> raise (Exceptions.Wrong_argument_number __POS__)
 
@@ -1063,6 +1063,9 @@ let __get_array_length = Builtin.register BuiltinDecl.__get_array_length execute
 let __get_hidden_field = Builtin.register BuiltinDecl.__get_hidden_field execute___get_hidden_field
 
 let __get_type_of = Builtin.register BuiltinDecl.__get_type_of execute___get_type_of
+
+(* only used in Quandary, so ok to skip *)
+let __global_access = Builtin.register BuiltinDecl.__global_access execute_skip
 
 (* infer assume, diverging on inconsistencies *)
 let __infer_assume = Builtin.register BuiltinDecl.__infer_assume execute___infer_assume

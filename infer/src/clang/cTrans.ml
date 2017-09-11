@@ -173,21 +173,18 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
       (Exp.Var id, typ)
     in
     let make_arg typ (id, _, _) = (id, typ) in
-    let rec f es =
-      match es with
-      | []
-       -> []
-      | (Exp.Closure {name; captured_vars}, ({Typ.desc= Tptr ({Typ.desc= Tfun _}, _)} as t)) :: es'
-       -> let app =
-            let function_name = make_function_name t name in
-            let args = List.map ~f:(make_arg t) captured_vars in
-            function_name :: args
-          in
-          app @ f es'
-      | e :: es'
-       -> e :: f es'
+    let f = function
+      | Exp.Closure {name; captured_vars}, ({Typ.desc= Tptr ({Typ.desc= Tfun _}, _)} as t)
+       -> let function_name = make_function_name t name in
+          let args = List.map ~f:(make_arg t) captured_vars in
+          function_name :: args
+      | e
+       -> [e]
     in
-    (f exps, !insts)
+    (* evaluation order matters here *)
+    let exps' = List.concat_map ~f exps in
+    let insts' = !insts in
+    (exps', insts')
 
   let collect_exprs res_trans_list =
     List.concat_map ~f:(fun res_trans -> res_trans.exps) res_trans_list
@@ -337,13 +334,6 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     in
     let call_instr = Sil.Call (ret_id', function_sil, params, sil_loc, call_flags) in
     {empty_res_trans with instrs= [call_instr]; exps= ret_exps; initd_exps}
-
-  let breakStmt_trans trans_state =
-    match trans_state.continuation with
-    | Some bn
-     -> {empty_res_trans with root_nodes= bn.break}
-    | _
-     -> assert false
 
   let continueStmt_trans trans_state =
     match trans_state.continuation with
@@ -1849,7 +1839,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     let sil_loc = CLocation.get_sil_location stmt_info context in
     let join_node = create_node Procdesc.Node.Join_node [] sil_loc context in
     let continuation = Some {break= succ_nodes; continue= [join_node]; return_temp= false} in
-    (* set the flat to inform that we are translating a condition of a if *)
+    (* set the flag to inform that we are translating a condition of a if *)
     let continuation_cond = mk_cond_continuation outer_continuation in
     let init_incr_nodes =
       match loop_kind with
@@ -1890,8 +1880,10 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
        -> res_trans_cond.root_nodes
     in
     let body_continuation =
-      match (continuation, init_incr_nodes) with
-      | Some c, Some (_, nodes_incr)
+      match (loop_kind, continuation, init_incr_nodes) with
+      | Loops.DoWhile _, Some c, _
+       -> Some {c with continue= res_trans_cond.root_nodes}
+      | _, Some c, Some (_, nodes_incr)
        -> Some {c with continue= nodes_incr}
       | _
        -> continuation
@@ -2924,6 +2916,16 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     | _
      -> assert false
 
+  and breakStmt_trans trans_state stmt_info =
+    match trans_state.continuation with
+    | Some bn
+     -> let trans_state' = {trans_state with succ_nodes= bn.break} in
+        let destr_trans_result = inject_destructors trans_state' stmt_info in
+        if destr_trans_result.root_nodes <> [] then destr_trans_result
+        else {empty_res_trans with root_nodes= bn.break}
+    | _
+     -> assert false
+
   (* Expect that this doesn't happen *)
   and trans_into_undefined_expr trans_state expr_info =
     let tenv = trans_state.context.CContext.tenv in
@@ -3076,8 +3078,8 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
      -> objCDictionaryLiteral_trans trans_state info stmt_info stmts
     | ObjCStringLiteral (stmt_info, stmts, info)
      -> objCStringLiteral_trans trans_state stmt_info stmts info
-    | BreakStmt _
-     -> breakStmt_trans trans_state
+    | BreakStmt (stmt_info, _)
+     -> breakStmt_trans trans_state stmt_info
     | ContinueStmt _
      -> continueStmt_trans trans_state
     | ObjCAtSynchronizedStmt (_, stmt_list)

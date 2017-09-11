@@ -325,7 +325,7 @@ module Make (CFG : ProcCfg.S) = struct
         match Mem.find_alias x mem with
         | Some lv
          -> let v = Mem.find_heap lv mem in
-            let itv_v = Itv.prune_ne (Val.get_itv v) Itv.false_sem in
+            let itv_v = Itv.prune_eq (Val.get_itv v) Itv.false_sem in
             let v' = Val.modify_itv itv_v v in
             Mem.update_mem (PowLoc.singleton lv) v' mem
         | None
@@ -434,8 +434,8 @@ module Make (CFG : ProcCfg.S) = struct
         match callee_ret_alias with
         | Some ret_loc
          -> if PowLoc.is_singleton v1 && PowLoc.is_singleton v2
-               && Loc.equal (PowLoc.choose v1) ret_loc
-            then ret_alias := Some (PowLoc.choose v2)
+               && Loc.equal (PowLoc.min_elt v1) ret_loc
+            then ret_alias := Some (PowLoc.min_elt v2)
         | None
          -> ()
       in
@@ -488,7 +488,7 @@ module Make (CFG : ProcCfg.S) = struct
         | Itv.Bound.Linear (_, se1) when Itv.SymLinear.is_zero se1
          -> (bound_map, trace_map)
         | Itv.Bound.Linear (0, se1) when Itv.SymLinear.cardinal se1 > 0
-         -> let symbol, coeff = Itv.SymLinear.choose se1 in
+         -> let symbol, coeff = Itv.SymLinear.min_binding se1 in
             if Int.equal coeff 1 then
               (Itv.SubstMap.add symbol actual bound_map, Itv.SubstMap.add symbol traces trace_map)
             else assert false
