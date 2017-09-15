@@ -26,10 +26,6 @@ type command =
   | Capture
       (** capture compilation commands and translate source files into infer's intermediate
                 language *)
-  | Clang
-      (** run and accept the same arguments as the clang compiler, may also capture the source
-              files compiled, and may also not actually compile the files depending on other options
-          *)
   | Compile
       (** set up the infer environment then run the compilation commands without capturing the
                 source files *)
@@ -55,6 +51,8 @@ val command_of_exe_name : string -> command option
 val is_originator : bool
 
 val init_work_dir : string
+
+val strict_mode : bool
 
 (** The [mk_*] functions declare command line options, while [parse] parses then according to the
     declared options.

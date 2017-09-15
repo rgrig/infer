@@ -14,10 +14,6 @@ module Hashtbl = Caml.Hashtbl
 
 module L = Logging
 
-exception TemplatedCodeException of Clang_ast_t.stmt
-
-exception UnsupportedStatementException of Clang_ast_t.stmt
-
 (* Extract the element of a singleton list. If the list is not a singleton *)
 (* It stops the computation giving a warning. We use this because we       *)
 (* assume in many places that a list is just a singleton. We use the       *)
@@ -322,7 +318,7 @@ module Scope = struct
           handle_instructions_block new_var_map (new_vars_in_stmt @ vars_in_scope) break_count rest
     in
     (* TODO handle following stmts: *)
-    (* ContinueStmt _ | GotoStmt _ |  | LabelStmt_ *)
+    (* GotoStmt _ |  | LabelStmt_ *)
     match stmt with
     | CompoundStmt (stmt_info, stmt_list)
      -> let vars, new_var_map =
@@ -333,7 +329,7 @@ module Scope = struct
         add_scope_vars_to_destroy new_var_map stmt_info vars_to_destroy
     | ReturnStmt (stmt_info, _)
      -> add_scope_vars_to_destroy var_map stmt_info vars_in_scope
-    | BreakStmt (stmt_info, _)
+    | BreakStmt (stmt_info, _) | ContinueStmt (stmt_info, _)
      -> let vars_to_destroy = List.take vars_in_scope (List.length vars_in_scope - break_count) in
         add_scope_vars_to_destroy var_map stmt_info vars_to_destroy
     | WhileStmt (_, stmt_list)
@@ -653,8 +649,7 @@ let rec get_type_from_exp_stmt stmt =
   | DeclRefExpr (_, _, _, info)
    -> do_decl_ref_exp info
   | _
-   -> L.internal_error "Failing with: %s@\n%!" (Clang_ast_j.string_of_stmt stmt) ;
-      assert false
+   -> L.die InternalError "get_type_from_expr_stmt failure: %s" (Clang_ast_j.string_of_stmt stmt)
 
 module Self = struct
   exception SelfClassException of Typ.Name.t
@@ -793,7 +788,7 @@ let is_dispatch_function stmt_list =
               try
                 let arg_stmt = List.nth_exn arg_stmts block_arg_pos in
                 if is_block_stmt arg_stmt then Some block_arg_pos else None
-              with Failure _ -> None )
+              with Invalid_argument _ -> None )
         | _
          -> None )
     | _ ->

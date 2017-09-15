@@ -5,16 +5,14 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-TESTS_DIR = ../../..
+TESTS_DIR = ../..
 
-ANALYZER = linters
-CLANG_OPTIONS = -x objective-c -fobjc-arc -c
-INFER_OPTIONS = --no-filtering --debug-exceptions --project-root $(TESTS_DIR) --no-keep-going \
---linters-doc-url "ASSIGN_POINTER_WARNING:www.example.com"
+ANALYZER = checkers
+
+CLANG_OPTIONS = -c
+INFER_OPTIONS = --project-root src --no-keep-going --liveness
 INFERPRINT_OPTIONS = --issues-tests
 
-SOURCES = \
-  $(wildcard *.m) \
-  $(wildcard */*.m) \
+SOURCES = src/templates.cpp
 
 include $(TESTS_DIR)/clang.make

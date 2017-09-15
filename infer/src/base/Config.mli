@@ -424,6 +424,10 @@ val immutable_cast : bool
 
 val infer_cache : string option
 
+val infer_is_clang : bool
+
+val infer_is_javac : bool
+
 val iphoneos_target_sdk_version : string option
 
 type iphoneos_target_sdk_version_path_regex = {path: Str.regexp; version: string}
@@ -473,6 +477,10 @@ val linters_def_file : string list
 
 val linters_def_folder : string list
 
+type linter_doc_url = {linter: string; doc_url: string}
+
+val linters_doc_url : linter_doc_url list
+
 val linters_developer_mode : bool
 
 val linters_ignore_clang_failures : bool
@@ -486,8 +494,6 @@ val load_analysis_results : string option
 val log_file : string
 
 val makefile_cmdline : string
-
-val maven : bool
 
 val max_nesting : int option
 

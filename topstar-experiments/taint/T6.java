@@ -25,23 +25,29 @@ class ToplProperty { // global
     }
   }
 
-  static void go_call_1(Object l0, Object x) {
-    if (maybe() && r0 == l0) state = 2;
-    else if (r0 == l0) state = 2;
+  static void go_call_1(Object l0) {
+    if (maybe() && r0 == l0) {
+      state = 2;
+    } else if (r0 == l0) {
+      state = 2;
+    }
   }
 
-  static void go_call_2(Object l0, Object x) {
-    if (maybe() && r0 == l0) x.toString();
-    else if (r0 == l0) x.toString();
+  static void go_call_2(Object l0) {
+    if (maybe() && r0 == l0) {
+      while (true);
+    } else if (r0 == l0) {
+      while (true);
+    }
   }
 
-  static void go_call(Object l0, Object x) {
+  static void go_call(Object l0) {
     if (state == 0) {
       // skip
     } else if (state == 1) {
-      go_call_1(l0, x);
+      go_call_1(l0);
     } else if (state == 2) {
-      go_call_2(l0, x);
+      go_call_2(l0);
     }
   }
 
@@ -59,7 +65,7 @@ class O {
     return r;
   }
   public void go() {
-    ToplProperty.go_call(this, null);
+    ToplProperty.go_call(this);
   }
 }
 
