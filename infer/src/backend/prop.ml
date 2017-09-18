@@ -1674,16 +1674,25 @@ module Normalize = struct
       in
       if not footprint then p'
       else
-        let p'' =
-          match a' with
-          | Aeq (Exp.Var i, e) when not (Sil.ident_in_exp i e)
-           -> let mysub = Sil.subst_of_list [(i, e)] in
-              let sigma_fp' = sigma_normalize tenv mysub p'.sigma_fp in
-              let pi_fp' = a' :: pi_normalize tenv mysub sigma_fp' p'.pi_fp in
-              footprint_normalize tenv (set p' ~pi_fp:pi_fp' ~sigma_fp:sigma_fp')
-          | _
-           -> footprint_normalize tenv (set p' ~pi_fp:(a' :: p'.pi_fp))
+        let fav_a' = Sil.atom_fav a' in
+        let fav_nofootprint_a' =
+          Sil.fav_copy_filter_ident fav_a' (fun id -> not (Ident.is_footprint id))
         in
+        let predicate_warning = not (Sil.fav_is_empty fav_nofootprint_a') in
+        let p'' =
+          if predicate_warning then footprint_normalize tenv p'
+          else
+            match a' with
+            | Aeq (Exp.Var i, e) when not (Sil.ident_in_exp i e)
+             -> let mysub = Sil.subst_of_list [(i, e)] in
+                let sigma_fp' = sigma_normalize tenv mysub p'.sigma_fp in
+                let pi_fp' = a' :: pi_normalize tenv mysub sigma_fp' p'.pi_fp in
+                footprint_normalize tenv (set p' ~pi_fp:pi_fp' ~sigma_fp:sigma_fp')
+            | _
+             -> footprint_normalize tenv (set p' ~pi_fp:(a' :: p'.pi_fp))
+        in
+        if predicate_warning then (
+          L.d_warning "dropping non-footprint " ; Sil.d_atom a' ; L.d_ln () ) ;
         unsafe_cast_to_normal p''
 
   (** normalize a prop *)
