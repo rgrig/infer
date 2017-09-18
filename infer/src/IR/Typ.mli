@@ -98,7 +98,17 @@ and name =
   | ObjcProtocol of QualifiedCppName.t
   [@@deriving compare]
 
-and template_spec_info = NoTemplate | Template of t option list [@@deriving compare]
+and template_arg = TType of t | TInt of Int64.t | TNull | TNullPtr | TOpaque [@@deriving compare]
+
+and template_spec_info =
+  | NoTemplate
+  | Template of
+      { mangled: string option
+            (** WARNING: because of type substitutions performed by [sub_type] and [sub_tname],
+                mangling is not guaranteed to be unique to a single type. All the information in
+                the template arguments is also needed for uniqueness. *)
+      ; args: template_arg list }
+  [@@deriving compare]
 
 val mk : ?default:t -> ?quals:type_quals -> desc -> t
 (** Create Typ.t from given desc. if [default] is passed then use its value to set other fields such as quals *)
@@ -366,6 +376,8 @@ module Procname : sig
   (** Get the class name of a Objective-C/C++ procedure name. *)
 
   val objc_cpp_get_class_type_name : objc_cpp -> Name.t
+
+  val objc_cpp_replace_method_name : t -> string -> t
 
   val objc_method_kind_of_bool : bool -> objc_cpp_method_kind
   (** Create ObjC method type from a bool is_instance. *)

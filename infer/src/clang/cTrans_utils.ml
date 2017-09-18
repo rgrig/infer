@@ -54,10 +54,7 @@ module Nodes = struct
       extract_exp_from_list e_cond
         "@\nWARNING: Missing expression for Conditional operator. Need to be fixed"
     in
-    let e_cond'' =
-      if branch then Exp.BinOp (Binop.Ne, e_cond', Exp.zero)
-      else Exp.BinOp (Binop.Eq, e_cond', Exp.zero)
-    in
+    let e_cond'' = if branch then e_cond' else Exp.UnOp (Unop.LNot, e_cond', None) in
     let instrs_cond' = instrs_cond @ [Sil.Prune (e_cond'', loc, branch, ik)] in
     create_node (prune_kind branch) instrs_cond' loc context
 
@@ -195,9 +192,6 @@ let collect_res_trans pdesc l =
   in
   let rt = collect l empty_res_trans in
   {rt with instrs= List.rev rt.instrs; exps= List.rev rt.exps; initd_exps= List.rev rt.initd_exps}
-
-let extract_var_exp_or_fail transt_state =
-  match transt_state.var_exp_typ with Some var_exp_typ -> var_exp_typ | None -> assert false
 
 (* priority_node is used to enforce some kind of policy for creating nodes *)
 (* in the cfg. Certain elements of the AST _must_ create nodes therefore   *)
