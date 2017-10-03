@@ -555,6 +555,8 @@ module Rename : sig
   val to_subst_proj : side -> Sil.fav -> Sil.exp_subst
 
   val to_subst_emb : side -> Sil.exp_subst
+
+  val get_unify_subs : unit -> (Exp.t * Exp.t) list
   (*
   val get : Exp.t -> Exp.t -> Exp.t option
   val pp : printenv -> Format.formatter -> (Exp.t * Exp.t * Exp.t) list -> unit
@@ -692,14 +694,14 @@ end = struct
       let compare (i, _) (i', _) = Ident.compare i i' in
       List.sort ~cmp:compare sub_list
     in
-    let rec find_duplicates = function
-      | (i, _) :: ((i', _) :: _ as t)
-       -> Ident.equal i i' || find_duplicates t
-      | _
-       -> false
+    let rec uniq ys = function
+      | [] -> ys
+      | [x] -> x :: ys
+      | ((i1, e1) as x) :: (((i2, e2) :: _) as xs) ->
+          if Ident.equal i1 i2 then uniq ys xs
+          else uniq (x :: ys) xs
     in
-    if find_duplicates sub_list_sorted then ( L.d_strln "failure reason 12" ; raise Sil.JoinFail )
-    else Sil.exp_subst_of_list sub_list_sorted
+    Sil.exp_subst_of_list (uniq [] sub_list_sorted)
 
   let get_others' f_lookup side e =
     let side_op = opposite side in
@@ -828,6 +830,43 @@ end = struct
         in
         let entry = (e1, e2, e) in
         push entry ; Todo.push entry ; e
+
+  (*
+    For each x such that (_,x,y1), ..., (_,x,yn) are in !tbl,
+    return substitutions that amount to y1=...=yn.
+    Similarly for (x,_,y1), ..., (x,_,yn).
+   *)
+  let get_unify_subs () : (Exp.t * Exp.t) list =
+    let uf = Exp.Hash.create 101 in
+    let rec find x =
+      try
+        let y = Exp.Hash.find uf x in
+        let z = find y in
+        Exp.Hash.replace uf x z; z
+      with Not_found -> x in
+    let union x y =
+      let x, y = if Random.bool () then (x, y) else (y, x) in
+      Exp.Hash.replace uf (find x) (find y) in
+
+    let union_by_fst xs =
+      let h = Exp.Hash.create 2 in
+      let record (a, b) =
+        try
+          let c = Exp.Hash.find h a in
+          union b c
+        with Not_found -> Exp.Hash.add h a b in
+      List.iter ~f:record xs in
+    let f1 (a, _, b) = (a, b) in
+    let f2 (_, a, b) = (a, b) in
+    union_by_fst (List.map ~f:f1 !tbl);
+    union_by_fst (List.map ~f:f2 !tbl);
+    let extract_var = function
+      | Exp.Var i -> i
+      | _ -> assert false (* XXX *) in
+    let get_key k _ ks = k :: ks in
+    let ks = Exp.Hash.fold get_key uf [] in
+    let extract subs k = (k, find k) :: subs in
+    List.fold ~f:extract ~init:[] ks
 end
 
 (** {2 Functions for constructing fresh sil data types} *)
@@ -1762,15 +1801,21 @@ let pi_partial_meet tenv (p: Prop.normal Prop.t) (ep1: 'a Prop.t) (ep2: 'b Prop.
       Sil.atom_sub (`Exp sub) atom
     else ( L.d_str "handle_atom failed on " ; Sil.d_atom atom ; L.d_ln () ; raise Sil.JoinFail )
   in
+  let subs = Rename.get_unify_subs () in
   let f1 p' atom = Prop.prop_atom_and tenv p' (handle_atom sub1 dom1 atom) in
   let f2 p' atom = Prop.prop_atom_and tenv p' (handle_atom sub2 dom2 atom) in
+  let f3 p' (a, b) =
+    let p' = Prop.conjoin_eq tenv a b p' in
+    p' in
   let pi1 = ep1.Prop.pi in
   let pi2 = ep2.Prop.pi in
   let p_pi1 = List.fold ~f:f1 ~init:p pi1 in
   let p_pi2 = List.fold ~f:f2 ~init:p_pi1 pi2 in
-  if Prover.check_inconsistency_base tenv p_pi2 then (
-    L.d_strln "check_inconsistency_base failed" ; raise Sil.JoinFail )
-  else p_pi2
+  let p_pi3 = List.fold ~f:f3 ~init:p_pi2 subs in
+  if Prover.check_inconsistency_base tenv p_pi3 then (
+    L.d_strln "check_inconsistency_base failed for "; Prop.d_prop p_pi3;
+    raise Sil.JoinFail )
+  else p_pi3
 
 (** {2 Join and Meet for Prop} *)
 
