@@ -561,10 +561,26 @@ module Rename : sig
   val get : Exp.t -> Exp.t -> Exp.t option
   val pp : printenv -> Format.formatter -> (Exp.t * Exp.t * Exp.t) list -> unit
 *)
+  val d_tbl : unit -> unit
 end = struct
   type t = (Exp.t * Exp.t * Exp.t) list
 
   let tbl : t ref = ref []
+
+  let d_tbl () =
+    L.d_strln "tbl";
+    let ppp (x1, x2, x3) =
+      L.d_str "A="; L.d_str (Exp.to_string x1);
+      L.d_str "; B="; L.d_str (Exp.to_string x2);
+      L.d_str "; C="; L.d_str (Exp.to_string x3);
+      L.d_strln "" in
+(* XXX
+    Format.printf "@[<2>tbl";
+    let ppp (x1, x2, x3) =
+      Format.printf "@\n(%a, %a, %a)" Exp.pp x1 Exp.pp x2 Exp.pp x3 in
+*)
+    List.iter ~f:ppp !tbl
+(*     Format.printf "@]@\n" *)
 
   let init () = tbl := []
 
@@ -697,7 +713,7 @@ end = struct
     let rec uniq ys = function
       | [] -> ys
       | [x] -> x :: ys
-      | ((i1, e1) as x) :: (((i2, e2) :: _) as xs) ->
+      | ((i1, _) as x) :: (((i2, _) :: _) as xs) ->
           if Ident.equal i1 i2 then uniq ys xs
           else uniq (x :: ys) xs
     in
@@ -860,9 +876,6 @@ end = struct
     let f2 (_, a, b) = (a, b) in
     union_by_fst (List.map ~f:f1 !tbl);
     union_by_fst (List.map ~f:f2 !tbl);
-    let extract_var = function
-      | Exp.Var i -> i
-      | _ -> assert false (* XXX *) in
     let get_key k _ ks = k :: ks in
     let ks = Exp.Hash.fold get_key uf [] in
     let extract subs k = (k, find k) :: subs in
@@ -1342,7 +1355,10 @@ let hpred_partial_meet tenv (todo: Exp.t * Exp.t * Exp.t) (hpred1: Sil.hpred) (h
   let e1, e2, e = todo in
   match (hpred1, hpred2) with
   | Sil.Hpointsto (_, se1, te1), Sil.Hpointsto (_, se2, te2) when Exp.equal te1 te2
-   -> Prop.mk_ptsto tenv e (strexp_partial_meet se1 se2) te1
+    ->
+    L.d_str "te1="; L.d_strln (Exp.to_string te1);
+    L.d_str "te2="; L.d_strln (Exp.to_string te2);
+    Prop.mk_ptsto tenv e (strexp_partial_meet se1 se2) te1
   | Sil.Hpointsto _, _ | _, Sil.Hpointsto _
    -> L.d_strln "failure reason 58" ; raise Sil.JoinFail
   | Sil.Hlseg (k1, hpara1, _, next1, shared1), Sil.Hlseg (k2, hpara2, _, next2, shared2)
@@ -1630,6 +1646,8 @@ let rec sigma_partial_meet' tenv (sigma_acc: Prop.sigma) (sigma1_in: Prop.sigma)
     L.d_ln () ;
     let hpred_opt1, sigma1 = find_hpred_by_address tenv e1 sigma1_in in
     let hpred_opt2, sigma2 = find_hpred_by_address tenv e2 sigma2_in in
+    L.d_str "PROP1_rest="; Prop.d_sigma sigma1; L.d_ln ();
+    L.d_str "PROP2_rest="; Prop.d_sigma sigma2; L.d_ln ();
     match (hpred_opt1, hpred_opt2) with
     | None, None
      -> sigma_partial_meet' tenv sigma_acc sigma1 sigma2
@@ -1791,6 +1809,7 @@ let pi_partial_join tenv mode (ep1: Prop.exposed Prop.t) (ep2: Prop.exposed Prop
 
 let pi_partial_meet tenv (p: Prop.normal Prop.t) (ep1: 'a Prop.t) (ep2: 'b Prop.t)
     : Prop.normal Prop.t =
+  Rename.d_tbl ();
   let sub1 = Rename.to_subst_emb Lhs in
   let sub2 = Rename.to_subst_emb Rhs in
   let dom1 = Ident.idlist_to_idset (Sil.sub_domain sub1) in
@@ -1805,7 +1824,9 @@ let pi_partial_meet tenv (p: Prop.normal Prop.t) (ep1: 'a Prop.t) (ep2: 'b Prop.
   let f1 p' atom = Prop.prop_atom_and tenv p' (handle_atom sub1 dom1 atom) in
   let f2 p' atom = Prop.prop_atom_and tenv p' (handle_atom sub2 dom2 atom) in
   let f3 p' (a, b) =
+    Format.printf "@[  before f3 = %a @]@\n" (Prop.pp_prop Pp.text) p';
     let p' = Prop.conjoin_eq tenv a b p' in
+    Format.printf "@[  after f3 = %a @]@\n" (Prop.pp_prop Pp.text) p';
     p' in
   let pi1 = ep1.Prop.pi in
   let pi2 = ep2.Prop.pi in
@@ -1839,11 +1860,19 @@ let eprop_partial_meet tenv (ep1: 'a Prop.t) (ep2: 'b Prop.t) : 'c Prop.t =
     let todos = List.map ~f:(fun x -> (x, x, x)) es in
     List.iter ~f:Todo.push todos ;
     let sigma_new = sigma_partial_meet tenv sigma1 sigma2 in
+    Format.printf "@[sigma1 = %a @]@\n" (Prop.pp_sigma Pp.text) sigma1;
+    Format.printf "@[sigma2 = %a @]@\n" (Prop.pp_sigma Pp.text) sigma2;
+    Format.printf "@[sigma_new = %a @]@\n" (Prop.pp_sigma Pp.text) sigma_new;
     let ep = Prop.set ep1 ~sigma:sigma_new in
+    Format.printf "@[ep = %a @]@\n" (Prop.pp_prop Pp.text) ep;
     let ep' = Prop.set ep ~pi:[] in
+    Format.printf "@[ep' = %a @]@\n" (Prop.pp_prop Pp.text) ep';
     let p' = Prop.normalize tenv ep' in
+    Format.printf "@[p' = %a @]@\n" (Prop.pp_prop Pp.text) p';
     let p'' = pi_partial_meet tenv p' ep1 ep2 in
+    Format.printf "@[p'' = %a @]@\n" (Prop.pp_prop Pp.text) p'';
     let res = Prop.prop_rename_primed_footprint_vars tenv p'' in
+    Format.printf "@[res = %a @]@\n" (Prop.pp_prop Pp.text) res;
     res
 
 let prop_partial_meet tenv p1 p2 =
@@ -2131,51 +2160,43 @@ let pathset_join pname tenv (pset1: Paths.PathSet.t) (pset2: Paths.PathSet.t)
   res
 
 (**
-   The meet operator does two things:
-   1) makes the result logically stronger (just like additive conjunction)
-   2) makes the result spatially larger (just like multiplicative conjunction).
-   Assuming that the meet operator forms a partial commutative monoid (soft assumption: it means
-   that the results are more predictable), try to combine every element of plist with any other element.
-   Return a list of the same lenght, with each element maximally combined. The algorithm is quadratic.
-   The operation is dependent on the order in which elements are combined; there is a straightforward
-   order - independent algorithm but it is exponential.
+  The meet operator does two things:
+  1) makes the result logically stronger (just like additive conjunction)
+  2) makes the result spatially larger (just like multiplicative conjunction).
+  For all subsets of plist, compute the meet (if any).
+  This takes exponential time, and could be optimized so that one produces
+  meets only for the maximal subsets that have a meet.
 *)
 let proplist_meet_generate tenv plist =
-  let props_done = ref Propset.empty in
-  let combine p (porig, pcombined) =
-    SymOp.pay () ;
-    (* pay one symop *)
-    L.d_strln ".... MEET ...." ;
-    L.d_strln "MEET SYM HEAP1: " ;
-    Prop.d_prop p ;
-    L.d_ln () ;
-    L.d_strln "MEET SYM HEAP2: " ;
-    Prop.d_prop pcombined ;
-    L.d_ln () ;
-    match prop_partial_meet tenv p pcombined with
-    | None
-     -> L.d_strln_color Red ".... MEET FAILED ...." ; L.d_ln () ; (porig, pcombined)
-    | Some pcombined'
-     -> L.d_strln_color Green ".... MEET SUCCEEDED ...." ;
-        L.d_strln "RESULT SYM HEAP:" ;
-        Prop.d_prop pcombined' ;
-        L.d_ln () ;
-        L.d_ln () ;
-        (porig, pcombined')
-  in
-  let rec proplist_meet = function
-    | []
-     -> ()
-    | (porig, pcombined) :: pplist
-     -> (* use porig instead of pcombined because it might be combinable with more othe props *)
-        (* e.g. porig might contain a global var to add to the ture branch of a conditional *)
-        (* but pcombined might have been combined with the false branch already *)
-        let pplist' = List.map ~f:(combine porig) pplist in
-        props_done := Propset.add tenv pcombined !props_done ;
-        proplist_meet pplist'
-  in
-  proplist_meet (List.map ~f:(fun p -> (p, p)) plist) ;
-  !props_done
+  let pre x ys = x :: ys in
+  let rec subsets = function
+    | [] -> [[]]
+    | x :: xs ->
+        let yss = subsets xs in
+        List.rev_append yss (List.map ~f:(pre x) yss) in
+  let plus a b = match (a, b) with
+    | (None, _) -> None
+    | (Some a, b) ->
+        SymOp.pay ();
+        L.d_strln "MEET SYM HEAP1: ";  Prop.d_prop a; L.d_ln ();
+        L.d_strln "MEET SYM HEAP2: ";  Prop.d_prop b; L.d_ln ();
+        let r = prop_partial_meet tenv a b in
+        (match r with
+        | None -> L.d_strln_color Red ".... MEET FAILED ...."; L.d_ln ();
+        | Some c ->
+            L.d_strln_color Green ".... MEET SUCCEEDED ....";
+            L.d_strln "RESULT SYM HEAP:"; Prop.d_prop c; L.d_ln (); L.d_ln ());
+        r in
+  let meet_all = function
+    | [] -> None
+    | x :: xs -> List.fold ~f:plus ~init:(Some x) xs in
+  let xs = List.map ~f:meet_all (subsets plist) in
+  let keep_some acc = function
+    | None -> acc
+    | Some x -> Propset.add tenv x acc in
+  List.fold ~f:keep_some ~init:Propset.empty xs
+
+
 
 let propset_meet_generate_pre tenv pset =
   let plist = Propset.to_proplist pset in
