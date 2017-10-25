@@ -71,7 +71,32 @@ type compilation_database_dependencies =
   | NoDeps
   [@@deriving compare]
 
-type dynamic_dispatch_policy = [`None | `Interface | `Sound | `Lazy]
+type dynamic_dispatch = NoDynamicDispatch | Interface | Sound | Lazy [@@deriving compare]
+
+val equal_dynamic_dispatch : dynamic_dispatch -> dynamic_dispatch -> bool
+
+val string_of_dynamic_dispatch : dynamic_dispatch -> string
+
+type build_system =
+  | BAnalyze
+  | BAnt
+  | BBuck
+  | BClang
+  | BGradle
+  | BJava
+  | BJavac
+  | BMake
+  | BMvn
+  | BNdk
+  | BPython
+  | BXcode
+  [@@deriving compare]
+
+val equal_build_system : build_system -> build_system -> bool
+
+val build_system_of_exe_name : string -> build_system
+
+val string_of_build_system : build_system -> string
 
 val env_inside_maven : Unix.env
 
@@ -84,8 +109,6 @@ val anonymous_block_prefix : string
 val append_buck_flavors : string list
 
 val assign : string
-
-val attributes_dir_name : string
 
 val backend_stats_dir_name : string
 
@@ -273,8 +296,6 @@ val analysis_suppress_errors : analyzer -> string list
 
 val analyzer : analyzer
 
-val angelic_execution : bool
-
 val annotation_reachability : bool
 
 val annotation_reachability_custom_pairs : Yojson.Basic.json
@@ -303,18 +324,14 @@ val buck_out : string option
 
 val bufferoverrun : bool
 
-val bugs_csv : string option
-
-val bugs_tests : string option
-
-val bugs_txt : string option
-
-val changed_files_index : string option
-
 val calls_csv : string option
 
 val captured_dir : string
 (** directory where the results of the capture phase are stored *)
+
+val changed_files_index : string option
+
+val check_nullable : bool
 
 val clang_biniou_file : string option
 
@@ -370,7 +387,7 @@ val dotty_cfg_libs : bool
 
 val dump_duplicate_symbols : bool
 
-val dynamic_dispatch : [`None | `Interface | `Sound | `Lazy]
+val dynamic_dispatch : dynamic_dispatch
 
 val eradicate : bool
 
@@ -404,7 +421,11 @@ val filtering : bool
 
 val flavors : bool
 
+val force_delete_results_dir : bool
+
 val fragment_retains_view : bool
+
+val force_integration : build_system option
 
 val from_json_report : string option
 
@@ -432,11 +453,15 @@ val infer_is_clang : bool
 
 val infer_is_javac : bool
 
+val inferconfig_file : string option
+
 val iphoneos_target_sdk_version : string option
 
 type iphoneos_target_sdk_version_path_regex = {path: Str.regexp; version: string}
 
 val iphoneos_target_sdk_version_path_regex : iphoneos_target_sdk_version_path_regex list
+
+val issues_csv : string option
 
 val issues_fields :
   [ `Issue_field_bug_class
@@ -458,6 +483,10 @@ val issues_fields :
   | `Issue_field_procedure_id_without_crc
   | `Issue_field_qualifier_contains_potential_exception_note ]
   list
+
+val issues_tests : string option
+
+val issues_txt : string option
 
 val iterations : int
 
@@ -515,6 +544,8 @@ val monitor_prop_size : bool
 val nelseg : bool
 
 val no_translate_libs : bool
+
+val nullable_annotation : string option
 
 val objc_memory_model_on : bool
 
@@ -632,7 +663,7 @@ val test_filtering : bool
 
 val testing_mode : bool
 
-val threadsafety : bool
+val racerd : bool
 
 val threadsafe_aliases : Yojson.Basic.json
 
@@ -647,6 +678,8 @@ val trace_rearrange : bool
 val tv_limit : int
 
 val type_size : bool
+
+val uninit : bool
 
 val unsafe_malloc : bool
 

@@ -38,6 +38,11 @@ val mk_struct :
   -> Typ.Struct.t
 (** Construct a struct_typ, normalizing field types *)
 
+val add_field : t -> Typ.Name.t -> Typ.Struct.field -> unit
+(** Add a field to a given struct in the global type environment. *)
+
+val sort_fields_tenv : t -> unit
+
 val mem : t -> Typ.Name.t -> bool
 (** Check if typename is found in t *)
 
@@ -49,3 +54,6 @@ val store_to_file : DB.filename -> t -> unit
 
 val get_overriden_method : t -> Typ.Procname.java -> Typ.Procname.t option
 (** Get method that is being overriden by java_pname (if any) **)
+
+val language_is : t -> Config.language -> bool
+(** Test the language from which the types in the tenv were translated *)

@@ -44,7 +44,7 @@ val custom_desc_with_advice : string -> string -> (string * string) list -> erro
 
 module BucketLevel : sig
   val b1 : string
-  (** highest likelyhood *)
+  (** highest likelihood *)
 
   val b2 : string
 
@@ -53,7 +53,7 @@ module BucketLevel : sig
   val b4 : string
 
   val b5 : string
-  (** lowest likelyhood *)
+  (** lowest likelihood *)
 end
 
 val error_desc_extract_tag_value : error_desc -> string -> string
@@ -71,9 +71,8 @@ val error_desc_get_tag_call_procedure : error_desc -> string
 val error_desc_get_bucket : error_desc -> string option
 (** get the bucket value of an error_desc, if any *)
 
-val error_desc_set_bucket : error_desc -> string -> bool -> error_desc
-(** set the bucket value of an error_desc.
-    The boolean indicates where the bucket should be shown in the message *)
+val error_desc_set_bucket : error_desc -> string -> error_desc
+(** set the bucket value of an error_desc *)
 
 val error_desc_hash : error_desc -> int
 (** hash function for error_desc *)
@@ -134,7 +133,11 @@ type access =
   | Initialized_automatically
   | Returned_from_call of int
 
-val dereference_string : deref_str -> string -> access option -> Location.t -> error_desc
+val nullable_annotation_name : Typ.Procname.t -> string
+(** Name of the nullable annotation *)
+
+val dereference_string :
+  Typ.Procname.t -> deref_str -> string -> access option -> Location.t -> error_desc
 
 val parameter_field_not_null_checked_desc : error_desc -> Exp.t -> error_desc
 
@@ -177,7 +180,7 @@ val desc_leak :
   Exp.t option -> string option -> PredSymb.resource option -> PredSymb.res_action option
   -> Location.t -> string option -> error_desc
 
-val desc_buffer_overrun : string -> string -> error_desc
+val desc_buffer_overrun : string -> error_desc
 
 val desc_null_test_after_dereference : string -> int -> Location.t -> error_desc
 

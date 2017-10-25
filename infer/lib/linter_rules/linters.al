@@ -114,11 +114,11 @@ DEFINE-CHECKER REGISTERED_OBSERVER_BEING_DEALLOCATED = {
 	  		(remove_observer1)
 		HOLDS-EVENTUALLY;
 
- 	LET eventually_removeObserver =
+	LET eventually_removeObserver =
 		IN-NODE ObjCImplementationDecl, ObjCProtocolDecl WITH-TRANSITION Any
 		 		(remove_observer_in_method  OR
 					remove_observer_in_method HOLDS-IN-SOME-SUPERCLASS-OF ObjCImplementationDecl)
-  	HOLDS-EVENTUALLY;
+ 	HOLDS-EVENTUALLY;
 
   SET report_when =
 			WHEN
@@ -243,4 +243,16 @@ DEFINE-CHECKER POINTER_TO_INTEGRAL_IMPLICIT_CAST = {
       HOLDS-IN-NODE ImplicitCastExpr;
   SET message = "Implicit conversion from %child_type% to %type% in usage of %name%";
 	SET doc_url = "https://clang.llvm.org/docs/DiagnosticsReference.html#wint-conversion";
+};
+
+DEFINE-CHECKER POINTER_TO_CONST_OBJC_CLASS = {
+  SET name = "Pointer To const Objective-C Class";
+  SET report_when = is_decl() AND has_type_const_ptr_to_objc_class();
+  SET message = "`const %class_name%*` may not mean what you want:
+                   it represents a mutable pointer pointing to an Objective-C
+                   class where the ivars cannot be changed.";
+  SET suggestion = "Consider using `%class_name% *const` instead, meaning
+	                  the destination of the pointer cannot be changed.";
+  SET severity = "WARNING";
+  SET mode = "ON";
 };

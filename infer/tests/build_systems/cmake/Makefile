@@ -11,9 +11,9 @@ CMAKE_DIR = ../codetoanalyze/cmake
 CMAKE_BUILD_DIR = $(CMAKE_DIR)/_build
 CMAKE_ANALYZE_DIR = $(CMAKE_DIR)/_build_infer
 
-ANALYZER = infer
+ANALYZER = checkers
 CLEAN_EXTRA = $(CMAKE_BUILD_DIR) $(CMAKE_ANALYZE_DIR)
-INFER_OPTIONS = --project-root $(TESTS_DIR) --no-keep-going
+INFER_OPTIONS = --project-root $(TESTS_DIR)
 SOURCES = $(CMAKE_DIR)/hello.c
 OBJECTS = $(CMAKE_BUILD_DIR)/CMakeFiles/Hello.dir/hello.c.o
 INFERPRINT_OPTIONS = --issues-tests

@@ -11,6 +11,7 @@ package java.util;
 import java.io.*;
 
 import com.facebook.infer.builtins.InferUndefined;
+import com.facebook.infer.builtins.InferBuiltins;
 
 /**
  * A recency abstraction for hashmaps that remembers only the last two
@@ -28,6 +29,7 @@ public abstract class HashMap<K,V> {
 
   private K lastKey1 = null;
   private K lastKey2 = null;
+  private boolean containsResources = false;
 
   public boolean containsKey(K key) {
     // doesn't actually check if _containsKey(key). If you just put a
@@ -52,6 +54,12 @@ public abstract class HashMap<K,V> {
   }
 
   public V put(K key, V value) {
+    if (value instanceof Closeable) {
+      // Transfer the resource ownership to the container
+      InferBuiltins.__set_mem_attribute(value);
+      InferBuiltins.__set_file_attribute(this);
+      containsResources = true;
+    }
     pushKey(key);
 
     if (InferUndefined.boolean_undefined()) {
@@ -60,6 +68,20 @@ public abstract class HashMap<K,V> {
     return null;
   }
 
+  public V remove(K key) {
+    V value = get(key);
+    removeKey(key);
+    return value;
+  }
+
+  public void clear() {
+    lastKey1 = null;
+    lastKey2 = null;
+    if (containsResources) {
+      InferBuiltins.__set_mem_attribute(this);
+    }
+    containsResources = false;
+  }
 
   /** some sort of circular buffer simulator */
   private void pushKey(K key) {
@@ -69,6 +91,15 @@ public abstract class HashMap<K,V> {
 
   private boolean _containsKey(K key) {
       return areEqual(key, lastKey1) || areEqual(key, lastKey2);
+  }
+
+  private void removeKey(K key) {
+    if (areEqual(key, lastKey1)) {
+      lastKey1 = null;
+    }
+    if (areEqual(key, lastKey2)) {
+      lastKey2 = null;
+    }
   }
 
   private boolean areEqual(K x, K y) {

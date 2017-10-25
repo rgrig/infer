@@ -67,8 +67,7 @@ exception Context_leak of Localise.error_desc * Logging.ml_loc
 
 exception Custom_error of string * Localise.error_desc
 
-exception
-  Dangling_pointer_dereference of
+exception Dangling_pointer_dereference of
   PredSymb.dangling_kind option * Localise.error_desc * Logging.ml_loc
 
 exception Deallocate_stack_variable of Localise.error_desc
@@ -97,8 +96,7 @@ exception Internal_error of Localise.error_desc
 
 exception Java_runtime_exception of Typ.Name.t * string * Localise.error_desc
 
-exception
-  Leak of
+exception Leak of
   bool * Sil.hpred * (visibility * Localise.error_desc) * bool * PredSymb.resource * Logging.ml_loc
 
 exception Missing_fld of Typ.Fieldname.t * Logging.ml_loc
@@ -137,8 +135,6 @@ exception Symexec_memory_error of Logging.ml_loc
 
 exception Unary_minus_applied_to_unsigned_expression of Localise.error_desc * Logging.ml_loc
 
-exception Uninitialized_value of Localise.error_desc * Logging.ml_loc
-
 exception Unknown_proc
 
 exception Unreachable_code_after of Localise.error_desc * Logging.ml_loc
@@ -166,14 +162,13 @@ val pp_err :
   -> Logging.ml_loc option -> Format.formatter -> unit -> unit
 (** pretty print an error *)
 
-val recognize_exception :
-  exn
-  -> IssueType.t
-     * Localise.error_desc
-     * Logging.ml_loc option
-     * visibility
-     * severity
-     * err_kind option
-     * err_class
-(** Turn an exception into an error name, error description,
-    location in ml source, and category *)
+type t =
+  { name: IssueType.t
+  ; description: Localise.error_desc
+  ; ml_loc: Logging.ml_loc option  (** location in the infer source code *)
+  ; visibility: visibility
+  ; severity: severity
+  ; kind: err_kind option
+  ; category: err_class }
+
+val recognize_exception : exn -> t

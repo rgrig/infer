@@ -81,10 +81,6 @@ val cast_operation :
 
 val trans_assertion : trans_state -> Location.t -> trans_result
 
-val is_owning_method : Clang_ast_t.stmt -> bool
-
-val is_owning_name : string -> bool
-
 val is_method_call : Clang_ast_t.stmt -> bool
 
 val contains_opaque_value_expr : Clang_ast_t.stmt -> bool
@@ -99,8 +95,8 @@ val cxx_method_builtin_trans :
   trans_state -> Location.t -> trans_result list -> Typ.Procname.t -> trans_result option
 
 val alloc_trans :
-  trans_state -> Location.t -> Clang_ast_t.stmt_info -> Typ.t -> bool -> Typ.Procname.t option
-  -> trans_result
+  trans_state -> alloc_builtin:Typ.Procname.t -> ?alloc_source_function:Typ.Procname.t
+  -> Location.t -> Clang_ast_t.stmt_info -> Typ.t -> trans_result
 
 val new_or_alloc_trans :
   trans_state -> Location.t -> Clang_ast_t.stmt_info -> Clang_ast_t.qual_type -> Typ.Name.t option
@@ -125,8 +121,8 @@ module Nodes : sig
   val is_join_node : Procdesc.Node.t -> bool
 
   val create_prune_node :
-    bool -> (Exp.t * Typ.t) list -> Sil.instr list -> Location.t -> Sil.if_kind -> CContext.t
-    -> Procdesc.Node.t
+    branch:bool -> negate_cond:bool -> (Exp.t * Typ.t) list -> Sil.instr list -> Location.t
+    -> Sil.if_kind -> CContext.t -> Procdesc.Node.t
 
   val is_prune_node : Procdesc.Node.t -> bool
 

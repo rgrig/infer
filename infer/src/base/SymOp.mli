@@ -61,19 +61,15 @@ type failure_kind =
   | FKrecursion_timeout of int  (** max recursion level exceeded *)
   | FKcrash of string  (** uncaught exception or failed assertion *)
 
-exception Analysis_failure_exe of failure_kind(** Timeout exception *)
+exception Analysis_failure_exe of failure_kind  (** Timeout exception *)
 
 val exn_not_failure : exn -> bool
 (** check that the exception is not a timeout exception *)
 
-val try_finally : ?fail_early:bool -> (unit -> 'a) -> (unit -> unit) -> 'a
-(** [try_finally ~fail_early f g] executes [f] and then [g] even if [f] raises an exception.
-    Assuming that [g ()] terminates quickly [Analysis_failure_exe] exceptions are handled correctly.
-    In particular, an exception raised by [f ()] is delayed until [g ()] finishes, so [g ()] should
-    return reasonably quickly.  [~fail_early=true] can be passed to skip executing [g ()] when [f
-    ()] raises a [Analysis_failure_exe] exception. *)
-
-val finally_try : (unit -> unit) -> (unit -> 'a) -> 'a
-(** [finally_try g f] is equivalent to [try_finally f g]. *)
+val try_finally : f:(unit -> 'a) -> finally:(unit -> unit) -> 'a
+(** [try_finally ~f ~finally] executes [f] and then [finally] even if [f] raises an exception.
+    Assuming that [finally ()] terminates quickly [Analysis_failure_exe] exceptions are handled correctly.
+    In particular, an exception raised by [f ()] is delayed until [finally ()] finishes, so [finally ()] should
+    return reasonably quickly. *)
 
 val pp_failure_kind : Format.formatter -> failure_kind -> unit

@@ -10,6 +10,14 @@
 open! IStd
 module F = Format
 
+module Types : sig
+  type 'astate bottom_lifted = Bottom | NonBottom of 'astate
+
+  type 'astate top_lifted = Top | NonTop of 'astate
+end
+
+open! Types
+
 (** Abstract domains and domain combinators *)
 
 module type S = sig
@@ -47,14 +55,14 @@ end
 
 (** Lift a pre-domain to a domain *)
 module BottomLifted (Domain : S) : sig
-  type astate = Bottom | NonBottom of Domain.astate
+  type astate = Domain.astate bottom_lifted
 
   include WithBottom with type astate := astate
 end
 
 (** Create a domain with Top element from a pre-domain *)
 module TopLifted (Domain : S) : sig
-  type astate = Top | NonTop of Domain.astate
+  type astate = Domain.astate top_lifted
 
   include WithTop with type astate := astate
 end
@@ -71,8 +79,8 @@ module FiniteSet (Element : PrettyPrintable.PrintableOrderedType) : sig
 end
 
 (** Lift a set to a powerset domain ordered by superset, so the join operator is intersection *)
-module InvertedSet (Set : PrettyPrintable.PPSet) : sig
-  include PrettyPrintable.PPSet with type t = Set.t and type elt = Set.elt
+module InvertedSet (Element : PrettyPrintable.PrintableOrderedType) : sig
+  include module type of PrettyPrintable.MakePPSet (Element)
 
   include S with type astate = t
 end
@@ -87,13 +95,10 @@ end
 
 (** Map domain ordered by intersection over the set of bindings, so the top element is the empty
     map. Every element implictly maps to top unless it is explicitly bound to something else *)
-module InvertedMap (Map : PrettyPrintable.PPMap) (ValueDomain : S) : sig
-  include PrettyPrintable.PPMap with type 'a t = 'a Map.t and type key = Map.key
+module InvertedMap (Key : PrettyPrintable.PrintableOrderedType) (ValueDomain : S) : sig
+  include module type of PrettyPrintable.MakePPMap (Key)
 
-  include S with type astate = ValueDomain.astate Map.t
-
-  val empty : [`This_domain_is_not_pointed]
-  (** this domain doesn't have a natural bottom element *)
+  include S with type astate = ValueDomain.astate t
 end
 
 (** Boolean domain ordered by p || ~q. Useful when you want a boolean that's true only when it's

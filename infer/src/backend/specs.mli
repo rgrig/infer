@@ -136,8 +136,9 @@ type payload =
   ; quandary: QuandarySummary.t option
   ; resources: ResourceLeakDomain.summary option
   ; siof: SiofDomain.astate option
-  ; threadsafety: ThreadSafetyDomain.summary option
-  ; buffer_overrun: BufferOverrunDomain.Summary.t option }
+  ; racerd: RacerDDomain.summary option
+  ; buffer_overrun: BufferOverrunDomain.Summary.t option
+  ; uninit: UninitDomain.summary option }
 
 (** Procedure summary *)
 type summary =

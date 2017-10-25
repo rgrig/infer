@@ -41,6 +41,7 @@ end = struct
     String.lowercase s |> String.split ~on:'_' |> List.map ~f:String.capitalize
     |> String.concat ~sep:" " |> String.strip
 
+
   let set_enabled issue b = issue.enabled <- b
 
   (** avoid creating new issue types. The idea is that there are three types of issue types:
@@ -66,6 +67,7 @@ end = struct
       all_issues := IssueSet.add issue !all_issues ;
       issue
 
+
   let all_issues () = IssueSet.elements !all_issues
 end
 
@@ -90,7 +92,17 @@ let assert_failure = from_string "Assert_failure"
 
 let bad_footprint = from_string "Bad_footprint"
 
-let buffer_overrun = from_string "BUFFER_OVERRUN"
+let buffer_overrun_l1 = from_string "BUFFER_OVERRUN_L1"
+
+let buffer_overrun_l2 = from_string "BUFFER_OVERRUN_L2"
+
+let buffer_overrun_l3 = from_string "BUFFER_OVERRUN_L3"
+
+let buffer_overrun_l4 = from_string ~enabled:false "BUFFER_OVERRUN_L4"
+
+let buffer_overrun_l5 = from_string ~enabled:false "BUFFER_OVERRUN_L5"
+
+let buffer_overrun_s2 = from_string "BUFFER_OVERRUN_S2"
 
 let cannot_star = from_string "Cannot_star"
 
@@ -136,59 +148,77 @@ let divide_by_zero = from_string ~enabled:false "DIVIDE_BY_ZERO"
 
 let double_lock = from_string "DOUBLE_LOCK"
 
+let do_not_report = from_string "DO_NOT_REPORT"
+
 let empty_vector_access = from_string "EMPTY_VECTOR_ACCESS"
 
 let eradicate_condition_redundant =
   from_string "ERADICATE_CONDITION_REDUNDANT" ~hum:"Condition Redundant"
 
+
 let eradicate_condition_redundant_nonnull =
   from_string "ERADICATE_CONDITION_REDUNDANT_NONNULL" ~hum:"Condition Redundant Non-Null"
+
 
 let eradicate_field_not_initialized =
   from_string "ERADICATE_FIELD_NOT_INITIALIZED" ~hum:"Field Not Initialized"
 
+
 let eradicate_field_not_mutable =
   from_string "ERADICATE_FIELD_NOT_MUTABLE" ~hum:"Field Not Mutable"
+
 
 let eradicate_field_not_nullable =
   from_string "ERADICATE_FIELD_NOT_NULLABLE" ~hum:"Field Not Nullable"
 
+
 let eradicate_field_over_annotated =
   from_string "ERADICATE_FIELD_OVER_ANNOTATED" ~hum:"Field Over Annotated"
 
+
 let eradicate_field_value_absent =
   from_string "ERADICATE_FIELD_VALUE_ABSENT" ~hum:"Field Value Absent"
+
 
 let eradicate_inconsistent_subclass_parameter_annotation =
   from_string "ERADICATE_INCONSISTENT_SUBCLASS_PARAMETER_ANNOTATION"
     ~hum:"Inconsistent Subclass Parameter Annotation"
 
+
 let eradicate_inconsistent_subclass_return_annotation =
   from_string "ERADICATE_INCONSISTENT_SUBCLASS_RETURN_ANNOTATION"
     ~hum:"Inconsistent Subclass Return Annotation"
 
+
 let eradicate_null_field_access =
   from_string "ERADICATE_NULL_FIELD_ACCESS" ~hum:"Null Field Access"
+
 
 let eradicate_null_method_call = from_string "ERADICATE_NULL_METHOD_CALL" ~hum:"Null Method Call"
 
 let eradicate_parameter_not_nullable =
   from_string "ERADICATE_PARAMETER_NOT_NULLABLE" ~hum:"Parameter Not Nullable"
 
+
 let eradicate_parameter_value_absent =
   from_string "ERADICATE_PARAMETER_VALUE_ABSENT" ~hum:"Parameter Value Absent"
+
 
 let eradicate_return_not_nullable =
   from_string "ERADICATE_RETURN_NOT_NULLABLE" ~hum:"Return Not Nullable"
 
+
 let eradicate_return_over_annotated =
   from_string "ERADICATE_RETURN_OVER_ANNOTATED" ~hum:"Return Over Annotated"
+
 
 let eradicate_return_value_not_present =
   from_string "ERADICATE_RETURN_VALUE_NOT_PRESENT" ~hum:"Return Value Not Present"
 
+
 let eradicate_value_not_present =
   from_string "ERADICATE_VALUE_NOT_PRESENT" ~hum:"Value Not Present"
+
 
 let failure_exe = from_string "Failure_exe"
 
@@ -200,7 +230,10 @@ let field_not_null_checked = from_string "IVAR_NOT_NULL_CHECKED"
 let _global_variable_initialized_with_function_or_method_call =
   from_string ~enabled:false "GLOBAL_VARIABLE_INITIALIZED_WITH_FUNCTION_OR_METHOD_CALL"
 
+
 let inherently_dangerous_function = from_string "INHERENTLY_DANGEROUS_FUNCTION"
+
+let interface_not_thread_safe = from_string "INTERFACE_NOT_THREAD_SAFE"
 
 let internal_error = from_string "Internal_error"
 
@@ -215,6 +248,8 @@ let missing_fld = from_string "Missing_fld" ~hum:"Missing Field"
 let null_dereference = from_string "NULL_DEREFERENCE"
 
 let null_test_after_dereference = from_string ~enabled:false "NULL_TEST_AFTER_DEREFERENCE"
+
+let nullable_dereference = from_string "NULLABLE_DEREFERENCE"
 
 let parameter_not_null_checked = from_string "PARAMETER_NOT_NULL_CHECKED"
 
@@ -253,12 +288,14 @@ let static_initialization_order_fiasco = from_string "STATIC_INITIALIZATION_ORDE
 let symexec_memory_error =
   from_string "Symexec_memory_error" ~hum:"Symbolic Execution Memory Error"
 
+
 let thread_safety_violation = from_string "THREAD_SAFETY_VIOLATION"
 
 let unary_minus_applied_to_unsigned_expression =
   from_string ~enabled:false "UNARY_MINUS_APPLIED_TO_UNSIGNED_EXPRESSION"
 
-let uninitialized_value = from_string ~enabled:false "UNINITIALIZED_VALUE"
+
+let uninitialized_value = from_string "UNINITIALIZED_VALUE"
 
 let unknown_proc = from_string "Unknown_proc" ~hum:"Unknown Procedure"
 

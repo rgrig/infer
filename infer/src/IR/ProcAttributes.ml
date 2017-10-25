@@ -21,6 +21,7 @@ let compare_proc_flags x y =
   let bindings x = Hashtbl.fold (fun k d l -> (k, d) :: l) x [] in
   [%compare : (string * string) list] (bindings x) (bindings y)
 
+
 let proc_flags_empty () : proc_flags = Hashtbl.create 1
 
 let proc_flag_ignore_return = "ignore_return"
@@ -31,8 +32,8 @@ let proc_flags_find proc_flags key = Hashtbl.find proc_flags key
 
 (** Type for ObjC accessors *)
 type objc_accessor_type =
-  | Objc_getter of Typ.Fieldname.t
-  | Objc_setter of Typ.Fieldname.t
+  | Objc_getter of Typ.Struct.field
+  | Objc_setter of Typ.Struct.field
   [@@deriving compare]
 
 type t =
@@ -54,6 +55,7 @@ type t =
   ; is_cpp_noexcept_method: bool  (** the procedure is an C++ method annotated with "noexcept" *)
   ; is_java_synchronized_method: bool  (** the procedure is a Java synchronized method *)
   ; is_model: bool  (** the procedure is a model *)
+  ; is_specialized: bool  (** the procedure is a clone specialized for dynamic dispatch handling *)
   ; is_synthetic_method: bool  (** the procedure is a synthetic method *)
   ; language: Config.language  (** language of the procedure *)
   ; loc: Location.t  (** location of this procedure in the source code *)
@@ -86,6 +88,7 @@ let default proc_name language =
   ; is_defined= false
   ; is_objc_instance_method= false
   ; is_model= false
+  ; is_specialized= false
   ; is_synthetic_method= false
   ; language
   ; loc= Location.dummy
@@ -97,3 +100,4 @@ let default proc_name language =
   ; proc_name
   ; ret_type= Typ.mk Typ.Tvoid
   ; source_file_captured= SourceFile.invalid __FILE__ }
+

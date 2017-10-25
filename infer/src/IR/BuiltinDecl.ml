@@ -19,6 +19,7 @@ let create_procname name =
   let pname = Typ.Procname.from_string_c_fun name in
   register pname ; pname
 
+
 let create_objc_class_method class_name method_name =
   let method_kind = Typ.Procname.ObjCClassMethod in
   let tname = Typ.Name.Objc.from_string class_name in
@@ -27,6 +28,7 @@ let create_objc_class_method class_name method_name =
       (Typ.Procname.objc_cpp tname method_name method_kind Typ.NoTemplate ~is_generic_model:false)
   in
   register pname ; pname
+
 
 let is_declared pname = Typ.Procname.Set.mem pname !builtin_decls
 
@@ -83,6 +85,7 @@ let __objc_cast = create_procname "__objc_cast"
 let __objc_dictionary_literal =
   create_objc_class_method "NSDictionary" "dictionaryWithObjects:forKeys:count:"
 
+
 let __objc_release = create_procname "__objc_release"
 
 let __objc_release_autorelease_pool = create_procname "__objc_release_autorelease_pool"
@@ -109,15 +112,11 @@ let __set_file_attribute = create_procname "__set_file_attribute"
 
 let __set_hidden_field = create_procname "__set_hidden_field"
 
-let __set_lock_attribute = create_procname "__set_lock_attribute"
-
 let __set_locked_attribute = create_procname "__set_locked_attribute"
 
 let __set_mem_attribute = create_procname "__set_mem_attribute"
 
 let __set_observer_attribute = create_procname "__set_observer_attribute"
-
-let __set_unlocked_attribute = create_procname "__set_unlocked_attribute"
 
 let __set_unsubscribed_observer_attribute = create_procname "__set_unsubscribed_observer_attribute"
 

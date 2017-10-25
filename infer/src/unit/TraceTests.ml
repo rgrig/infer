@@ -14,6 +14,8 @@ module F = Format
 module MockTraceElem = struct
   type t = Kind1 | Kind2 | Footprint [@@deriving compare]
 
+  let matches ~caller ~callee = Int.equal 0 (compare caller callee)
+
   let call_site _ = CallSite.dummy
 
   let kind t = t
@@ -21,17 +23,20 @@ module MockTraceElem = struct
   let make ?indexes:_ kind _ = kind
 
   let pp fmt = function
-    | Kind1
-     -> F.fprintf fmt "Kind1"
-    | Kind2
-     -> F.fprintf fmt "Kind2"
-    | Footprint
-     -> F.fprintf fmt "Footprint"
+    | Kind1 ->
+        F.fprintf fmt "Kind1"
+    | Kind2 ->
+        F.fprintf fmt "Kind2"
+    | Footprint ->
+        F.fprintf fmt "Footprint"
+
 
   module Kind = struct
     type nonrec t = t
 
     let compare = compare
+
+    let matches = matches
 
     let pp = pp
   end
@@ -75,18 +80,22 @@ module MockTrace = Trace.Make (struct
   module Source = MockSource
   module Sink = MockSink
 
-  let should_report source sink =
-    [%compare.equal : MockTraceElem.t] (Source.kind source) (Sink.kind sink)
+  let get_report source sink =
+    if [%compare.equal : MockTraceElem.t] (Source.kind source) (Sink.kind sink) then
+      Some IssueType.quandary_taint_error
+    else None
+
 end)
 
 let trace_equal t1 t2 = MockTrace.( <= ) ~lhs:t1 ~rhs:t2 && MockTrace.( <= ) ~lhs:t2 ~rhs:t1
 
 let source_equal path_source source =
   match path_source with
-  | MockTrace.Known s
-   -> MockSource.equal s source
-  | MockTrace.Footprint _
-   -> false
+  | MockTrace.Known s ->
+      MockSource.equal s source
+  | MockTrace.Footprint _ ->
+      false
+
 
 let tests =
   let source1 = MockSource.make MockTraceElem.Kind1 CallSite.dummy in
@@ -104,11 +113,13 @@ let tests =
       assert_equal (List.length reports) 2 ;
       assert_bool "Reports should contain source1 -> sink1"
         (List.exists
-           ~f:(fun (source, sink, _) -> source_equal source source1 && MockSink.equal sink sink1)
+           ~f:(fun {MockTrace.path_source; path_sink} ->
+             source_equal path_source source1 && MockSink.equal path_sink sink1)
            reports) ;
       assert_bool "Reports should contain source2 -> sink2"
         (List.exists
-           ~f:(fun (source, sink, _) -> source_equal source source2 && MockSink.equal sink sink2)
+           ~f:(fun {MockTrace.path_source; path_sink} ->
+             source_equal path_source source2 && MockSink.equal path_sink sink2)
            reports)
     in
     "get_reports" >:: get_reports_
@@ -128,3 +139,4 @@ let tests =
     "append" >:: append_
   in
   "trace_domain_suite" >::: [get_reports; append]
+

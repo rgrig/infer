@@ -17,8 +17,9 @@ BUILD_MODE ?= opt
 MAKE_SOURCE = $(MAKE) -C $(SRC_DIR) INFER_BUILD_DIR=_build/$(BUILD_MODE)
 
 ifneq ($(UTOP),no)
-BUILD_SYSTEMS_TESTS += infertop
-build_infertop_print build_infertop_test: test_build
+# TODO: turn this back on
+#BUILD_SYSTEMS_TESTS += infertop
+#build_infertop_print build_infertop_test: test_build
 endif
 
 ifeq ($(BUILD_C_ANALYZERS),yes)
@@ -32,6 +33,7 @@ BUILD_SYSTEMS_TESTS += \
   clang_with_E_flag \
   clang_with_M_flag \
   clang_with_MD_flag \
+  deduplicate_template_warnings \
   delete_results_dir \
   diff \
   diff_gen_build_script \
@@ -46,7 +48,7 @@ BUILD_SYSTEMS_TESTS += \
 
 DIRECT_TESTS += \
   c_biabduction c_bufferoverrun c_errors c_frontend \
-  cpp_bufferoverrun cpp_errors cpp_frontend  cpp_liveness cpp_quandary cpp_siof cpp_threadsafety cpp_nullable \
+  cpp_bufferoverrun cpp_errors cpp_frontend  cpp_liveness cpp_quandary cpp_racerd cpp_siof cpp_uninit cpp_nullable \
 
 ifneq ($(BUCK),no)
 BUILD_SYSTEMS_TESTS += buck-clang-db buck_flavors buck_flavors_run buck_flavors_deterministic
@@ -61,11 +63,11 @@ ifneq ($(PYTHON_lxml),no)
 BUILD_SYSTEMS_TESTS += results_xml
 endif
 ifneq ($(XCODE_SELECT),no)
-BUILD_SYSTEMS_TESTS += xcodebuild_no_xcpretty
+BUILD_SYSTEMS_TESTS += xcodebuild_no_xcpretty objc_getters_setters
 DIRECT_TESTS += \
   objc_frontend objc_errors objc_linters objc_ioslints \
 	objcpp_frontend objcpp_linters objc_linters-for-test-only objcpp_linters-for-test-only \
-	objc_linters-def-folder
+	objc_linters-def-folder objc_checkers
 ifneq ($(XCPRETTY),no)
 BUILD_SYSTEMS_TESTS += xcodebuild
 endif
@@ -83,8 +85,8 @@ BUILD_SYSTEMS_TESTS += \
   resource_leak_exception_lines \
 
 DIRECT_TESTS += \
-  java_checkers java_eradicate java_infer java_tracing java_quandary java_threadsafety \
-  java_crashcontext java_harness
+  java_checkers java_eradicate java_infer java_lab java_tracing java_quandary \
+  java_racerd java_crashcontext java_harness
 ifneq ($(ANT),no)
 BUILD_SYSTEMS_TESTS += ant
 endif
@@ -136,17 +138,23 @@ fb-setup:
 	$(QUIET)$(call silent_on_success,Facebook setup,\
 	$(MAKE) -C facebook setup)
 
-OCAMLFORMAT_EXE=facebook/dependencies/ocamlformat/src/_build/opt/ocamlformat.exe
+OCAMLFORMAT_EXE?=ocamlformat
 
 .PHONY: fmt
 fmt:
-	parallel $(OCAMLFORMAT_EXE) --no-warn-error -i ::: $$(git diff --name-only $$(git merge-base origin/master HEAD) | grep "\.mli\?$$")
+	parallel $(OCAMLFORMAT_EXE) -i ::: $$(git diff --name-only $$(git merge-base origin/master HEAD) | grep "\.mli\?$$")
+
+JBUILD_ML:=$(shell find * -name 'jbuild*.in' | grep -v workspace)
+
+.PHONY: fmt_jbuild
+fmt_jbuild:
+	parallel $(OCAMLFORMAT_EXE) -i ::: $(JBUILD_ML)
 
 SRC_ML:=$(shell find * \( -name _build -or -name facebook-clang-plugins -or -path facebook/dependencies \) -not -prune -or -type f -and -name '*'.ml -or -name '*'.mli 2>/dev/null)
 
 .PHONY: fmt_all
 fmt_all:
-	parallel $(OCAMLFORMAT_EXE) --no-warn-error -i ::: $(SRC_ML)
+	parallel $(OCAMLFORMAT_EXE) -i ::: $(SRC_ML) $(JBUILD_ML)
 
 # pre-building these avoids race conditions when building, eg src_build and test_build in parallel
 .PHONY: src_build_common
@@ -156,7 +164,7 @@ src_build_common:
 
 .PHONY: src_build
 src_build: src_build_common
-	$(QUIET)$(call silent_on_success,Building native Infer,\
+	$(QUIET)$(call silent_on_success,Building native($(BUILD_MODE)) Infer,\
 	$(MAKE_SOURCE) infer)
 
 .PHONY: byte
@@ -232,8 +240,9 @@ endif
 
 .PHONY: ocaml_unit_test
 ocaml_unit_test: test_build
+	$(QUIET)$(REMOVE_DIR) infer-out-unit-tests
 	$(QUIET)$(call silent_on_success,Running OCaml unit tests,\
-	$(BUILD_DIR)/test/inferunit.bc)
+	INFER_ARGS=--results-dir^infer-out-unit-tests $(BUILD_DIR)/test/inferunit.bc)
 
 define silence_make
   ($(1) 2> >(grep -v "warning: \(ignoring old\|overriding\) \(commands\|recipe\) for target") \
@@ -298,6 +307,8 @@ $(BUILD_SYSTEMS_TESTS:%=build_%_replace): infer
 	$(QUIET)$(call silent_on_success,Recording: $(subst _, ,$@),\
 	$(call silence_make,\
 	$(MAKE) -C $(INFER_DIR)/tests/build_systems/$(patsubst build_%_replace,%,$@) replace))
+
+build_infertop_print build_infertop_test build_infertop_replace: test_build
 
 .PHONY: build_systems_tests
 build_systems_tests: $(BUILD_SYSTEMS_TESTS:%=build_%_test)
@@ -406,7 +417,7 @@ ifeq ($(BUILD_C_ANALYZERS),yes)
 	test -d      $(DESTDIR)$(libdir)/infer/infer/lib/linter_rules/ || \
 	  $(MKDIR_P) $(DESTDIR)$(libdir)/infer/infer/lib/linter_rules
 	test -d      $(DESTDIR)$(libdir)/infer/infer/etc/ || \
-		$(MKDIR_P) $(DESTDIR)$(libdir)/infer/infer/etc 
+		$(MKDIR_P) $(DESTDIR)$(libdir)/infer/infer/etc
 endif
 ifeq ($(BUILD_JAVA_ANALYZERS),yes)
 	test -d      $(DESTDIR)$(libdir)/infer/infer/lib/java/ || \
@@ -568,13 +579,19 @@ opam.lock: opam
 # This is a magical version number that doesn't reinstall the world when added on top of what we
 # have in opam.lock. To upgrade this version number, manually try to install several utop versions
 # until you find one that doesn't recompile the world. TODO(t20828442): get rid of magic
-OPAM_DEV_DEPS = ocp-indent merlin tuareg utop.2.0.0
+OPAM_DEV_DEPS = ocp-indent merlin utop.2.0.1
+
+ifneq ($(EMACS),no)
+OPAM_DEV_DEPS += tuareg
+endif
 
 .PHONY: devsetup
 devsetup: Makefile.autoconf
 	$(QUIET)[ $(OPAM) != "no" ] || (echo 'No `opam` found, aborting setup.' >&2; exit 1)
 	$(QUIET)$(call silent_on_success,installing $(OPAM_DEV_DEPS),\
 	  OPAMSWITCH=$(OPAMSWITCH); $(OPAM) install --yes --no-checksum user-setup $(OPAM_DEV_DEPS))
+	$(QUIET)$(call silent_on_success,installing ocamlformat,\
+	  OPAMSWITCH=$(OPAMSWITCH); $(OPAM) pin add --yes ocamlformat https://github.com/ocaml-ppx/ocamlformat.git#$$(grep version .ocamlformat | cut -d ' ' -f 2))
 	$(QUIET)echo '$(TERM_INFO)*** Running `opam config setup -a`$(TERM_RESET)' >&2
 	$(QUIET)OPAMSWITCH=$(OPAMSWITCH); $(OPAM) config --yes setup -a
 	$(QUIET)echo '$(TERM_INFO)*** Running `opam user-setup`$(TERM_RESET)' >&2

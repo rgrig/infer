@@ -43,6 +43,8 @@ val atomic_att : string
 
 val autorelease : string
 
+val biniou_buffer_size : int
+
 val block : string
 
 val builtin_expect : string
@@ -174,3 +176,5 @@ val sil_types_map : Typ.desc Clang_ast_extend.TypePointerMap.t ref
     Populated during frontend execution when new type is found *)
 
 val reset_global_state : unit -> unit
+
+val tableaux_evaluation : bool

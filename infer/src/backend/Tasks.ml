@@ -23,6 +23,7 @@ let create ?(continuation= None) closures =
   in
   {closures; continuations}
 
+
 let empty = {closures= []; continuations= Queue.create ()}
 
 (* Aggregate closures into groups of the given size *)
@@ -35,9 +36,17 @@ let aggregate ~size t =
     {t with closures}
   else t
 
+
 let run t =
   List.iter ~f:(fun f -> f ()) t.closures ;
   Queue.iter ~f:(fun closure -> closure ()) t.continuations
+
+
+let fork_protect ~f x =
+  L.reset_formatters () ;
+  ResultsDir.new_database_connection () ;
+  f x
+
 
 module Runner = struct
   type runner = {pool: ProcessPool.t; all_continuations: closure Queue.t}
@@ -48,10 +57,12 @@ module Runner = struct
     let pool = runner.pool in
     Queue.enqueue_all runner.all_continuations (Queue.to_list tasks.continuations) ;
     List.iter
-      ~f:(fun x -> ProcessPool.start_child ~f:(fun f -> L.reset_formatters () ; f ()) ~pool x)
+      ~f:(fun x -> ProcessPool.start_child ~f:(fun f -> fork_protect ~f ()) ~pool x)
       tasks.closures
+
 
   let complete runner =
     ProcessPool.wait_all runner.pool ;
     Queue.iter ~f:(fun f -> f ()) runner.all_continuations
+
 end

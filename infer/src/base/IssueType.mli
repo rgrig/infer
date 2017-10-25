@@ -43,7 +43,17 @@ val assert_failure : t
 
 val bad_footprint : t
 
-val buffer_overrun : t
+val buffer_overrun_l1 : t
+
+val buffer_overrun_l2 : t
+
+val buffer_overrun_l3 : t
+
+val buffer_overrun_l4 : t
+
+val buffer_overrun_l5 : t
+
+val buffer_overrun_s2 : t
 
 val cannot_star : t
 
@@ -89,6 +99,9 @@ val divide_by_zero : t
 
 val double_lock : t
 
+val do_not_report : t
+(** an issue type that should never be reported *)
+
 val empty_vector_access : t
 
 val eradicate_condition_redundant : t
@@ -133,6 +146,8 @@ val field_not_null_checked : t
 
 val inherently_dangerous_function : t
 
+val interface_not_thread_safe : t
+
 val internal_error : t
 
 val leak_after_array_abstraction : t
@@ -146,6 +161,8 @@ val missing_fld : t
 val null_dereference : t
 
 val null_test_after_dereference : t
+
+val nullable_dereference : t
 
 val parameter_not_null_checked : t
 

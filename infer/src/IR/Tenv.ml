@@ -23,12 +23,17 @@ end)
 (** Type for type environment. *)
 type t = Typ.Struct.t TypenameHash.t
 
+let iter f tenv = TypenameHash.iter f tenv
+
+let fold f tenv = TypenameHash.fold f tenv
+
 let pp fmt (tenv: t) =
   TypenameHash.iter
     (fun name typ ->
       Format.fprintf fmt "@[<6>NAME: %s@." (Typ.Name.to_string name) ;
       Format.fprintf fmt "@[<6>TYPE: %a@." (Typ.Struct.pp Pp.text name) typ)
     tenv
+
 
 (** Create a new type environment. *)
 let create () = TypenameHash.create 1000
@@ -38,7 +43,9 @@ let mk_struct tenv ?default ?fields ?statics ?methods ?supers ?annots name =
   let struct_typ =
     Typ.Struct.internal_mk_struct ?default ?fields ?statics ?methods ?supers ?annots ()
   in
-  TypenameHash.replace tenv name struct_typ ; struct_typ
+  TypenameHash.replace tenv name struct_typ ;
+  struct_typ
+
 
 (** Check if typename is found in tenv *)
 let mem tenv name = TypenameHash.mem tenv name
@@ -55,11 +62,36 @@ let lookup tenv name : Typ.Struct.t option =
     | CppClass (m, NoTemplate) -> (
       try Some (TypenameHash.find tenv (CStruct m))
       with Not_found -> None )
-    | _
-     -> None
+    | _ ->
+        None
+
 
 (** Add a (name,type) pair to the global type environment. *)
 let add tenv name struct_typ = TypenameHash.replace tenv name struct_typ
+
+let compare_fields (name1, _, _) (name2, _, _) = Typ.Fieldname.compare name1 name2
+
+let equal_fields f1 f2 = Int.equal (compare_fields f1 f2) 0
+
+let sort_fields fields = List.sort ~cmp:compare_fields fields
+
+let sort_fields_tenv tenv =
+  let sort_fields_struct name ({Typ.Struct.fields} as st) =
+    ignore (mk_struct tenv ~default:st ~fields:(sort_fields fields) name)
+  in
+  iter sort_fields_struct tenv
+
+
+(** Add a field to a given struct in the global type environment. *)
+let add_field tenv class_tn_name field =
+  match lookup tenv class_tn_name with
+  | Some ({fields} as struct_typ) ->
+      if not (List.mem ~equal:equal_fields fields field) then
+        let new_fields = List.merge [field] fields ~cmp:compare_fields in
+        ignore (mk_struct tenv ~default:struct_typ ~fields:new_fields ~statics:[] class_tn_name)
+  | _ ->
+      ()
+
 
 (** Get method that is being overriden by java_pname (if any) **)
 let get_overriden_method tenv pname_java =
@@ -77,20 +109,22 @@ let get_overriden_method tenv pname_java =
           Some (struct_typ_get_method_by_name struct_typ (Typ.Procname.java_get_method pname_java))
         with Not_found ->
           get_overriden_method_in_supers pname_java (supers_tail @ struct_typ.supers) )
-      | None
-       -> get_overriden_method_in_supers pname_java supers_tail )
-    | []
-     -> None
+      | None ->
+          get_overriden_method_in_supers pname_java supers_tail )
+    | [] ->
+        None
   in
   match lookup tenv (Typ.Procname.java_get_class_type_name pname_java) with
-  | Some {supers}
-   -> get_overriden_method_in_supers pname_java supers
-  | _
-   -> None
+  | Some {supers} ->
+      get_overriden_method_in_supers pname_java supers
+  | _ ->
+      None
+
 
 (** Serializer for type environments *)
 let tenv_serializer : t Serialization.serializer =
   Serialization.create_serializer Serialization.Key.tenv
+
 
 let global_tenv : t option ref = ref None
 
@@ -101,6 +135,7 @@ let load_from_file (filename: DB.filename) : t option =
       := Serialization.read_from_file tenv_serializer DB.global_tenv_fname ;
     !global_tenv )
   else Serialization.read_from_file tenv_serializer filename
+
 
 (** Save a type environment into a file *)
 let store_to_file (filename: DB.filename) (tenv: t) =
@@ -114,6 +149,15 @@ let store_to_file (filename: DB.filename) (tenv: t) =
     let fmt = Format.formatter_of_out_channel out_channel in
     Format.fprintf fmt "%a" pp tenv ; Out_channel.close out_channel
 
-let iter f tenv = TypenameHash.iter f tenv
 
-let fold f tenv = TypenameHash.fold f tenv
+exception Found of Typ.Name.t
+
+let language_is tenv lang =
+  match TypenameHash.iter (fun n -> raise (Found n)) tenv with
+  | () ->
+      false
+  | exception Found JavaClass _ ->
+      Config.equal_language lang Java
+  | exception Found _ ->
+      Config.equal_language lang Clang
+

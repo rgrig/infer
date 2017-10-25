@@ -281,7 +281,10 @@ module Procname : sig
     [@@deriving compare]
 
   val equal : t -> t -> bool
-  (** Equality for proc names. *)
+
+  val hash : t -> int
+
+  val sexp_of_t : t -> Sexp.t
 
   type java_type = string option * string
 
@@ -299,6 +302,7 @@ module Procname : sig
     | ObjCInternalMethod
 
   (** Hash tables with proc names as keys. *)
+  module Hashable : Caml.Hashtbl.HashedType with type t = t
 
   module Hash : Caml.Hashtbl.S with type key = t
 
@@ -369,8 +373,6 @@ module Procname : sig
     Name.t -> string -> objc_cpp_method_kind -> template_spec_info -> is_generic_model:bool
     -> objc_cpp
   (** Create an objc procedure name from a class_name and method_name. *)
-
-  val get_default_objc_class_method : Name.t -> t
 
   val objc_cpp_get_class_name : objc_cpp -> string
   (** Get the class name of a Objective-C/C++ procedure name. *)
@@ -479,8 +481,8 @@ module Procname : sig
   val to_unique_id : t -> string
   (** Convert a proc name into a unique identifier. *)
 
-  val to_filename : t -> string
-  (** Convert a proc name to a filename. *)
+  val to_filename : ?crc_only:bool -> t -> string
+  (** Convert a proc name to a filename or only to its crc. *)
 
   val get_qualifiers : t -> QualifiedCppName.t
   (** get qualifiers of C/objc/C++ method/function *)
@@ -579,6 +581,8 @@ module Struct : sig
     ; annots: Annot.Item.t  (** annotations *) }
 
   type lookup = Name.t -> t option
+
+  val pp_field : Pp.env -> F.formatter -> field -> unit
 
   val pp : Pp.env -> Name.t -> F.formatter -> t -> unit
   (** Pretty print a struct type. *)

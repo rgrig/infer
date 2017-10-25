@@ -7,7 +7,7 @@
 
 TESTS_DIR = ../..
 
-ANALYZER = infer
+ANALYZER = checkers
 
 CLANG_OPTIONS = -c
 INFERPRINT_OPTIONS = --issues-tests
@@ -18,6 +18,6 @@ include $(TESTS_DIR)/clang.make
 
 infer-out/report.json: $(CLANG_DEPS) $(SOURCES) $(HEADERS)
 	$(QUIET)$(call silent_on_success,Testing make clang and javac integration,\
-	  $(INFER_BIN) --no-keep-going --dump-duplicate-symbols --project-root $(TESTS_DIR) -a $(ANALYZER) -- \
+	  $(INFER_BIN) --dump-duplicate-symbols --project-root $(TESTS_DIR) -a $(ANALYZER) -- \
 	    make -C ../codetoanalyze/make clean all)
 	$(QUIET)$(call check_no_duplicates,infer-out/duplicates.txt)

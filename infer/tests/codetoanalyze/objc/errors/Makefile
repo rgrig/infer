@@ -11,20 +11,19 @@ IPHONESIMULATOR_ISYSROOT_SUFFIX = /Platforms/iPhoneSimulator.platform/Developer/
 
 XCODEROOT = $(shell $(XCODE_SELECT) -p)
 
-ANALYZER = infer
+ANALYZER = checkers
 CLANG_OPTIONS = -x objective-c \
   -isysroot $(XCODEROOT)$(IPHONESIMULATOR_ISYSROOT_SUFFIX) \
   -mios-simulator-version-min=8.2 --target=x86_64-apple-darwin14 -c \
 
 CLEAN_EXTRA = infer-out-arc infer-out-all infer-out-all infer-out-arc \
               issues.exp.test.all issues.exp.test.arc issues.exp.test.default
-INFER_OPTIONS = --dump-duplicate-symbols --no-filtering --debug-exceptions --project-root $(TESTS_DIR) --no-keep-going
+INFER_OPTIONS = --biabduction-only --dump-duplicate-symbols --debug-exceptions --project-root $(TESTS_DIR)
 INFERPRINT_OPTIONS = --issues-tests
 
 SOURCES_DEFAULT = \
   field_superclass/B.m \
   memory_leaks_benchmark/MemoryLeakRaii.m \
-  memory_leaks_benchmark/NSMakeCollectableExample.m \
   memory_leaks_benchmark/NSString_models_tests.m \
 	memory_leaks_benchmark/NSData_models_tests.m \
   memory_leaks_benchmark/RetainReleaseExampleBucketing.m \
@@ -48,6 +47,7 @@ SOURCES_DEFAULT = \
   shared/memory_leaks_benchmark/MemoryLeakExample.m \
   shared/memory_leaks_benchmark/RetainReleaseExample.m \
   shared/memory_leaks_benchmark/arc_methods.m \
+	shared/npe/Available_expr.m \
   shared/npe/Nonnull_attribute_example.m \
   shared/property/GetterExample.m \
   shared/property/PropertyAttributes.m \
@@ -79,7 +79,6 @@ SOURCES_BUCKET_ALL = \
   shared/block/dispatch_in_macro.m \
   shared/category_procdesc/main.c \
   shared/field_superclass/SuperExample.m \
-  shared/memory_leaks_benchmark/RetainReleaseExample2.m \
   shared/npe/npe_malloc.m \
   warnings/ParameterNotNullableExample.m \
 

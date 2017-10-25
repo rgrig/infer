@@ -13,9 +13,6 @@ open! IStd
 val initial_times : Unix.process_times
 (** initial process times *)
 
-val initial_timeofday : float
-(** precise time of day at the start of the analysis *)
-
 val string_crc_hex32 : string -> string
 (** Compute a 32-character hexadecimal crc using the Digest module  *)
 
@@ -94,3 +91,13 @@ val write_file_with_locking : ?delete:bool -> f:(Out_channel.t -> unit) -> strin
 
 val rmtree : string -> unit
 (** [rmtree path] removes [path] and, if [path] is a directory, recursively removes its contents *)
+
+val try_finally_swallow_timeout : f:(unit -> 'a) -> finally:(unit -> unit) -> 'a
+(** Calls [f] then [finally] even if [f] raised an exception. The original exception is reraised afterwards.
+    Where possible use [SymOp.try_finally] to avoid swallowing timeouts. *)
+
+val without_gc : f:(unit -> unit) -> unit
+(** Call [f ()] with the gc compaction disabled during the execution *)
+
+val yield : unit -> unit
+(** try to give the control back to the OS without sleeping too much *)

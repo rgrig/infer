@@ -11,7 +11,11 @@ open! IStd
 module F = Format
 
 module MockTrace = Trace.Make (struct
-  module MockTraceElem = CallSite
+  module MockTraceElem = struct
+    include CallSite
+
+    let matches ~caller ~callee = equal caller callee
+  end
 
   module Source = Source.Make (struct
     include MockTraceElem
@@ -20,6 +24,7 @@ module MockTrace = Trace.Make (struct
       if String.is_prefix ~prefix:"SOURCE" (Typ.Procname.to_string pname) then
         Some (CallSite.make pname Location.dummy, None)
       else None
+
 
     let get_tainted_formals _ _ = []
   end)
@@ -31,9 +36,10 @@ module MockTrace = Trace.Make (struct
       if String.is_prefix ~prefix:"SINK" (Typ.Procname.to_string pname) then
         Some (CallSite.make pname Location.dummy, IntSet.singleton 0)
       else None
+
   end)
 
-  let should_report _ _ = false
+  let get_report _ _ = None
 end)
 
 module MockTaintAnalysis = TaintAnalysis.Make (struct
@@ -54,7 +60,9 @@ module MockTaintAnalysis = TaintAnalysis.Make (struct
 end)
 
 module TestInterpreter =
-  AnalyzerTester.Make (ProcCfg.Normal) (LowerHil.MakeDefault (MockTaintAnalysis.TransferFunctions))
+  AnalyzerTester.Make
+    (ProcCfg.Normal)
+    (LowerHil.Make (MockTaintAnalysis.TransferFunctions) (LowerHil.DefaultConfig))
 
 let tests =
   let open OUnit2 in
@@ -114,7 +122,7 @@ let tests =
   (* hack: register an empty analyze_ondemand to prevent a crash because the callback is unset *)
   let analyze_ondemand summary _ = summary in
   let get_proc_desc _ = None in
-  let callbacks = {Ondemand.analyze_ondemand= analyze_ondemand; get_proc_desc} in
+  let callbacks = {Ondemand.analyze_ondemand; get_proc_desc} in
   Ondemand.set_callbacks callbacks ;
   let test_list =
     [ ("source recorded", [assign_to_source "ret_id"; invariant "{ ret_id$0 => (SOURCE -> ?) }"])
@@ -192,3 +200,4 @@ let tests =
          ~initial:(MockTaintAnalysis.Domain.empty, IdAccessPathMapDomain.empty)
   in
   "taint_test_suite" >::: test_list
+

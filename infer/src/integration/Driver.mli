@@ -12,8 +12,6 @@ open! IStd
 (** entry points for top-level functionalities such as capture under various build systems,
     analysis, and reporting *)
 
-type build_system
-
 (** based on the build_system and options passed to infer, we run in different driver modes *)
 type mode =
   | Analyze
@@ -24,11 +22,13 @@ type mode =
   | Javac of Javac.compiler * string * string list
   | Maven of string * string list
   | Python of string list
-  | PythonCapture of build_system * string list
+  | PythonCapture of Config.build_system * string list
   | XcodeXcpretty of string * string list
   [@@deriving compare]
 
 val equal_mode : mode -> mode -> bool
+
+val pp_mode : Format.formatter -> mode -> unit
 
 val mode_from_command_line : mode Lazy.t
 (** driver mode computed from the command-line arguments and settings in Config *)

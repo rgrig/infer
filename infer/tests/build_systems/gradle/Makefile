@@ -8,7 +8,7 @@
 TESTS_DIR = ../..
 ROOT_DIR = $(TESTS_DIR)/../..
 
-ANALYZER = infer
+ANALYZER = checkers
 SOURCES_DIR = $(ROOT_DIR)/examples/java_hello
 SOURCES = $(wildcard $(SOURCES_DIR)/*.java)
 # no objects since we only run a mock gradle that cannot compile Java sources
@@ -18,7 +18,7 @@ INFERPRINT_OPTIONS = --issues-tests
 include $(TESTS_DIR)/java.make
 include $(TESTS_DIR)/infer.make
 
-infer-out/report.json: $(JAVA_DEPS) $(SOURCES)
+infer-out/report.json: $(JAVA_DEPS) $(SOURCES) $(MAKEFILE_LIST)
 #	mock version of gradle
 	$(QUIET)PATH=$(CURDIR)/../mock:"$$PATH"; \
 	cd $(SOURCES_DIR) && \

@@ -19,41 +19,39 @@ type failure_kind =
   | FKrecursion_timeout of int  (** max recursion level exceeded *)
   | FKcrash of string  (** uncaught exception or failed assertion *)
 
-exception Analysis_failure_exe of failure_kind(** failure that prevented analysis from finishing *)
+exception Analysis_failure_exe of failure_kind
+    (** failure that prevented analysis from finishing *)
 
 let exn_not_failure = function Analysis_failure_exe _ -> false | _ -> true
 
-let try_finally ?(fail_early= false) f g =
+let try_finally ~f ~finally =
   match f () with
-  | r
-   -> g () ; r
-  | exception (Analysis_failure_exe _ as f_exn)
-   -> let backtrace = Caml.Printexc.get_raw_backtrace () in
-      ( if not fail_early then
-          try g ()
-          with _ -> () (* swallow in favor of the original exception *) ) ;
-      reraise ~backtrace f_exn
-  | exception f_exn
-   -> let f_backtrace = Caml.Printexc.get_raw_backtrace () in
-      match g () with
-      | ()
-       -> reraise ~backtrace:f_backtrace f_exn
-      | exception (Analysis_failure_exe _ as g_exn)
-       -> reraise g_exn
-      | exception _
-       -> reraise ~backtrace:f_backtrace f_exn
+  | r ->
+      finally () ; r
+  | exception (Analysis_failure_exe _ as f_exn) ->
+      reraise_after f_exn ~f:(fun () ->
+          try finally ()
+          with _ -> (* swallow in favor of the original exception *) () )
+  | exception f_exn ->
+      reraise_after f_exn ~f:(fun () ->
+          try finally ()
+          with
+          | finally_exn
+          when (* do not swallow Analysis_failure_exe thrown from finally *)
+               match finally_exn with Analysis_failure_exe _ -> false | _ -> true
+          -> () )
 
-let finally_try g f = try_finally f g
 
 let pp_failure_kind fmt = function
-  | FKtimeout
-   -> F.fprintf fmt "TIMEOUT"
-  | FKsymops_timeout symops
-   -> F.fprintf fmt "SYMOPS TIMEOUT (%d)" symops
-  | FKrecursion_timeout level
-   -> F.fprintf fmt "RECURSION TIMEOUT(%d)" level
-  | FKcrash msg
-   -> F.fprintf fmt "CRASH (%s)" msg
+  | FKtimeout ->
+      F.fprintf fmt "TIMEOUT"
+  | FKsymops_timeout symops ->
+      F.fprintf fmt "SYMOPS TIMEOUT (%d)" symops
+  | FKrecursion_timeout level ->
+      F.fprintf fmt "RECURSION TIMEOUT(%d)" level
+  | FKcrash msg ->
+      F.fprintf fmt "CRASH (%s)" msg
+
 
 (** Count the number of symbolic operations *)
 
@@ -62,9 +60,11 @@ let timeout_seconds =
   ref
     (Option.map Config.seconds_per_iteration ~f:(fun sec -> sec *. float_of_int Config.iterations))
 
+
 (** Timeout in SymOps *)
 let timeout_symops =
   ref (Option.map Config.symops_per_iteration ~f:(fun symops -> symops * Config.iterations))
+
 
 let get_timeout_seconds () = !timeout_seconds
 
@@ -98,6 +98,7 @@ let save_state ~keep_symop_total =
   gs := new_state ;
   old_state
 
+
 (** handler for the wallclock timeout *)
 let wallclock_timeout_handler = ref None
 
@@ -113,18 +114,20 @@ let unset_wallclock_alarm () = !gs.last_wallclock <- None
 (** if the wallclock alarm has expired, raise a timeout exception *)
 let check_wallclock_alarm () =
   match (!gs.last_wallclock, !wallclock_timeout_handler) with
-  | Some alarm_time, Some handler when Unix.gettimeofday () >= alarm_time
-   -> unset_wallclock_alarm () ; handler ()
-  | _
-   -> ()
+  | Some alarm_time, Some handler when Unix.gettimeofday () >= alarm_time ->
+      unset_wallclock_alarm () ; handler ()
+  | _ ->
+      ()
+
 
 (** Return the time remaining before the wallclock alarm expires *)
 let get_remaining_wallclock_time () =
   match !gs.last_wallclock with
-  | Some alarm_time
-   -> max 0.0 (alarm_time -. Unix.gettimeofday ())
-  | None
-   -> 0.0
+  | Some alarm_time ->
+      max 0.0 (alarm_time -. Unix.gettimeofday ())
+  | None ->
+      0.0
+
 
 (** Return the total number of symop's since the beginning *)
 let get_total () = !(!gs.symop_total)
@@ -137,11 +140,12 @@ let pay () =
   !gs.symop_count <- !gs.symop_count + 1 ;
   !gs.symop_total := !(!gs.symop_total) + 1 ;
   ( match !timeout_symops with
-  | Some symops when !gs.symop_count > symops && !gs.alarm_active
-   -> raise (Analysis_failure_exe (FKsymops_timeout !gs.symop_count))
-  | _
-   -> () ) ;
+  | Some symops when !gs.symop_count > symops && !gs.alarm_active ->
+      raise (Analysis_failure_exe (FKsymops_timeout !gs.symop_count))
+  | _ ->
+      () ) ;
   check_wallclock_alarm ()
+
 
 (** Reset the counter *)
 let reset_count () = !gs.symop_count <- 0
@@ -150,6 +154,7 @@ let reset_count () = !gs.symop_count <- 0
 let set_alarm () =
   reset_count () ;
   !gs.alarm_active <- true
+
 
 (** De-activate the alarm *)
 let unset_alarm () = !gs.alarm_active <- false

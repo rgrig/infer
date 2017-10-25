@@ -9,7 +9,7 @@
 
 open! IStd
 
-type t = ALVar.formula_id * ALVar.alexp list
+type t = ALVar.formula_id * ALVar.alexp list [@@deriving compare]
 
 (* (name, [param1,...,paramK]) *)
 
@@ -95,6 +95,8 @@ val class_unavailable_in_supported_ios_sdk :
 
 val has_type : Ctl_parser_types.ast_node -> ALVar.alexp -> bool
 
+val has_value : Ctl_parser_types.ast_node -> ALVar.alexp -> bool
+
 val method_return_type : Ctl_parser_types.ast_node -> ALVar.alexp -> bool
 
 val has_type_subprotocol_of : Ctl_parser_types.ast_node -> ALVar.alexp -> bool
@@ -105,9 +107,6 @@ val get_selector : Ctl_parser_types.ast_node -> string option
 
 val within_responds_to_selector_block :
   CLintersContext.context -> Ctl_parser_types.ast_node -> bool
-
-val objc_method_has_nth_parameter_of_type :
-  Ctl_parser_types.ast_node -> ALVar.alexp -> ALVar.alexp -> bool
 
 val using_namespace : Ctl_parser_types.ast_node -> ALVar.alexp -> bool
 
@@ -129,3 +128,9 @@ val iphoneos_target_sdk_version_by_path : CLintersContext.context -> string opti
 val iphoneos_target_sdk_version_greater_or_equal : CLintersContext.context -> string -> bool
 
 val within_available_class_block : CLintersContext.context -> Ctl_parser_types.ast_node -> bool
+
+val has_type_const_ptr_to_objc_class : Ctl_parser_types.ast_node -> bool
+
+val is_decl : Ctl_parser_types.ast_node -> bool
+
+val get_ast_node_type_ptr : Ctl_parser_types.ast_node -> Clang_ast_t.type_ptr option

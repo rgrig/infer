@@ -289,6 +289,7 @@ AC_SUBST([NCPU])
 
 AC_CHECK_TOOL([ANT], [ant], [no])
 AC_CHECK_TOOL([BUCK], [buck], [no])
+AC_CHECK_TOOL([EMACS], [emacs], [no])
 AC_ARG_VAR([MVN], [command to execute Maven when running tests])
 AS_IF([test "x$MVN" = "x"], [
   AC_CHECK_TOOL([MVN], [mvn], [no])
@@ -300,7 +301,7 @@ if test x"$NDKBUILD" = x"no"; then
 # ndk-build not in $PATH, look into potential android NDK install paths and record the absolute path
 # to ndk-build
   AC_PATH_PROG([NDKBUILD], [ndk-build], [no],
-    [$PATH$PATH_SEPARATOR$ANDROID_NDK$PATH_SEPARATOR/opt/android_ndk/r10e])
+    [$PATH$PATH_SEPARATOR$ANDROID_NDK$PATH_SEPARATOR/opt/android_ndk/r15c])
 fi
 
 AC_CHECK_PYTHON_MODULE([$PYTHON27], [lxml])

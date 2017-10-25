@@ -555,32 +555,14 @@ module Rename : sig
   val to_subst_proj : side -> Sil.fav -> Sil.exp_subst
 
   val to_subst_emb : side -> Sil.exp_subst
-
-  val get_unify_subs : unit -> (Exp.t * Exp.t) list
   (*
   val get : Exp.t -> Exp.t -> Exp.t option
   val pp : printenv -> Format.formatter -> (Exp.t * Exp.t * Exp.t) list -> unit
 *)
-  val d_tbl : unit -> unit
 end = struct
   type t = (Exp.t * Exp.t * Exp.t) list
 
   let tbl : t ref = ref []
-
-  let d_tbl () =
-    L.d_strln "tbl";
-    let ppp (x1, x2, x3) =
-      L.d_str "A="; L.d_str (Exp.to_string x1);
-      L.d_str "; B="; L.d_str (Exp.to_string x2);
-      L.d_str "; C="; L.d_str (Exp.to_string x3);
-      L.d_strln "" in
-(* XXX
-    Format.printf "@[<2>tbl";
-    let ppp (x1, x2, x3) =
-      Format.printf "@\n(%a, %a, %a)" Exp.pp x1 Exp.pp x2 Exp.pp x3 in
-*)
-    List.iter ~f:ppp !tbl
-(*     Format.printf "@]@\n" *)
 
   let init () = tbl := []
 
@@ -710,14 +692,15 @@ end = struct
       let compare (i, _) (i', _) = Ident.compare i i' in
       List.sort ~cmp:compare sub_list
     in
-    let rec uniq ys = function
-      | [] -> ys
-      | [x] -> x :: ys
-      | ((i1, _) as x) :: (((i2, _) :: _) as xs) ->
-          if Ident.equal i1 i2 then uniq ys xs
-          else uniq (x :: ys) xs
+    let rec find_duplicates = function
+      | (i, _) :: ((i', _) :: _ as t) ->
+          Ident.equal i i' || find_duplicates t
+      | _ ->
+          false
     in
-    Sil.exp_subst_of_list (uniq [] sub_list_sorted)
+    if find_duplicates sub_list_sorted then ( L.d_strln "failure reason 12" ; raise Sil.JoinFail )
+    else Sil.exp_subst_of_list sub_list_sorted
+
 
   let get_others' f_lookup side e =
     let side_op = opposite side in
@@ -847,39 +830,6 @@ end = struct
         let entry = (e1, e2, e) in
         push entry ; Todo.push entry ; e
 
-  (*
-    For each x such that (_,x,y1), ..., (_,x,yn) are in !tbl,
-    return substitutions that amount to y1=...=yn.
-    Similarly for (x,_,y1), ..., (x,_,yn).
-   *)
-  let get_unify_subs () : (Exp.t * Exp.t) list =
-    let uf = Exp.Hash.create 101 in
-    let rec find x =
-      try
-        let y = Exp.Hash.find uf x in
-        let z = find y in
-        Exp.Hash.replace uf x z; z
-      with Not_found -> x in
-    let union x y =
-      let x, y = if Random.bool () then (x, y) else (y, x) in
-      Exp.Hash.replace uf (find x) (find y) in
-
-    let union_by_fst xs =
-      let h = Exp.Hash.create 2 in
-      let record (a, b) =
-        try
-          let c = Exp.Hash.find h a in
-          union b c
-        with Not_found -> Exp.Hash.add h a b in
-      List.iter ~f:record xs in
-    let f1 (a, _, b) = (a, b) in
-    let f2 (_, a, b) = (a, b) in
-    union_by_fst (List.map ~f:f1 !tbl);
-    union_by_fst (List.map ~f:f2 !tbl);
-    let get_key k _ ks = k :: ks in
-    let ks = Exp.Hash.fold get_key uf [] in
-    let extract subs k = (k, find k) :: subs in
-    List.fold ~f:extract ~init:[] ks
 end
 
 (** {2 Functions for constructing fresh sil data types} *)
@@ -1380,8 +1330,9 @@ let hpred_partial_meet tenv (todo: Exp.t * Exp.t * Exp.t) (hpred1: Sil.hpred) (h
       let oB' = exp_partial_meet oB1 oB2 in
       let shared' = exp_list_partial_meet shared1 shared2 in
       Prop.mk_dllseg tenv (kind_meet k1 k2) hpara' iF' oB' oF' iB' shared'
-  | _
-   -> assert false
+  | _ ->
+      assert false
+
 
 (** {2 Join and Meet for Sigma} *)
 
@@ -1390,32 +1341,34 @@ let find_hpred_by_address tenv (e: Exp.t) (sigma: Prop.sigma) : Sil.hpred option
     match Prover.is_root tenv Prop.prop_emp e' e with None -> false | Some _ -> true
   in
   let contains_e = function
-    | Sil.Hpointsto (e', _, _)
-     -> is_root_for_e e'
-    | Sil.Hlseg (_, _, e', _, _)
-     -> is_root_for_e e'
-    | Sil.Hdllseg (_, _, iF, _, _, iB, _)
-     -> is_root_for_e iF || is_root_for_e iB
+    | Sil.Hpointsto (e', _, _) ->
+        is_root_for_e e'
+    | Sil.Hlseg (_, _, e', _, _) ->
+        is_root_for_e e'
+    | Sil.Hdllseg (_, _, iF, _, _, iB, _) ->
+        is_root_for_e iF || is_root_for_e iB
   in
   let rec f sigma_acc = function
-    | []
-     -> (None, sigma)
-    | hpred :: sigma
-     -> if contains_e hpred then (Some hpred, List.rev_append sigma_acc sigma)
+    | [] ->
+        (None, sigma)
+    | hpred :: sigma ->
+        if contains_e hpred then (Some hpred, List.rev_append sigma_acc sigma)
         else f (hpred :: sigma_acc) sigma
   in
   f [] sigma
 
+
 let same_pred (hpred1: Sil.hpred) (hpred2: Sil.hpred) : bool =
   match (hpred1, hpred2) with
-  | Sil.Hpointsto _, Sil.Hpointsto _
-   -> true
-  | Sil.Hlseg _, Sil.Hlseg _
-   -> true
-  | Sil.Hdllseg _, Sil.Hdllseg _
-   -> true
-  | _
-   -> false
+  | Sil.Hpointsto _, Sil.Hpointsto _ ->
+      true
+  | Sil.Hlseg _, Sil.Hlseg _ ->
+      true
+  | Sil.Hdllseg _, Sil.Hdllseg _ ->
+      true
+  | _ ->
+      false
+
 
 (* check that applying renaming to the lhs / rhs of [sigma_new]
  * gives [sigma] and that the renaming is injective *)
@@ -1428,6 +1381,7 @@ let sigma_renaming_check (lhs: side) (sigma: Prop.sigma) (sigma_new: Prop.sigma)
   let sigma' = Prop.sigma_sub (`Exp sub) sigma_new in
   equal_sigma sigma sigma'
 
+
 let sigma_renaming_check_lhs = sigma_renaming_check Lhs
 
 let sigma_renaming_check_rhs = sigma_renaming_check Rhs
@@ -1436,21 +1390,21 @@ let rec sigma_partial_join' tenv mode (sigma_acc: Prop.sigma) (sigma1_in: Prop.s
     (sigma2_in: Prop.sigma) : Prop.sigma * Prop.sigma * Prop.sigma =
   let lookup_and_expand side e e' =
     match (Rename.get_others side e, side) with
-    | None, _
-     -> L.d_strln "failure reason 60" ; raise Sil.JoinFail
-    | Some (e_res, e_op), Lhs
-     -> (e_res, exp_partial_join e' e_op)
-    | Some (e_res, e_op), Rhs
-     -> (e_res, exp_partial_join e_op e')
+    | None, _ ->
+        L.d_strln "failure reason 60" ; raise Sil.JoinFail
+    | Some (e_res, e_op), Lhs ->
+        (e_res, exp_partial_join e' e_op)
+    | Some (e_res, e_op), Rhs ->
+        (e_res, exp_partial_join e_op e')
   in
   let join_list_and_non side root' hlseg e opposite =
     match hlseg with
-    | Sil.Hlseg (_, hpara, root, next, shared)
-     -> let next' = do_side side exp_partial_join next opposite in
+    | Sil.Hlseg (_, hpara, root, next, shared) ->
+        let next' = do_side side exp_partial_join next opposite in
         let shared' = Rename.lookup_list side shared in
         CheckJoin.add side root next ; Sil.Hlseg (Sil.Lseg_PE, hpara, root', next', shared')
-    | Sil.Hdllseg (_, hpara, iF, oB, oF, iB, shared) when Exp.equal iF e
-     -> let oF' = do_side side exp_partial_join oF opposite in
+    | Sil.Hdllseg (_, hpara, iF, oB, oF, iB, shared) when Exp.equal iF e ->
+        let oF' = do_side side exp_partial_join oF opposite in
         let shared' = Rename.lookup_list side shared in
         let oB', iB' = lookup_and_expand side oB iB in
         (*
@@ -1460,8 +1414,8 @@ let rec sigma_partial_join' tenv mode (sigma_acc: Prop.sigma) (sigma1_in: Prop.s
         CheckJoin.add side iF oF ;
         CheckJoin.add side oB iB ;
         Sil.Hdllseg (Sil.Lseg_PE, hpara, root', oB', oF', iB', shared')
-    | Sil.Hdllseg (_, hpara, iF, oB, oF, iB, shared) when Exp.equal iB e
-     -> let oB' = do_side side exp_partial_join oB opposite in
+    | Sil.Hdllseg (_, hpara, iF, oB, oF, iB, shared) when Exp.equal iB e ->
+        let oB' = do_side side exp_partial_join oB opposite in
         let shared' = Rename.lookup_list side shared in
         let oF', iF' = lookup_and_expand side oF iF in
         (*
@@ -1471,26 +1425,26 @@ let rec sigma_partial_join' tenv mode (sigma_acc: Prop.sigma) (sigma1_in: Prop.s
         CheckJoin.add side iF oF ;
         CheckJoin.add side oB iB ;
         Sil.Hdllseg (Sil.Lseg_PE, hpara, iF', oB', oF', root', shared')
-    | _
-     -> assert false
+    | _ ->
+        assert false
   in
   let update_list side lseg root' =
     match lseg with
-    | Sil.Hlseg (k, hpara, _, next, shared)
-     -> let next' = Rename.lookup side next and shared' = Rename.lookup_list_todo side shared in
+    | Sil.Hlseg (k, hpara, _, next, shared) ->
+        let next' = Rename.lookup side next and shared' = Rename.lookup_list_todo side shared in
         Sil.Hlseg (k, hpara, root', next', shared')
-    | _
-     -> assert false
+    | _ ->
+        assert false
   in
   let update_dllseg side dllseg iF iB =
     match dllseg with
-    | Sil.Hdllseg (k, hpara, _, oB, oF, _, shared)
-     -> let oB' = Rename.lookup side oB
+    | Sil.Hdllseg (k, hpara, _, oB, oF, _, shared) ->
+        let oB' = Rename.lookup side oB
         and oF' = Rename.lookup side oF
         and shared' = Rename.lookup_list_todo side shared in
         Sil.Hdllseg (k, hpara, iF, oB', oF', iB, shared')
-    | _
-     -> assert false
+    | _ ->
+        assert false
   in
   (* Drop the part of 'other' sigma corresponding to 'target' sigma if possible.
      'side' describes that target is Lhs or Rhs.
@@ -1501,30 +1455,34 @@ let rec sigma_partial_join' tenv mode (sigma_acc: Prop.sigma) (sigma1_in: Prop.s
     Todo.push todo ;
     let res =
       match side with
-      | Lhs
-       -> let res, target', other' = sigma_partial_join' tenv mode [] target other in
-          list_is_empty target' ; sigma_renaming_check_lhs target res ; other'
-      | Rhs
-       -> let res, other', target' = sigma_partial_join' tenv mode [] other target in
-          list_is_empty target' ; sigma_renaming_check_rhs target res ; other'
+      | Lhs ->
+          let res, target', other' = sigma_partial_join' tenv mode [] target other in
+          list_is_empty target' ;
+          sigma_renaming_check_lhs target res ;
+          other'
+      | Rhs ->
+          let res, other', target' = sigma_partial_join' tenv mode [] other target in
+          list_is_empty target' ;
+          sigma_renaming_check_rhs target res ;
+          other'
     in
     Todo.set x ; res
   in
   let cut_lseg side todo lseg sigma =
     match lseg with
-    | Sil.Hlseg (_, hpara, root, next, shared)
-     -> let _, sigma_lseg = Sil.hpara_instantiate hpara root next shared in
+    | Sil.Hlseg (_, hpara, root, next, shared) ->
+        let _, sigma_lseg = Sil.hpara_instantiate hpara root next shared in
         cut_sigma side todo sigma_lseg sigma
-    | _
-     -> assert false
+    | _ ->
+        assert false
   in
   let cut_dllseg side todo root lseg sigma =
     match lseg with
-    | Sil.Hdllseg (_, hpara, _, oB, oF, _, shared)
-     -> let _, sigma_dllseg = Sil.hpara_dll_instantiate hpara root oB oF shared in
+    | Sil.Hdllseg (_, hpara, _, oB, oF, _, shared) ->
+        let _, sigma_dllseg = Sil.hpara_dll_instantiate hpara root oB oF shared in
         cut_sigma side todo sigma_dllseg sigma
-    | _
-     -> assert false
+    | _ ->
+        assert false
   in
   try
     let todo_curr = Todo.pop () in
@@ -1548,81 +1506,85 @@ let rec sigma_partial_join' tenv mode (sigma_acc: Prop.sigma) (sigma1_in: Prop.s
     let hpred_opt1, sigma1 = find_hpred_by_address tenv e1 sigma1_in in
     let hpred_opt2, sigma2 = find_hpred_by_address tenv e2 sigma2_in in
     match (hpred_opt1, hpred_opt2) with
-    | None, None
-     -> sigma_partial_join' tenv mode sigma_acc sigma1 sigma2
+    | None, None ->
+        sigma_partial_join' tenv mode sigma_acc sigma1 sigma2
     | Some (Sil.Hlseg (k, _, _, _, _) as lseg), None
-    | Some (Sil.Hdllseg (k, _, _, _, _, _, _) as lseg), None
-     -> if not Config.nelseg || Sil.equal_lseg_kind k Sil.Lseg_PE then
+    | Some (Sil.Hdllseg (k, _, _, _, _, _, _) as lseg), None ->
+        if not Config.nelseg || Sil.equal_lseg_kind k Sil.Lseg_PE then
           let sigma_acc' = join_list_and_non Lhs e lseg e1 e2 :: sigma_acc in
           sigma_partial_join' tenv mode sigma_acc' sigma1 sigma2
         else ( L.d_strln "failure reason 62" ; raise Sil.JoinFail )
     | None, Some (Sil.Hlseg (k, _, _, _, _) as lseg)
-    | None, Some (Sil.Hdllseg (k, _, _, _, _, _, _) as lseg)
-     -> if not Config.nelseg || Sil.equal_lseg_kind k Sil.Lseg_PE then
+    | None, Some (Sil.Hdllseg (k, _, _, _, _, _, _) as lseg) ->
+        if not Config.nelseg || Sil.equal_lseg_kind k Sil.Lseg_PE then
           let sigma_acc' = join_list_and_non Rhs e lseg e2 e1 :: sigma_acc in
           sigma_partial_join' tenv mode sigma_acc' sigma1 sigma2
         else ( L.d_strln "failure reason 63" ; raise Sil.JoinFail )
-    | None, _ | _, None
-     -> L.d_strln "failure reason 64" ; raise Sil.JoinFail
-    | Some hpred1, Some hpred2 when same_pred hpred1 hpred2
-     -> let hpred_res1 = hpred_partial_join tenv mode todo_curr hpred1 hpred2 in
+    | None, _ | _, None ->
+        L.d_strln "failure reason 64" ; raise Sil.JoinFail
+    | Some hpred1, Some hpred2 when same_pred hpred1 hpred2 ->
+        let hpred_res1 = hpred_partial_join tenv mode todo_curr hpred1 hpred2 in
         sigma_partial_join' tenv mode (hpred_res1 :: sigma_acc) sigma1 sigma2
-    | Some (Sil.Hlseg _ as lseg), Some hpred2
-     -> let sigma2' = cut_lseg Lhs todo_curr lseg (hpred2 :: sigma2) in
+    | Some (Sil.Hlseg _ as lseg), Some hpred2 ->
+        let sigma2' = cut_lseg Lhs todo_curr lseg (hpred2 :: sigma2) in
         let sigma_acc' = update_list Lhs lseg e :: sigma_acc in
         sigma_partial_join' tenv mode sigma_acc' sigma1 sigma2'
-    | Some hpred1, Some (Sil.Hlseg _ as lseg)
-     -> let sigma1' = cut_lseg Rhs todo_curr lseg (hpred1 :: sigma1) in
+    | Some hpred1, Some (Sil.Hlseg _ as lseg) ->
+        let sigma1' = cut_lseg Rhs todo_curr lseg (hpred1 :: sigma1) in
         let sigma_acc' = update_list Rhs lseg e :: sigma_acc in
         sigma_partial_join' tenv mode sigma_acc' sigma1' sigma2
-    | Some (Sil.Hdllseg (_, _, iF1, _, _, iB1, _) as dllseg), Some hpred2 when Exp.equal e1 iF1
-     -> let iB_res = exp_partial_join iB1 e2 in
+    | Some (Sil.Hdllseg (_, _, iF1, _, _, iB1, _) as dllseg), Some hpred2 when Exp.equal e1 iF1 ->
+        let iB_res = exp_partial_join iB1 e2 in
         let sigma2' = cut_dllseg Lhs todo_curr iF1 dllseg (hpred2 :: sigma2) in
         let sigma_acc' = update_dllseg Lhs dllseg e iB_res :: sigma_acc in
         CheckJoin.add Lhs iF1 iB1 ;
         (* add equality iF1=iB1 *)
         sigma_partial_join' tenv mode sigma_acc' sigma1 sigma2'
     | Some (Sil.Hdllseg (_, _, iF1, _, _, iB1, _) as dllseg), Some hpred2
-    (* when Exp.equal e1 iB1 *)
-     -> let iF_res = exp_partial_join iF1 e2 in
+    (* when Exp.equal e1 iB1 *) ->
+        let iF_res = exp_partial_join iF1 e2 in
         let sigma2' = cut_dllseg Lhs todo_curr iB1 dllseg (hpred2 :: sigma2) in
         let sigma_acc' = update_dllseg Lhs dllseg iF_res e :: sigma_acc in
         CheckJoin.add Lhs iF1 iB1 ;
         (* add equality iF1=iB1 *)
         sigma_partial_join' tenv mode sigma_acc' sigma1 sigma2'
-    | Some hpred1, Some (Sil.Hdllseg (_, _, iF2, _, _, iB2, _) as dllseg) when Exp.equal e2 iF2
-     -> let iB_res = exp_partial_join e1 iB2 in
+    | Some hpred1, Some (Sil.Hdllseg (_, _, iF2, _, _, iB2, _) as dllseg) when Exp.equal e2 iF2 ->
+        let iB_res = exp_partial_join e1 iB2 in
         let sigma1' = cut_dllseg Rhs todo_curr iF2 dllseg (hpred1 :: sigma1) in
         let sigma_acc' = update_dllseg Rhs dllseg e iB_res :: sigma_acc in
         CheckJoin.add Rhs iF2 iB2 ;
         (* add equality iF2=iB2 *)
         sigma_partial_join' tenv mode sigma_acc' sigma1' sigma2
-    | Some hpred1, Some (Sil.Hdllseg (_, _, iF2, _, _, iB2, _) as dllseg)
-     -> let iF_res = exp_partial_join e1 iF2 in
+    | Some hpred1, Some (Sil.Hdllseg (_, _, iF2, _, _, iB2, _) as dllseg) ->
+        let iF_res = exp_partial_join e1 iF2 in
         let sigma1' = cut_dllseg Rhs todo_curr iB2 dllseg (hpred1 :: sigma1) in
         let sigma_acc' = update_dllseg Rhs dllseg iF_res e :: sigma_acc in
         CheckJoin.add Rhs iF2 iB2 ;
         (* add equality iF2=iB2 *)
         sigma_partial_join' tenv mode sigma_acc' sigma1' sigma2
-    | Some Sil.Hpointsto _, Some Sil.Hpointsto _
-     -> assert false
+    | Some Sil.Hpointsto _, Some Sil.Hpointsto _ ->
+        assert false
     (* Should be handled by a guarded case *)
   with Todo.Empty ->
     match (sigma1_in, sigma2_in) with
-    | _ :: _, _ :: _
-     -> L.d_strln "todo is empty, but the sigmas are not" ; raise Sil.JoinFail
-    | _
-     -> (sigma_acc, sigma1_in, sigma2_in)
+    | _ :: _, _ :: _ ->
+        L.d_strln "todo is empty, but the sigmas are not" ;
+        raise Sil.JoinFail
+    | _ ->
+        (sigma_acc, sigma1_in, sigma2_in)
+
 
 let sigma_partial_join tenv mode (sigma1: Prop.sigma) (sigma2: Prop.sigma)
     : Prop.sigma * Prop.sigma * Prop.sigma =
   CheckJoin.init mode sigma1 sigma2 ;
   let lost_little = CheckJoin.lost_little in
   let s1, s2, s3 = sigma_partial_join' tenv mode [] sigma1 sigma2 in
-  try
-    if Rename.check lost_little then ( CheckJoin.final () ; (s1, s2, s3) )
-    else ( L.d_strln "failed Rename.check" ; CheckJoin.final () ; raise Sil.JoinFail )
-  with exn -> CheckJoin.final () ; reraise exn
+  SymOp.try_finally
+    ~f:(fun () ->
+      if Rename.check lost_little then (s1, s2, s3)
+      else ( L.d_strln "failed Rename.check" ; raise Sil.JoinFail ))
+    ~finally:CheckJoin.final
+
 
 let rec sigma_partial_meet' tenv (sigma_acc: Prop.sigma) (sigma1_in: Prop.sigma)
     (sigma2_in: Prop.sigma) : Prop.sigma =
@@ -1649,38 +1611,43 @@ let rec sigma_partial_meet' tenv (sigma_acc: Prop.sigma) (sigma1_in: Prop.sigma)
     L.d_str "PROP1_rest="; Prop.d_sigma sigma1; L.d_ln ();
     L.d_str "PROP2_rest="; Prop.d_sigma sigma2; L.d_ln ();
     match (hpred_opt1, hpred_opt2) with
-    | None, None
-     -> sigma_partial_meet' tenv sigma_acc sigma1 sigma2
-    | Some hpred, None
-     -> let hpred' = hpred_construct_fresh Lhs hpred in
+    | None, None ->
+        sigma_partial_meet' tenv sigma_acc sigma1 sigma2
+    | Some hpred, None ->
+        let hpred' = hpred_construct_fresh Lhs hpred in
         let sigma_acc' = hpred' :: sigma_acc in
         sigma_partial_meet' tenv sigma_acc' sigma1 sigma2
-    | None, Some hpred
-     -> let hpred' = hpred_construct_fresh Rhs hpred in
+    | None, Some hpred ->
+        let hpred' = hpred_construct_fresh Rhs hpred in
         let sigma_acc' = hpred' :: sigma_acc in
         sigma_partial_meet' tenv sigma_acc' sigma1 sigma2
-    | Some hpred1, Some hpred2 when same_pred hpred1 hpred2
-     -> let hpred' = hpred_partial_meet tenv todo_curr hpred1 hpred2 in
+    | Some hpred1, Some hpred2 when same_pred hpred1 hpred2 ->
+        let hpred' = hpred_partial_meet tenv todo_curr hpred1 hpred2 in
         sigma_partial_meet' tenv (hpred' :: sigma_acc) sigma1 sigma2
-    | Some _, Some _
-     -> L.d_strln "failure reason 65" ; raise Sil.JoinFail
+    | Some _, Some _ ->
+        L.d_strln "failure reason 65" ; raise Sil.JoinFail
   with Todo.Empty ->
     match (sigma1_in, sigma2_in) with
-    | [], []
-     -> sigma_acc
-    | _, _
-     -> L.d_strln "todo is empty, but the sigmas are not" ; raise Sil.JoinFail
+    | [], [] ->
+        sigma_acc
+    | _, _ ->
+        L.d_strln "todo is empty, but the sigmas are not" ;
+        raise Sil.JoinFail
+
 
 let sigma_partial_meet tenv (sigma1: Prop.sigma) (sigma2: Prop.sigma) : Prop.sigma =
   sigma_partial_meet' tenv [] sigma1 sigma2
+
 
 let widening_top =
   (* nearly max_int but not so close to overflow *)
   IntLit.of_int64 Int64.max_value -- IntLit.of_int 1000
 
+
 let widening_bottom =
   (* nearly min_int but not so close to underflow *)
   IntLit.of_int64 Int64.min_value ++ IntLit.of_int 1000
+
 
 (** {2 Join and Meet for Pi} *)
 let pi_partial_join tenv mode (ep1: Prop.exposed Prop.t) (ep2: Prop.exposed Prop.t) (pi1: Prop.pi)
@@ -1689,12 +1656,13 @@ let pi_partial_join tenv mode (ep1: Prop.exposed Prop.t) (ep2: Prop.exposed Prop
     (* find some array length in the prop, to be used as heuritic for upper bound in widening *)
     let len_list = ref [] in
     let do_hpred = function
-      | Sil.Hpointsto (_, Sil.Earray (Exp.Const Const.Cint n, _, _), _)
-       -> if IntLit.geq n IntLit.one then len_list := n :: !len_list
-      | _
-       -> ()
+      | Sil.Hpointsto (_, Sil.Earray (Exp.Const Const.Cint n, _, _), _) ->
+          if IntLit.geq n IntLit.one then len_list := n :: !len_list
+      | _ ->
+          ()
     in
-    List.iter ~f:do_hpred prop.Prop.sigma ; !len_list
+    List.iter ~f:do_hpred prop.Prop.sigma ;
+    !len_list
   in
   let bounds =
     let bounds1 = get_array_len ep1 in
@@ -1705,8 +1673,8 @@ let pi_partial_join tenv mode (ep1: Prop.exposed Prop.t) (ep2: Prop.exposed Prop
   let widening_atom a =
     (* widening heuristic for upper bound: take the length of some array, -2 and -1 *)
     match (Prop.atom_exp_le_const a, bounds) with
-    | Some (e, n), len :: _
-     -> let first_try = IntLit.sub len IntLit.one in
+    | Some (e, n), len :: _ ->
+        let first_try = IntLit.sub len IntLit.one in
         let second_try = IntLit.sub len IntLit.two in
         let bound =
           if IntLit.leq n first_try then if IntLit.leq n second_try then second_try else first_try
@@ -1714,16 +1682,16 @@ let pi_partial_join tenv mode (ep1: Prop.exposed Prop.t) (ep2: Prop.exposed Prop
         in
         let a' = Prop.mk_inequality tenv (Exp.BinOp (Binop.Le, e, Exp.int bound)) in
         Some a'
-    | Some (e, _), []
-     -> let bound = widening_top in
+    | Some (e, _), [] ->
+        let bound = widening_top in
         let a' = Prop.mk_inequality tenv (Exp.BinOp (Binop.Le, e, Exp.int bound)) in
         Some a'
     | _ ->
       match Prop.atom_const_lt_exp a with
-      | None
-       -> None
-      | Some (n, e)
-       -> let bound =
+      | None ->
+          None
+      | Some (n, e) ->
+          let bound =
             if IntLit.leq IntLit.minus_one n then IntLit.minus_one else widening_bottom
           in
           let a' = Prop.mk_inequality tenv (Exp.BinOp (Binop.Lt, Exp.int bound, e)) in
@@ -1731,23 +1699,26 @@ let pi_partial_join tenv mode (ep1: Prop.exposed Prop.t) (ep2: Prop.exposed Prop
   in
   let is_stronger_le e n a =
     match Prop.atom_exp_le_const a with
-    | None
-     -> false
-    | Some (e', n')
-     -> Exp.equal e e' && IntLit.lt n' n
+    | None ->
+        false
+    | Some (e', n') ->
+        Exp.equal e e' && IntLit.lt n' n
   in
   let is_stronger_lt n e a =
     match Prop.atom_const_lt_exp a with
-    | None
-     -> false
-    | Some (n', e')
-     -> Exp.equal e e' && IntLit.lt n n'
+    | None ->
+        false
+    | Some (n', e') ->
+        Exp.equal e e' && IntLit.lt n n'
   in
   let join_atom_check_pre p a =
     (* check for atoms in pre mode: fail if the negation is implied by the other side *)
     let not_a = Prover.atom_negate tenv a in
     if Prover.check_atom tenv p not_a then (
-      L.d_str "join_atom_check failed on " ; Sil.d_atom a ; L.d_ln () ; raise Sil.JoinFail )
+      L.d_str "join_atom_check failed on " ;
+      Sil.d_atom a ;
+      L.d_ln () ;
+      raise Sil.JoinFail )
   in
   let join_atom_check_attribute p a =
     (* check for attribute: fail if the attribute is not in the other side *)
@@ -1760,35 +1731,35 @@ let pi_partial_join tenv mode (ep1: Prop.exposed Prop.t) (ep2: Prop.exposed Prop
   let join_atom side p_op pi_op a =
     (* try to find the atom corresponding to a on the other side, and check if it is implied *)
     match Rename.get_other_atoms tenv side a with
-    | None
-     -> None
-    | Some (a_res, a_op)
-     -> if JoinState.equal_mode mode JoinState.Pre then join_atom_check_pre p_op a_op ;
+    | None ->
+        None
+    | Some (a_res, a_op) ->
+        if JoinState.equal_mode mode JoinState.Pre then join_atom_check_pre p_op a_op ;
         if Attribute.is_pred a then join_atom_check_attribute p_op a_op ;
         if not (Prover.check_atom tenv p_op a_op) then None
         else
           match Prop.atom_exp_le_const a_op with
           | None -> (
             match Prop.atom_const_lt_exp a_op with
-            | None
-             -> Some a_res
-            | Some (n, e)
-             -> if List.exists ~f:(is_stronger_lt n e) pi_op then widening_atom a_res
+            | None ->
+                Some a_res
+            | Some (n, e) ->
+                if List.exists ~f:(is_stronger_lt n e) pi_op then widening_atom a_res
                 else Some a_res )
-          | Some (e, n)
-           -> if List.exists ~f:(is_stronger_le e n) pi_op then widening_atom a_res else Some a_res
+          | Some (e, n) ->
+              if List.exists ~f:(is_stronger_le e n) pi_op then widening_atom a_res else Some a_res
   in
   let handle_atom_with_widening len p_op pi_op atom_list a =
     (* find a join for the atom, if it fails apply widening heuristing and try again *)
     match join_atom len p_op pi_op a with
     | None -> (
       match widening_atom a with
-      | None
-       -> atom_list
+      | None ->
+          atom_list
       | Some a' ->
         match join_atom len p_op pi_op a' with None -> atom_list | Some a' -> a' :: atom_list )
-    | Some a'
-     -> a' :: atom_list
+    | Some a' ->
+        a' :: atom_list
   in
   if Config.trace_join then (
     L.d_str "pi1: " ; Prop.d_pi pi1 ; L.d_ln () ; L.d_str "pi2: " ; Prop.d_pi pi2 ; L.d_ln () ) ;
@@ -1806,6 +1777,7 @@ let pi_partial_join tenv mode (ep1: Prop.exposed Prop.t) (ep2: Prop.exposed Prop
   if Config.trace_join then (
     L.d_str "atom_list_combined: " ; Prop.d_pi atom_list_combined ; L.d_ln () ) ;
   atom_list_combined
+
 
 let pi_partial_meet tenv (p: Prop.normal Prop.t) (ep1: 'a Prop.t) (ep2: 'b Prop.t)
     : Prop.normal Prop.t =
@@ -1832,11 +1804,11 @@ let pi_partial_meet tenv (p: Prop.normal Prop.t) (ep1: 'a Prop.t) (ep2: 'b Prop.
   let pi2 = ep2.Prop.pi in
   let p_pi1 = List.fold ~f:f1 ~init:p pi1 in
   let p_pi2 = List.fold ~f:f2 ~init:p_pi1 pi2 in
-  let p_pi3 = List.fold ~f:f3 ~init:p_pi2 subs in
-  if Prover.check_inconsistency_base tenv p_pi3 then (
-    L.d_strln "check_inconsistency_base failed for "; Prop.d_prop p_pi3;
+  if Prover.check_inconsistency_base tenv p_pi2 then (
+    L.d_strln "check_inconsistency_base failed" ;
     raise Sil.JoinFail )
-  else p_pi3
+  else p_pi2
+
 
 (** {2 Join and Meet for Prop} *)
 
@@ -1875,18 +1847,16 @@ let eprop_partial_meet tenv (ep1: 'a Prop.t) (ep2: 'b Prop.t) : 'c Prop.t =
     Format.printf "@[res = %a @]@\n" (Prop.pp_prop Pp.text) res;
     res
 
+
 let prop_partial_meet tenv p1 p2 =
   Rename.init () ;
   FreshVarExp.init () ;
   Todo.init () ;
   try
-    let res = eprop_partial_meet tenv p1 p2 in
-    Rename.final () ; FreshVarExp.final () ; Todo.final () ; Some res
-  with exn ->
-    Rename.final () ;
-    FreshVarExp.final () ;
-    Todo.final () ;
-    match exn with Sil.JoinFail -> None | _ -> reraise exn
+    SymOp.try_finally ~f:(fun () -> Some (eprop_partial_meet tenv p1 p2)) ~finally:(fun () ->
+        Rename.final () ; FreshVarExp.final () ; Todo.final () )
+  with Sil.JoinFail -> None
+
 
 let eprop_partial_join' tenv mode (ep1: Prop.exposed Prop.t) (ep2: Prop.exposed Prop.t)
     : Prop.normal Prop.t =
@@ -1899,12 +1869,12 @@ let eprop_partial_join' tenv mode (ep1: Prop.exposed Prop.t) (ep2: Prop.exposed 
   let simple_check = Int.equal (List.length es1) (List.length es2) in
   let rec expensive_check es1' es2' =
     match (es1', es2') with
-    | [], []
-     -> true
-    | [], _ :: _ | _ :: _, []
-     -> false
-    | e1 :: es1'', e2 :: es2''
-     -> Exp.equal e1 e2 && expensive_check es1'' es2''
+    | [], [] ->
+        true
+    | [], _ :: _ | _ :: _, [] ->
+        false
+    | e1 :: es1'', e2 :: es2'' ->
+        Exp.equal e1 e2 && expensive_check es1'' es2''
   in
   let sub_common, eqs_from_sub1, eqs_from_sub2 =
     let sub1 = ep1.Prop.sub in
@@ -1931,8 +1901,8 @@ let eprop_partial_join' tenv mode (ep1: Prop.exposed Prop.t) (ep2: Prop.exposed 
   let todos = List.map ~f:(fun x -> (x, x, x)) es1 in
   List.iter ~f:Todo.push todos ;
   match sigma_partial_join tenv mode sigma1 sigma2 with
-  | sigma_new, [], []
-   -> L.d_strln "sigma_partial_join succeeded" ;
+  | sigma_new, [], [] ->
+      L.d_strln "sigma_partial_join succeeded" ;
       let ep_sub =
         let ep = Prop.set ep1 ~pi:[] in
         Prop.set ep ~sub:sub_common
@@ -1948,8 +1918,9 @@ let eprop_partial_join' tenv mode (ep1: Prop.exposed Prop.t) (ep2: Prop.exposed 
         List.fold ~f:(Prop.prop_atom_and tenv) ~init:p_sub_sigma pi_all
       in
       p_sub_sigma_pi
-  | _
-   -> L.d_strln "leftovers not empty" ; raise Sil.JoinFail
+  | _ ->
+      L.d_strln "leftovers not empty" ; raise Sil.JoinFail
+
 
 let footprint_partial_join' tenv (p1: Prop.normal Prop.t) (p2: Prop.normal Prop.t)
     : Prop.normal Prop.t * Prop.normal Prop.t =
@@ -1973,6 +1944,7 @@ let footprint_partial_join' tenv (p1: Prop.normal Prop.t) (p2: Prop.normal Prop.
     let ep2' = Prop.set p2 ~pi_fp ~sigma_fp in
     (Prop.normalize tenv ep1', Prop.normalize tenv ep2')
 
+
 let prop_partial_join pname tenv mode p1 p2 =
   let res_by_implication_only =
     if !Config.footprint then None
@@ -1982,48 +1954,42 @@ let prop_partial_join pname tenv mode p1 p2 =
   in
   match res_by_implication_only with
   | None
-   -> (
+    -> (
       if !Config.footprint then JoinState.set_footprint true ;
       Rename.init () ;
       FreshVarExp.init () ;
       Todo.init () ;
       try
-        let p1', p2' = footprint_partial_join' tenv p1 p2 in
-        let rename_footprint = Rename.reset () in
-        Todo.reset rename_footprint ;
-        let res = Some (eprop_partial_join' tenv mode (Prop.expose p1') (Prop.expose p2')) in
-        if !Config.footprint then JoinState.set_footprint false ;
-        Rename.final () ;
-        FreshVarExp.final () ;
-        Todo.final () ;
-        res
-      with exn ->
-        Rename.final () ;
-        FreshVarExp.final () ;
-        Todo.final () ;
-        if !Config.footprint then JoinState.set_footprint false ;
-        match exn with Sil.JoinFail -> None | _ -> reraise exn )
-  | Some _
-   -> res_by_implication_only
+        SymOp.try_finally
+          ~f:(fun () ->
+            let p1', p2' = footprint_partial_join' tenv p1 p2 in
+            let rename_footprint = Rename.reset () in
+            Todo.reset rename_footprint ;
+            let res = eprop_partial_join' tenv mode (Prop.expose p1') (Prop.expose p2') in
+            if !Config.footprint then JoinState.set_footprint false ;
+            Some res) ~finally:(fun () -> Rename.final () ; FreshVarExp.final () ; Todo.final () )
+      with Sil.JoinFail -> None )
+  | Some _ ->
+      res_by_implication_only
+
 
 let eprop_partial_join tenv mode (ep1: Prop.exposed Prop.t) (ep2: Prop.exposed Prop.t)
     : Prop.normal Prop.t =
   Rename.init () ;
   FreshVarExp.init () ;
   Todo.init () ;
-  try
-    let res = eprop_partial_join' tenv mode ep1 ep2 in
-    Rename.final () ; FreshVarExp.final () ; Todo.final () ; res
-  with exn -> Rename.final () ; FreshVarExp.final () ; Todo.final () ; reraise exn
+  SymOp.try_finally ~f:(fun () -> eprop_partial_join' tenv mode ep1 ep2) ~finally:(fun () ->
+      Rename.final () ; FreshVarExp.final () ; Todo.final () )
+
 
 (** {2 Join and Meet for Propset} *)
 
 let list_reduce name dd f list =
   let rec element_list_reduce acc (x, p1) = function
-    | []
-     -> ((x, p1), List.rev acc)
-    | (y, p2) :: ys
-     -> L.d_strln ("COMBINE[" ^ name ^ "] ....") ;
+    | [] ->
+        ((x, p1), List.rev acc)
+    | (y, p2) :: ys ->
+        L.d_strln ("COMBINE[" ^ name ^ "] ....") ;
         L.d_str "ENTRY1: " ;
         L.d_ln () ;
         dd x ;
@@ -2034,24 +2000,25 @@ let list_reduce name dd f list =
         L.d_ln () ;
         L.d_ln () ;
         match f x y with
-        | None
-         -> L.d_strln_color Red (".... COMBINE[" ^ name ^ "] FAILED ...") ;
+        | None ->
+            L.d_strln_color Red (".... COMBINE[" ^ name ^ "] FAILED ...") ;
             element_list_reduce ((y, p2) :: acc) (x, p1) ys
-        | Some x'
-         -> L.d_strln_color Green (".... COMBINE[" ^ name ^ "] SUCCEEDED ....") ;
+        | Some x' ->
+            L.d_strln_color Green (".... COMBINE[" ^ name ^ "] SUCCEEDED ....") ;
             L.d_strln "RESULT:" ;
             dd x' ;
             L.d_ln () ;
             element_list_reduce acc (x', p1) ys
   in
   let rec reduce acc = function
-    | []
-     -> List.rev acc
-    | x :: xs
-     -> let x', xs' = element_list_reduce [] x xs in
+    | [] ->
+        List.rev acc
+    | x :: xs ->
+        let x', xs' = element_list_reduce [] x xs in
         reduce (x' :: acc) xs'
   in
   reduce [] list
+
 
 let pathset_collapse_impl pname tenv pset =
   let f x y =
@@ -2063,6 +2030,7 @@ let pathset_collapse_impl pname tenv pset =
   let plist' = list_reduce "JOIN_IMPL" Prop.d_prop f plist in
   Paths.PathSet.from_renamed_list plist'
 
+
 let jprop_partial_join tenv mode jp1 jp2 =
   let p1, p2 = (Prop.expose (Specs.Jprop.to_prop jp1), Prop.expose (Specs.Jprop.to_prop jp2)) in
   try
@@ -2071,22 +2039,25 @@ let jprop_partial_join tenv mode jp1 jp2 =
     Some (Specs.Jprop.Joined (0, p_renamed, jp1, jp2))
   with Sil.JoinFail -> None
 
+
 let jplist_collapse tenv mode jplist =
   let f = jprop_partial_join tenv mode in
   list_reduce "JOIN" Specs.Jprop.d_shallow f jplist
+
 
 (** Add identifiers to a list of jprops *)
 let jprop_list_add_ids jplist =
   let seq_number = ref 0 in
   let rec do_jprop = function
-    | Specs.Jprop.Prop (_, p)
-     -> incr seq_number ; Specs.Jprop.Prop (!seq_number, p)
-    | Specs.Jprop.Joined (_, p, jp1, jp2)
-     -> let jp1' = do_jprop jp1 in
+    | Specs.Jprop.Prop (_, p) ->
+        incr seq_number ; Specs.Jprop.Prop (!seq_number, p)
+    | Specs.Jprop.Joined (_, p, jp1, jp2) ->
+        let jp1' = do_jprop jp1 in
         let jp2' = do_jprop jp2 in
         incr seq_number ; Specs.Jprop.Joined (!seq_number, p, jp1', jp2')
   in
   List.map ~f:(fun (p, path) -> (do_jprop p, path)) jplist
+
 
 let proplist_collapse tenv mode plist =
   let jplist = List.map ~f:(fun (p, path) -> (Specs.Jprop.Prop (0, p), path)) plist in
@@ -2094,9 +2065,11 @@ let proplist_collapse tenv mode plist =
   let jplist_joined = f (f jplist) in
   jprop_list_add_ids jplist_joined
 
+
 let proplist_collapse_pre tenv plist =
   let plist' = List.map ~f:(fun p -> (p, ())) plist in
   List.map ~f:fst (proplist_collapse tenv JoinState.Pre plist')
+
 
 let pathset_collapse tenv pset =
   let plist = Paths.PathSet.elements pset in
@@ -2104,23 +2077,21 @@ let pathset_collapse tenv pset =
   Paths.PathSet.from_renamed_list
     (List.map ~f:(fun (p, path) -> (Specs.Jprop.to_prop p, path)) plist')
 
-let join_time = ref 0.0
 
 let pathset_join pname tenv (pset1: Paths.PathSet.t) (pset2: Paths.PathSet.t)
     : Paths.PathSet.t * Paths.PathSet.t =
   let mode = JoinState.Post in
-  let initial_time = Unix.gettimeofday () in
   let pset_to_plist pset =
     let f_list p pa acc = (p, pa) :: acc in
     Paths.PathSet.fold f_list pset []
   in
   let ppalist1 = pset_to_plist pset1 in
   let ppalist2 = pset_to_plist pset2 in
-  let rec join_proppath_plist ppalist2_acc (p2, pa2 as ppa2) = function
-    | []
-     -> (ppa2, List.rev ppalist2_acc)
-    | (p2', pa2' as ppa2') :: ppalist2_rest
-     -> L.d_strln ".... JOIN ...." ;
+  let rec join_proppath_plist ppalist2_acc ((p2, pa2) as ppa2) = function
+    | [] ->
+        (ppa2, List.rev ppalist2_acc)
+    | ((p2', pa2') as ppa2') :: ppalist2_rest ->
+        L.d_strln ".... JOIN ...." ;
         L.d_strln "JOIN SYM HEAP1: " ;
         Prop.d_prop p2 ;
         L.d_ln () ;
@@ -2129,12 +2100,12 @@ let pathset_join pname tenv (pset1: Paths.PathSet.t) (pset2: Paths.PathSet.t)
         L.d_ln () ;
         L.d_ln () ;
         match prop_partial_join pname tenv mode p2 p2' with
-        | None
-         -> L.d_strln_color Red ".... JOIN FAILED ...." ;
+        | None ->
+            L.d_strln_color Red ".... JOIN FAILED ...." ;
             L.d_ln () ;
             join_proppath_plist (ppa2' :: ppalist2_acc) ppa2 ppalist2_rest
-        | Some p2''
-         -> L.d_strln_color Green ".... JOIN SUCCEEDED ...." ;
+        | Some p2'' ->
+            L.d_strln_color Green ".... JOIN SUCCEEDED ...." ;
             L.d_strln "RESULT SYM HEAP:" ;
             Prop.d_prop p2'' ;
             L.d_ln () ;
@@ -2142,10 +2113,10 @@ let pathset_join pname tenv (pset1: Paths.PathSet.t) (pset2: Paths.PathSet.t)
             join_proppath_plist ppalist2_acc (p2'', Paths.Path.join pa2 pa2') ppalist2_rest
   in
   let rec join ppalist1_cur ppalist2_acc = function
-    | []
-     -> (ppalist1_cur, ppalist2_acc)
-    | ppa2 :: ppalist2_rest
-     -> let ppa2', ppalist2_acc' = join_proppath_plist [] ppa2 ppalist2_acc in
+    | [] ->
+        (ppalist1_cur, ppalist2_acc)
+    | ppa2 :: ppalist2_rest ->
+        let ppa2', ppalist2_acc' = join_proppath_plist [] ppa2 ppalist2_acc in
         let ppa2'', ppalist2_rest' = join_proppath_plist [] ppa2' ppalist2_rest in
         let ppa2_new, ppalist1_cur' = join_proppath_plist [] ppa2'' ppalist1_cur in
         join ppalist1_cur' (ppa2_new :: ppalist2_acc') ppalist2_rest'
@@ -2156,8 +2127,8 @@ let pathset_join pname tenv (pset1: Paths.PathSet.t) (pset2: Paths.PathSet.t)
   let res =
     (Paths.PathSet.from_renamed_list ppalist1_res, Paths.PathSet.from_renamed_list ppalist2_res)
   in
-  join_time := !join_time +. (Unix.gettimeofday () -. initial_time) ;
   res
+
 
 (**
   The meet operator does two things:
@@ -2207,3 +2178,4 @@ let propset_meet_generate_pre tenv pset =
     let plist_old = Propset.to_proplist pset in
     let plist_new = Propset.to_proplist pset_new in
     plist_new @ plist_old
+
