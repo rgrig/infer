@@ -148,22 +148,27 @@ module CppSource = Source.Make (SourceKind)
 
 module SinkKind = struct
   type t =
-    | Allocation  (** memory allocation *)
     | BufferAccess  (** read/write an array *)
+    | HeapAllocation  (** heap memory allocation *)
     | ShellExec  (** shell exec function *)
     | SQL  (** SQL query *)
+    | StackAllocation  (** stack memory allocation *)
     | Other  (** for testing or uncategorized sinks *)
     [@@deriving compare]
 
   let matches ~caller ~callee = Int.equal 0 (compare caller callee)
 
   let of_string = function
-    | "Allocation" ->
-        Allocation
+    | "BufferAccess" ->
+        BufferAccess
+    | "HeapAllocation" ->
+        HeapAllocation
     | "ShellExec" ->
         ShellExec
     | "SQL" ->
         SQL
+    | "StackAllocation" ->
+        StackAllocation
     | _ ->
         Other
 
@@ -226,7 +231,7 @@ module SinkKind = struct
         taint_all BufferAccess actuals
     | Typ.Procname.C _ when Typ.Procname.equal pname BuiltinDecl.__set_array_length ->
         (* called when creating a stack-allocated array *)
-        taint_nth 1 Allocation actuals
+        taint_nth 1 StackAllocation actuals
     | Typ.Procname.C _ -> (
       match Typ.Procname.to_string pname with
       | "execl" | "execlp" | "execle" | "execv" | "execve" | "execvp" | "system" ->
@@ -234,7 +239,7 @@ module SinkKind = struct
       | "popen" ->
           taint_nth 0 ShellExec actuals
       | ("brk" | "calloc" | "malloc" | "realloc" | "sbrk") when Config.developer_mode ->
-          taint_all Allocation actuals
+          taint_all HeapAllocation actuals
       | "strcpy" when Config.developer_mode ->
           (* warn if source array is tainted *)
           taint_nth 1 BufferAccess actuals
@@ -258,14 +263,16 @@ module SinkKind = struct
   let pp fmt kind =
     F.fprintf fmt
       ( match kind with
-      | Allocation ->
-          "Allocation"
       | BufferAccess ->
           "BufferAccess"
+      | HeapAllocation ->
+          "HeapAllocation"
       | ShellExec ->
           "ShellExec"
       | SQL ->
           "SQL"
+      | StackAllocation ->
+          "StackAllocation"
       | Other ->
           "Other" )
 
@@ -288,18 +295,28 @@ include Trace.Make (struct
     | Endpoint _, BufferAccess ->
         (* untrusted data from an endpoint flowing into a buffer *)
         Some IssueType.quandary_taint_error
-    | Endpoint (_, typ), (ShellExec | SQL) ->
-        (* untrusted string data flowing to shell exec/SQL *)
-        Option.some_if (is_stringy typ) IssueType.quandary_taint_error
-    | (EnvironmentVariable | File), (BufferAccess | ShellExec | SQL) ->
-        (* untrusted environment var or file data flowing to buffer or code injection *)
+    | Endpoint (_, typ), ShellExec ->
+        (* untrusted string data flowing to shell ShellExec *)
+        Option.some_if (is_stringy typ) IssueType.shell_injection
+    | Endpoint (_, typ), SQL ->
+        (* untrusted string data flowing to SQL *)
+        Option.some_if (is_stringy typ) IssueType.sql_injection
+    | (CommandLineFlag _ | EnvironmentVariable | File | Other), BufferAccess ->
+        (* untrusted flag, environment var, or file data flowing to buffer *)
         Some IssueType.quandary_taint_error
-    | (Endpoint _ | EnvironmentVariable | File), Allocation ->
-        (* untrusted data flowing to memory allocation *)
+    | (CommandLineFlag _ | EnvironmentVariable | File | Other), ShellExec ->
+        (* untrusted flag, environment var, or file data flowing to shell *)
+        Some IssueType.shell_injection
+    | (CommandLineFlag _ | EnvironmentVariable | File | Other), SQL ->
+        (* untrusted flag, environment var, or file data flowing to SQL *)
+        Some IssueType.sql_injection
+    | (CommandLineFlag _ | Endpoint _ | EnvironmentVariable | File | Other), HeapAllocation ->
+        (* untrusted data of any kind flowing to heap allocation. this can cause crashes or DOS. *)
         Some IssueType.quandary_taint_error
-    | CommandLineFlag _, (Allocation | BufferAccess | Other | ShellExec | SQL) ->
-        (* data controlled by a command line flag flowing somewhere sensitive *)
-        Some IssueType.quandary_taint_error
+    | (CommandLineFlag _ | Endpoint _ | EnvironmentVariable | File | Other), StackAllocation ->
+        (* untrusted data of any kind flowing to stack buffer allocation. trying to allocate a stack
+           buffer that's too large will cause a stack overflow. *)
+        Some IssueType.untrusted_variable_length_array
     | Other, _ ->
         (* Other matches everything *)
         Some IssueType.quandary_taint_error

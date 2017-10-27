@@ -113,6 +113,9 @@ and template_spec_info =
 val mk : ?default:t -> ?quals:type_quals -> desc -> t
 (** Create Typ.t from given desc. if [default] is passed then use its value to set other fields such as quals *)
 
+val void_star : t
+(** void* type *)
+
 (** Stores information about type substitution *)
 type type_subst_t [@@deriving compare]
 
@@ -328,6 +331,12 @@ module Procname : sig
 
   val get_method : t -> string
   (** Return the method/function of a procname. *)
+
+  val is_objc_block : t -> bool
+  (** Return whether the procname is a block procname. *)
+
+  val is_cpp_lambda : t -> bool
+  (** Return whether the procname is a cpp lambda. *)
 
   val hash_pname : t -> int
   (** Hash function for procname. *)

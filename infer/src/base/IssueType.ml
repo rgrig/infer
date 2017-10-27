@@ -281,6 +281,10 @@ let skip_function = from_string "SKIP_FUNCTION"
 
 let skip_pointer_dereference = from_string "SKIP_POINTER_DEREFERENCE"
 
+let shell_injection = from_string "SHELL_INJECTION"
+
+let sql_injection = from_string "SQL_INJECTION"
+
 let stack_variable_address_escape = from_string ~enabled:false "STACK_VARIABLE_ADDRESS_ESCAPE"
 
 let static_initialization_order_fiasco = from_string "STATIC_INITIALIZATION_ORDER_FIASCO"
@@ -304,5 +308,7 @@ let unreachable_code_after = from_string "UNREACHABLE_CODE"
 let unsafe_guarded_by_access = from_string "UNSAFE_GUARDED_BY_ACCESS"
 
 let use_after_free = from_string "USE_AFTER_FREE"
+
+let untrusted_variable_length_array = from_string "UNTRUSTED_VARIABLE_LENGTH_ARRAY"
 
 let wrong_argument_number = from_string "Wrong_argument_number" ~hum:"Wrong Argument Number"
