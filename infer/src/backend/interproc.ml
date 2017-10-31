@@ -762,6 +762,7 @@ let collect_postconditions wl tenv proc_cfg : Paths.PathSet.t * Specs.Visitedset
         vset_ref_add_pathset vset_ref pathset_diverging ;
         compute_visited !vset_ref
       in
+      Format.printf "COLLECTPOSTS PATHSET %d@\n" (Paths.PathSet.size pathset);
       (pathset, visited)
     with Exceptions.Leak _ ->
       L.d_strln "Leak in post collection" ;
