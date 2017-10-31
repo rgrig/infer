@@ -87,6 +87,13 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       in
       fun pname ->
         QualifiedCppName.Match.match_qualifiers matcher (Typ.Procname.get_qualifiers pname)
+    and is_cpp_trylock =
+      let matcher =
+        QualifiedCppName.Match.of_fuzzy_qual_names
+          ["std::unique_lock::owns_lock"; "std::unique_lock::try_lock"]
+      in
+      fun pname ->
+        QualifiedCppName.Match.match_qualifiers matcher (Typ.Procname.get_qualifiers pname)
     in
     fun pname actuals ->
       match pname with
@@ -121,6 +128,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           Lock
       | Typ.Procname.ObjC_Cpp _ as pname when is_cpp_unlock pname ->
           Unlock
+      | Typ.Procname.ObjC_Cpp _ as pname when is_cpp_trylock pname ->
+          LockedIfTrue
       | pname when Typ.Procname.equal pname BuiltinDecl.__set_locked_attribute ->
           Lock
       | pname when Typ.Procname.equal pname BuiltinDecl.__delete_locked_attribute ->
@@ -369,6 +378,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       | _ ->
           false
     in
+    let is_static_access ((base: Var.t), _) =
+      match base with ProgramVar pvar -> Pvar.is_static_local pvar | _ -> false
+    in
     let rec add_field_accesses pre prefix_path access_acc = function
       | [] ->
           access_acc
@@ -388,7 +400,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     in
     let add_access_ acc (base, accesses) =
       let base_access_path = (base, []) in
-      if List.is_empty accesses || OwnershipDomain.is_owned base_access_path ownership then acc
+      if List.is_empty accesses || OwnershipDomain.is_owned base_access_path ownership
+         || is_static_access base
+      then acc
       else
         let pre =
           match AccessPrecondition.make locks threads proc_data.pdesc with
@@ -547,8 +561,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
            ["folly::AtomicStruct::load"; "folly::detail::SingletonHolder::createInstance"])
     in
     fun pname ->
-      QualifiedCppName.Match.match_qualifiers (Lazy.force matcher)
-        (Typ.Procname.get_qualifiers pname)
+      Typ.Procname.is_destructor pname
+      || QualifiedCppName.Match.match_qualifiers (Lazy.force matcher)
+           (Typ.Procname.get_qualifiers pname)
 
 
   let get_summary caller_pdesc callee_pname actuals callee_loc tenv =
@@ -1174,8 +1189,8 @@ type report_kind =
   | ReadWriteRace of conflicts  (** non-empty list of conflicting accesses *)
   | UnannotatedInterface
 
-(** Explain why we are reporting this access *)
-let get_reporting_explanation report_kind tenv pname thread =
+(** Explain why we are reporting this access, in Java *)
+let get_reporting_explanation_java report_kind tenv pname thread =
   (* best explanation is always that the current class or method is annotated thread-safe. try for
      that first. *)
   let annotation_explanation_opt =
@@ -1199,25 +1214,39 @@ let get_reporting_explanation report_kind tenv pname thread =
   in
   match (report_kind, annotation_explanation_opt) with
   | UnannotatedInterface, Some threadsafe_explanation ->
-      F.asprintf "%s." threadsafe_explanation
+      (IssueType.interface_not_thread_safe, F.asprintf "%s." threadsafe_explanation)
   | UnannotatedInterface, None ->
       Logging.die InternalError
         "Reporting non-threadsafe interface call, but can't find a @ThreadSafe annotation"
   | _, Some threadsafe_explanation when RacerDDomain.ThreadsDomain.is_any thread ->
-      F.asprintf
-        "%s, so we assume that this method can run in parallel with other non-private methods in the class (incuding itself)."
-        threadsafe_explanation
+      ( IssueType.thread_safety_violation
+      , F.asprintf
+          "%s, so we assume that this method can run in parallel with other non-private methods in the class (incuding itself)."
+          threadsafe_explanation )
   | _, Some threadsafe_explanation ->
-      F.asprintf
-        "%s. Although this access is not known to run on a background thread, it may happen in parallel with another access that does."
-        threadsafe_explanation
+      ( IssueType.thread_safety_violation
+      , F.asprintf
+          "%s. Although this access is not known to run on a background thread, it may happen in parallel with another access that does."
+          threadsafe_explanation )
   | _, None ->
       (* failed to explain based on @ThreadSafe annotation; have to justify using background thread *)
       if RacerDDomain.ThreadsDomain.is_any thread then
-        F.asprintf "@\n Reporting because this access may occur on a background thread."
+        ( IssueType.thread_safety_violation
+        , F.asprintf "@\n Reporting because this access may occur on a background thread." )
       else
-        F.asprintf
-          "@\n Reporting because another access to the same memory occurs on a background thread, although this access may not."
+        ( IssueType.thread_safety_violation
+        , F.asprintf
+            "@\n Reporting because another access to the same memory occurs on a background thread, although this access may not."
+        )
+
+
+(** Explain why we are reporting this access, in C++ *)
+let get_reporting_explanation_cpp = (IssueType.lock_consistency_violation, "")
+
+(** Explain why we are reporting this access *)
+let get_reporting_explanation report_kind tenv pname thread =
+  if Typ.Procname.is_java pname then get_reporting_explanation_java report_kind tenv pname thread
+  else get_reporting_explanation_cpp
 
 
 let filter_by_access access_filter trace =
@@ -1320,8 +1349,7 @@ let make_trace ~report_kind original_path pdesc =
       original_trace
 
 
-let report_thread_safety_violation tenv pdesc issue_type ~make_description ~report_kind access
-    thread =
+let report_thread_safety_violation tenv pdesc ~make_description ~report_kind access thread =
   let open RacerDDomain in
   let pname = Procdesc.get_proc_name pdesc in
   let report_one_path ((_, sinks) as path) =
@@ -1338,7 +1366,7 @@ let report_thread_safety_violation tenv pdesc issue_type ~make_description ~repo
       (* what the potential bug is *)
       let description = make_description pname final_sink_site initial_sink_site final_sink in
       (* why we are reporting it *)
-      let explanation = get_reporting_explanation report_kind tenv pname thread in
+      let issue_type, explanation = get_reporting_explanation report_kind tenv pname thread in
       let error_message = F.sprintf "%s%s" description explanation in
       let exn =
         Exceptions.Checkers (issue_type.IssueType.unique_id, Localise.verbatim_desc error_message)
@@ -1358,8 +1386,8 @@ let report_unannotated_interface_violation tenv pdesc access thread reported_pna
           "Unprotected call to method of un-annotated interface %s. Consider annotating the class with %a, adding a lock, or using an interface that is known to be thread-safe."
           class_name MF.pp_monospaced "@ThreadSafe"
       in
-      report_thread_safety_violation tenv pdesc IssueType.interface_not_thread_safe
-        ~make_description ~report_kind:UnannotatedInterface access thread
+      report_thread_safety_violation tenv pdesc ~make_description ~report_kind:UnannotatedInterface
+        access thread
   | _ ->
       (* skip reporting on C++ *)
       ()
@@ -1535,7 +1563,7 @@ let report_unsafe_accesses
             if List.is_empty writes_on_background_thread && not (ThreadsDomain.is_any thread) then
               reported_acc
             else (
-              report_thread_safety_violation tenv pdesc IssueType.thread_safety_violation
+              report_thread_safety_violation tenv pdesc
                 ~make_description:make_unprotected_write_description
                 ~report_kind:(WriteWriteRace writes_on_background_thread) access thread ;
               update_reported access pname reported_acc )
@@ -1572,7 +1600,7 @@ let report_unsafe_accesses
           in
           if List.is_empty all_writes then reported_acc
           else (
-            report_thread_safety_violation tenv pdesc IssueType.thread_safety_violation
+            report_thread_safety_violation tenv pdesc
               ~make_description:(make_read_write_race_description ~read_is_sync:false all_writes)
               ~report_kind:
                 (ReadWriteRace (List.map ~f:(fun (access, _, _, _, _) -> access) all_writes))
@@ -1604,7 +1632,7 @@ let report_unsafe_accesses
           if List.is_empty conflicting_writes then reported_acc
           else (
             (* protected read with conflicting unprotected write(s). warn. *)
-            report_thread_safety_violation tenv pdesc IssueType.thread_safety_violation
+            report_thread_safety_violation tenv pdesc
               ~make_description:
                 (make_read_write_race_description ~read_is_sync:true conflicting_writes)
               ~report_kind:
@@ -1889,3 +1917,4 @@ let file_analysis {Callbacks.procedures} =
            else (module MayAliasQuotientedAccessListMap) )
            class_env))
     (aggregate_by_class procedures)
+

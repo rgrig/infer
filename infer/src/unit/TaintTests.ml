@@ -125,79 +125,42 @@ let tests =
   let callbacks = {Ondemand.analyze_ondemand; get_proc_desc} in
   Ondemand.set_callbacks callbacks ;
   let test_list =
-    [ ("source recorded", [assign_to_source "ret_id"; invariant "{ ret_id$0 => (SOURCE -> ?) }"])
+    [ ("source recorded", [assign_to_source "ret_id"; invariant "{ ret_id$0* => (SOURCE -> ?) }"])
     ; ("non-source not recorded", [assign_to_non_source "ret_id"; assert_empty])
     ; ( "source flows to var"
       , [ assign_to_source "ret_id"
         ; var_assign_id "var" "ret_id"
-        ; invariant "{ ret_id$0 => (SOURCE -> ?), &var => (SOURCE -> ?) }" ] )
+        ; invariant "{ ret_id$0* => (SOURCE -> ?), &var* => (SOURCE -> ?) }" ] )
     ; ( "source flows to field"
       , [ assign_to_source "ret_id"
         ; assign_id_to_field "base_id" "f" "ret_id"
-        ; invariant "{ base_id$0.f => (SOURCE -> ?), ret_id$0 => (SOURCE -> ?) }" ] )
+        ; invariant "{ base_id$0.f* => (SOURCE -> ?), ret_id$0* => (SOURCE -> ?) }" ] )
     ; ( "source flows to field then var"
       , [ assign_to_source "ret_id"
         ; assign_id_to_field "base_id" "f" "ret_id"
         ; read_field_to_id "read_id" "base_id" "f"
         ; var_assign_id "var" "read_id"
         ; invariant
-            "{ base_id$0.f => (SOURCE -> ?),\n  ret_id$0 => (SOURCE -> ?),\n  &var => (SOURCE -> ?) }"
+            "{ base_id$0.f* => (SOURCE -> ?),\n  ret_id$0* => (SOURCE -> ?),\n  &var* => (SOURCE -> ?) }"
         ] )
     ; ( "source flows to var then cleared"
       , [ assign_to_source "ret_id"
         ; var_assign_id "var" "ret_id"
-        ; invariant "{ ret_id$0 => (SOURCE -> ?), &var => (SOURCE -> ?) }"
+        ; invariant "{ ret_id$0* => (SOURCE -> ?), &var* => (SOURCE -> ?) }"
         ; assign_to_non_source "non_source_id"
         ; var_assign_id "var" "non_source_id"
-        ; invariant "{ ret_id$0 => (SOURCE -> ?) }" ] )
+        ; invariant "{ ret_id$0* => (SOURCE -> ?) }" ] )
     ; ( "source flows to field then cleared"
       , [ assign_to_source "ret_id"
         ; assign_id_to_field "base_id" "f" "ret_id"
-        ; invariant "{ base_id$0.f => (SOURCE -> ?), ret_id$0 => (SOURCE -> ?) }"
+        ; invariant "{ base_id$0.f* => (SOURCE -> ?), ret_id$0* => (SOURCE -> ?) }"
         ; assign_to_non_source "non_source_id"
         ; assign_id_to_field "base_id" "f" "non_source_id"
-        ; invariant "{ ret_id$0 => (SOURCE -> ?) }" ] )
+        ; invariant "{ ret_id$0* => (SOURCE -> ?) }" ] )
     ; ( "sink without source not tracked"
-      , [assign_to_non_source "ret_id"; call_sink "ret_id"; assert_empty] )
-    ; ( "source -> sink direct"
-      , [ assign_to_source "ret_id"
-        ; call_sink "ret_id"
-        ; invariant "{ ret_id$0* => (SOURCE -> SINK) }" ] )
-    ; ( "source -> sink via var"
-      , [ assign_to_source "ret_id"
-        ; var_assign_id "actual" "ret_id"
-        ; call_sink_with_exp (var_of_str "actual")
-        ; invariant "{ ret_id$0 => (SOURCE -> ?), &actual* => (SOURCE -> SINK) }" ] )
-    ; ( "source -> sink via var then ident"
-      , [ assign_to_source "ret_id"
-        ; var_assign_id "x" "ret_id"
-        ; id_assign_var "actual_id" "x"
-        ; call_sink "actual_id"
-        ; invariant "{ ret_id$0 => (SOURCE -> ?), &x* => (SOURCE -> SINK) }" ] )
-    ; ( "source -> sink via field"
-      , [ assign_to_source "ret_id"
-        ; assign_id_to_field "base_id" "f" "ret_id"
-        ; read_field_to_id "actual_id" "base_id" "f"
-        ; call_sink "actual_id"
-        ; invariant "{ base_id$0.f* => (SOURCE -> SINK), ret_id$0 => (SOURCE -> ?) }" ] )
-    ; ( "source -> sink via field read from var"
-      , [ assign_to_source "ret_id"
-        ; assign_id_to_field "base_id" "f" "ret_id"
-        ; var_assign_id "var" "base_id"
-        ; id_assign_var "var_id" "var"
-        ; read_field_to_id "read_id" "var_id" "f"
-        ; call_sink "read_id"
-        ; invariant
-            "{ base_id$0.f => (SOURCE -> ?),\n  ret_id$0 => (SOURCE -> ?),\n  &var.f* => (SOURCE -> SINK) }"
-        ] )
-    ; ( "source -> sink via cast"
-      , [ assign_to_source "ret_id"
-        ; cast_id_to_id "cast_id" (Typ.mk Tvoid) "ret_id"
-        ; call_sink "cast_id"
-        ; invariant "{ ret_id$0* => (SOURCE -> SINK) }" ] ) ]
+      , [assign_to_non_source "ret_id"; call_sink "ret_id"; assert_empty] ) ]
     |> TestInterpreter.create_tests ~pp_opt:pp_sparse
          {formal_map= FormalMap.empty; summary= Specs.dummy}
          ~initial:(MockTaintAnalysis.Domain.empty, IdAccessPathMapDomain.empty)
   in
   "taint_test_suite" >::: test_list
-
