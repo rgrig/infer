@@ -179,7 +179,6 @@ let default_error_handling : Unix.Exit_or_signal.t -> unit = function
 
 
 let run_command ?(cleanup= default_error_handling) ~prog ~args () =
-  F.printf "OOPS %s@\n" prog;
   Unix.waitpid (Unix.fork_exec ~prog ~argv:(prog :: args) ())
   |> fun status ->
   cleanup status ;

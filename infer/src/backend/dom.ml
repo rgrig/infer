@@ -2230,71 +2230,29 @@ let pathset_join pname tenv (pset1: Paths.PathSet.t) (pset2: Paths.PathSet.t)
   join_time := !join_time +. (Unix.gettimeofday () -. initial_time) ;
   res
 
-(**
-  The meet operator does two things:
-  1) makes the result logically stronger (just like additive conjunction)
-  2) makes the result spatially larger (just like multiplicative conjunction).
-  For all subsets of plist, compute the meet (if any).
-  This takes exponential time, and could be optimized so that one produces
-  meets only for the maximal subsets that have a meet.
-*)
-let proplist_meet_generate tenv plist =
-  let oops = ref 0 in
-  let pre x ys = x :: ys in
-  let rec subsets = function
-    | [] -> incr oops; [[]]
-    | x :: xs ->
-        incr oops;
-        let yss = subsets xs in
-        List.rev_append yss (List.map ~f:(pre x) yss) in
-  let plus a b = match (a, b) with
-    | (None, _) -> incr oops; None
-    | (Some a, b) ->
-        incr oops;
-        SymOp.pay ();
-        L.d_strln "MEET SYM HEAP1: ";  Prop.d_prop a; L.d_ln ();
-        L.d_strln "MEET SYM HEAP2: ";  Prop.d_prop b; L.d_ln ();
-        let r = prop_partial_meet tenv a b in
-        (match r with
-        | None -> L.d_strln_color Red ".... MEET FAILED ...."; L.d_ln ();
-        | Some c ->
-            L.d_strln_color Green ".... MEET SUCCEEDED ....";
-            L.d_strln "RESULT SYM HEAP:"; Prop.d_prop c; L.d_ln (); L.d_ln ());
-        r in
-  let meet_all = function
-    | [] -> None
-    | x :: xs -> List.fold ~f:plus ~init:(Some x) xs in
-  let xs = List.map ~f:meet_all (subsets plist) in
-  let keep_some acc = function
-    | None -> incr oops; acc
-    | Some x -> incr oops; Propset.add tenv x acc in
-  let xs = List.fold ~f:keep_some ~init:Propset.empty xs in
-  Format.printf "MEET OOPS %d INLEN %d OUTLEN %d@\n"
-    !oops (List.length plist) (Propset.size xs);
-  xs
-
 (* Computes x1+...+xk for maximal subsets {x1,...,xk} of xs such that
  sum is defined. |plus| returns an option, which is None for 'undefined'.
  The subsets are also limited to have size at most n. *)
 let maximal_combine n plus xs =
-  (* XXX TODO: keep only maximals! *)
+  let oops = ref 0 in
   let module MapIS = Caml.Map.Make (IntSet) in
-  let all_values = ref [] in
-  let record_values xss =
-    let f _ = function None -> () | Some x -> all_values := x :: !all_values in
-    MapIS.iter f xss in
+  let maximal_values = ref [] in
   let rec loop k xss =
-    record_values xss;
     if k < n then begin
       let add_one old_set old_value yss = match old_value with
         | None -> yss
         | Some old_value ->
+            let is_maximal = ref true in
             let f (i, yss) x =
+              incr oops;
               if IntSet.mem i old_set then (i+1, yss) else
               let new_set = IntSet.add i old_set in
               if MapIS.mem new_set yss then (i+1, yss) else
-              (i+1, MapIS.add new_set (plus old_value x) yss) in
+              let new_value = plus old_value x in
+              (match new_value with None -> () | Some _ -> is_maximal := false);
+              (i+1, MapIS.add new_set new_value yss) in
             let _, yss = List.fold ~f ~init:(0, yss) xs in
+            if !is_maximal then maximal_values := old_value :: !maximal_values;
             yss
       in
       let yss = MapIS.fold add_one xss MapIS.empty in
@@ -2303,9 +2261,19 @@ let maximal_combine n plus xs =
   let f (i, xss) x = (i+1, MapIS.add (IntSet.singleton i) (Some x) xss) in
   let _, xss = List.fold ~f ~init:(0, MapIS.empty) xs in
   loop 1 xss;
-  !all_values
+  L.d_str (Printf.sprintf
+    "PERF: maximal_combine inlen=%d outlen=%d oops=%d"
+    (List.length xs) (List.length !maximal_values) !oops
+  ); L.d_ln ();
+  !maximal_values
   (* xss, yss : (* set of ints *) -> 'a option *)
 
+(**
+  The meet operator does two things:
+  1) makes the result logically stronger (just like additive conjunction)
+  2) makes the result spatially larger (just like multiplicative conjunction).
+  Produces meets only for the maximal subsets that have a meet.
+*)
 let proplist_meet_generate tenv plist =
   let plus a b =
       SymOp.pay ();
