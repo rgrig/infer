@@ -370,18 +370,6 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       ; return_attributes= AttributeSetDomain.empty }
 
 
-  let cpp_force_skipped =
-    let matcher =
-      lazy
-        (QualifiedCppName.Match.of_fuzzy_qual_names
-           ["folly::AtomicStruct::load"; "folly::detail::SingletonHolder::createInstance"])
-    in
-    fun pname ->
-      Typ.Procname.is_destructor pname
-      || QualifiedCppName.Match.match_qualifiers (Lazy.force matcher)
-           (Typ.Procname.get_qualifiers pname)
-
-
   let get_summary caller_pdesc callee_pname actuals callee_loc tenv =
     let open RacerDConfig in
     let get_receiver_ap actuals =
@@ -399,8 +387,6 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     | Some ContainerRead, _ ->
         make_container_access callee_pname ~is_write:false (get_receiver_ap actuals) callee_loc
           tenv
-    | None, Typ.Procname.ObjC_Cpp _ when cpp_force_skipped callee_pname ->
-        None
     | None, _ ->
         Summary.read_summary caller_pdesc callee_pname
 
@@ -866,7 +852,7 @@ let pdesc_is_assumed_thread_safe pdesc tenv =
 let should_analyze_proc pdesc tenv =
   let pn = Procdesc.get_proc_name pdesc in
   not (Typ.Procname.is_class_initializer pn) && not (FbThreadSafety.is_logging_method pn)
-  && not (pdesc_is_assumed_thread_safe pdesc tenv)
+  && not (pdesc_is_assumed_thread_safe pdesc tenv) && not (RacerDConfig.Models.should_skip pn)
 
 
 let get_current_class_and_threadsafe_superclasses tenv pname =
@@ -920,7 +906,7 @@ let analyze_procedure {Callbacks.proc_desc; get_proc_desc; tenv; summary} =
     Typ.Procname.is_constructor proc_name || FbThreadSafety.is_custom_init tenv proc_name
   in
   let open RacerDDomain in
-  if should_analyze_proc proc_desc tenv then (
+  if should_analyze_proc proc_desc tenv then
     let formal_map = FormalMap.make proc_desc in
     let proc_data = ProcData.make proc_desc tenv get_proc_desc in
     let initial =
@@ -993,7 +979,7 @@ let analyze_procedure {Callbacks.proc_desc; get_proc_desc; tenv; summary} =
         let post = {threads; locks; accesses; return_ownership; return_attributes} in
         Summary.update_summary post summary
     | None ->
-        summary )
+        summary
   else Summary.update_summary empty_post summary
 
 
@@ -1734,3 +1720,4 @@ let file_analysis {Callbacks.procedures} =
            else (module MayAliasQuotientedAccessListMap) )
            class_env))
     (aggregate_by_class procedures)
+
