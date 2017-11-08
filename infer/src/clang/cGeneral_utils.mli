@@ -19,16 +19,12 @@ val append_no_duplicates_fields :
   (Typ.Fieldname.t * Typ.t * Annot.Item.t) list -> (Typ.Fieldname.t * Typ.t * Annot.Item.t) list
   -> (Typ.Fieldname.t * Typ.t * Annot.Item.t) list
 
-val append_no_duplicates_csu : Typ.Name.t list -> Typ.Name.t list -> Typ.Name.t list
-
 val collect_list_tuples :
   ('a list * 'b list * 'c list * 'd list * 'e list) list
   -> 'a list * 'b list * 'c list * 'd list * 'e list
   -> 'a list * 'b list * 'c list * 'd list * 'e list
 
 val swap_elements_list : 'a list -> 'a list
-
-val is_static_var : Clang_ast_t.var_decl_info -> bool
 
 val zip : 'a list -> 'b list -> ('a * 'b) list
 

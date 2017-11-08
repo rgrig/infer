@@ -110,6 +110,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       when NullCheckedPname.mem callee_pname checked_pnames ->
         (* Do not report nullable when the method has already been checked for null *)
         remove_nullable_ap (ret_var, []) astate
+    | Call (_, Direct callee_pname, (HilExp.AccessPath receiver) :: _, _, _)
+      when Models.is_check_not_null callee_pname ->
+        assume_pnames_notnull receiver astate
     | Call (Some ret_var, Direct callee_pname, _, _, loc)
       when Annotations.pname_has_return_annot callee_pname
              ~attrs_of_pname:Specs.proc_resolve_attributes Annotations.ia_is_nullable ->
@@ -122,7 +125,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           astate
       | Some (nullable_ap, call_sites) ->
           report_nullable_dereference nullable_ap call_sites proc_data loc ;
-          remove_nullable_ap receiver astate )
+          assume_pnames_notnull receiver astate )
     | Call (Some ret_var, _, _, _, _) ->
         remove_nullable_ap (ret_var, []) astate
     | Assign (lhs, rhs, loc)

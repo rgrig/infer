@@ -30,20 +30,11 @@ let rec string_from_list l =
   match l with [] -> "" | [item] -> item | item :: l' -> item ^ " " ^ string_from_list l'
 
 
-let rec append_no_duplicates eq list1 list2 =
-  match list2 with
-  | el :: rest2 ->
-      if List.mem ~equal:eq list1 el then append_no_duplicates eq list1 rest2
-      else append_no_duplicates eq list1 rest2 @ [el]
-  | [] ->
-      list1
-
-
-let append_no_duplicates_csu list1 list2 = append_no_duplicates Typ.Name.equal list1 list2
-
 let append_no_duplicates_annotations list1 list2 =
-  let eq (annot1, _) (annot2, _) = String.equal annot1.Annot.class_name annot2.Annot.class_name in
-  append_no_duplicates eq list1 list2
+  let equal (annot1, _) (annot2, _) =
+    String.equal annot1.Annot.class_name annot2.Annot.class_name
+  in
+  IList.append_no_duplicates equal list1 list2
 
 
 let add_no_duplicates_fields field_tuple l =
@@ -77,14 +68,6 @@ let rec collect_list_tuples l (a, a1, b, c, d) =
       (a, a1, b, c, d)
   | (a', a1', b', c', d') :: l' ->
       collect_list_tuples l' (a @ a', a1 @ a1', b @ b', c @ c', d @ d')
-
-
-let is_static_var var_decl_info =
-  match var_decl_info.Clang_ast_t.vdi_storage_class with
-  | Some sc ->
-      String.equal sc CFrontend_config.static
-  | _ ->
-      false
 
 
 let rec zip xs ys =
@@ -145,14 +128,15 @@ let mk_sil_global_var {CFrontend_config.source_file} ?(mk_name= fun _ x -> x) na
     var_decl_info qt =
   let name_string, simple_name = get_var_name_mangled named_decl_info var_decl_info in
   let translation_unit =
-    match
-      (var_decl_info.Clang_ast_t.vdi_storage_class, var_decl_info.Clang_ast_t.vdi_init_expr)
-    with
-    | Some "extern", None ->
-        (* some compilers simply disregard "extern" when the global is given some initialisation
-           code, which is why we make sure that [vdi_init_expr] is None here... *)
+    match Clang_ast_t.((var_decl_info.vdi_is_extern, var_decl_info.vdi_init_expr)) with
+    | true, None ->
         Pvar.TUExtern
-    | _ ->
+    | _, None when var_decl_info.Clang_ast_t.vdi_is_static_data_member ->
+        (* non-const static data member get extern scope unless they are defined out of line here (in which case vdi_init_expr will not be None) *)
+        Pvar.TUExtern
+    | true, Some _
+    (* "extern" variables with initialisation code are not extern at all, but compilers accept this *)
+    | false, _ ->
         Pvar.TUFile source_file
   in
   let is_constexpr = var_decl_info.Clang_ast_t.vdi_is_const_expr in
@@ -201,4 +185,3 @@ let mk_sil_var trans_unit_ctx named_decl_info decl_info_qual_type_opt procname o
         CAst_utils.get_qualified_name named_decl_info |> QualifiedCppName.to_qual_string
       in
       Pvar.mk (Mangled.from_string name_string) procname
-
