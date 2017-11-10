@@ -8,9 +8,34 @@
  */
 #import <Foundation/NSObject.h>
 
-@interface B : NSObject {
-  int y;
-  int x;
+@interface HappySadView : NSObject
+@end
+
+@implementation HappySadView
+
+- (void)makeBadAction {
+  [self copy];
+}
+
+- (void)foo {
+}
+
+@end
+
+@interface SubClassTestClass : NSObject
+
+@end
+
+@interface HappySadView2 : SubClassTestClass
+@end
+
+@implementation HappySadView2
+
+- (void)makeBadAction {
+  [self copy];
+}
+
+- (void)foo {
 }
 
 @end
