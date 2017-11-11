@@ -47,8 +47,7 @@ struct
 
   let exec_instr ((actual_state, id_map) as astate) extras node instr =
     let f_resolve_id id =
-      try Some (IdAccessPathMapDomain.find id id_map)
-      with Not_found -> None
+      try Some (IdAccessPathMapDomain.find id id_map) with Not_found -> None
     in
     match
       HilInstr.of_sil ~include_array_indexes:HilConfig.include_array_indexes ~f_resolve_id instr
@@ -88,12 +87,12 @@ struct
 
 end
 
-module MakeAbstractInterpreter
+module MakeAbstractInterpreterWithConfig
+    (HilConfig : HilConfig)
     (CFG : ProcCfg.S)
     (MakeTransferFunctions : TransferFunctions.MakeHIL) =
 struct
-  module Interpreter =
-    AbstractInterpreter.Make (CFG) (Make (MakeTransferFunctions) (DefaultConfig))
+  module Interpreter = AbstractInterpreter.Make (CFG) (Make (MakeTransferFunctions) (HilConfig))
 
   let compute_post ({ProcData.pdesc; tenv} as proc_data) ~initial =
     if not (Procdesc.did_preanalysis pdesc) then Preanal.do_liveness pdesc tenv ;
@@ -101,3 +100,5 @@ struct
     Option.map ~f:fst (Interpreter.compute_post ~debug:false proc_data ~initial:initial')
 
 end
+
+module MakeAbstractInterpreter = MakeAbstractInterpreterWithConfig (DefaultConfig)
