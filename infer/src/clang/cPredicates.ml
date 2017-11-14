@@ -481,6 +481,14 @@ let is_in_objc_subclass_of context name =
       false
 
 
+let is_in_objc_class_named context name =
+  match context.CLintersContext.current_objc_class with
+  | Some cls ->
+      is_objc_interface_named (Decl cls) name
+  | None ->
+      false
+
+
 let captures_cxx_references an = List.length (captured_variables_cxx_ref an) > 0
 
 let is_binop_with_kind an alexp_kind =
@@ -871,3 +879,13 @@ let has_value an al_exp =
   | _ ->
       false
 
+
+(* check if method is called on superclass *)
+let is_method_called_by_superclass an =
+  let open Clang_ast_t in
+  let open Ctl_parser_types in
+  match an with
+  | Stmt ObjCMessageExpr (_, _, _, obj_c_message_expr_info) -> (
+    match obj_c_message_expr_info.omei_receiver_kind with `SuperInstance -> true | _ -> false )
+  | _ ->
+      false

@@ -128,7 +128,8 @@ DEFINE-CHECKER TEST_BUILTIN_TYPE = {
 
   SET report_when =
         WHEN
-          method_return_type("void")
+          is_in_objc_class_named("TestType") AND 
+          (method_return_type("void")
           OR method_return_type("bool")
           OR method_return_type("char")
           OR method_return_type("unsigned char")
@@ -153,7 +154,7 @@ DEFINE-CHECKER TEST_BUILTIN_TYPE = {
           OR method_return_type("float *")
           OR method_return_type("unsigned int **")
           OR method_return_type("A*")
-          OR method_return_type("REGEXP('This.+')*" )
+          OR method_return_type("REGEXP('This.+')*" ))
         HOLDS-IN-NODE ObjCMethodDecl;
 
   SET message = "Method return.....";
@@ -423,10 +424,22 @@ DEFINE-CHECKER TEST_PARAMETER_SEL_TYPE = {
  SET message = "Method has parameter of type SEL";
 
  };
- 
+
  DEFINE-CHECKER IN_SUBCLASS_TEST = {
    SET report_when =
-   		       WHEN is_in_objc_subclass_of("SubClassTestClass") 
+   		       WHEN is_in_objc_subclass_of("SubClassTestClass")
              HOLDS-IN-NODE ObjCMessageExpr;
    SET message = "Found a message call in a class that is not subclass of A.";
  };
+
+ DEFINE-CHECKER TEST_IF_VIEW_METHOD_IS_NOT_CALLED_WITH_SUPER = {
+
+  SET report_when =
+      WHEN
+        call_method("testView") AND
+        NOT is_method_called_by_superclass()
+      HOLDS-IN-NODE ObjCMessageExpr;
+
+  SET message = "Method %name% is not called with super.";
+
+};

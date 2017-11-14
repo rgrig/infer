@@ -70,6 +70,8 @@ val is_objc_dealloc : CLintersContext.context -> bool
 
 val is_in_objc_subclass_of : CLintersContext.context -> ALVar.alexp -> bool
 
+val is_in_objc_class_named : CLintersContext.context -> ALVar.alexp -> bool
+
 val is_subclass_of : Clang_ast_t.decl -> ALVar.alexp -> bool
 
 val captures_cxx_references : Ctl_parser_types.ast_node -> bool
@@ -140,3 +142,5 @@ val has_type_const_ptr_to_objc_class : Ctl_parser_types.ast_node -> bool
 val is_decl : Ctl_parser_types.ast_node -> bool
 
 val get_ast_node_type_ptr : Ctl_parser_types.ast_node -> Clang_ast_t.type_ptr option
+
+val is_method_called_by_superclass : Ctl_parser_types.ast_node -> bool

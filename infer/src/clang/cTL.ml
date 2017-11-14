@@ -1020,6 +1020,10 @@ let rec eval_Atomic _pred_name args an lcxt =
       CPredicates.is_in_function lcxt name
   | "is_in_objc_method", [name], _ ->
       CPredicates.is_in_objc_method lcxt name
+  | "is_in_objc_class_named", [name], _ ->
+      CPredicates.is_in_objc_class_named lcxt name
+  | "is_in_objc_subclass_of", [name], _ ->
+      CPredicates.is_in_objc_subclass_of lcxt name
   | "is_ivar_atomic", [], an ->
       CPredicates.is_ivar_atomic an
   | "is_method_property_accessor_of_ivar", [], an ->
@@ -1032,8 +1036,6 @@ let rec eval_Atomic _pred_name args an lcxt =
       CPredicates.is_objc_dealloc lcxt
   | "is_objc_extension", [], _ ->
       CPredicates.is_objc_extension lcxt
-  | "is_in_objc_subclass_of", [name], _ ->
-      CPredicates.is_in_objc_subclass_of lcxt name
   | "is_objc_interface_named", [name], an ->
       CPredicates.is_objc_interface_named an name
   | "is_property_pointer_type", [], an ->
@@ -1064,6 +1066,8 @@ let rec eval_Atomic _pred_name args an lcxt =
       CPredicates.has_used_attribute an
   | "within_available_class_block", [], an ->
       CPredicates.within_available_class_block lcxt an
+  | "is_method_called_by_superclass", [], an ->
+      CPredicates.is_method_called_by_superclass an
   | _ ->
       L.(die ExternalError) "Undefined Predicate or wrong set of arguments: '%s'" pred_name
 
@@ -1251,4 +1255,3 @@ and eval_formula f an lcxt : Ctl_parser_types.ast_node option =
         eval_ET tl sw phi an lcxt
   in
   debug_eval_end res ; res
-
