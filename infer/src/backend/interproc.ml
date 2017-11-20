@@ -1050,7 +1050,7 @@ let perform_analysis_phase tenv (summary: Specs.summary) (proc_cfg: ProcCfg.Exce
 
 
 let set_current_language proc_desc =
-  let language = (Procdesc.get_attributes proc_desc).ProcAttributes.language in
+  let language = Typ.Procname.get_language (Procdesc.get_proc_name proc_desc) in
   Config.curr_language := language
 
 
@@ -1168,7 +1168,7 @@ let report_custom_errors tenv summary =
   let error_preconditions, all_post_error = custom_error_preconditions summary in
   let report (pre, custom_error) =
     if all_post_error || is_unavoidable tenv pre then
-      let loc = summary.Specs.attributes.ProcAttributes.loc in
+      let loc = Specs.get_loc summary in
       let err_desc = Localise.desc_custom_error loc in
       let exn = Exceptions.Custom_error (custom_error, err_desc) in
       Reporting.log_error_deprecated pname exn
@@ -1403,28 +1403,16 @@ let do_analysis_closures exe_env : Tasks.closure list =
       match Exe_env.get_proc_desc exe_env pname with Some pdesc -> pdesc | None -> assert false
     in
     let nodes = List.map ~f:(fun n -> Procdesc.Node.get_id n) (Procdesc.get_nodes pdesc) in
-    let proc_flags = Procdesc.get_flags pdesc in
-    let static_err_log = Procdesc.get_err_log pdesc in
-    (* err log from translation *)
     let calls = get_calls pdesc in
-    let attributes =
-      {(Procdesc.get_attributes pdesc) with ProcAttributes.err_log= static_err_log}
-    in
-    let proc_desc_option =
-      if Config.(equal_dynamic_dispatch dynamic_dispatch Lazy) then Some pdesc else None
-    in
-    ignore (Specs.init_summary (nodes, proc_flags, calls, attributes, proc_desc_option))
+    ignore (Specs.init_summary (nodes, calls, pdesc))
   in
   let callbacks =
     let get_proc_desc proc_name =
       match Exe_env.get_proc_desc exe_env proc_name with
       | Some pdesc ->
           Some pdesc
-      | None when Config.(equal_dynamic_dispatch dynamic_dispatch Lazy) ->
-          Option.bind (Specs.get_summary proc_name) ~f:(fun summary ->
-              summary.Specs.proc_desc_option )
       | None ->
-          None
+          Option.map ~f:Specs.get_proc_desc (Specs.get_summary proc_name)
     in
     let analyze_ondemand _ proc_desc =
       let proc_name = Procdesc.get_proc_name proc_desc in
@@ -1445,140 +1433,3 @@ let do_analysis_closures exe_env : Tasks.closure list =
       (interprocedural_algorithm_closures ~prepare_proc exe_env)
   in
   closures
-
-
-let visited_and_total_nodes ~filter cfg =
-  let filter_node pdesc n =
-    Procdesc.is_defined pdesc && filter pdesc
-    &&
-    match Procdesc.Node.get_kind n with
-    | Procdesc.Node.Stmt_node _
-    | Procdesc.Node.Prune_node _
-    | Procdesc.Node.Start_node _
-    | Procdesc.Node.Exit_node _ ->
-        true
-    | Procdesc.Node.Skip_node _ | Procdesc.Node.Join_node ->
-        false
-  in
-  let counted_nodes, visited_nodes_re =
-    let set = ref Procdesc.NodeSet.empty in
-    let set_visited_re = ref Procdesc.NodeSet.empty in
-    let add pdesc n =
-      if filter_node pdesc n then (
-        set := Procdesc.NodeSet.add n !set ;
-        if snd (Printer.node_is_visited n) then set_visited_re
-          := Procdesc.NodeSet.add n !set_visited_re )
-    in
-    Cfg.iter_all_nodes add cfg ; (!set, !set_visited_re)
-  in
-  (Procdesc.NodeSet.elements visited_nodes_re, Procdesc.NodeSet.elements counted_nodes)
-
-
-(** Print the stats for the given cfg.
-    Consider every defined proc unless a proc with the same name
-    was defined in another module, and was the one which was analyzed *)
-let print_stats_cfg proc_shadowed source cfg =
-  let err_table = Errlog.create_err_table () in
-  let filter pdesc =
-    match Specs.get_summary (Procdesc.get_proc_name pdesc) with
-    | None ->
-        false
-    | Some summary ->
-        Specs.get_specs_from_payload summary <> []
-  in
-  let nodes_visited, nodes_total = visited_and_total_nodes ~filter cfg in
-  let num_proc = ref 0 in
-  let num_nospec_noerror_proc = ref 0 in
-  let num_spec_noerror_proc = ref 0 in
-  let num_nospec_error_proc = ref 0 in
-  let num_spec_error_proc = ref 0 in
-  let tot_specs = ref 0 in
-  let tot_symops = ref 0 in
-  let num_timeout = ref 0 in
-  let compute_stats_proc proc_desc =
-    let proc_name = Procdesc.get_proc_name proc_desc in
-    match Specs.get_summary proc_name with
-    | None ->
-        ()
-    | Some _ when proc_shadowed proc_desc ->
-        L.(debug Analysis Medium)
-          "print_stats: ignoring function %a which is also defined in another file@."
-          Typ.Procname.pp proc_name
-    | Some summary ->
-        let stats = summary.Specs.stats in
-        let err_log = summary.Specs.attributes.ProcAttributes.err_log in
-        incr num_proc ;
-        let specs = Specs.get_specs_from_payload summary in
-        tot_specs := List.length specs + !tot_specs ;
-        let () =
-          match
-            ( specs
-            , Errlog.size
-                (fun ekind in_footprint ->
-                  Exceptions.equal_err_kind ekind Exceptions.Kerror && in_footprint)
-                err_log )
-          with
-          | [], 0 ->
-              incr num_nospec_noerror_proc
-          | _, 0 ->
-              incr num_spec_noerror_proc
-          | [], _ ->
-              incr num_nospec_error_proc
-          | _, _ ->
-              incr num_spec_error_proc
-        in
-        tot_symops := !tot_symops + stats.Specs.symops ;
-        if Option.is_some stats.Specs.stats_failure then incr num_timeout ;
-        Errlog.extend_table err_table err_log
-  in
-  let print_file_stats fmt () =
-    let num_errors = Errlog.err_table_size_footprint Exceptions.Kerror err_table in
-    let num_warnings = Errlog.err_table_size_footprint Exceptions.Kwarning err_table in
-    let num_infos = Errlog.err_table_size_footprint Exceptions.Kinfo err_table in
-    let num_ok_proc = !num_spec_noerror_proc + !num_spec_error_proc in
-    (* F.fprintf fmt "VISITED: %a@\n" (pp_seq pp_node) nodes_visited;
-       F.fprintf fmt "TOTAL: %a@\n" (pp_seq pp_node) nodes_total; *)
-    F.fprintf fmt "@\n++++++++++++++++++++++++++++++++++++++++++++++++++@\n" ;
-    F.fprintf fmt "+ FILE: %a  VISITED: %d/%d SYMOPS: %d@\n" SourceFile.pp source
-      (List.length nodes_visited) (List.length nodes_total) !tot_symops ;
-    F.fprintf fmt "+  num_procs: %d (%d ok, %d timeouts, %d errors, %d warnings, %d infos)@\n"
-      !num_proc num_ok_proc !num_timeout num_errors num_warnings num_infos ;
-    F.fprintf fmt "+  detail procs:@\n" ;
-    F.fprintf fmt "+    - No Errors and No Specs: %d@\n" !num_nospec_noerror_proc ;
-    F.fprintf fmt "+    - Some Errors and No Specs: %d@\n" !num_nospec_error_proc ;
-    F.fprintf fmt "+    - No Errors and Some Specs: %d@\n" !num_spec_noerror_proc ;
-    F.fprintf fmt "+    - Some Errors and Some Specs: %d@\n" !num_spec_error_proc ;
-    F.fprintf fmt "+  errors: %a@\n" (Errlog.pp_err_table_stats Exceptions.Kerror) err_table ;
-    F.fprintf fmt "+  warnings: %a@\n" (Errlog.pp_err_table_stats Exceptions.Kwarning) err_table ;
-    F.fprintf fmt "+  infos: %a@\n" (Errlog.pp_err_table_stats Exceptions.Kinfo) err_table ;
-    F.fprintf fmt "+  specs: %d@\n" !tot_specs ;
-    F.fprintf fmt "++++++++++++++++++++++++++++++++++++++++++++++++++@\n" ;
-    Errlog.print_err_table_details fmt err_table
-  in
-  let save_file_stats () =
-    let source_dir = DB.source_dir_from_source_file source in
-    let stats_file = DB.source_dir_get_internal_file source_dir ".stats" in
-    try
-      let outc = Out_channel.create (DB.filename_to_string stats_file) in
-      let fmt = F.formatter_of_out_channel outc in
-      print_file_stats fmt () ; Out_channel.close outc
-    with Sys_error _ -> ()
-  in
-  List.iter ~f:compute_stats_proc (Cfg.get_defined_procs cfg) ;
-  L.(debug Analysis Medium) "%a" print_file_stats () ;
-  save_file_stats ()
-
-
-(** Print the stats for all the files in the cluster *)
-let print_stats cluster =
-  let exe_env = Exe_env.from_cluster cluster in
-  Exe_env.iter_files
-    (fun source cfg ->
-      let proc_shadowed proc_desc =
-        (* return true if a proc with the same name in another module was analyzed instead *)
-        let proc_name = Procdesc.get_proc_name proc_desc in
-        Exe_env.get_source exe_env proc_name <> Some source
-      in
-      print_stats_cfg proc_shadowed source cfg)
-    exe_env
-

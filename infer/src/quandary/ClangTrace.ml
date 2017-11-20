@@ -298,25 +298,32 @@ end
 module CppSink = Sink.Make (SinkKind)
 
 module CppSanitizer = struct
-  type t = All [@@deriving compare]
+  type t =
+    | Escape  (** escaped string to sanitize SQL injection or ShellExec sinks *)
+    | All  (** sanitizes all forms of taint *)
+    [@@deriving compare]
+
+  let equal = [%compare.equal : t]
+
+  let of_string = function "Escape" -> Escape | _ -> All
 
   let external_sanitizers =
     List.map
-      ~f:(fun {QuandaryConfig.Sanitizer.procedure} ->
-        QualifiedCppName.Match.of_fuzzy_qual_names [procedure])
+      ~f:(fun {QuandaryConfig.Sanitizer.procedure; kind} ->
+        (QualifiedCppName.Match.of_fuzzy_qual_names [procedure], of_string kind))
       (QuandaryConfig.Sanitizer.of_json Config.quandary_sanitizers)
 
 
   let get pname =
     let qualified_pname = Typ.Procname.get_qualifiers pname in
     List.find_map
-      ~f:(fun qualifiers ->
-        if QualifiedCppName.Match.match_qualifiers qualifiers qualified_pname then Some All
+      ~f:(fun (qualifiers, kind) ->
+        if QualifiedCppName.Match.match_qualifiers qualifiers qualified_pname then Some kind
         else None)
       external_sanitizers
 
 
-  let pp fmt = function All -> F.fprintf fmt "All"
+  let pp fmt = function Escape -> F.fprintf fmt "Escape" | All -> F.fprintf fmt "All"
 end
 
 include Trace.Make (struct
@@ -324,39 +331,63 @@ include Trace.Make (struct
   module Sink = CppSink
   module Sanitizer = CppSanitizer
 
-  let get_report source sink =
-    (* TODO: make this accept structs/objects too, but not primitive types or enumes *)
+  (* return true if code injection is possible because the source is a string/is not sanitized *)
+  let is_injection_possible ?typ sanitizers =
+    let is_escaped = List.mem sanitizers Sanitizer.Escape ~equal:Sanitizer.equal in
     (* using this to match custom string wrappers such as folly::StringPiece *)
     let is_stringy typ =
       let lowercase_typ = String.lowercase (Typ.to_string (Typ.mk typ)) in
       String.is_substring ~substring:"string" lowercase_typ
       || String.is_substring ~substring:"char*" lowercase_typ
     in
+    not is_escaped
+    &&
+    match typ with
+    | Some typ ->
+        is_stringy typ
+    | None ->
+        (* not sure if it's a string; assume injection possible *)
+        true
+
+
+  let get_report source sink sanitizers =
     match (Source.kind source, Sink.kind sink) with
-    | Endpoint (_, typ), (ShellExec | SQL) ->
-        (* remote code execution if the caller of the endpoint doesn't sanitize *)
-        Option.some_if (is_stringy typ) IssueType.remote_code_execution_risk
-    | Endpoint _, (BufferAccess | HeapAllocation | StackAllocation) ->
-        (* may want to report this in the future, but don't care for now *)
+    | _ when List.mem sanitizers Sanitizer.All ~equal:Sanitizer.equal ->
+        (* the All sanitizer clears any form of taint; don't report *)
         None
+    | UserControlledEndpoint (_, typ), SQL ->
+        if is_injection_possible ~typ sanitizers then Some IssueType.sql_injection
+        else
+          (* no injection risk, but still user-controlled *)
+          Some IssueType.user_controlled_sql_risk
+    | Endpoint (_, typ), SQL ->
+        if is_injection_possible ~typ sanitizers then
+          (* code injection if the caller of the endpoint doesn't sanitize on its end *)
+          Some IssueType.remote_code_execution_risk
+        else
+          (* no injection risk, but still user-controlled *)
+          Some IssueType.user_controlled_sql_risk
+    | Endpoint (_, typ), ShellExec ->
+        (* code injection if the caller of the endpoint doesn't sanitize on its end *)
+        Option.some_if (is_injection_possible ~typ sanitizers) IssueType.remote_code_execution_risk
+    | UserControlledEndpoint (_, typ), ShellExec ->
+        (* we know the user controls the endpoint, so it's code injection without a sanitizer *)
+        Option.some_if (is_injection_possible ~typ sanitizers) IssueType.shell_injection
     | UserControlledEndpoint _, BufferAccess ->
         (* untrusted data from an endpoint flowing into a buffer *)
         Some IssueType.quandary_taint_error
-    | UserControlledEndpoint (_, typ), ShellExec ->
-        (* untrusted string data flowing to shell ShellExec *)
-        Option.some_if (is_stringy typ) IssueType.shell_injection
-    | UserControlledEndpoint (_, typ), SQL ->
-        (* untrusted string data flowing to SQL *)
-        Option.some_if (is_stringy typ) IssueType.sql_injection
+    | Endpoint _, (BufferAccess | HeapAllocation | StackAllocation) ->
+        (* may want to report this in the future, but don't care for now *)
+        None
     | (CommandLineFlag _ | EnvironmentVariable | File | Other), BufferAccess ->
         (* untrusted flag, environment var, or file data flowing to buffer *)
         Some IssueType.quandary_taint_error
     | (CommandLineFlag _ | EnvironmentVariable | File | Other), ShellExec ->
         (* untrusted flag, environment var, or file data flowing to shell *)
-        Some IssueType.shell_injection
+        Option.some_if (is_injection_possible sanitizers) IssueType.shell_injection
     | (CommandLineFlag _ | EnvironmentVariable | File | Other), SQL ->
         (* untrusted flag, environment var, or file data flowing to SQL *)
-        Some IssueType.sql_injection
+        Option.some_if (is_injection_possible sanitizers) IssueType.sql_injection
     | ( (CommandLineFlag _ | UserControlledEndpoint _ | EnvironmentVariable | File | Other)
       , HeapAllocation ) ->
         (* untrusted data of any kind flowing to heap allocation. this can cause crashes or DOS. *)

@@ -65,7 +65,12 @@
   ],
   "quandary-sanitizers": [
     {
-      "procedure": "__infer_string_sanitizer"
+      "procedure": "__infer_all_sanitizer",
+      "kind": "All"
+    },
+    {
+      "procedure": "__infer_string_sanitizer",
+      "kind": "Escape"
     },
     {
       "procedure": "basics::Obj::sanitizer1"
@@ -76,6 +81,8 @@
   ],
   "quandary-endpoints": [
     "basics::Obj::endpoint",
+    "endpoints::Service1::user_controlled_endpoint_to_sql_bad",
+    "endpoints::Service1::user_controlled_endpoint_to_shell_bad",
     "execs::Obj::endpoint"
   ]
 }

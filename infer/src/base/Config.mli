@@ -282,8 +282,6 @@ val rest : string list
 
 val abs_struct : int
 
-val allow_specs_cleanup : bool
-
 val analysis_path_regex_whitelist : analyzer -> string list
 
 val analysis_path_regex_blacklist : analyzer -> string list
@@ -352,8 +350,6 @@ val compute_analytics : bool
 val continue_capture : bool
 
 val crashcontext : bool
-
-val create_harness : bool
 
 val current_to_previous_script : string option
 
@@ -642,6 +638,8 @@ val source_preview : bool
 val spec_abs_level : int
 
 val specs_library : string list
+
+val sqlite_vfs : string option
 
 val stacktrace : string option
 

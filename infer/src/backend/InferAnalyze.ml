@@ -25,10 +25,7 @@ let analyze_exe_env_tasks cluster exe_env : Tasks.t =
       (Interproc.do_analysis_closures exe_env)
       ~continuation:
         ( if Config.write_html || Config.developer_mode then
-            Some
-              (fun () ->
-                if Config.write_html then Printer.write_all_html_files cluster ;
-                if Config.developer_mode then Interproc.print_stats cluster)
+            Some (fun () -> if Config.write_html then Printer.write_all_html_files cluster)
         else None )
   else
     (* run the registered checkers *)
@@ -139,7 +136,9 @@ let main ~changed_files ~makefile =
   | Some fname ->
       process_cluster_cmdline fname
   | None ->
-      if Config.allow_specs_cleanup then DB.Results_dir.clean_specs_dir () ;
+      (* delete all specs when doing a full analysis so that we do not report on procedures that do
+         not exist anymore *)
+      if not Config.reactive_mode then DB.Results_dir.clean_specs_dir () ;
       let all_clusters = DB.find_source_dirs () in
       let clusters_to_analyze =
         List.filter ~f:(cluster_should_be_analyzed ~changed_files) all_clusters

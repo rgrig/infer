@@ -7,6 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+module F = Format
 module L = Logging
 module MF = MarkupFormatter
 module CallSites = AbstractDomain.FiniteSet (CallSite)
@@ -28,6 +29,12 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         (Specs.proc_resolve_attributes callee_pname)
 
 
+  let is_blacklisted callee_pname =
+    let blacklist = ["URLWithString:"]
+    and simplified_callee_pname = Typ.Procname.to_simplified_string callee_pname in
+    List.exists ~f:(String.equal simplified_callee_pname) blacklist
+
+
   let report_nullable_dereference ap call_sites {ProcData.pdesc; extras} loc =
     let pname = Procdesc.get_proc_name pdesc in
     let annotation = Localise.nullable_annotation_name pname in
@@ -38,22 +45,29 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           "Expecting a least one element in the set of call sites when analyzing %a"
           Typ.Procname.pp pname
     in
-    let message =
+    let simplified_pname =
+      Typ.Procname.to_simplified_string ~withclass:true (CallSite.pname call_site)
+    in
+    let is_direct_dereference =
       match ap with
       | (Var.LogicalVar _, _), _ ->
-          (* direct dereference without intermediate variable *)
-          Format.asprintf
-            "The return value of %s is annotated with %a and is dereferenced without being checked for null at %a"
-            (MF.monospaced_to_string
-               (Typ.Procname.to_simplified_string ~withclass:true (CallSite.pname call_site)))
-            MF.pp_monospaced annotation Location.pp loc
-      | _ ->
-          (* dereference with intermediate variable *)
-          Format.asprintf
-            "Variable %a is indirectly annotated with %a (source %a) and is dereferenced without being checked for null at %a"
-            (MF.wrap_monospaced AccessPath.pp)
-            ap MF.pp_monospaced annotation (MF.wrap_monospaced CallSite.pp) call_site Location.pp
-            loc
+          true
+      | (Var.ProgramVar pvar, _), _ ->
+          Pvar.is_frontend_tmp pvar
+    in
+    let message =
+      if is_direct_dereference then
+        (* direct dereference without intermediate variable *)
+        F.asprintf
+          "The return value of %s is annotated with %a and is dereferenced without being checked for null at %a"
+          (MF.monospaced_to_string simplified_pname)
+          MF.pp_monospaced annotation Location.pp loc
+      else
+        (* dereference with intermediate variable *)
+        F.asprintf
+          "Variable %a is indirectly annotated with %a (source %a) and is dereferenced without being checked for null at %a"
+          (MF.wrap_monospaced AccessPath.pp)
+          ap MF.pp_monospaced annotation (MF.wrap_monospaced CallSite.pp) call_site Location.pp loc
     in
     let exn = Exceptions.Checkers (issue_kind, Localise.verbatim_desc message) in
     let summary = extras in
@@ -65,7 +79,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             []
         | Some attributes ->
             let description =
-              Format.asprintf "definition of %s" (Typ.Procname.get_method callee_pname)
+              F.asprintf "definition of %s" (Typ.Procname.get_method callee_pname)
             in
             let trace_element =
               Errlog.make_trace_element 1 attributes.ProcAttributes.loc description []
@@ -82,7 +96,11 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           trace_element :: with_origin_site
       in
       let dereference_site =
-        let description = Format.asprintf "deference of %a" AccessPath.pp ap in
+        let description =
+          if is_direct_dereference then
+            F.asprintf "dereferencing the return of %s" simplified_pname
+          else F.asprintf "dereference of %a" AccessPath.pp ap
+        in
         Errlog.make_trace_element 0 loc description []
       in
       dereference_site :: with_assignment_site
@@ -113,6 +131,27 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       match ap with _, [] -> None | p -> longest_nullable_prefix (AccessPath.truncate p) astate
 
 
+  let check_ap proc_data loc ap astate =
+    match longest_nullable_prefix ap astate with
+    | None ->
+        astate
+    | Some (nullable_ap, call_sites) ->
+        report_nullable_dereference nullable_ap call_sites proc_data loc ;
+        assume_pnames_notnull ap astate
+
+
+  let rec check_nil_in_nsarray proc_data loc args astate =
+    match args with
+    | [] ->
+        astate
+    | [arg] when HilExp.is_null_literal arg ->
+        astate
+    | (HilExp.AccessPath ap) :: other_args ->
+        check_nil_in_nsarray proc_data loc other_args (check_ap proc_data loc ap astate)
+    | _ :: other_args ->
+        check_nil_in_nsarray proc_data loc other_args astate
+
+
   let exec_instr ((_, checked_pnames) as astate) proc_data _ (instr: HilInstr.t) : Domain.astate =
     let is_pointer_assignment tenv lhs rhs =
       HilExp.is_null_literal rhs
@@ -129,19 +168,19 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     | Call (_, Direct callee_pname, (HilExp.AccessPath receiver) :: _, _, _)
       when Models.is_check_not_null callee_pname ->
         assume_pnames_notnull receiver astate
+    | Call (_, Direct callee_pname, _, _, _) when is_blacklisted callee_pname ->
+        astate
     | Call (Some ret_var, Direct callee_pname, _, _, loc)
       when Annotations.pname_has_return_annot callee_pname
              ~attrs_of_pname:Specs.proc_resolve_attributes Annotations.ia_is_nullable ->
         let call_site = CallSite.make callee_pname loc in
         add_nullable_ap (ret_var, []) (CallSites.singleton call_site) astate
     | Call (_, Direct callee_pname, (HilExp.AccessPath receiver) :: _, _, loc)
-      when is_instance_method callee_pname -> (
-      match longest_nullable_prefix receiver astate with
-      | None ->
-          astate
-      | Some (nullable_ap, call_sites) ->
-          report_nullable_dereference nullable_ap call_sites proc_data loc ;
-          assume_pnames_notnull receiver astate )
+      when is_instance_method callee_pname ->
+        check_ap proc_data loc receiver astate
+    | Call (_, Direct callee_pname, args, _, loc)
+      when Typ.Procname.equal callee_pname BuiltinDecl.nsArray_arrayWithObjectsCount ->
+        check_nil_in_nsarray proc_data loc args astate
     | Call (Some ret_var, _, _, _, _) ->
         remove_nullable_ap (ret_var, []) astate
     | Assign (lhs, rhs, loc)

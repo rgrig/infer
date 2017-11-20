@@ -482,7 +482,7 @@ let wrappers_dir = lib_dir ^/ "wrappers"
 
 let ncpu =
   try
-    Utils.with_process_in "getconf _NPROCESSORS_ONLN 2>/dev/null" (fun chan ->
+    Utils.with_process_in "getconf NPROCESSORS_ONLN_ 2>/dev/null" (fun chan ->
         Scanf.bscanf (Scanf.Scanning.from_channel chan) "%d" (fun n -> n) )
     |> fst
   with _ -> 1
@@ -597,11 +597,6 @@ and allow_leak =
   CLOpt.mk_bool ~deprecated:["leak"] ~long:"allow-leak" "Forget leaked memory during abstraction"
 
 
-and allow_specs_cleanup =
-  CLOpt.mk_bool ~deprecated:["allow_specs_cleanup"] ~long:"allow-specs-cleanup" ~default:true
-    "Allow to remove existing specs before running analysis when it's not incremental"
-
-
 and ( analysis_blacklist_files_containing_options
     , analysis_path_regex_blacklist_options
     , analysis_path_regex_whitelist_options
@@ -698,12 +693,6 @@ and analyzer =
         | _ as x ->
             x)
     ~symbols:string_to_analyzer
-
-
-and android_harness =
-  CLOpt.mk_bool ~deprecated:["harness"] ~long:"android-harness"
-    "(Experimental) Create harness to detect issues involving the Android lifecycle"
-
 
 and ( annotation_reachability
     , biabduction
@@ -1869,6 +1858,19 @@ and specs_library =
   specs_library
 
 
+and sqlite_vfs =
+  let default =
+    match Utils.read_file "/proc/version" with
+    | Result.Ok [line] ->
+        let re = Str.regexp "Linux.+-Microsoft" in
+        (* on WSL (bash on Windows) standard SQLite VFS can't be used, see WSL/issues/1927 WSL/issues/2395 *)
+        if Str.string_match re line 0 then Some "unix-excl" else None
+    | _ ->
+        None
+  in
+  CLOpt.mk_string_opt ?default ~long:"sqlite-vfs" "VFS for SQLite"
+
+
 and stacktrace =
   CLOpt.mk_path_opt ~deprecated:["st"] ~long:"stacktrace"
     ~in_help:CLOpt.([(Analyze, manual_crashcontext)])
@@ -1997,9 +1999,9 @@ and xcode_developer_dir =
 
 
 and xcpretty =
-  CLOpt.mk_bool ~long:"xcpretty" ~default:true
+  CLOpt.mk_bool ~long:"xcpretty" ~default:false
     ~in_help:CLOpt.([(Capture, manual_clang)])
-    "Infer will use xcpretty together with xcodebuild to analyze an iOS app. xcpretty just needs to be in the path, infer command is still just $(i,`infer -- <xcodebuild command>`). (Recommended)"
+    "Infer will use xcpretty together with xcodebuild to analyze an iOS app. xcpretty just needs to be in the path, infer command is still just $(i,`infer -- <xcodebuild command>`)."
 
 
 and xml_specs =
@@ -2257,8 +2259,6 @@ and abs_struct = !abs_struct
 
 and abs_val_orig = !abs_val
 
-and allow_specs_cleanup = !allow_specs_cleanup
-
 and analysis_path_regex_whitelist_options =
   List.map ~f:(fun (a, b) -> (a, !b)) analysis_path_regex_whitelist_options
 
@@ -2349,8 +2349,6 @@ and continue_capture = !continue
 and current_to_previous_script = !current_to_previous_script
 
 and crashcontext = !crashcontext
-
-and create_harness = !android_harness
 
 and cxx = !cxx
 
@@ -2651,6 +2649,8 @@ and sources = !sources
 and sourcepath = !sourcepath
 
 and spec_abs_level = !spec_abs_level
+
+and sqlite_vfs = !sqlite_vfs
 
 and stacktrace = !stacktrace
 
