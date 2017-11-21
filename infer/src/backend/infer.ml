@@ -29,7 +29,7 @@ let setup () =
   match Config.command with
   | Analyze ->
       ResultsDir.assert_results_dir "have you run capture before?"
-  | Report | ReportDiff ->
+  | Report | ReportDiff | ToplDiff ->
       ResultsDir.create_results_dir ()
   | Diff ->
       ResultsDir.remove_results_dir () ; ResultsDir.create_results_dir ()
@@ -107,6 +107,10 @@ let () =
           () ) ;
       ReportDiff.reportdiff ~current_report:Config.report_current
         ~previous_report:Config.report_previous
+  | ToplDiff ->
+      ToplDiff.topldiff
+        ~previous_results:Config.report_previous
+        ~current_results:Config.report_current
   | Capture | Compile | Run ->
       run (Lazy.force Driver.mode_from_command_line)
   | Diff ->
