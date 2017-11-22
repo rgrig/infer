@@ -142,8 +142,7 @@ type payload =
 
 (** Procedure summary *)
 type summary =
-  { nodes: Procdesc.Node.id list  (** ids of cfg nodes of the procedure *)
-  ; phase: phase  (** in FOOTPRINT phase or in RE_EXECUTION PHASE *)
+  { phase: phase  (** in FOOTPRINT phase or in RE_EXECUTION PHASE *)
   ; payload: payload  (** payload containing the result of some analysis *)
   ; sessions: int ref  (** Session number: how many nodes went trough symbolic execution *)
   ; stats: stats  (** statistics: execution time and list of errors *)
@@ -201,14 +200,6 @@ val get_summary_unsafe : string -> Typ.Procname.t -> summary
 val get_status : summary -> status
 (** Return the status (active v.s. inactive) of a procedure summary *)
 
-val init_summary :
-  Procdesc.Node.id list * (* nodes *)
-                          (Typ.Procname.t * Location.t) list * (* calls *)
-                                                               Procdesc.t
-  (* procdesc *) -> summary
-(** Initialize the summary for [proc_name] given dependent procs in list [depend_list].
-    This also stores the new summary in the spec table. *)
-
 val reset_summary : Procdesc.t -> summary
 (** Reset a summary rebuilding the dependents and preserving the proc attributes if present. *)
 
@@ -229,9 +220,6 @@ val pp_specs : Pp.env -> Format.formatter -> Prop.normal spec list -> unit
 
 val pp_summary_html : SourceFile.t -> Pp.color -> Format.formatter -> summary -> unit
 (** Print the summary in html format *)
-
-val pp_summary_latex : Pp.color -> Format.formatter -> summary -> unit
-(** Print the summary in latext format *)
 
 val pp_summary_text : Format.formatter -> summary -> unit
 (** Print the summary in text format *)

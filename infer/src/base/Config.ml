@@ -19,7 +19,6 @@ module CLOpt = CommandLineOption
 module L = Die
 
 type analyzer =
-  | BiAbduction
   | CaptureOnly
   | CompileOnly
   | Checkers
@@ -30,10 +29,9 @@ type analyzer =
 let equal_analyzer = [%compare.equal : analyzer]
 
 let string_to_analyzer =
-  [ ("infer", BiAbduction)
-  ; ("biabduction", BiAbduction)
+  [ ("checkers", Checkers)
+  ; ("infer", Checkers)
   ; ("capture", CaptureOnly)
-  ; ("checkers", Checkers)
   ; ("compile", CompileOnly)
   ; ("crashcontext", Crashcontext)
   ; ("linters", Linters) ]
@@ -659,10 +657,9 @@ and analysis_stops =
 
 and analyzer =
   let () =
-    match BiAbduction with
+    match Checkers with
     (* NOTE: if compilation fails here, it means you have added a new analyzer without updating the
        documentation of this option *)
-    | BiAbduction
     | CaptureOnly
     | CompileOnly
     | Checkers
@@ -693,6 +690,7 @@ and analyzer =
         | _ as x ->
             x)
     ~symbols:string_to_analyzer
+
 
 and ( annotation_reachability
     , biabduction
@@ -1373,12 +1371,6 @@ and iphoneos_target_sdk_version_path_regex =
     "To pass a specific target SDK version to use for iphoneos in a particular path, with the format path:version (can be specified multiple times)"
 
 
-and issues_csv =
-  CLOpt.mk_path_opt ~deprecated:["bugs"] ~long:"issues-csv"
-    ~in_help:CLOpt.([(Report, manual_generic)])
-    ~meta:"file" "Write a list of issues in CSV format to $(i,file)"
-
-
 and issues_fields =
   CLOpt.mk_symbol_seq ~long:"issues-fields"
     ~in_help:CLOpt.([(Report, manual_generic)])
@@ -1426,11 +1418,6 @@ and join_cond =
 - 0 = use the most aggressive join for preconditions
 - 1 = use the least aggressive join for preconditions
 |}
-
-
-and latex =
-  CLOpt.mk_path_opt ~deprecated:["latex"] ~long:"latex" ~meta:"file"
-    "Write a latex report of the analysis results to a file"
 
 
 and log_file =
@@ -1735,7 +1722,7 @@ and report_hook =
     ~in_help:CLOpt.([(Analyze, manual_generic); (Run, manual_generic)])
     ~default:(lib_dir ^/ "python" ^/ "report.py")
     ~meta:"script"
-    "Specify a script to be executed after the analysis results are written.  This script will be passed $(b,--issues-csv), $(b,--issues-json), $(b,--issues-txt), $(b,--issues-xml), $(b,--project-root), and $(b,--results-dir)."
+    "Specify a script to be executed after the analysis results are written.  This script will be passed, $(b,--issues-json), $(b,--issues-txt), $(b,--issues-xml), $(b,--project-root), and $(b,--results-dir)."
 
 
 and report_previous =
@@ -2193,10 +2180,6 @@ let post_parsing_initialization command_opt =
       | _ ->
           () ) ;
   ( match !analyzer with
-  | Some BiAbduction ->
-      disable_all_checkers () ;
-      (* technically the biabduction checker doesn't run in this mode, but this gives an easy way to test if the biabduction *analysis* is active *)
-      biabduction := true
   | Some Crashcontext ->
       disable_all_checkers () ;
       crashcontext := true
@@ -2459,8 +2442,6 @@ and iphoneos_target_sdk_version_path_regex =
   process_iphoneos_target_sdk_version_path_regex !iphoneos_target_sdk_version_path_regex
 
 
-and issues_csv = !issues_csv
-
 and issues_fields = !issues_fields
 
 and issues_tests = !issues_tests
@@ -2478,8 +2459,6 @@ and javac_verbose_out = !verbose_out
 and jobs = !jobs
 
 and join_cond = !join_cond
-
-and latex = !latex
 
 and linter = !linter
 
@@ -2740,8 +2719,6 @@ let clang_frontend_action_string =
 let dynamic_dispatch =
   let default_mode =
     match analyzer with
-    | BiAbduction ->
-        Lazy
     | Checkers when biabduction ->
         Lazy
     | Checkers when quandary ->

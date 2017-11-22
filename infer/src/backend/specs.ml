@@ -21,7 +21,7 @@ module F = Format
 
 (** Module for joined props *)
 module Jprop = struct
-  (* type aliases for component of t values that compare should ignore *)
+  (** type aliases for component of t values that compare should ignore *)
   type id_ = int
 
   let compare_id_ _ _ = 0
@@ -320,9 +320,6 @@ module CallStats = struct
 *)
 end
 
-(** stats of the calls performed during the analysis *)
-type call_stats = CallStats.t
-
 (** Execution statistics *)
 type stats =
   { stats_failure: SymOp.failure_kind option
@@ -330,7 +327,7 @@ type stats =
   ; symops: int  (** Number of SymOp's throughout the whole analysis of the function *)
   ; mutable nodes_visited_fp: IntSet.t  (** Nodes visited during the footprint phase *)
   ; mutable nodes_visited_re: IntSet.t  (** Nodes visited during the re-execution phase *)
-  ; call_stats: call_stats }
+  ; call_stats: CallStats.t }
 
 type status = Pending | Analyzed [@@deriving compare]
 
@@ -359,8 +356,7 @@ type payload =
   ; uninit: UninitDomain.summary option }
 
 type summary =
-  { nodes: Procdesc.Node.id list  (** ids of cfg nodes of the procedure *)
-  ; phase: phase  (** in FOOTPRINT phase or in RE_EXECUTION PHASE *)
+  { phase: phase  (** in FOOTPRINT phase or in RE_EXECUTION PHASE *)
   ; payload: payload  (** payload containing the result of some analysis *)
   ; sessions: int ref  (** Session number: how many nodes went trough symbolic execution *)
   ; stats: stats  (** statistics: execution time and list of errors *)
@@ -434,13 +430,6 @@ let pp_spec pe num_opt fmt spec =
         pre Io_infer.Html.pp_end_color () ;
       F.fprintf fmt "%a" (Propgraph.pp_proplist pe_post "POST" (pre, true)) post_list ;
       F.fprintf fmt "----------------------------------------------------------------"
-  | LATEX ->
-      F.fprintf fmt "\\textbf{\\large Requires}\\\\@\n@[%a%a%a@]\\\\@\n" Latex.pp_color Pp.Blue
-        (Prop.pp_prop (Pp.latex Blue))
-        pre Latex.pp_color pe.Pp.color ;
-      F.fprintf fmt "\\textbf{\\large Ensures}\\\\@\n@[%a@]"
-        (Propgraph.pp_proplist pe_post "POST" (pre, true))
-        post_list
 
 
 (** Dump a spec *)
@@ -461,13 +450,6 @@ let pp_specs pe fmt specs =
         ~f:(fun spec ->
           incr cnt ;
           F.fprintf fmt "%a<br>@\n" (pp_spec pe (Some (!cnt, total))) spec)
-        specs
-  | LATEX ->
-      List.iter
-        ~f:(fun spec ->
-          incr cnt ;
-          F.fprintf fmt "\\subsection*{Spec %d of %d}@\n\\(%a\\)@\n" !cnt total (pp_spec pe None)
-            spec)
         specs
 
 
@@ -545,16 +527,6 @@ let pp_summary_text fmt summary =
     summary.payload
 
 
-let pp_summary_latex color fmt summary =
-  let pe = Pp.latex color in
-  F.fprintf fmt "\\begin{verbatim}@\n" ;
-  pp_summary_no_stats_specs fmt summary ;
-  F.fprintf fmt "%a@\n" pp_errlog (get_err_log summary) ;
-  F.fprintf fmt "%a@\n" pp_stats summary.stats ;
-  F.fprintf fmt "\\end{verbatim}@\n" ;
-  F.fprintf fmt "%a@\n" (pp_specs pe) (get_specs_from_payload summary)
-
-
 let pp_summary_html source color fmt summary =
   let pe = Pp.html color in
   Io_infer.Html.pp_start_color fmt Black ;
@@ -568,12 +540,12 @@ let pp_summary_html source color fmt summary =
   F.fprintf fmt "</LISTING>@\n"
 
 
-let empty_stats calls =
+let empty_stats =
   { stats_failure= None
   ; symops= 0
   ; nodes_visited_fp= IntSet.empty
   ; nodes_visited_re= IntSet.empty
-  ; call_stats= CallStats.init calls }
+  ; call_stats= CallStats.init [] (* TODO(T23648322): remove the call_stats *) }
 
 
 let payload_compact sh payload =
@@ -761,13 +733,12 @@ let empty_payload =
 (** [init_summary (depend_list, nodes,
     proc_flags, calls, in_out_calls_opt, proc_attributes)]
     initializes the summary for [proc_name] given dependent procs in list [depend_list]. *)
-let init_summary (nodes, calls, proc_desc) =
+let init_summary proc_desc =
   let summary =
-    { nodes
-    ; phase= FOOTPRINT
+    { phase= FOOTPRINT
     ; sessions= ref 0
     ; payload= empty_payload
-    ; stats= empty_stats calls
+    ; stats= empty_stats
     ; status= Pending
     ; proc_desc }
   in
@@ -778,10 +749,10 @@ let init_summary (nodes, calls, proc_desc) =
 let dummy =
   let dummy_attributes = ProcAttributes.default Typ.Procname.empty_block in
   let dummy_proc_desc = Procdesc.from_proc_attributes ~called_from_cfg:true dummy_attributes in
-  init_summary ([], [], dummy_proc_desc)
+  init_summary dummy_proc_desc
 
 
 (** Reset a summary rebuilding the dependents and preserving the proc attributes if present. *)
-let reset_summary proc_desc = init_summary ([], [], proc_desc)
+let reset_summary proc_desc = init_summary proc_desc
 
 (* =============== END of support for spec tables =============== *)

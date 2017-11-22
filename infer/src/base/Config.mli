@@ -15,7 +15,6 @@ module CLOpt = CommandLineOption
     time by system calls, environment variables, or command line options *)
 
 type analyzer =
-  | BiAbduction
   | CaptureOnly
   | CompileOnly
   | Checkers
@@ -457,8 +456,6 @@ type iphoneos_target_sdk_version_path_regex = {path: Str.regexp; version: string
 
 val iphoneos_target_sdk_version_path_regex : iphoneos_target_sdk_version_path_regex list
 
-val issues_csv : string option
-
 val issues_fields :
   [ `Issue_field_bug_class
   | `Issue_field_kind
@@ -497,8 +494,6 @@ val jobs : int
 val join_cond : int
 
 val keep_going : bool
-
-val latex : string option
 
 val linter : string option
 

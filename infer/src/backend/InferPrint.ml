@@ -32,24 +32,6 @@ let load_specfiles () =
   specs_files_in_dir result_specs_dir
 
 
-(** Create and initialize latex file *)
-let begin_latex_file fmt =
-  let author = "Infer " ^ Version.versionString in
-  let title = "Report on Analysis Results" in
-  let table_of_contents = true in
-  Latex.pp_begin fmt (author, title, table_of_contents)
-
-
-let error_desc_to_csv_string error_desc =
-  let pp fmt = F.fprintf fmt "%a" Localise.pp_error_desc error_desc in
-  Escape.escape_csv (F.asprintf "%t" pp)
-
-
-let error_advice_to_csv_string error_desc =
-  let pp fmt = F.fprintf fmt "%a" Localise.pp_error_advice error_desc in
-  Escape.escape_csv (F.asprintf "%t" pp)
-
-
 let error_desc_to_plain_string error_desc =
   let pp fmt = F.fprintf fmt "%a" Localise.pp_error_desc error_desc in
   let s = F.asprintf "%t" pp in
@@ -62,12 +44,6 @@ let error_desc_to_plain_string error_desc =
 
 
 let error_desc_to_dotty_string error_desc = Localise.error_desc_get_dotty error_desc
-
-let error_desc_to_xml_tags error_desc =
-  let tags = Localise.error_desc_get_tags error_desc in
-  let subtree label contents = Io_infer.Xml.create_tree label [] [Io_infer.Xml.String contents] in
-  List.map ~f:(fun (tag, value) -> subtree tag (Escape.escape_xml value)) tags
-
 
 let get_bug_hash (kind: string) (type_str: string) (procedure_id: string) (filename: string)
     (node_key: Digest.t) (error_desc: Localise.error_desc) =
@@ -133,8 +109,6 @@ type summary_val =
   ; vflags: ProcAttributes.proc_flags
   ; vline: int
   ; vsignature: string
-  ; vweight: int
-  ; vproof_coverage: string
   ; vproof_trace: string }
 
 (** compute values from summary data to export to csv format *)
@@ -144,9 +118,8 @@ let summary_values summary =
   let err_log = Specs.get_err_log summary in
   let proc_name = Specs.get_proc_name summary in
   let signature = Specs.get_signature summary in
-  let nodes_nr = List.length summary.Specs.nodes in
   let specs = Specs.get_specs_from_payload summary in
-  let nr_nodes_visited, lines_visited =
+  let lines_visited =
     let visited = ref Specs.Visitedset.empty in
     let do_spec spec = visited := Specs.Visitedset.union spec.Specs.visited !visited in
     List.iter ~f:do_spec specs ;
@@ -154,15 +127,12 @@ let summary_values summary =
     Specs.Visitedset.iter
       (fun (_, ls) -> List.iter ~f:(fun l -> visited_lines := Int.Set.add !visited_lines l) ls)
       !visited ;
-    (Specs.Visitedset.cardinal !visited, Int.Set.elements !visited_lines)
+    Int.Set.elements !visited_lines
   in
   let proof_trace =
     let pp_line fmt l = F.fprintf fmt "%d" l in
     let pp fmt = F.fprintf fmt "%a" (Pp.seq pp_line) lines_visited in
     F.asprintf "%t" pp
-  in
-  let node_coverage =
-    if Int.equal nodes_nr 0 then 0.0 else float_of_int nr_nodes_visited /. float_of_int nodes_nr
   in
   let pp_failure failure = F.asprintf "%a" SymOp.pp_failure_kind failure in
   { vname= Typ.Procname.to_string proc_name
@@ -179,8 +149,6 @@ let summary_values summary =
   ; vfile= SourceFile.to_string attributes.ProcAttributes.loc.Location.file
   ; vline= attributes.ProcAttributes.loc.Location.line
   ; vsignature= signature
-  ; vweight= nodes_nr
-  ; vproof_coverage= Printf.sprintf "%2.2f" node_coverage
   ; vproof_trace= proof_trace }
 
 
@@ -208,8 +176,6 @@ module ProcsCsv = struct
     pp "%s," sv.vfile ;
     pp "%d," sv.vline ;
     pp "\"%s\"," (Escape.escape_csv sv.vsignature) ;
-    pp "%d," sv.vweight ;
-    pp "%s," sv.vproof_coverage ;
     pp "%s@\n" sv.vproof_trace
 
 end
@@ -258,86 +224,6 @@ let censored_reason (issue_type: IssueType.t) source_file =
   in
   Option.value ~default:"" (List.find_map Config.filter_report ~f:rejected_by)
 
-
-module IssuesCsv = struct
-  let csv_issues_id = ref 0
-
-  let pp_header fmt () =
-    Format.fprintf fmt "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s@\n" Io_infer.Xml.tag_class
-      Io_infer.Xml.tag_kind Io_infer.Xml.tag_type Io_infer.Xml.tag_qualifier
-      Io_infer.Xml.tag_severity Io_infer.Xml.tag_line Io_infer.Xml.tag_procedure
-      Io_infer.Xml.tag_procedure_id Io_infer.Xml.tag_file Io_infer.Xml.tag_trace
-      Io_infer.Xml.tag_key Io_infer.Xml.tag_qualifier_tags Io_infer.Xml.tag_hash "bug_id"
-      "always_report" "advice"
-
-
-  let pp_issue fmt error_filter procname proc_loc_opt (key: Errlog.err_key)
-      (err_data: Errlog.err_data) =
-    let pp x = F.fprintf fmt x in
-    let source_file =
-      match proc_loc_opt with
-      | Some proc_loc ->
-          proc_loc.Location.file
-      | None ->
-          err_data.loc.Location.file
-    in
-    if key.in_footprint && error_filter source_file key.err_desc key.err_name
-       && should_report key.err_kind key.err_name key.err_desc err_data.err_class
-    then
-      let err_desc_string = error_desc_to_csv_string key.err_desc in
-      let err_advice_string = error_advice_to_csv_string key.err_desc in
-      let qualifier_tag_xml =
-        let xml_node =
-          Io_infer.Xml.create_tree Io_infer.Xml.tag_qualifier_tags []
-            (error_desc_to_xml_tags key.err_desc)
-        in
-        let p fmt = F.fprintf fmt "%a" (Io_infer.Xml.pp_document false) xml_node in
-        let s = F.asprintf "%t" p in
-        Escape.escape_csv s
-      in
-      let kind = Exceptions.err_kind_string key.err_kind in
-      let type_str = key.err_name.IssueType.unique_id in
-      let procedure_id = Typ.Procname.to_filename procname in
-      let filename = SourceFile.to_string source_file in
-      let always_report =
-        match Localise.error_desc_extract_tag_value key.err_desc "always_report" with
-        | "" ->
-            "false"
-        | v ->
-            v
-      in
-      let trace =
-        Jsonbug_j.string_of_json_trace
-          {trace= loc_trace_to_jsonbug_record err_data.loc_trace key.err_kind}
-      in
-      incr csv_issues_id ;
-      pp "%s," (Exceptions.err_class_string err_data.err_class) ;
-      pp "%s," kind ;
-      pp "%s," type_str ;
-      pp "\"%s\"," err_desc_string ;
-      pp "%s," key.severity ;
-      pp "%d," err_data.loc.Location.line ;
-      pp "\"%s\"," (Escape.escape_csv (Typ.Procname.to_string procname)) ;
-      pp "\"%s\"," (Escape.escape_csv procedure_id) ;
-      pp "%s," filename ;
-      pp "\"%s\"," (Escape.escape_csv trace) ;
-      pp "\"%s\"," (Digest.to_hex err_data.node_id_key.node_key) ;
-      pp "\"%s\"," qualifier_tag_xml ;
-      pp "\"%s\","
-        ( get_bug_hash kind type_str procedure_id filename err_data.node_id_key.node_key
-            key.err_desc
-        |> Digest.to_hex ) ;
-      pp "\"%d\"," !csv_issues_id ;
-      (* bug id *)
-      pp "\"%s\"," always_report ;
-      pp "\"%s\"@\n" err_advice_string
-
-
-  (** Write bug report in csv format *)
-  let pp_issues_of_error_log fmt error_filter _ proc_loc_opt procname err_log =
-    Errlog.iter (pp_issue fmt error_filter procname proc_loc_opt) err_log
-
-end
 
 let potential_exception_message = "potential exception at line"
 
@@ -694,55 +580,6 @@ module Report = struct
   let pp_stats fmt stats = Stats.pp fmt stats
 end
 
-module Summary = struct
-  let pp_summary_out summary =
-    let proc_name = Specs.get_proc_name summary in
-    if CLOpt.equal_command Config.command CLOpt.Report && not Config.quiet then
-      L.result "Procedure: %a@\n%a@." Typ.Procname.pp proc_name Specs.pp_summary_text summary
-
-
-  (** Write proc summary to latex file *)
-  let write_summary_latex fmt summary =
-    let proc_name = Specs.get_proc_name summary in
-    Latex.pp_section fmt
-      ("Analysis of function " ^ Latex.convert_string (Typ.Procname.to_string proc_name)) ;
-    F.fprintf fmt "@[<v>%a@]" (Specs.pp_summary_latex Black) summary
-
-
-  let pp_summary_xml summary fname =
-    if Config.xml_specs then
-      let base = DB.chop_extension (DB.filename_from_string fname) in
-      let xml_file = DB.filename_add_suffix base ".xml" in
-      let specs = Specs.get_specs_from_payload summary in
-      if not (DB.file_exists xml_file)
-         || DB.file_modified_time (DB.filename_from_string fname) > DB.file_modified_time xml_file
-      then
-        let xml_out = Utils.create_outfile (DB.filename_to_string xml_file) in
-        Utils.do_outf xml_out (fun outf ->
-            Dotty.print_specs_xml (Specs.get_signature summary) specs (Specs.get_loc summary)
-              outf.fmt ;
-            Utils.close_outf outf )
-
-
-  let print_summary_dot_svg summary fname =
-    if Config.svg then
-      let base = DB.chop_extension (DB.filename_from_string fname) in
-      let specs = Specs.get_specs_from_payload summary in
-      let dot_file = DB.filename_add_suffix base ".dot" in
-      let svg_file = DB.filename_add_suffix base ".svg" in
-      if not (DB.file_exists dot_file)
-         || DB.file_modified_time (DB.filename_from_string fname) > DB.file_modified_time dot_file
-      then Dotty.pp_speclist_dotty_file base specs ;
-      if not (DB.file_exists svg_file)
-         || DB.file_modified_time dot_file > DB.file_modified_time svg_file
-      then
-        ignore
-          (Sys.command
-             ( "dot -Tsvg \"" ^ DB.filename_to_string dot_file ^ "\" >\""
-             ^ DB.filename_to_string svg_file ^ "\"" ))
-
-end
-
 (** Categorize the preconditions of specs and print stats *)
 module PreconditionStats = struct
   let nr_nopres = ref 0
@@ -821,21 +658,19 @@ let error_filter filters proc_name file error_desc error_name =
   && filters.Inferconfig.error_filter error_name && filters.Inferconfig.proc_filter proc_name
 
 
-type report_kind = Issues | Procs | Stats | Calls | Summary [@@deriving compare]
+type report_kind = Issues | Procs | Stats | Calls [@@deriving compare]
 
-type bug_format_kind = Json | Csv | Tests | Text | Latex [@@deriving compare]
+type bug_format_kind = Json | Csv | Tests | Text [@@deriving compare]
 
 let pp_issue_in_format (format_kind, (outf: Utils.outfile)) error_filter
     {Issue.proc_name; proc_location; err_key; err_data} =
   match format_kind with
   | Csv ->
-      IssuesCsv.pp_issue outf.fmt error_filter proc_name (Some proc_location) err_key err_data
+      L.(die InternalError) "Printing issues in a CSV format is not implemented"
   | Json ->
       IssuesJson.pp_issue outf.fmt error_filter proc_name (Some proc_location) err_key err_data
-  | Latex ->
-      L.(die InternalError) "Printing issues in latex is not implemented"
   | Tests ->
-      L.(die InternalError) "Print issues as tests is not implemented"
+      L.(die InternalError) "Printing issues as tests is not implemented"
   | Text ->
       IssuesTxt.pp_issue outf.fmt error_filter (Some proc_location) err_key err_data
 
@@ -845,45 +680,35 @@ let pp_issues_in_format (format_kind, (outf: Utils.outfile)) =
   | Json ->
       IssuesJson.pp_issues_of_error_log outf.fmt
   | Csv ->
-      IssuesCsv.pp_issues_of_error_log outf.fmt
+      L.(die InternalError) "Printing issues in a CSV format is not implemented"
   | Tests ->
-      L.(die InternalError) "Print issues as tests is not implemented"
+      L.(die InternalError) "Printing issues as tests is not implemented"
   | Text ->
       IssuesTxt.pp_issues_of_error_log outf.fmt
-  | Latex ->
-      L.(die InternalError) "Printing issues in latex is not implemented"
 
 
 let pp_procs_in_format (format_kind, (outf: Utils.outfile)) =
   match format_kind with
   | Csv ->
       ProcsCsv.pp_summary outf.fmt
-  | Json | Latex | Tests | Text ->
-      L.(die InternalError) "Printing procs in json/latex/tests/text is not implemented"
+  | Json | Tests | Text ->
+      L.(die InternalError) "Printing procs in json/tests/text is not implemented"
 
 
 let pp_calls_in_format (format_kind, (outf: Utils.outfile)) =
   match format_kind with
   | Csv ->
       CallsCsv.pp_calls outf.fmt
-  | Json | Tests | Text | Latex ->
-      L.(die InternalError) "Printing calls in json/tests/text/latex is not implemented"
+  | Json | Tests | Text ->
+      L.(die InternalError) "Printing calls in json/tests/text is not implemented"
 
 
 let pp_stats_in_format (format_kind, _) =
   match format_kind with
   | Csv ->
       Stats.process_summary
-  | Json | Tests | Text | Latex ->
-      L.(die InternalError) "Printing stats in json/tests/text/latex is not implemented"
-
-
-let pp_summary_in_format (format_kind, (outf: Utils.outfile)) =
-  match format_kind with
-  | Latex ->
-      Summary.write_summary_latex outf.fmt
-  | Json | Csv | Tests | Text ->
-      L.(die InternalError) "Printing summary in json/csv/tests/text is not implemented"
+  | Json | Tests | Text ->
+      L.(die InternalError) "Printing stats in json/tests/text is not implemented"
 
 
 let pp_issues_of_error_log error_filter linereader proc_loc_opt procname err_log bug_format_list =
@@ -926,19 +751,8 @@ let pp_stats error_filter linereader summary stats stats_format_list =
   List.iter ~f:pp_stats_in_format stats_format_list
 
 
-let pp_summary summary fname summary_format_list =
-  let pp_summary_in_format format =
-    let pp_summary = pp_summary_in_format format in
-    pp_summary summary
-  in
-  List.iter ~f:pp_summary_in_format summary_format_list ;
-  Summary.pp_summary_out summary ;
-  Summary.pp_summary_xml summary fname ;
-  Summary.print_summary_dot_svg summary fname
-
-
-let pp_summary_by_report_kind formats_by_report_kind summary fname error_filter linereader stats
-    file issues_acc =
+let pp_summary_by_report_kind formats_by_report_kind summary error_filter linereader stats file
+    issues_acc =
   let pp_summary_by_report_kind (report_kind, format_list) =
     match (report_kind, format_list) with
     | Procs, _ :: _ ->
@@ -947,8 +761,6 @@ let pp_summary_by_report_kind formats_by_report_kind summary fname error_filter 
         pp_stats (error_filter file) linereader summary stats format_list
     | Calls, _ :: _ ->
         pp_calls summary format_list
-    | Summary, _ ->
-        pp_summary summary fname format_list
     | _ ->
         ()
   in
@@ -970,8 +782,6 @@ let pp_json_report_by_report_kind formats_by_report_kind fname =
               L.(die InternalError) "Printing issues from json does not support json output"
           | Csv ->
               L.(die InternalError) "Printing issues from json does not support csv output"
-          | Latex ->
-              L.(die InternalError) "Printing issues from json does not support latex output"
         in
         List.iter ~f:pp_json_issue format_list
       in
@@ -1009,15 +819,15 @@ let pp_lint_issues filters formats_by_report_kind linereader procname error_log 
 
 
 (** Process a summary *)
-let process_summary filters formats_by_report_kind linereader stats fname summary issues_acc =
+let process_summary filters formats_by_report_kind linereader stats summary issues_acc =
   let file = (Specs.get_loc summary).Location.file in
   let proc_name = Specs.get_proc_name summary in
   let error_filter = error_filter filters proc_name in
   let pp_simple_saved = !Config.pp_simple in
   Config.pp_simple := true ;
   let issues_acc' =
-    pp_summary_by_report_kind formats_by_report_kind summary fname error_filter linereader stats
-      file issues_acc
+    pp_summary_by_report_kind formats_by_report_kind summary error_filter linereader stats file
+      issues_acc
   in
   if Config.precondition_stats then PreconditionStats.do_summary proc_name summary ;
   Config.pp_simple := pp_simple_saved ;
@@ -1125,12 +935,11 @@ let mk_format format_kind fname =
     ~default:[] (Utils.create_outfile fname)
 
 
-let init_issues_format_list report_csv report_json =
-  let csv_format = Option.value_map ~f:(mk_format Csv) ~default:[] report_csv in
+let init_issues_format_list report_json =
   let json_format = Option.value_map ~f:(mk_format Json) ~default:[] report_json in
   let tests_format = Option.value_map ~f:(mk_format Tests) ~default:[] Config.issues_tests in
   let txt_format = Option.value_map ~f:(mk_format Text) ~default:[] Config.issues_txt in
-  csv_format @ json_format @ tests_format @ txt_format
+  json_format @ tests_format @ txt_format
 
 
 let init_procs_format_list () = Option.value_map ~f:(mk_format Csv) ~default:[] Config.procs_csv
@@ -1145,26 +954,19 @@ let init_stats_format_list () =
   csv_format
 
 
-let init_summary_format_list () =
-  let latex_format = Option.value_map ~f:(mk_format Latex) ~default:[] Config.latex in
-  latex_format
-
-
 let init_files format_list_by_kind =
   let init_files_of_report_kind (report_kind, format_list) =
     let init_files_of_format (format_kind, (outfile: Utils.outfile)) =
       match (format_kind, report_kind) with
       | Csv, Issues ->
-          IssuesCsv.pp_header outfile.fmt ()
+          L.(die InternalError) "Printing issues in a CSV format is not implemented"
       | Csv, Procs ->
           ProcsCsv.pp_header outfile.fmt ()
       | Csv, Stats ->
           Report.pp_header outfile.fmt ()
       | Json, Issues ->
           IssuesJson.pp_json_open outfile.fmt ()
-      | Latex, Summary ->
-          begin_latex_file outfile.fmt
-      | (Csv | Json | Latex | Tests | Text), _ ->
+      | (Csv | Json | Tests | Text), _ ->
           ()
     in
     List.iter ~f:init_files_of_format format_list
@@ -1172,7 +974,7 @@ let init_files format_list_by_kind =
   List.iter ~f:init_files_of_report_kind format_list_by_kind
 
 
-let finalize_and_close_files format_list_by_kind stats pdflatex =
+let finalize_and_close_files format_list_by_kind stats =
   let close_files_of_report_kind (report_kind, format_list) =
     let close_files_of_format (format_kind, (outfile: Utils.outfile)) =
       ( match (format_kind, report_kind) with
@@ -1180,18 +982,9 @@ let finalize_and_close_files format_list_by_kind stats pdflatex =
           F.fprintf outfile.fmt "%a@?" Report.pp_stats stats
       | Json, Issues ->
           IssuesJson.pp_json_close outfile.fmt ()
-      | Latex, Summary ->
-          Latex.pp_end outfile.fmt ()
-      | (Csv | Latex | Tests | Text | Json), _ ->
+      | (Csv | Tests | Text | Json), _ ->
           () ) ;
-      Utils.close_outf outfile ;
-      (* bug_format_kind report_kind *)
-      if [%compare.equal : bug_format_kind * report_kind]
-           (format_kind, report_kind) (Latex, Summary)
-      then (
-        pdflatex outfile.fname ;
-        let pdf_name = Filename.chop_extension outfile.fname ^ ".pdf" in
-        ignore (Sys.command ("open " ^ pdf_name)) )
+      Utils.close_outf outfile
     in
     List.iter ~f:close_files_of_format format_list ;
     ()
@@ -1200,16 +993,14 @@ let finalize_and_close_files format_list_by_kind stats pdflatex =
 
 
 let pp_summary_and_issues formats_by_report_kind issue_formats =
-  let pdflatex fname = ignore (Sys.command ("pdflatex " ^ fname)) in
   let stats = Stats.create () in
   let linereader = Printer.LineReader.create () in
   let filters = Inferconfig.create_filters Config.analyzer in
   let iterate_summaries = AnalysisResults.get_summary_iterator () in
   let all_issues = ref [] in
-  iterate_summaries (fun (filename, summary) ->
+  iterate_summaries (fun (_, summary) ->
       all_issues
-      := process_summary filters formats_by_report_kind linereader stats filename summary
-           !all_issues ) ;
+      := process_summary filters formats_by_report_kind linereader stats summary !all_issues ) ;
   List.iter
     ~f:(fun ({Issue.proc_name} as issue) ->
       let error_filter = error_filter filters proc_name in
@@ -1222,17 +1013,16 @@ let pp_summary_and_issues formats_by_report_kind issue_formats =
   Typ.Procname.Map.iter
     (pp_lint_issues filters formats_by_report_kind linereader)
     !LintIssues.errLogMap ;
-  finalize_and_close_files formats_by_report_kind stats pdflatex
+  finalize_and_close_files formats_by_report_kind stats
 
 
-let main ~report_csv ~report_json =
-  let issue_formats = init_issues_format_list report_csv report_json in
+let main ~report_json =
+  let issue_formats = init_issues_format_list report_json in
   let formats_by_report_kind =
     [ (Issues, issue_formats)
     ; (Procs, init_procs_format_list ())
     ; (Calls, init_calls_format_list ())
-    ; (Stats, init_stats_format_list ())
-    ; (Summary, init_summary_format_list ()) ]
+    ; (Stats, init_stats_format_list ()) ]
   in
   if Config.developer_mode then register_perf_stats_report () ;
   init_files formats_by_report_kind ;
@@ -1241,4 +1031,3 @@ let main ~report_csv ~report_json =
       pp_json_report_by_report_kind formats_by_report_kind fname
   | None ->
       pp_summary_and_issues formats_by_report_kind issue_formats
-

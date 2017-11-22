@@ -1192,9 +1192,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
           in
           Some (new_or_alloc_trans trans_state_pri sil_loc si qual_type class_opt selector)
       | _ ->
-          None (* assertions *)
-    else if CTrans_models.is_handleFailureInMethod selector then
-      Some (CTrans_utils.trans_assertion trans_state sil_loc)
+          None
     else None
 
 
@@ -1265,17 +1263,16 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
         in
         let selector = obj_c_message_expr_info.Clang_ast_t.omei_selector in
         let nname = "Message Call: " ^ selector in
-        let all_res_trans = res_trans_subexpr_list @ [res_trans_call] in
+        let assertion_trans_opt =
+          if CTrans_models.is_handleFailureInMethod selector then
+            CTrans_utils.trans_assertion trans_state sil_loc
+          else empty_res_trans
+        in
+        let all_res_trans = res_trans_subexpr_list @ [res_trans_call; assertion_trans_opt] in
         let res_trans_to_parent =
           PriorityNode.compute_results_to_parent trans_state_pri sil_loc nname si all_res_trans
         in
         {res_trans_to_parent with exps= res_trans_call.exps}
-
-
-  and dispatch_function_trans trans_state stmt_info stmt_list n =
-    L.(debug Capture Verbose) "@\n Call to a dispatch function treated as special case...@\n" ;
-    let transformed_stmt = Ast_expressions.translate_dispatch_function stmt_info stmt_list n in
-    instruction trans_state transformed_stmt
 
 
   and compute_this_for_destructor_calls trans_state stmt_info class_ptr =
@@ -3058,12 +3055,8 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
         arraySubscriptExpr_trans trans_state expr_info stmt_list
     | BinaryOperator (stmt_info, stmt_list, expr_info, binop_info) ->
         binaryOperator_trans_with_cond trans_state stmt_info stmt_list expr_info binop_info
-    | CallExpr (stmt_info, stmt_list, ei) -> (
-      match is_dispatch_function stmt_list with
-      | Some block_arg_pos ->
-          dispatch_function_trans trans_state stmt_info stmt_list block_arg_pos
-      | None ->
-          callExpr_trans trans_state stmt_info stmt_list ei )
+    | CallExpr (stmt_info, stmt_list, ei) ->
+        callExpr_trans trans_state stmt_info stmt_list ei
     | CXXMemberCallExpr (stmt_info, stmt_list, ei) ->
         cxxMemberCallExpr_trans trans_state stmt_info stmt_list ei
     | CXXOperatorCallExpr (stmt_info, stmt_list, ei) ->
