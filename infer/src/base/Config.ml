@@ -563,7 +563,7 @@ let () =
     match cmd with
     | Report ->
         `Add
-    | Analyze | Capture | Compile | Diff | Explore | ReportDiff | Run | ToplDiff ->
+    | Analyze | Capture | Compile | Diff | Explore | ReportDiff | Run ->
         `Reject
   in
   (* make sure we generate doc for all the commands we know about *)

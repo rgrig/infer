@@ -99,7 +99,6 @@ type command =
   | Report
   | ReportDiff
   | Run
-  | ToplDiff
   [@@deriving compare]
 
 let equal_command = [%compare.equal : command]
@@ -114,8 +113,7 @@ let command_to_name =
   ; (Explore, "explore")
   ; (Report, "report")
   ; (ReportDiff, "reportdiff")
-  ; (Run, "run")
-  ; (ToplDiff, "topldiff") ]
+  ; (Run, "run") ]
 
 
 let all_commands = List.map ~f:fst command_to_name

@@ -237,16 +237,6 @@ let reportdiff =
       ; `P "All three files follow the same format as normal infer reports." ]
     ~see_also:CLOpt.([Report])
 
-let topldiff =
-  mk_command_doc ~title:"Infer Report Difference, customized for TOPL"
-    ~short_description:"compute the differences between two infer reports"
-    ~synopsis:
-      "$(b,infer) $(b,topldiff) $(b,--report-current) $(i,file) $(b,--report-previous) $(i,file) $(i,[options])"
-    ~description:
-      [ `P
-          "Given two infer reports $(i,previous) and $(i,current), compute a report with warnings in procedures that used to have specs but lost them"
-      ]
-    ~see_also:CLOpt.([ReportDiff])
 
 let run =
   mk_command_doc ~title:"Infer Analysis of a Project"
@@ -276,8 +266,7 @@ let command_to_data =
   ; mk Explore explore
   ; mk Report report
   ; mk ReportDiff reportdiff
-  ; mk Run run
-  ; mk ToplDiff topldiff ]
+  ; mk Run run ]
 
 
 let data_of_command command =
