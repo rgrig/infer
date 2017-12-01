@@ -706,6 +706,7 @@ and ( annotation_reachability
     , quandary
     , racerd
     , resource_leak
+    , should_update
     , siof
     , suggest_nullable
     , uninit ) =
@@ -748,6 +749,9 @@ and ( annotation_reachability
     mk_checker ~long:"racerd" ~deprecated:["-threadsafety"] ~default:true
       "the RacerD thread safety analysis"
   and resource_leak = mk_checker ~long:"resource-leak" ""
+  and should_update =
+    mk_checker ~long:"should-update"
+      "Experimental checker for identifying GraphQL dependencies of a Litho component"
   and siof =
     mk_checker ~long:"siof" ~default:true
       "the Static Initialization Order Fiasco analysis (C++ only)"
@@ -805,6 +809,7 @@ and ( annotation_reachability
   , quandary
   , racerd
   , resource_leak
+  , should_update
   , siof
   , suggest_nullable
   , uninit )
@@ -994,7 +999,6 @@ and ( bo_debug
     , print_logs
     , print_types
     , reports_include_ml_loc
-    , stats
     , trace_error
     , write_html
     , write_html_whitelist_regex
@@ -1056,7 +1060,8 @@ and ( bo_debug
     debug_level_linters := level
   in
   let debug =
-    CLOpt.mk_bool_group ~deprecated:["debug"] ~long:"debug" ~short:'g' ~in_help:all_generic_manuals
+    CLOpt.mk_bool_group ~deprecated:["debug"; "-stats"] ~long:"debug" ~short:'g'
+      ~in_help:all_generic_manuals
       "Debug mode (also sets $(b,--debug-level 2), $(b,--developer-mode), $(b,--no-filtering), $(b,--print-buckets), $(b,--print-types), $(b,--reports-include-ml-loc), $(b,--no-only-cheap-debug), $(b,--trace-error), $(b,--write-dotty), $(b,--write-html))"
       ~f:(fun debug ->
         if debug then set_debug_level 2 else set_debug_level 0 ;
@@ -1099,10 +1104,6 @@ and ( bo_debug
           ; (Run, manual_generic)
           ; (Report, manual_generic) ])
       "Also log messages to stdout and stderr"
-  and stats =
-    CLOpt.mk_bool ~deprecated:["stats"] ~long:"stats" "Stats mode (debugging)" ~f:(fun stats ->
-        if stats then set_debug_level 1 else set_debug_level 0 ;
-        stats )
   in
   let linters_developer_mode =
     CLOpt.mk_bool_group ~long:"linters-developer-mode"
@@ -1131,7 +1132,6 @@ and ( bo_debug
   , print_logs
   , print_types
   , reports_include_ml_loc
-  , stats
   , trace_error
   , write_html
   , write_html_whitelist_regex
@@ -2618,6 +2618,8 @@ and seconds_per_iteration = !seconds_per_iteration
 
 and select = !select
 
+and should_update = !should_update
+
 and show_buckets = !print_buckets
 
 and show_progress_bar = !progress_bar
@@ -2647,8 +2649,6 @@ and sqlite_vfs = !sqlite_vfs
 and stacktrace = !stacktrace
 
 and stacktraces_dir = !stacktraces_dir
-
-and stats_mode = !stats
 
 and stats_report = !stats_report
 

@@ -612,6 +612,8 @@ val seconds_per_iteration : float option
 
 val select : int option
 
+val should_update : bool
+
 val show_buckets : bool
 
 val show_progress_bar : bool
@@ -639,8 +641,6 @@ val sqlite_vfs : string option
 val stacktrace : string option
 
 val stacktraces_dir : string option
-
-val stats_mode : bool
 
 val stats_report : string option
 

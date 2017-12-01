@@ -7,7 +7,13 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
+#include <mutex>
 #include <new>
+#include <thread>
+
+namespace folly {
+class ScopeGuard {};
+} // namespace folly
 
 namespace dead_stores {
 
@@ -243,7 +249,6 @@ void placement_new_ok(int len, int* ptr) {
 }
 
 // we don't report on dead stores where the RHS is 0, 0.0, false, nullptr, etc.
-
 bool sentinel_bool_ok() {
   bool b = false;
   b = true;
@@ -279,5 +284,48 @@ int* sentinel_ptr_ok(int* j) {
   i = j;
   return i;
 }
+
+void scope_guard_ok() {
+  // realistically, it would be something like guard = folly::makeGuard();
+  folly::ScopeGuard* guard = nullptr;
+}
+
+struct S {
+  ~S() {}
+};
+
+typedef S&& B;
+
+S mk_s() {
+  S s;
+  return s;
+};
+
+// s gets read by the destructor for S
+void dead_struct_value1_bad() { S s = mk_s(); }
+
+// need to handle operator= in order to detect this case
+void FN_dead_struct_value2_bad() {
+  S s = mk_s();
+  s = mk_s();
+}
+
+void dead_struct_rvalue_ref_bad() { B b = mk_s(); }
+
+S struct_value_used_ok() {
+  S s = mk_s();
+  return s;
+}
+
+B& struct_rvalue_ref_used_ok() {
+  B b = mk_s();
+  return b;
+}
+
+std::mutex my_mutex;
+
+void dead_lock_guard_ok() { std::lock_guard<std::mutex> lock(my_mutex); }
+
+void dead_unique_lock_ok() { std::unique_lock<std::mutex> lock(my_mutex); }
 
 }
