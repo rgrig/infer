@@ -135,6 +135,8 @@ exception Stack_variable_address_escape of Localise.error_desc * L.ml_loc
 
 exception Symexec_memory_error of L.ml_loc
 
+exception Topl_error
+
 exception Unary_minus_applied_to_unsigned_expression of Localise.error_desc * L.ml_loc
 
 exception Unknown_proc
@@ -158,7 +160,7 @@ type t =
 
 let recognize_exception exn =
   match exn with
-  (* all the static names of errors must be defined in Config.IssueType *)
+  (* all the static names of errors must be defined in IssueType *)
   | Abduction_case_not_implemented ml_loc ->
       { name= IssueType.abduction_case_not_implemented
       ; description= Localise.no_desc
@@ -583,6 +585,14 @@ let recognize_exception exn =
       ; ml_loc= Some ml_loc
       ; visibility= Exn_developer
       ; severity= Low
+      ; kind= None
+      ; category= Nocat }
+  | Topl_error ->
+      { name= IssueType.topl_error
+      ; description= Localise.no_desc
+      ; ml_loc = None
+      ; visibility= Exn_user
+      ; severity= Medium
       ; kind= None
       ; category= Nocat }
   | Unary_minus_applied_to_unsigned_expression (desc, ml_loc) ->

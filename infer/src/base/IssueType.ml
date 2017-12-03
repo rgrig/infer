@@ -307,6 +307,8 @@ let symexec_memory_error =
 
 let thread_safety_violation = from_string "THREAD_SAFETY_VIOLATION"
 
+let topl_error = from_string "TOPL_ERROR"
+
 let unary_minus_applied_to_unsigned_expression =
   from_string ~enabled:false "UNARY_MINUS_APPLIED_TO_UNSIGNED_EXPRESSION"
 

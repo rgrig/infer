@@ -104,6 +104,85 @@ let restore_global_state st =
   State.restore_state st.symexec_state ;
   Timeout.resume_previous_timeout ()
 
+(* XXX *)
+let add_topl_warnings summary =
+  let env = Tenv.create () in (* HACK *)
+  let get_topl field sigma =
+    let is_topl_class e = (* HACK *)
+      String.is_suffix (Exp.to_string e) ~suffix:"topl.Property" in
+    let is_field fn = (* HACK *)
+      String.equal
+        (Typ.Fieldname.to_string fn)
+        (Printf.sprintf "topl.Property.%s" field) in
+    let from_strexp = Sil.(function
+      | Eexp (e,_) -> e
+      | _ -> L.(die InternalError "(mbzmj)")) in
+    let from_one_field (fn, e) =
+      if is_field fn then Some (from_strexp e) else None in
+    let get_field = function
+      | Some x -> (fun _ -> Some x)
+      | None -> from_one_field in
+    let from_fields = Sil.(function
+      | Estruct (fs, _) -> List.fold ~init:None ~f:get_field fs
+      | _ -> None) in
+    let from_pointsto = Sil.(function
+      | Hpointsto (a, b, _) -> if is_topl_class a then from_fields b else None
+      | _ -> None) in
+    let get = function Some x -> (fun _ -> Some x) | None -> from_pointsto in
+    (match List.fold ~init:None ~f:get sigma with
+    | Some x -> x
+    | None -> raise Not_found)
+(*XXX    let dbg = Sil.(function
+      | Hpointsto (a, b, c) ->
+          Printf.(
+            let rec p_strexp = function
+              | Eexp (e,_) -> printf "%s" (Exp.to_string e)
+              | Estruct (fs, _) ->
+                  printf "struct";
+                  List.iter ~f:p_field fs;
+                  printf "\n"
+              | Earray _ -> printf "array"
+            and p_field (fn, e) =
+              printf " (%s=" (Typ.Fieldname.to_string fn);
+              p_strexp e;
+              printf ")"
+            in
+            printf "(start\n";
+            printf "  a = %s\n" (Exp.to_string a);
+            printf "  b = "; p_strexp b; printf "\n";
+            printf "  c = %s\n" (Exp.to_string c);
+            printf "stop)\n")
+      | _ -> Printf.printf "nonpointsto\n"
+    ) in
+    List.iter ~f:dbg sigma;
+    raise Not_found *)
+  in
+  let handle_preposts {Specs.pre;posts;_} =
+    let pre =
+      (match pre with Prop (_, p) | Joined (_, p, _, _) -> p) in
+    let handle_post (post, _) = (* look at (pre, post) *)
+      try
+        let pre_s = Prop.(pre.sigma) in
+        let post_s = Prop.(post.sigma) in
+        let pre_state = get_topl "state" pre_s in
+        let post_state = get_topl "state" post_s in
+        let pre_qsize = get_topl "q_size" pre_s in
+        let ceq = Prop.conjoin_eq env in
+        let post = ceq pre_state Exp.zero post in
+        let post = ceq pre_qsize Exp.zero post in
+        let post = ceq post_state Exp.one post in
+        Format.printf "ASK if consistent: %a@\n" (Prop.pp_prop Pp.text) post; (* XXX *)
+        if not (Prover.check_inconsistency env post) then
+          (Format.printf "YES adding TOPL_ERR@\n";
+          Reporting.log_error summary Exceptions.Topl_error)
+        else Format.printf "NOT adding TOPL_ERR@\n"
+      with Not_found -> () in
+    List.iter ~f:handle_post posts in
+  let handle_all_preposts xs =
+    let xs = Specs.normalized_specs_to_specs xs in
+    List.iter ~f:handle_preposts xs in
+  Option.iter ~f:handle_all_preposts Specs.(summary.payload.preposts)
+
 
 let run_proc_analysis analyze_proc curr_pdesc callee_pdesc =
   let curr_pname = Procdesc.get_proc_name curr_pdesc in
@@ -126,6 +205,7 @@ let run_proc_analysis analyze_proc curr_pdesc callee_pdesc =
   in
   let postprocess summary =
     decr nesting ;
+    add_topl_warnings summary;
     Specs.store_summary summary ;
     remove_active callee_pname ;
     Printer.write_proc_html callee_pdesc ;

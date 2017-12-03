@@ -705,10 +705,12 @@ let store_summary (summ1: summary) =
   in
   let final_summary = {summ2 with status= Analyzed} in
   let proc_name = get_proc_name final_summary in
+(* XXX
   F.printf "@[<2>SPEC for %s@\n%a@]@\n"
     (Typ.Procname.to_string proc_name)
     (pp_specs Pp.text)
     (get_specs_from_payload final_summary);
+*)
   (* Make sure the summary in memory is identical to the saved one *)
   add_summary proc_name final_summary ;
   Serialization.write_to_file summary_serializer

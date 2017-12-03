@@ -133,6 +133,8 @@ exception Stack_variable_address_escape of Localise.error_desc * Logging.ml_loc
 
 exception Symexec_memory_error of Logging.ml_loc
 
+exception Topl_error
+
 exception Unary_minus_applied_to_unsigned_expression of Localise.error_desc * Logging.ml_loc
 
 exception Unknown_proc
