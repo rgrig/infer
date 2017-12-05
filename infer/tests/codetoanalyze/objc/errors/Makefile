@@ -27,6 +27,7 @@ SOURCES_DEFAULT = \
   memory_leaks_benchmark/NSString_models_tests.m \
 	memory_leaks_benchmark/NSData_models_tests.m \
   memory_leaks_benchmark/RetainReleaseExampleBucketing.m \
+	memory_leaks_benchmark/CoreVideoExample.m \
   npe/Fraction.m \
   npe/NPD_core_foundation.m \
   npe/Npe_with_equal_names.m \
@@ -86,6 +87,7 @@ SOURCES_BUCKET_ALL = \
 SOURCES_ARC = \
   field_superclass/SubtypingExample.m \
   initialization/struct_initlistexpr.c \
+	memory_leaks_benchmark/RetainCycleExampleWeak.m \
   memory_leaks_benchmark/RetainReleaseExampleBucketingArc.m \
   memory_leaks_benchmark/retain_cycle.m \
   memory_leaks_benchmark/retain_cycle2.m \
