@@ -56,10 +56,6 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     | Sil.Load (lhs_id, _, _, _) when Ident.is_none lhs_id ->
         (* dummy deref inserted by frontend--don't count as a read *)
         astate
-    | Sil.Call (_, Exp.Const Cfun (Typ.Procname.ObjC_Cpp _ as pname), _, _, _)
-      when Typ.Procname.is_destructor pname ->
-        (* don't count destructor calls as a read *)
-        astate
     | Sil.Load (lhs_id, rhs_exp, _, _) ->
         Domain.remove (Var.of_id lhs_id) astate |> exp_add_live rhs_exp
     | Sil.Store (Lvar lhs_pvar, _, rhs_exp, _) ->
@@ -85,6 +81,21 @@ end
 module CFG = ProcCfg.OneInstrPerNode (ProcCfg.Backward (ProcCfg.Exceptional))
 module Analyzer = AbstractInterpreter.Make (CFG) (TransferFunctions)
 
+(* It's fine to have a dead store on a type that uses the "scope guard" pattern. These types
+   are only read in their destructors, and this is expected/ok.
+   (e.g., https://github.com/facebook/folly/blob/master/folly/ScopeGuard.h). *)
+let matcher_scope_guard =
+  let of_json init = function
+    | `List scope_guards ->
+        List.fold scope_guards ~f:(fun acc json -> Yojson.Basic.Util.to_string json :: acc) ~init
+    | _ ->
+        init
+  in
+  let default_scope_guards = ["CKComponentScope"] in
+  of_json default_scope_guards Config.cxx_scope_guards
+  |> QualifiedCppName.Match.of_fuzzy_qual_names
+
+
 let checker {Callbacks.tenv; summary; proc_desc} : Specs.summary =
   let cfg = CFG.from_pdesc proc_desc in
   let invariant_map =
@@ -101,19 +112,6 @@ let checker {Callbacks.tenv; summary; proc_desc} : Specs.summary =
     | _ ->
         false
   in
-  let matcher_scope_guard =
-    QualifiedCppName.Match.of_fuzzy_qual_names
-      [ "folly::RWSpinLock::ReadHolder"
-      ; "folly::RWSpinLock::WriteHolder"
-      ; "folly::SpinLockGuard"
-      ; "folly::ScopeGuard"
-      ; "std::lock_guard"
-      ; "std::scoped_lock"
-      ; "std::unique_lock" ]
-  in
-  (* It's fine to have a dead store on a type that uses the "scope guard" pattern. These types
-     are only read in their destructors, and this is expected/ok.
-     (e.g., https://github.com/facebook/folly/blob/master/folly/ScopeGuard.h). *)
   let rec is_scope_guard = function
     | {Typ.desc= Tstruct name} ->
         QualifiedCppName.Match.match_qualifiers matcher_scope_guard (Typ.Name.qual_name name)
@@ -128,21 +126,23 @@ let checker {Callbacks.tenv; summary; proc_desc} : Specs.summary =
       || Domain.mem (Var.of_pvar pvar) live_vars || Procdesc.is_captured_var proc_desc pvar
       || is_scope_guard typ || Procdesc.has_modify_in_block_attr proc_desc pvar )
   in
-  let log_report pvar loc =
-    let issue_id = IssueType.dead_store.unique_id in
-    let message = F.asprintf "The value written to %a is never used" (Pvar.pp Pp.text) pvar in
+  let log_report pvar typ loc =
+    let message =
+      F.asprintf "The value written to %a (type %a) is never used" (Pvar.pp Pp.text) pvar
+        (Typ.pp_full Pp.text) typ
+    in
     let ltr = [Errlog.make_trace_element 0 loc "Write of unused value" []] in
-    let exn = Exceptions.Checkers (issue_id, Localise.verbatim_desc message) in
+    let exn = Exceptions.Checkers (IssueType.dead_store, Localise.verbatim_desc message) in
     Reporting.log_error summary ~loc ~ltr exn
   in
   let report_dead_store live_vars = function
     | Sil.Store (Lvar pvar, typ, rhs_exp, loc)
       when should_report pvar typ live_vars && not (is_sentinel_exp rhs_exp) ->
-        log_report pvar loc
+        log_report pvar typ loc
     | Sil.Call
         (None, Exp.Const Cfun (Typ.Procname.ObjC_Cpp _ as pname), (Exp.Lvar pvar, typ) :: _, loc, _)
       when Typ.Procname.is_constructor pname && should_report pvar typ live_vars ->
-        log_report pvar loc
+        log_report pvar typ loc
     | _ ->
         ()
   in
@@ -160,3 +160,4 @@ let checker {Callbacks.tenv; summary; proc_desc} : Specs.summary =
   in
   List.iter (CFG.nodes cfg) ~f:report_on_node ;
   summary
+

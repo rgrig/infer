@@ -27,9 +27,16 @@ type callback = callback_fun * Config.language
 type checker = {name: string; active: bool; callbacks: callback list}
 
 let all_checkers =
+  (* TODO (T24393492): the checkers should run in the order from this list.
+     Currently, the checkers are run in the reverse order *)
   [ { name= "annotation reachability"
     ; active= Config.annotation_reachability
     ; callbacks= [(Procedure AnnotationReachability.checker, Config.Java)] }
+  ; { name= "nullable checks"
+    ; active= Config.check_nullable
+    ; callbacks=
+        [ (Procedure NullabilityCheck.checker, Config.Clang)
+        ; (Procedure NullabilityCheck.checker, Config.Java) ] }
   ; { name= "biabduction"
     ; active= Config.biabduction
     ; callbacks=
@@ -59,11 +66,6 @@ let all_checkers =
   ; { name= "printf args"
     ; active= Config.printf_args
     ; callbacks= [(Procedure PrintfArgs.callback_printf_args, Config.Java)] }
-  ; { name= "nullable checks"
-    ; active= Config.check_nullable
-    ; callbacks=
-        [ (Procedure NullabilityCheck.checker, Config.Clang)
-        ; (Procedure NullabilityCheck.checker, Config.Java) ] }
   ; { name= "nullable suggestion"
     ; active= Config.suggest_nullable
     ; callbacks=
@@ -89,9 +91,7 @@ let all_checkers =
                interprocedural later on *)
             Procedure ResourceLeaks.checker
           , Config.Java ) ] }
-  ; { name= "should update"
-    ; active= Config.should_update
-    ; callbacks= [(Procedure ShouldUpdate.checker, Config.Java)] }
+  ; {name= "litho"; active= Config.litho; callbacks= [(Procedure Litho.checker, Config.Java)]}
   ; {name= "SIOF"; active= Config.siof; callbacks= [(Procedure Siof.checker, Config.Clang)]}
   ; { name= "uninitialized variables"
     ; active= Config.uninit
@@ -134,3 +134,4 @@ let pp_checker fmt {name; callbacks} =
   F.fprintf fmt "%s (%a)" name
     (Pp.seq ~sep:", " (Pp.to_string ~f:Config.string_of_language))
     langs_of_callbacks
+

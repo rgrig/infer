@@ -195,6 +195,13 @@ let error_desc_set_bucket err_desc bucket =
   {err_desc with descriptions; tags}
 
 
+let error_desc_is_reportable_bucket err_desc =
+  let issue_bucket = error_desc_get_bucket err_desc in
+  let high_buckets = BucketLevel.([b1; b2]) in
+  Option.value_map issue_bucket ~default:false ~f:(fun b ->
+      List.mem ~equal:String.equal high_buckets b )
+
+
 (** get the value tag, if any *)
 let get_value_line_tag tags =
   try
@@ -566,6 +573,24 @@ let nullable_annotation_name proc_name =
       "_Nullable"
 
 
+let access_desc tags access_opt =
+  match access_opt with
+  | None ->
+      []
+  | Some Last_accessed (n, _) ->
+      let line_str = string_of_int n in
+      Tags.update tags Tags.accessed_line line_str ;
+      ["last accessed on line " ^ line_str]
+  | Some Last_assigned (n, _) ->
+      let line_str = string_of_int n in
+      Tags.update tags Tags.assigned_line line_str ;
+      ["last assigned on line " ^ line_str]
+  | Some Returned_from_call _ ->
+      []
+  | Some Initialized_automatically ->
+      ["initialized automatically"]
+
+
 let dereference_string proc_name deref_str value_str access_opt loc =
   let tags = deref_str.tags in
   Tags.update tags Tags.value value_str ;
@@ -576,23 +601,6 @@ let dereference_string proc_name deref_str value_str access_opt loc =
       ; (if is_call_access then "returned by " else "")
       ; MF.monospaced_to_string value_str
       ; (match deref_str.value_post with Some s -> " " ^ MF.monospaced_to_string s | _ -> "") ]
-  in
-  let access_desc =
-    match access_opt with
-    | None ->
-        []
-    | Some Last_accessed (n, _) ->
-        let line_str = string_of_int n in
-        Tags.update tags Tags.accessed_line line_str ;
-        ["last accessed on line " ^ line_str]
-    | Some Last_assigned (n, _) ->
-        let line_str = string_of_int n in
-        Tags.update tags Tags.assigned_line line_str ;
-        ["last assigned on line " ^ line_str]
-    | Some Returned_from_call _ ->
-        []
-    | Some Initialized_automatically ->
-        ["initialized automatically"]
   in
   let problem_desc =
     let problem_str =
@@ -613,6 +621,7 @@ let dereference_string proc_name deref_str value_str access_opt loc =
     in
     [problem_str ^ " " ^ at_line tags loc]
   in
+  let access_desc = access_desc tags access_opt in
   {no_desc with descriptions= value_desc :: access_desc @ problem_desc; tags= !tags}
 
 
@@ -889,44 +898,12 @@ let desc_return_expression_required typ_str loc =
   {no_desc with descriptions= [description]; tags= !tags}
 
 
-let desc_retain_cycle cycle loc cycle_dotty =
+let desc_retain_cycle cycle_str loc cycle_dotty =
   Logging.d_strln "Proposition with retain cycle:" ;
-  let ct = ref 1 in
   let tags = Tags.create () in
-  let str_cycle = ref "" in
-  let remove_old s =
-    match Str.split_delim (Str.regexp_string "&old_") s with [_; s'] -> s' | _ -> s
-  in
-  let do_edge ((se, _), f, _) =
-    match se with
-    | Sil.Eexp (Exp.Lvar pvar, _) when Pvar.equal pvar Sil.block_pvar ->
-        str_cycle
-        := !str_cycle ^ " (" ^ string_of_int !ct ^ ") a block capturing "
-           ^ MF.monospaced_to_string (Typ.Fieldname.to_string f) ^ "; " ;
-        ct := !ct + 1
-    | Sil.Eexp ((Exp.Lvar pvar as e), _) ->
-        let e_str = Exp.to_string e in
-        let e_str = if Pvar.is_seed pvar then remove_old e_str else e_str in
-        str_cycle
-        := !str_cycle ^ " (" ^ string_of_int !ct ^ ") object " ^ e_str ^ " retaining "
-           ^ MF.monospaced_to_string (e_str ^ "." ^ Typ.Fieldname.to_string f) ^ ", " ;
-        ct := !ct + 1
-    | Sil.Eexp (Exp.Sizeof {typ}, _) ->
-        let step =
-          " (" ^ string_of_int !ct ^ ") an object of "
-          ^ MF.monospaced_to_string (Typ.to_string typ)
-          ^ " retaining another object via instance variable "
-          ^ MF.monospaced_to_string (Typ.Fieldname.to_string f) ^ ", "
-        in
-        str_cycle := !str_cycle ^ step ;
-        ct := !ct + 1
-    | _ ->
-        ()
-  in
-  List.iter ~f:do_edge cycle ;
   let desc =
-    Format.sprintf "Retain cycle involving the following objects: %s  %s" !str_cycle
-      (at_line tags loc)
+    Format.sprintf "Retain cycle %s involving the following objects:%s" (at_line tags loc)
+      cycle_str
   in
   {no_desc with descriptions= [desc]; tags= !tags; dotty= cycle_dotty}
 
@@ -1018,4 +995,3 @@ let desc_uninitialized_dangling_pointer_deref deref expr_str loc =
       (at_line tags loc)
   in
   {no_desc with descriptions= [description]; tags= !tags}
-

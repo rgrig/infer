@@ -15,10 +15,11 @@ module SourceKind = struct
   type t =
     | DrawableResource of Pvar.t  (** Drawable resource ID read from a global *)
     | Intent  (** external Intent or a value read from one *)
+    | IntentFromURI  (** Intent created from a URI *)
     | Other  (** for testing or uncategorized sources *)
     | PrivateData  (** private user or device-specific data *)
     | UserControlledString  (** data read from a text box or the clipboard service *)
-    | UserControlledURI  (** resource locator from the browser bar *)
+    | UserControlledURI  (** resource locator originating from the browser bar *)
     [@@deriving compare]
 
   let matches ~caller ~callee = Int.equal 0 (compare caller callee)
@@ -26,6 +27,8 @@ module SourceKind = struct
   let of_string = function
     | "Intent" ->
         Intent
+    | "IntentFromURI" ->
+        IntentFromURI
     | "PrivateData" ->
         PrivateData
     | "UserControlledURI" ->
@@ -42,11 +45,31 @@ module SourceKind = struct
       (QuandaryConfig.Source.of_json Config.quandary_sources)
 
 
+  let actual_has_type n type_string actuals tenv =
+    let is_typ typename _ = String.equal (Typ.Name.name typename) type_string in
+    match List.nth actuals n with
+    | Some actual -> (
+      match HilExp.get_typ tenv actual with
+      | Some {desc= Tptr ({desc= Tstruct typename}, _)} ->
+          PatternMatch.supertype_exists tenv is_typ typename
+      | _ ->
+          false )
+    | None ->
+        false
+
+
   let get pname actuals tenv =
     let return = None in
     match pname with
     | Typ.Procname.Java pname -> (
       match (Typ.Procname.java_get_class_name pname, Typ.Procname.java_get_method pname) with
+      | "android.content.Intent", "<init>" when actual_has_type 2 "android.net.Uri" actuals tenv ->
+          (* taint the [this] parameter passed to the constructor *)
+          Some (IntentFromURI, Some 0)
+      | ( "android.content.Intent"
+        , ( "parseUri" | "setData" | "setDataAndNormalize" | "setDataAndType"
+          | "setDataAndTypeAndNormalize" ) ) ->
+          Some (IntentFromURI, return)
       | ( "android.location.Location"
         , ("getAltitude" | "getBearing" | "getLatitude" | "getLongitude" | "getSpeed") ) ->
           Some (PrivateData, return)
@@ -179,6 +202,8 @@ module SourceKind = struct
           Pvar.to_string pvar
       | Intent ->
           "Intent"
+      | IntentFromURI ->
+          "IntentFromURI"
       | Other ->
           "Other"
       | PrivateData ->
@@ -385,35 +410,40 @@ include Trace.Make (struct
     match (Source.kind source, Sink.kind sink) with
     | _ when not (List.is_empty sanitizers) ->
         (* assume any sanitizer clears all forms of taint *)
-        L.d_strln "non-empty sanitizers!" ; None
-    | PrivateData, Logging
-    (* logging private data issue *)
-    | Intent, StartComponent
-    (* intent reuse issue *)
-    | Intent, CreateIntent
-    (* intent configured with external values issue *)
-    | Intent, JavaScript
-    (* external data flows into JS: remote code execution risk *)
-    | PrivateData, JavaScript
-    (* leaking private data into JS *)
-    | UserControlledURI, (CreateIntent | StartComponent)
-    (* create intent/launch component from user-controlled URI *)
-    | UserControlledURI, CreateFile
-    (* create file from user-controller URI; potential path-traversal vulnerability *)
-    | UserControlledString, (StartComponent | CreateIntent | JavaScript | CreateFile | HTML) ->
-        (* do something sensitive with a user-controlled string *)
-        Some IssueType.quandary_taint_error
-    | (Intent | UserControlledURI | UserControlledString), Deserialization ->
+        None
+    | (Intent | UserControlledString | UserControlledURI), CreateIntent ->
+        (* creating Intent from user-congrolled data *)
+        Some IssueType.untrusted_intent_creation
+    | (Intent | IntentFromURI | UserControlledString | UserControlledURI), CreateFile ->
+        (* user-controlled file creation; may be vulnerable to path traversal + more *)
+        Some IssueType.untrusted_file
+    | (Intent | IntentFromURI | UserControlledString | UserControlledURI), Deserialization ->
         (* shouldn't let anyone external control what we deserialize *)
-        Some IssueType.quandary_taint_error
+        Some IssueType.untrusted_deserialization
+    | (Intent | IntentFromURI | UserControlledString | UserControlledURI), HTML ->
+        (* untrusted data flows into HTML; XSS risk *)
+        Some IssueType.cross_site_scripting
+    | (Intent | IntentFromURI | UserControlledString | UserControlledURI), JavaScript ->
+        (* untrusted data flows into JS *)
+        Some IssueType.javascript_injection
     | DrawableResource _, OpenDrawableResource ->
         (* not a security issue, but useful for debugging flows from resource IDs to inflation *)
         Some IssueType.quandary_taint_error
+    | IntentFromURI, StartComponent ->
+        (* create an intent/start a component using a (possibly user-controlled) URI. may or may not
+           be an issue; depends on where the URI comes from *)
+        Some IssueType.create_intent_from_uri
+    | PrivateData, Logging ->
+        Some IssueType.logging_private_data
     | Other, _ | _, Other ->
-        L.d_strln (F.asprintf "have %d sanitizers" (List.length sanitizers)) ;
         (* for testing purposes, Other matches everything *)
         Some IssueType.quandary_taint_error
-    | _ ->
+    | DrawableResource _, _
+    | IntentFromURI, _
+    | PrivateData, _
+    | _, Logging
+    | _, OpenDrawableResource
+    | _, StartComponent ->
         None
 
 end)

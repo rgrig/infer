@@ -63,17 +63,6 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         OwnershipAbstractValue.unowned
 
 
-  (* will return true on x.f.g.h when x.f and x.f.g are owned, but not requiring x.f.g.h *)
-  (* must not be called with an empty access list *)
-  let all_prefixes_owned (base, accesses) attribute_map =
-    let but_last_rev = List.rev accesses |> List.tl_exn in
-    let rec aux acc = function [] -> acc | _ :: tail as all -> aux (List.rev all :: acc) tail in
-    let prefixes = aux [] but_last_rev in
-    List.for_all
-      ~f:(fun ap -> RacerDDomain.OwnershipDomain.is_owned (base, ap) attribute_map)
-      prefixes
-
-
   let propagate_attributes lhs_access_path rhs_exp attribute_map =
     let rhs_attributes = attributes_of_expr attribute_map rhs_exp in
     Domain.AttributeMapDomain.add lhs_access_path rhs_attributes attribute_map
@@ -95,7 +84,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
                | _ ->
                    false ->
             ownership_of_expr rhs_exp ownership
-        | _ when all_prefixes_owned lhs_access_path ownership ->
+        | _ when Domain.OwnershipDomain.is_owned lhs_access_path ownership ->
             ownership_of_expr rhs_exp ownership
         | _ ->
             Domain.OwnershipAbstractValue.unowned
@@ -940,6 +929,9 @@ let analyze_procedure {Callbacks.proc_desc; get_proc_desc; tenv; summary} =
         | _ ->
             OwnershipDomain.empty
       in
+      let add_conditional_owned_formal acc (formal, formal_index) =
+        OwnershipDomain.add (formal, []) (OwnershipAbstractValue.make_owned_if formal_index) acc
+      in
       if is_initializer tenv (Procdesc.get_proc_name proc_desc) then
         let add_owned_formal acc formal_index =
           match FormalMap.get_formal_base formal_index formal_map with
@@ -948,25 +940,27 @@ let analyze_procedure {Callbacks.proc_desc; get_proc_desc; tenv; summary} =
           | None ->
               acc
         in
-        let owned_formals =
+        let ownership =
           (* if a constructer is called via DI, all of its formals will be freshly allocated and
              therefore owned. we assume that constructors annotated with @Inject will only be
              called via DI or using fresh parameters. *)
           if Annotations.pdesc_has_return_annot proc_desc Annotations.ia_is_inject then
             List.mapi ~f:(fun i _ -> i) (Procdesc.get_formals proc_desc)
-          else [0]
-          (* express that the constructor owns [this] *)
+            |> List.fold ~f:add_owned_formal ~init:own_locals_in_cpp
+          else
+            (* express that the constructor owns [this] *)
+            let init = add_owned_formal own_locals_in_cpp 0 in
+            List.fold ~f:add_conditional_owned_formal ~init
+              (List.filter
+                 ~f:(fun (_, index) -> not (Int.equal index 0))
+                 (FormalMap.get_formals_indexes formal_map))
         in
-        let ownership = List.fold ~f:add_owned_formal owned_formals ~init:own_locals_in_cpp in
         {RacerDDomain.empty with ownership; threads}
       else
         (* add Owned(formal_index) predicates for each formal to indicate that each one is owned if
            it is owned in the caller *)
-        let add_owned_formal acc (formal, formal_index) =
-          OwnershipDomain.add (formal, []) (OwnershipAbstractValue.make_owned_if formal_index) acc
-        in
         let ownership =
-          List.fold ~f:add_owned_formal
+          List.fold ~f:add_conditional_owned_formal
             (FormalMap.get_formals_indexes formal_map)
             ~init:own_locals_in_cpp
         in
@@ -993,11 +987,11 @@ let analyze_procedure {Callbacks.proc_desc; get_proc_desc; tenv; summary} =
 
 module AccessListMap = Caml.Map.Make (RacerDDomain.Access)
 
-type conflicts = RacerDDomain.TraceElem.t list
+type conflict = RacerDDomain.TraceElem.t
 
 type report_kind =
-  | WriteWriteRace of conflicts  (** possibly-empty list of conflicting accesses *)
-  | ReadWriteRace of conflicts  (** non-empty list of conflicting accesses *)
+  | WriteWriteRace of conflict option  (** one of conflicting access, if there are any *)
+  | ReadWriteRace of conflict  (** one of several conflicting accesses *)
   | UnannotatedInterface
 
 (** Explain why we are reporting this access, in Java *)
@@ -1142,9 +1136,12 @@ let make_trace ~report_kind original_path pdesc =
         []
   in
   let original_trace = loc_trace_of_path original_path in
+  let get_end_loc trace = Option.map (List.last trace) ~f:(function {Errlog.lt_loc} -> lt_loc) in
+  let original_end = get_end_loc original_trace in
   let make_with_conflicts conflict_sink original_trace ~label1 ~label2 =
     (* create a trace for one of the conflicts and append it to the trace for the original sink *)
     let conflict_trace = make_trace_for_sink conflict_sink in
+    let conflict_end = get_end_loc conflict_trace in
     let get_start_loc = function head :: _ -> head.Errlog.lt_loc | [] -> Location.dummy in
     let first_trace_spacer =
       Errlog.make_trace_element 0 (get_start_loc original_trace) label1 []
@@ -1152,17 +1149,19 @@ let make_trace ~report_kind original_path pdesc =
     let second_trace_spacer =
       Errlog.make_trace_element 0 (get_start_loc conflict_trace) label2 []
     in
-    first_trace_spacer :: original_trace @ second_trace_spacer :: conflict_trace
+    ( first_trace_spacer :: original_trace @ second_trace_spacer :: conflict_trace
+    , original_end
+    , conflict_end )
   in
   match report_kind with
-  | ReadWriteRace (conflict_sink :: _) ->
+  | ReadWriteRace conflict_sink ->
       make_with_conflicts conflict_sink original_trace ~label1:"<Read trace>"
         ~label2:"<Write trace>"
-  | WriteWriteRace (conflict_sink :: _) ->
+  | WriteWriteRace Some conflict_sink ->
       make_with_conflicts conflict_sink original_trace ~label1:"<Write on unknown thread>"
         ~label2:"<Write on background thread>"
-  | ReadWriteRace [] | WriteWriteRace [] | UnannotatedInterface ->
-      original_trace
+  | WriteWriteRace None | UnannotatedInterface ->
+      (original_trace, original_end, None)
 
 
 let report_thread_safety_violation tenv pdesc ~make_description ~report_kind access thread =
@@ -1170,24 +1169,37 @@ let report_thread_safety_violation tenv pdesc ~make_description ~report_kind acc
   let pname = Procdesc.get_proc_name pdesc in
   let report_one_path ((_, sinks) as path) =
     let final_sink, _ = List.hd_exn sinks in
+    let initial_sink, _ = List.last_exn sinks in
     let is_full_trace = TraceElem.is_direct final_sink in
+    let is_pvar_base initial_sink =
+      let access_path = Access.get_access_path (PathDomain.Sink.kind initial_sink) in
+      Option.value_map ~default:false access_path ~f:(fun ap ->
+          match ap with
+          | (Var.LogicalVar _, _), _ ->
+              false
+          | (Var.ProgramVar pvar, _), _ ->
+              not (Pvar.is_frontend_tmp pvar) )
+    in
     (* Traces can be truncated due to limitations of our Buck integration. If we have a truncated
-       trace, it's probably going to be too confusing to be actionable. Skip it. *)
-    if not (Typ.Procname.is_java pname) || is_full_trace || not Config.filtering then
+       trace, it's probably going to be too confusing to be actionable. Skip it.
+       For C++ it is difficult to understand error messages when access path starts with a logical
+       variable or a temporary variable. We want to skip the reports for now until we
+       find a solution *)
+    if not Config.filtering
+       || if Typ.Procname.is_java pname then is_full_trace else is_pvar_base initial_sink
+    then
       let final_sink_site = PathDomain.Sink.call_site final_sink in
-      let initial_sink, _ = List.last_exn sinks in
       let initial_sink_site = PathDomain.Sink.call_site initial_sink in
       let loc = CallSite.loc initial_sink_site in
-      let ltr = make_trace ~report_kind path pdesc in
+      let ltr, original_end, conflict_end = make_trace ~report_kind path pdesc in
       (* what the potential bug is *)
       let description = make_description pname final_sink_site initial_sink_site initial_sink in
       (* why we are reporting it *)
       let issue_type, explanation = get_reporting_explanation report_kind tenv pname thread in
       let error_message = F.sprintf "%s%s" description explanation in
-      let exn =
-        Exceptions.Checkers (issue_type.IssueType.unique_id, Localise.verbatim_desc error_message)
-      in
-      let access = B64.encode (Marshal.to_string (pname, access) []) in
+      let exn = Exceptions.Checkers (issue_type, Localise.verbatim_desc error_message) in
+      let end_locs = Option.to_list original_end @ Option.to_list conflict_end in
+      let access = IssueAuxData.encode (pname, access, end_locs) in
       Reporting.log_error_deprecated ~store_summary:true pname ~loc ~ltr ~access exn
   in
   let trace_of_pname = trace_of_pname access pdesc in
@@ -1228,22 +1240,23 @@ let make_unprotected_write_description pname final_sink_site initial_sink_site f
     pp_access final_sink
 
 
-let make_read_write_race_description ~read_is_sync conflicts pname final_sink_site
-    initial_sink_site final_sink =
-  let conflicting_proc_names =
-    List.map ~f:(fun (_, _, _, _, pdesc) -> Procdesc.get_proc_name pdesc) conflicts
-    |> Typ.Procname.Set.of_list
-  in
-  let pp_conflicts fmt conflicts =
-    if Int.equal (Typ.Procname.Set.cardinal conflicts) 1 then
-      Typ.Procname.pp fmt (Typ.Procname.Set.min_elt conflicts)
-    else Typ.Procname.Set.pp fmt conflicts
+type reported_access =
+  { access: RacerDDomain.TraceElem.t
+  ; threads: RacerDDomain.ThreadsDomain.astate
+  ; precondition: RacerDDomain.AccessPrecondition.t
+  ; tenv: Tenv.t
+  ; procdesc: Procdesc.t }
+
+let make_read_write_race_description ~read_is_sync (conflict: reported_access) pname
+    final_sink_site initial_sink_site final_sink =
+  let pp_conflict fmt {procdesc} =
+    F.fprintf fmt "%s"
+      (Typ.Procname.to_simplified_string ~withclass:true (Procdesc.get_proc_name procdesc))
   in
   let conflicts_description =
-    Format.asprintf "Potentially races with%s writes in method%s %a"
+    Format.asprintf "Potentially races with%s write in method %a"
       (if read_is_sync then " unsynchronized" else "")
-      (if Typ.Procname.Set.cardinal conflicting_proc_names > 1 then "s" else "")
-      (MF.wrap_monospaced pp_conflicts) conflicting_proc_names
+      (MF.wrap_monospaced pp_conflict) conflict
   in
   Format.asprintf "Read/Write race. Non-private method %a%s reads%s from %a. %s."
     (MF.wrap_monospaced pp_procname_short)
@@ -1291,33 +1304,25 @@ let should_report_on_proc proc_desc tenv =
     currently not distinguishing different locks, and are treating "known to be confined to a
     thread" as if "known to be confined to UI thread".
 *)
-let report_unsafe_accesses
-    (aggregated_access_map:
-      ( RacerDDomain.TraceElem.t
-      * RacerDDomain.AccessPrecondition.t
-      * RacerDDomain.ThreadsDomain.astate
-      * Tenv.t
-      * Procdesc.t )
-      list
-      AccessListMap.t) =
+let report_unsafe_accesses (aggregated_access_map: reported_access list AccessListMap.t) =
   let open RacerDDomain in
-  let report_unsafe_access (access, pre, thread, tenv, pdesc) accesses =
-    let pname = Procdesc.get_proc_name pdesc in
-    match (TraceElem.kind access, pre) with
+  let report_unsafe_access {access; precondition; threads; tenv; procdesc} accesses =
+    let pname = Procdesc.get_proc_name procdesc in
+    match (TraceElem.kind access, precondition) with
     | ( Access.InterfaceCall unannoted_call_pname
       , (AccessPrecondition.Unprotected _ | AccessPrecondition.TotallyUnprotected) ) ->
-        if ThreadsDomain.is_any thread && is_marked_thread_safe pdesc tenv then
+        if ThreadsDomain.is_any threads && is_marked_thread_safe procdesc tenv then
           (* un-annotated interface call + no lock in method marked thread-safe. warn *)
-          report_unannotated_interface_violation tenv pdesc access thread unannoted_call_pname
+          report_unannotated_interface_violation tenv procdesc access threads unannoted_call_pname
     | Access.InterfaceCall _, AccessPrecondition.Protected _ ->
         (* un-annotated interface call, but it's protected by a lock/thread. don't report *)
         ()
     | ( (Access.Write _ | ContainerWrite _)
       , (AccessPrecondition.Unprotected _ | AccessPrecondition.TotallyUnprotected) ) -> (
-      match Procdesc.get_proc_name pdesc with
+      match Procdesc.get_proc_name procdesc with
       | Java _ ->
           let writes_on_background_thread =
-            if ThreadsDomain.is_any thread then
+            if ThreadsDomain.is_any threads then
               (* unprotected write in method that may run in parallel with itself. warn *)
               []
             else
@@ -1325,17 +1330,18 @@ let report_unsafe_accesses
                    (i.e., not a self race). find accesses on a background thread this access might
                    conflict with and report them *)
               List.filter_map
-                ~f:(fun (other_access, _, other_thread, _, _) ->
-                  if TraceElem.is_write other_access && ThreadsDomain.is_any other_thread then
+                ~f:(fun {access= other_access; threads= other_threads} ->
+                  if TraceElem.is_write other_access && ThreadsDomain.is_any other_threads then
                     Some other_access
                   else None)
                 accesses
           in
-          if not (List.is_empty writes_on_background_thread && not (ThreadsDomain.is_any thread))
+          if not (List.is_empty writes_on_background_thread && not (ThreadsDomain.is_any threads))
           then
-            report_thread_safety_violation tenv pdesc
+            let conflict = List.hd writes_on_background_thread in
+            report_thread_safety_violation tenv procdesc
               ~make_description:make_unprotected_write_description
-              ~report_kind:(WriteWriteRace writes_on_background_thread) access thread
+              ~report_kind:(WriteWriteRace conflict) access threads
       | _ ->
           (* Do not report unprotected writes when an access can't run in parallel with itself, or
                for ObjC_Cpp *)
@@ -1357,22 +1363,21 @@ let report_unsafe_accesses
         let is_conflict other_access pre other_thread =
           TraceElem.is_write other_access
           &&
-          if Typ.Procname.is_java pname then ThreadsDomain.is_any thread
+          if Typ.Procname.is_java pname then ThreadsDomain.is_any threads
             || ThreadsDomain.is_any other_thread
           else is_cpp_protected_write pre
         in
         let all_writes =
           List.filter
-            ~f:(fun (other_access, pre, other_thread, _, _) ->
-              is_conflict other_access pre other_thread)
+            ~f:(fun {access= other_access; precondition; threads= other_threads} ->
+              is_conflict other_access precondition other_threads)
             accesses
         in
         if not (List.is_empty all_writes) then
-          report_thread_safety_violation tenv pdesc
-            ~make_description:(make_read_write_race_description ~read_is_sync:false all_writes)
-            ~report_kind:
-              (ReadWriteRace (List.map ~f:(fun (access, _, _, _, _) -> access) all_writes))
-            access thread
+          let conflict = List.hd_exn all_writes in
+          report_thread_safety_violation tenv procdesc
+            ~make_description:(make_read_write_race_description ~read_is_sync:false conflict)
+            ~report_kind:(ReadWriteRace conflict.access) access threads
     | (Access.Read _ | ContainerRead _), AccessPrecondition.Protected excl ->
         (* protected read. report unprotected writes and opposite protected writes as conflicts
              Thread and Lock are opposites of one another, and Both has no opposite *)
@@ -1386,10 +1391,10 @@ let report_unsafe_accesses
         in
         let conflicting_writes =
           List.filter
-            ~f:(fun (access, pre, other_thread, _, _) ->
-              match pre with
+            ~f:(fun {access; precondition; threads= other_threads} ->
+              match precondition with
               | AccessPrecondition.Unprotected _ ->
-                  TraceElem.is_write access && ThreadsDomain.is_any other_thread
+                  TraceElem.is_write access && ThreadsDomain.is_any other_threads
               | AccessPrecondition.Protected other_excl when is_opposite (excl, other_excl) ->
                   TraceElem.is_write access
               | _ ->
@@ -1397,16 +1402,14 @@ let report_unsafe_accesses
             accesses
         in
         if not (List.is_empty conflicting_writes) then
+          let conflict = List.hd_exn conflicting_writes in
           (* protected read with conflicting unprotected write(s). warn. *)
-          report_thread_safety_violation tenv pdesc
-            ~make_description:
-              (make_read_write_race_description ~read_is_sync:true conflicting_writes)
-            ~report_kind:
-              (ReadWriteRace (List.map ~f:(fun (access, _, _, _, _) -> access) conflicting_writes))
-            access thread
+          report_thread_safety_violation tenv procdesc
+            ~make_description:(make_read_write_race_description ~read_is_sync:true conflict)
+            ~report_kind:(ReadWriteRace conflict.access) access threads
   in
   AccessListMap.iter
-    (fun _ grouped_accesses ->
+    (fun _ (grouped_accesses: reported_access list) ->
       let class_has_mutex_member objc_cpp tenv =
         let class_name = Typ.Procname.objc_cpp_get_class_type_name objc_cpp in
         let matcher = QualifiedCppName.Match.of_fuzzy_qual_names ["std::mutex"] in
@@ -1424,7 +1427,7 @@ let report_unsafe_accesses
                   (or an override or superclass is), or
                 - any access is in a field marked thread-safe (or an override) *)
             List.exists
-              ~f:(fun (_, _, thread, _, _) -> ThreadsDomain.is_any thread)
+              ~f:(fun ({threads}: reported_access) -> ThreadsDomain.is_any threads)
               grouped_accesses
             && should_report_on_proc pdesc tenv
         | ObjC_Cpp objc_cpp ->
@@ -1436,7 +1439,7 @@ let report_unsafe_accesses
             false
       in
       let reportable_accesses =
-        List.filter ~f:(fun (_, _, _, tenv, pdesc) -> should_report pdesc tenv) grouped_accesses
+        List.filter ~f:(fun {tenv; procdesc} -> should_report procdesc tenv) grouped_accesses
       in
       List.iter
         ~f:(fun access -> report_unsafe_access access reportable_accesses)
@@ -1445,16 +1448,14 @@ let report_unsafe_accesses
   |> ignore
 
 
-type ('a, 'b, 'c) dat = RacerDDomain.TraceElem.t * 'a * 'b * Tenv.t * 'c
-
 module type QuotientedAccessListMap = sig
-  type ('a, 'b, 'c) t
+  type t
 
-  val empty : ('a, 'b, 'c) t
+  val empty : t
 
-  val add : RacerDDomain.Access.t -> ('a, 'b, 'c) dat -> ('a, 'b, 'c) t -> ('a, 'b, 'c) t
+  val add : RacerDDomain.Access.t -> reported_access -> t -> t
 
-  val quotient : ('a, 'b, 'c) t -> ('a, 'b, 'c) dat list AccessListMap.t
+  val quotient : t -> reported_access list AccessListMap.t
 end
 
 module SyntacticQuotientedAccessListMap : QuotientedAccessListMap = struct
@@ -1486,7 +1487,7 @@ module SyntacticQuotientedAccessListMap : QuotientedAccessListMap = struct
 
   end)
 
-  type ('a, 'b, 'c) t = ('a, 'b, 'c) dat list M.t
+  type t = reported_access list M.t
 
   let empty = M.empty
 
@@ -1499,7 +1500,7 @@ module SyntacticQuotientedAccessListMap : QuotientedAccessListMap = struct
 end
 
 module MayAliasQuotientedAccessListMap : QuotientedAccessListMap = struct
-  type ('a, 'b, 'c) t = ('a, 'b, 'c) dat list AccessListMap.t
+  type t = reported_access list AccessListMap.t
 
   let empty = AccessListMap.empty
 
@@ -1548,10 +1549,8 @@ module MayAliasQuotientedAccessListMap : QuotientedAccessListMap = struct
     match (List.last_exn (snd p1), List.last_exn (snd p2)) with
     | FieldAccess _, ArrayAccess _ | ArrayAccess _, FieldAccess _ ->
         false
-    (* fields in Java contain the class name /declaring/ them
-       thus two fields can be aliases *iff* they are equal *)
-    | FieldAccess f1, FieldAccess f2 ->
-        Typ.Fieldname.equal f1 f2
+    | FieldAccess _, FieldAccess _ ->
+        syntactic_equal_access_path tenv p1 p2
     (* if arrays of objects that have an inheritance rel then they can alias *)
     | ( ArrayAccess ({desc= Tptr ({desc= Tstruct tn1}, _)}, _)
       , ArrayAccess ({desc= Tptr ({desc= Tstruct tn2}, _)}, _) ) ->
@@ -1568,9 +1567,10 @@ module MayAliasQuotientedAccessListMap : QuotientedAccessListMap = struct
       if AccessListMap.is_empty m then acc
       else
         let k, vals = AccessListMap.min_binding m in
-        let _, _, _, tenv, _ =
-          List.find_exn vals ~f:(fun (elem, _, _, _, _) ->
-              RacerDDomain.Access.equal (RacerDDomain.TraceElem.kind elem) k )
+        let tenv =
+          (List.find_exn vals ~f:(fun {access} ->
+               RacerDDomain.Access.equal (RacerDDomain.TraceElem.kind access) k ))
+            .tenv
         in
         (* assumption: the tenv for k is sufficient for k' too *)
         let k_part, non_k_part =
@@ -1617,14 +1617,16 @@ let should_filter_access access =
    that x.f.g may point to during execution *)
 let make_results_table (module AccessListMap: QuotientedAccessListMap) file_env =
   let open RacerDDomain in
-  let aggregate_post {threads; accesses} tenv pdesc acc =
+  let aggregate_post {threads; accesses} tenv procdesc acc =
     AccessDomain.fold
-      (fun pre accesses acc ->
+      (fun precondition accesses acc ->
         PathDomain.Sinks.fold
           (fun access acc ->
             let access_kind = TraceElem.kind access in
             if should_filter_access access_kind then acc
-            else AccessListMap.add access_kind (access, pre, threads, tenv, pdesc) acc)
+            else
+              let reported_access = {access; precondition; threads; tenv; procdesc} in
+              AccessListMap.add access_kind reported_access acc)
           (PathDomain.sinks accesses) acc)
       accesses acc
   in

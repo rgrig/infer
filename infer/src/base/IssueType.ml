@@ -108,6 +108,18 @@ let cannot_star = from_string "Cannot_star"
 
 let checkers_access_global = from_string "CHECKERS_ACCESS_GLOBAL"
 
+let checkers_allocates_memory = from_string "CHECKERS_ALLOCATES_MEMORY"
+
+let checkers_annotation_reachability_error = from_string "CHECKERS_ANNOTATION_REACHABILITY_ERROR"
+
+let checkers_calls_expensive_method = from_string "CHECKERS_CALLS_EXPENSIVE_METHOD"
+
+let checkers_expensive_overrides_unexpensive =
+  from_string "CHECKERS_EXPENSIVE_OVERRIDES_UNANNOTATED"
+
+
+let checkers_fragment_retain_view = from_string "CHECKERS_FRAGMENT_RETAINS_VIEW"
+
 let checkers_immutable_cast = from_string "CHECKERS_IMMUTABLE_CAST"
 
 let checkers_print_c_call = from_string "CHECKERS_PRINT_C_CALL"
@@ -129,6 +141,10 @@ let condition_always_false = from_string ~enabled:false "CONDITION_ALWAYS_FALSE"
 let condition_always_true = from_string ~enabled:false "CONDITION_ALWAYS_TRUE"
 
 let context_leak = from_string "CONTEXT_LEAK"
+
+let create_intent_from_uri = from_string "CREATE_INTENT_FROM_URI"
+
+let cross_site_scripting = from_string "CROSS_SITE_SCRIPTING"
 
 let dangling_pointer_dereference = from_string ~enabled:false "DANGLING_POINTER_DEREFERENCE"
 
@@ -245,11 +261,15 @@ let interface_not_thread_safe = from_string "INTERFACE_NOT_THREAD_SAFE"
 
 let internal_error = from_string "Internal_error"
 
+let javascript_injection = from_string "JAVASCRIPT_INJECTION"
+
 let leak_after_array_abstraction = from_string "Leak_after_array_abstraction"
 
 let leak_in_footprint = from_string "Leak_in_footprint"
 
 let lock_consistency_violation = from_string "LOCK_CONSISTENCY_VIOLATION"
+
+let logging_private_data = from_string "LOGGING_PRIVATE_DATA"
 
 let memory_leak = from_string "MEMORY_LEAK"
 
@@ -281,7 +301,7 @@ let remote_code_execution_risk = from_string "REMOTE_CODE_EXECUTION_RISK"
 
 let resource_leak = from_string "RESOURCE_LEAK"
 
-let retain_cycle = from_string ~enabled:false "RETAIN_CYCLE"
+let retain_cycle = from_string ~enabled:true "RETAIN_CYCLE"
 
 let return_expression_required = from_string "RETURN_EXPRESSION_REQUIRED"
 
@@ -323,8 +343,20 @@ let unsafe_guarded_by_access = from_string "UNSAFE_GUARDED_BY_ACCESS"
 
 let use_after_free = from_string "USE_AFTER_FREE"
 
-let untrusted_variable_length_array = from_string "UNTRUSTED_VARIABLE_LENGTH_ARRAY"
-
 let user_controlled_sql_risk = from_string "USER_CONTROLLED_SQL_RISK"
+
+let untrusted_deserialization = from_string "UNTRUSTED_DESERIALIZATION"
+
+let untrusted_file = from_string "UNTRUSTED_FILE"
+
+let untrusted_file_risk = from_string "UNTRUSTED_FILE_RISK"
+
+let untrusted_intent_creation = from_string "UNTRUSTED_INTENT_CREATION"
+
+let untrusted_url = from_string "UNTRUSTED_URL"
+
+let untrusted_url_risk = from_string "UNTRUSTED_URL_RISK"
+
+let untrusted_variable_length_array = from_string "UNTRUSTED_VARIABLE_LENGTH_ARRAY"
 
 let wrong_argument_number = from_string "Wrong_argument_number" ~hum:"Wrong Argument Number"

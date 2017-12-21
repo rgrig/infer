@@ -66,11 +66,10 @@ class MyActivity extends Activity {
 
   @Override
   public void onResume() {
-    FN_startServiceWithTaintedIntent();
+    startServiceWithTaintedIntent();
   }
 
-  // need to understand the lifecycle to get this
-  void FN_startServiceWithTaintedIntent() {
+  void startServiceWithTaintedIntent() {
     Intent taintedIntent = new Intent("", mUri);
     startService(taintedIntent);
   }
@@ -226,6 +225,18 @@ public class Intents {
   boolean startWithArrayOk(Context context, Intent[] newIntents) {
     context.startActivities(newIntents, null);
     return true;
+  }
+
+  void startWithClassLiteralOk() {
+    mActivity.startActivity(new Intent(mActivity, MyActivity.class));
+  }
+
+  void startWithUri1Bad(Uri uri) {
+    mActivity.startActivity(new Intent("action", uri));
+  }
+
+  void startWithUri2Bad(Uri uri) {
+    mActivity.startActivity(new Intent("action", uri, mActivity, MyActivity.class));
   }
 
 }

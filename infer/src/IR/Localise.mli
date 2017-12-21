@@ -74,6 +74,9 @@ val error_desc_get_bucket : error_desc -> string option
 val error_desc_set_bucket : error_desc -> string -> error_desc
 (** set the bucket value of an error_desc *)
 
+val error_desc_is_reportable_bucket : error_desc -> bool
+(** check if the report is in a high confidence bucket *)
+
 val error_desc_hash : error_desc -> int
 (** hash function for error_desc *)
 
@@ -201,9 +204,7 @@ val desc_precondition_not_met : pnm_kind option -> Typ.Procname.t -> Location.t 
 
 val desc_return_expression_required : string -> Location.t -> error_desc
 
-val desc_retain_cycle :
-  ((Sil.strexp * Typ.t) * Typ.Fieldname.t * Sil.strexp) list -> Location.t -> string option
-  -> error_desc
+val desc_retain_cycle : string -> Location.t -> string option -> error_desc
 
 val registered_observer_being_deallocated_str : string -> string
 
@@ -225,3 +226,5 @@ val desc_unary_minus_applied_to_unsigned_expression :
 val desc_unsafe_guarded_by_access : Typ.Fieldname.t -> string -> Location.t -> error_desc
 
 val desc_uninitialized_dangling_pointer_deref : deref_str -> string -> Location.t -> error_desc
+
+val access_desc : (string, string) Base__List.Assoc.t ref -> access option -> string list

@@ -224,7 +224,9 @@ module Models = struct
       lazy
         (QualifiedCppName.Match.of_fuzzy_qual_names ~prefix:true
            [ "folly::AtomicStruct"
+           ; "folly::fbstring_core"
            ; "folly::Future"
+           ; "folly::futures"
            ; "folly::LockedPtr"
            ; "folly::Optional"
            ; "folly::Promise"

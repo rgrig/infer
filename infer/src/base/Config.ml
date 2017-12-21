@@ -186,6 +186,8 @@ let dotty_output = "icfg.dot"
 
 let duplicates_filename = "duplicates.txt"
 
+let events_dir_name = "events"
+
 (** exit code to use for the --fail-on-issue option *)
 let fail_on_issue_exit_code = 2
 
@@ -397,19 +399,6 @@ let whitelisted_cpp_classes =
     ; other_whitelisted_cpp_classes ]
 
 
-type dynamic_dispatch = NoDynamicDispatch | Interface | Sound | Lazy [@@deriving compare]
-
-let equal_dynamic_dispatch = [%compare.equal : dynamic_dispatch]
-
-let string_to_dynamic_dispatch =
-  [("none", NoDynamicDispatch); ("interface", Interface); ("sound", Sound); ("lazy", Lazy)]
-
-
-let string_of_dynamic_dispatch ddp =
-  List.find_exn ~f:(fun (_, ddp') -> equal_dynamic_dispatch ddp ddp') string_to_dynamic_dispatch
-  |> fst
-
-
 let pp_version fmt () =
   F.fprintf fmt "Infer version %s@\nCopyright 2009 - present Facebook. All Rights Reserved."
     Version.versionString
@@ -563,7 +552,7 @@ let () =
     match cmd with
     | Report ->
         `Add
-    | Analyze | Capture | Compile | Diff | Explore | ReportDiff | Run ->
+    | Analyze | Capture | Compile | Diff | Events | Explore | ReportDiff | Run ->
         `Reject
   in
   (* make sure we generate doc for all the commands we know about *)
@@ -701,12 +690,12 @@ and ( annotation_reachability
     , fragment_retains_view
     , immutable_cast
     , linters
+    , litho
     , liveness
     , printf_args
     , quandary
     , racerd
     , resource_leak
-    , should_update
     , siof
     , suggest_nullable
     , uninit ) =
@@ -739,6 +728,7 @@ and ( annotation_reachability
     mk_checker ~long:"immutable-cast" ~default:true
       "the detection of object cast from immutable type to mutable type. For instance, it will detect cast from ImmutableList to List, ImmutableMap to Map, and ImmutableSet to Set."
   and linters = mk_checker ~long:"linters" ~default:true "syntactic linters"
+  and litho = mk_checker ~long:"litho" "Experimental checkers supporting the Litho framework"
   and liveness =
     mk_checker ~long:"liveness" ~default:true "the detection of dead stores and unused variables"
   and printf_args =
@@ -749,9 +739,6 @@ and ( annotation_reachability
     mk_checker ~long:"racerd" ~deprecated:["-threadsafety"] ~default:true
       "the RacerD thread safety analysis"
   and resource_leak = mk_checker ~long:"resource-leak" ""
-  and should_update =
-    mk_checker ~long:"should-update"
-      "Experimental checker for identifying GraphQL dependencies of a Litho component"
   and siof =
     mk_checker ~long:"siof" ~default:true
       "the Static Initialization Order Fiasco analysis (C++ only)"
@@ -804,12 +791,12 @@ and ( annotation_reachability
   , fragment_retains_view
   , immutable_cast
   , linters
+  , litho
   , liveness
   , printf_args
   , quandary
   , racerd
   , resource_leak
-  , should_update
   , siof
   , suggest_nullable
   , uninit )
@@ -973,6 +960,12 @@ and cxx_infer_headers =
   CLOpt.mk_bool ~long:"cxx-infer-headers" ~default:true
     ~in_help:CLOpt.([(Capture, manual_clang)])
     "Include C++ header models during compilation. Infer swaps some C++ headers for its own in order to get a better model of, eg, the standard library. This can sometimes cause compilation failures."
+
+
+and cxx_scope_guards =
+  CLOpt.mk_json ~long:"cxx-scope-guards"
+    ~in_help:CLOpt.([(Analyze, manual_clang)])
+    "Specify scope guard classes that can be read only by destructors without being reported as dead stores."
 
 
 and cxx =
@@ -1195,12 +1188,6 @@ and dump_duplicate_symbols =
     "Dump all symbols with the same name that are defined in more than one file."
 
 
-and dynamic_dispatch =
-  CLOpt.mk_symbol_opt ~long:"dynamic-dispatch"
-    "Specify treatment of dynamic dispatch in Java code: 'none' treats dynamic dispatch as a call to unknown code, 'lazy' follows the JVM semantics and creates procedure descriptions during symbolic execution using the type information found in the abstract state; 'sound' is significantly more computationally expensive"
-    ~symbols:string_to_dynamic_dispatch
-
-
 and eradicate_condition_redundant =
   CLOpt.mk_bool ~long:"eradicate-condition-redundant" "Condition redundant warnings"
 
@@ -1420,6 +1407,12 @@ and join_cond =
 |}
 
 
+and log_events =
+  CLOpt.mk_bool ~long:"log-events"
+    ~in_help:CLOpt.([(Run, manual_generic)])
+    "Turn on the feature that logs events in a machine-readable format"
+
+
 and log_file =
   CLOpt.mk_string ~deprecated:["out_file"; "-out-file"] ~long:"log-file" ~meta:"file"
     ~default:"logs" "Specify the file to use for logging"
@@ -1610,6 +1603,12 @@ and print_active_checkers =
 and print_builtins =
   CLOpt.mk_bool ~deprecated:["print_builtins"] ~long:"print-builtins"
     "Print the builtin functions and exit"
+
+
+and print_log_identifier =
+  CLOpt.mk_bool ~long:"print-log-identifier"
+    ~in_help:CLOpt.([(Run, manual_generic)])
+    "Print the unique identifier that is common to all logged events"
 
 
 and print_using_diff =
@@ -1935,6 +1934,11 @@ and type_size =
     "Consider the size of types during analysis, e.g. cannot use an int pointer to write to a char"
 
 
+and uninit_interproc =
+  CLOpt.mk_bool ~long:"uninit-interproc"
+    "Run uninit check in the experimental interprocedural mode"
+
+
 and unsafe_malloc =
   CLOpt.mk_bool ~long:"unsafe-malloc"
     ~in_help:CLOpt.([(Analyze, manual_clang)])
@@ -2153,8 +2157,10 @@ let post_parsing_initialization command_opt =
       ANSITerminal.(prerr_string [])
         "Run the command again with `--keep-going` to try and ignore this error." ;
       Out_channel.newline stderr ) ;
+    let exitcode = L.exit_code_of_exception exn in
+    L.log_uncaught_exception exn ~exitcode ;
     late_epilogue () ;
-    Pervasives.exit (L.exit_code_of_exception exn)
+    Pervasives.exit exitcode
   in
   Caml.Printexc.set_uncaught_exception_handler uncaught_exception_handler ;
   F.set_margin !margin ;
@@ -2347,6 +2353,8 @@ and cxx = !cxx
 
 and cxx_infer_headers = !cxx_infer_headers
 
+and cxx_scope_guards = !cxx_scope_guards
+
 and debug_level_analysis = !debug_level_analysis
 
 and debug_level_capture = !debug_level_capture
@@ -2495,6 +2503,8 @@ and linters_ignore_clang_failures = !linters_ignore_clang_failures
 
 and linters_validate_syntax_only = !linters_validate_syntax_only
 
+and litho = !litho
+
 and liveness = !liveness
 
 and load_average =
@@ -2502,6 +2512,8 @@ and load_average =
 
 
 and load_analysis_results = !load_results
+
+and log_events = !log_events
 
 and log_file = !log_file
 
@@ -2559,6 +2571,8 @@ and print_active_checkers = !print_active_checkers
 
 and print_builtins = !print_builtins
 
+and print_log_identifier = !print_log_identifier
+
 and print_logs = !print_logs
 
 and print_types = !print_types
@@ -2614,8 +2628,6 @@ and save_analysis_results = !save_results
 and seconds_per_iteration = !seconds_per_iteration
 
 and select = !select
-
-and should_update = !should_update
 
 and show_buckets = !print_buckets
 
@@ -2681,6 +2693,8 @@ and type_size = !type_size
 
 and uninit = !uninit
 
+and uninit_interproc = !uninit_interproc
+
 and unsafe_malloc = !unsafe_malloc
 
 and whole_seconds = !whole_seconds
@@ -2727,17 +2741,12 @@ let clang_frontend_action_string =
 
 
 let dynamic_dispatch =
-  let default_mode =
-    match analyzer with
-    | Checkers when biabduction ->
-        Lazy
-    | Checkers when quandary ->
-        Sound
-    | _ ->
-        NoDynamicDispatch
-  in
-  Option.value ~default:default_mode !dynamic_dispatch
+  CLOpt.mk_bool ~long:"dynamic-dispatch" ~default:biabduction
+    "Specify treatment of dynamic dispatch in Java code: false 'none' treats dynamic dispatch as a call to unknown code and true triggers lazy dynamic dispatch. The latter mode follows the JVM semantics and creates procedure descriptions during symbolic execution using the type information found in the abstract state"
+    ~in_help:CLOpt.([(Analyze, manual_java)])
 
+
+let dynamic_dispatch = !dynamic_dispatch
 
 let specs_library =
   match infer_cache with

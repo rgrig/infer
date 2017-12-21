@@ -70,12 +70,6 @@ type compilation_database_dependencies =
   | NoDeps
   [@@deriving compare]
 
-type dynamic_dispatch = NoDynamicDispatch | Interface | Sound | Lazy [@@deriving compare]
-
-val equal_dynamic_dispatch : dynamic_dispatch -> dynamic_dispatch -> bool
-
-val string_of_dynamic_dispatch : dynamic_dispatch -> string
-
 type build_system =
   | BAnalyze
   | BAnt
@@ -142,6 +136,8 @@ val default_failure_name : string
 val default_in_zip_results_dir : string
 
 val dotty_output : string
+
+val events_dir_name : string
 
 val etc_dir : string
 
@@ -356,6 +352,8 @@ val cxx : bool
 
 val cxx_infer_headers : bool
 
+val cxx_scope_guards : Yojson.Basic.json
+
 val debug_level_analysis : int
 
 val debug_level_capture : int
@@ -380,7 +378,7 @@ val dotty_cfg_libs : bool
 
 val dump_duplicate_symbols : bool
 
-val dynamic_dispatch : dynamic_dispatch
+val dynamic_dispatch : bool
 
 val eradicate : bool
 
@@ -513,9 +511,13 @@ val linters_ignore_clang_failures : bool
 
 val linters_validate_syntax_only : bool
 
+val litho : bool
+
 val liveness : bool
 
 val load_analysis_results : string option
+
+val log_events : bool
 
 val log_file : string
 
@@ -557,6 +559,8 @@ val previous_to_current_script : string option
 val print_active_checkers : bool
 
 val print_builtins : bool
+
+val print_log_identifier : bool
 
 val print_logs : bool
 
@@ -611,8 +615,6 @@ val save_analysis_results : string option
 val seconds_per_iteration : float option
 
 val select : int option
-
-val should_update : bool
 
 val show_buckets : bool
 
@@ -675,6 +677,8 @@ val tv_limit_filtered : int
 val type_size : bool
 
 val uninit : bool
+
+val uninit_interproc : bool
 
 val unsafe_malloc : bool
 

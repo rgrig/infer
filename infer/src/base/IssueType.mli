@@ -59,6 +59,22 @@ val cannot_star : t
 
 val checkers_access_global : t
 
+val checkers_allocates_memory : t
+(** Warning name when a performance critical method directly or indirectly
+    calls a method allocating memory *)
+
+val checkers_annotation_reachability_error : t
+
+val checkers_calls_expensive_method : t
+(** Warning name when a performance critical method directly or indirectly
+    calls a method annotatd as expensive *)
+
+val checkers_expensive_overrides_unexpensive : t
+(** Warning name for the subtyping rule: method not annotated as expensive cannot be overridden
+    by a method annotated as expensive *)
+
+val checkers_fragment_retain_view : t
+
 val checkers_immutable_cast : t
 
 val checkers_print_c_call : t
@@ -80,6 +96,10 @@ val condition_always_false : t
 val condition_always_true : t
 
 val context_leak : t
+
+val create_intent_from_uri : t
+
+val cross_site_scripting : t
 
 val dangling_pointer_dereference : t
 
@@ -158,11 +178,15 @@ val interface_not_thread_safe : t
 
 val internal_error : t
 
+val javascript_injection : t
+
 val leak_after_array_abstraction : t
 
 val leak_in_footprint : t
 
 val lock_consistency_violation : t
+
+val logging_private_data : t
 
 val memory_leak : t
 
@@ -231,6 +255,18 @@ val unreachable_code_after : t
 val unsafe_guarded_by_access : t
 
 val use_after_free : t
+
+val untrusted_deserialization : t
+
+val untrusted_file : t
+
+val untrusted_file_risk : t
+
+val untrusted_intent_creation : t
+
+val untrusted_url : t
+
+val untrusted_url_risk : t
 
 val untrusted_variable_length_array : t
 

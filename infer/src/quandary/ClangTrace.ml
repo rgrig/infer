@@ -13,10 +13,10 @@ module L = Logging
 
 module SourceKind = struct
   type t =
-    | CommandLineFlag of Var.t  (** source that was read from a command line flag *)
+    | CommandLineFlag of (Var.t * Typ.desc)  (** source that was read from a command line flag *)
     | Endpoint of (Mangled.t * Typ.desc)  (** source originating from formal of an endpoint *)
     | EnvironmentVariable  (** source that was read from an environment variable *)
-    | File  (** source that was read from a file *)
+    | ReadFile  (** source that was read from a file *)
     | Other  (** for testing or uncategorized sources *)
     | UserControlledEndpoint of (Mangled.t * Typ.desc)
         (** source originating from formal of an endpoint that is known to hold user-controlled data *)
@@ -31,8 +31,8 @@ module SourceKind = struct
         Endpoint (Mangled.from_string "NONE", Typ.Tvoid)
     | "EnvironmentVariable" ->
         EnvironmentVariable
-    | "File" ->
-        File
+    | "ReadFile" ->
+        ReadFile
     | "UserControlledEndpoint" ->
         Endpoint (Mangled.from_string "NONE", Typ.Tvoid)
     | _ ->
@@ -60,7 +60,7 @@ module SourceKind = struct
       external_sources
 
 
-  let get pname actuals _ =
+  let get pname actuals tenv =
     let return = None in
     match pname with
     | Typ.Procname.ObjC_Cpp cpp_name
@@ -73,7 +73,7 @@ module SourceKind = struct
         with
         | ( ["std"; ("basic_istream" | "basic_iostream")]
           , ("getline" | "read" | "readsome" | "operator>>") ) ->
-            Some (File, Some 1)
+            Some (ReadFile, Some 1)
         | _ ->
             get_external_source qualified_pname )
     | Typ.Procname.C _ when Typ.Procname.equal pname BuiltinDecl.__global_access
@@ -94,7 +94,14 @@ module SourceKind = struct
         match actuals with
         | [(HilExp.AccessPath access_path)] when is_gflag access_path ->
             let (global_pvar, _), _ = access_path in
-            Some (CommandLineFlag global_pvar, None)
+            let typ_desc =
+              match AccessPath.get_typ access_path tenv with
+              | Some {Typ.desc} ->
+                  desc
+              | None ->
+                  Typ.void_star.desc
+            in
+            Some (CommandLineFlag (global_pvar, typ_desc), None)
         | _ ->
             None )
     | Typ.Procname.C _ -> (
@@ -124,9 +131,18 @@ module SourceKind = struct
         let typename = Typ.Procname.objc_cpp_get_class_type_name cpp_pname in
         PatternMatch.supertype_exists tenv is_thrift_service_ typename
       in
-      let taint_all ~make_source =
+      (* taint all formals except for [this] *)
+      let taint_all_but_this ~make_source =
         List.map
-          ~f:(fun (name, typ) -> (name, typ, Some (make_source name typ.Typ.desc)))
+          ~f:(fun (name, typ) ->
+            let taint =
+              match Mangled.to_string name with
+              | "this" ->
+                  None
+              | _ ->
+                  Some (make_source name typ.Typ.desc)
+            in
+            (name, typ, taint))
           (Procdesc.get_formals pdesc)
       in
       match Procdesc.get_proc_name pdesc with
@@ -137,9 +153,9 @@ module SourceKind = struct
               (Typ.Procname.get_method pname)
           in
           if String.Set.mem endpoints qualified_pname then
-            taint_all ~make_source:(fun name desc -> UserControlledEndpoint (name, desc))
+            taint_all_but_this ~make_source:(fun name desc -> UserControlledEndpoint (name, desc))
           else if is_thrift_service cpp_pname then
-            taint_all ~make_source:(fun name desc -> Endpoint (name, desc))
+            taint_all_but_this ~make_source:(fun name desc -> Endpoint (name, desc))
           else Source.all_formals_untainted pdesc
       | _ ->
           Source.all_formals_untainted pdesc
@@ -150,9 +166,9 @@ module SourceKind = struct
         F.fprintf fmt "Endpoint[%s]" (Mangled.to_string formal_name)
     | EnvironmentVariable ->
         F.fprintf fmt "EnvironmentVariable"
-    | File ->
+    | ReadFile ->
         F.fprintf fmt "File"
-    | CommandLineFlag var ->
+    | CommandLineFlag (var, _) ->
         F.fprintf fmt "CommandLineFlag[%a]" Var.pp var
     | Other ->
         F.fprintf fmt "Other"
@@ -166,7 +182,9 @@ module CppSource = Source.Make (SourceKind)
 module SinkKind = struct
   type t =
     | BufferAccess  (** read/write an array *)
+    | CreateFile  (** create/open a file *)
     | HeapAllocation  (** heap memory allocation *)
+    | Network  (** network access *)
     | ShellExec  (** shell exec function *)
     | SQL  (** SQL query *)
     | StackAllocation  (** stack memory allocation *)
@@ -178,8 +196,12 @@ module SinkKind = struct
   let of_string = function
     | "BufferAccess" ->
         BufferAccess
+    | "CreateFile" ->
+        CreateFile
     | "HeapAllocation" ->
         HeapAllocation
+    | "Network" ->
+        Network
     | "ShellExec" ->
         ShellExec
     | "SQL" ->
@@ -200,6 +222,17 @@ module SinkKind = struct
   (* taint the nth parameter (0-indexed) *)
   let taint_nth n kind actuals =
     if n < List.length actuals then Some (kind, IntSet.singleton n) else None
+
+
+  (* taint all parameters after the nth (exclusive) *)
+  let taint_after_nth n kind actuals =
+    match
+      List.filter_mapi ~f:(fun actual_num _ -> Option.some_if (actual_num > n) actual_num) actuals
+    with
+    | [] ->
+        None
+    | to_taint ->
+        Some (kind, IntSet.of_list to_taint)
 
 
   let taint_all kind actuals =
@@ -237,9 +270,16 @@ module SinkKind = struct
       || String.is_substring ~substring:"string" typename
     in
     match pname with
-    | Typ.Procname.ObjC_Cpp _ -> (
-      match Typ.Procname.get_method pname with
-      | "operator[]" when Config.developer_mode && is_buffer_like pname ->
+    | Typ.Procname.ObjC_Cpp cpp_name -> (
+      match
+        ( QualifiedCppName.to_list
+            (Typ.Name.unqualified_name (Typ.Procname.objc_cpp_get_class_type_name cpp_name))
+        , Typ.Procname.get_method pname )
+      with
+      | ( ["std"; ("basic_fstream" | "basic_ifstream" | "basic_ofstream")]
+        , ("basic_fstream" | "basic_ifstream" | "basic_ofstream" | "open") ) ->
+          taint_nth 1 CreateFile actuals
+      | _, "operator[]" when Config.developer_mode && is_buffer_like pname ->
           taint_nth 1 BufferAccess actuals
       | _ ->
           get_external_sink pname actuals )
@@ -251,12 +291,40 @@ module SinkKind = struct
         taint_nth 1 StackAllocation actuals
     | Typ.Procname.C _ -> (
       match Typ.Procname.to_string pname with
+      | "creat" | "fopen" | "freopen" | "open" ->
+          taint_nth 0 CreateFile actuals
+      | "curl_easy_setopt"
+        -> (
+          (* magic constant for setting request URL *)
+          let controls_request = function
+            | 10002 (* CURLOPT_URL *) | 10015 (* CURLOPT_POSTFIELDS *) ->
+                true
+            | _ ->
+                false
+          in
+          (* first two actuals are curl object + integer code for data kind. *)
+          match List.nth actuals 1 with
+          | Some exp -> (
+            match HilExp.eval exp with
+            | Some Const.Cint i ->
+                (* check if the data kind might be CURLOPT_URL *)
+                if controls_request (IntLit.to_int i) then taint_after_nth 1 Network actuals
+                else None
+            | _ ->
+                (* can't statically resolve data kind; taint it just in case *)
+                taint_after_nth 1 Network actuals )
+          | None ->
+              None )
       | "execl" | "execlp" | "execle" | "execv" | "execve" | "execvp" | "system" ->
           taint_all ShellExec actuals
+      | "openat" ->
+          taint_nth 1 CreateFile actuals
       | "popen" ->
           taint_nth 0 ShellExec actuals
       | ("brk" | "calloc" | "malloc" | "realloc" | "sbrk") when Config.developer_mode ->
           taint_all HeapAllocation actuals
+      | "rename" ->
+          taint_all CreateFile actuals
       | "strcpy" when Config.developer_mode ->
           (* warn if source array is tainted *)
           taint_nth 1 BufferAccess actuals
@@ -282,8 +350,12 @@ module SinkKind = struct
       ( match kind with
       | BufferAccess ->
           "BufferAccess"
+      | CreateFile ->
+          "CreateFile"
       | HeapAllocation ->
           "HeapAllocation"
+      | Network ->
+          "Network"
       | ShellExec ->
           "ShellExec"
       | SQL ->
@@ -349,7 +421,17 @@ include Trace.Make (struct
     | _ when List.mem sanitizers Sanitizer.All ~equal:Sanitizer.equal ->
         (* the All sanitizer clears any form of taint; don't report *)
         None
-    | UserControlledEndpoint (_, typ), SQL ->
+    | UserControlledEndpoint (_, typ), CreateFile ->
+        Option.some_if (is_injection_possible ~typ sanitizers) IssueType.untrusted_file
+    | (Endpoint (_, typ) | CommandLineFlag (_, typ)), CreateFile ->
+        Option.some_if (is_injection_possible ~typ sanitizers) IssueType.untrusted_file_risk
+    | UserControlledEndpoint (_, typ), Network ->
+        Option.some_if (is_injection_possible ~typ sanitizers) IssueType.untrusted_url
+    | (Endpoint (_, typ) | CommandLineFlag (_, typ)), Network ->
+        Option.some_if (is_injection_possible ~typ sanitizers) IssueType.untrusted_url_risk
+    | (EnvironmentVariable | ReadFile), Network ->
+        None
+    | (UserControlledEndpoint (_, typ) | CommandLineFlag (_, typ)), SQL ->
         if is_injection_possible ~typ sanitizers then Some IssueType.sql_injection
         else
           (* no injection risk, but still user-controlled *)
@@ -361,36 +443,38 @@ include Trace.Make (struct
         else
           (* no injection risk, but still user-controlled *)
           Some IssueType.user_controlled_sql_risk
+    | (UserControlledEndpoint (_, typ) | CommandLineFlag (_, typ)), ShellExec ->
+        (* we know the user controls the endpoint, so it's code injection without a sanitizer *)
+        Option.some_if (is_injection_possible ~typ sanitizers) IssueType.shell_injection
     | Endpoint (_, typ), ShellExec ->
         (* code injection if the caller of the endpoint doesn't sanitize on its end *)
         Option.some_if (is_injection_possible ~typ sanitizers) IssueType.remote_code_execution_risk
-    | UserControlledEndpoint (_, typ), ShellExec ->
-        (* we know the user controls the endpoint, so it's code injection without a sanitizer *)
-        Option.some_if (is_injection_possible ~typ sanitizers) IssueType.shell_injection
     | UserControlledEndpoint _, BufferAccess ->
         (* untrusted data from an endpoint flowing into a buffer *)
         Some IssueType.quandary_taint_error
     | Endpoint _, (BufferAccess | HeapAllocation | StackAllocation) ->
         (* may want to report this in the future, but don't care for now *)
         None
-    | (CommandLineFlag _ | EnvironmentVariable | File | Other), BufferAccess ->
+    | (CommandLineFlag _ | EnvironmentVariable | ReadFile | Other), BufferAccess ->
         (* untrusted flag, environment var, or file data flowing to buffer *)
         Some IssueType.quandary_taint_error
-    | (CommandLineFlag _ | EnvironmentVariable | File | Other), ShellExec ->
+    | (EnvironmentVariable | ReadFile | Other), ShellExec ->
         (* untrusted flag, environment var, or file data flowing to shell *)
         Option.some_if (is_injection_possible sanitizers) IssueType.shell_injection
-    | (CommandLineFlag _ | EnvironmentVariable | File | Other), SQL ->
+    | (EnvironmentVariable | ReadFile | Other), SQL ->
         (* untrusted flag, environment var, or file data flowing to SQL *)
         Option.some_if (is_injection_possible sanitizers) IssueType.sql_injection
-    | ( (CommandLineFlag _ | UserControlledEndpoint _ | EnvironmentVariable | File | Other)
+    | ( (CommandLineFlag _ | UserControlledEndpoint _ | EnvironmentVariable | ReadFile | Other)
       , HeapAllocation ) ->
         (* untrusted data of any kind flowing to heap allocation. this can cause crashes or DOS. *)
         Some IssueType.quandary_taint_error
-    | ( (CommandLineFlag _ | UserControlledEndpoint _ | EnvironmentVariable | File | Other)
+    | ( (CommandLineFlag _ | UserControlledEndpoint _ | EnvironmentVariable | ReadFile | Other)
       , StackAllocation ) ->
         (* untrusted data of any kind flowing to stack buffer allocation. trying to allocate a stack
            buffer that's too large will cause a stack overflow. *)
         Some IssueType.untrusted_variable_length_array
+    | (EnvironmentVariable | ReadFile), CreateFile ->
+        None
     | Other, _ ->
         (* Other matches everything *)
         Some IssueType.quandary_taint_error

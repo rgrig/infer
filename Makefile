@@ -30,6 +30,7 @@ BUILD_SYSTEMS_TESTS += \
   clang_multiple_files \
   clang_translation \
   clang_unknown_ext \
+  clang_with_blacklisted_flags \
   clang_with_E_flag \
   clang_with_M_flag \
   clang_with_MD_flag \
@@ -44,11 +45,13 @@ BUILD_SYSTEMS_TESTS += \
   reactive \
   run_hidden_linters \
   tracebugs \
+  uninit \
   utf8_in_procname \
 
 DIRECT_TESTS += \
   c_biabduction c_bufferoverrun c_errors c_frontend \
-  cpp_bufferoverrun cpp_errors cpp_frontend  cpp_liveness cpp_quandary cpp_racerd cpp_siof cpp_uninit  cpp_nullable \
+  cpp_bufferoverrun cpp_errors cpp_frontend  cpp_liveness cpp_quandary \
+  cpp_racerd cpp_siof cpp_uninit  cpp_nullable cpp_conflicts \
 
 ifneq ($(BUCK),no)
 BUILD_SYSTEMS_TESTS += buck-clang-db buck_flavors buck_flavors_run buck_flavors_deterministic
@@ -176,6 +179,14 @@ byte: src_build_common
 test_build: src_build_common
 	$(QUIET)$(call silent_on_success,Testing Infer builds without warnings,\
 	$(MAKE_SOURCE) test)
+
+.PHONY: toplevel
+toplevel: src_build_common
+	$(QUIET)$(call silent_on_success,Building Infer REPL,\
+	$(MAKE_SOURCE) toplevel)
+	$(QUIET)echo
+	$(QUIET)echo "You can now use the infer REPL:"
+	$(QUIET)echo "  \"$(ABSOLUTE_ROOT_DIR)/scripts/infer_repl\""
 
 ifeq ($(IS_FACEBOOK_TREE),yes)
 byte src_build_common src_build test_build: fb-setup

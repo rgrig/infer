@@ -11,9 +11,9 @@
 #include <new>
 #include <thread>
 
-namespace folly {
+namespace infer {
 class ScopeGuard {};
-} // namespace folly
+}; // namespace infer
 
 namespace dead_stores {
 
@@ -285,10 +285,7 @@ int* sentinel_ptr_ok(int* j) {
   return i;
 }
 
-void scope_guard_ok() {
-  // realistically, it would be something like guard = folly::makeGuard();
-  folly::ScopeGuard* guard = nullptr;
-}
+void custom_scope_guard_ok() { infer::ScopeGuard guard; }
 
 struct S {
   ~S() {}
@@ -302,7 +299,7 @@ S mk_s() {
 };
 
 // s gets read by the destructor for S
-void dead_struct_value1_bad() { S s = mk_s(); }
+void FN_dead_struct_value1_bad() { S s = mk_s(); }
 
 // need to handle operator= in order to detect this case
 void FN_dead_struct_value2_bad() {
@@ -321,6 +318,10 @@ B& struct_rvalue_ref_used_ok() {
   B b = mk_s();
   return b;
 }
+
+struct NoDestructor {};
+
+void dead_struct_no_destructor_bad() { NoDestructor dead; }
 
 std::mutex my_mutex;
 

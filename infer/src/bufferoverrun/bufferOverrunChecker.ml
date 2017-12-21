@@ -77,7 +77,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
                   ~new_sym_num ~new_alloc_num mem
             | None ->
                 let decl_fld mem (fn, typ, _) =
-                  let loc_fld = Loc.append_field loc fn in
+                  let loc_fld = Loc.append_field loc ~fn in
                   decl_sym_val pname tenv node location ~depth loc_fld typ mem
                 in
                 let decl_flds str = List.fold ~f:decl_fld ~init:mem str.Typ.Struct.fields in
@@ -137,9 +137,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
                 |> Dom.Val.get_array_blk |> ArrayBlk.get_pow_loc
               in
               let instantiate_fld mem (fn, _, _) =
-                let formal_fields = PowLoc.append_field formal_locs fn in
+                let formal_fields = PowLoc.append_field formal_locs ~fn in
                 let v = Dom.Mem.find_heap_set formal_fields callee_exit_mem in
-                let actual_fields = PowLoc.append_field (Dom.Val.get_all_locs actual) fn in
+                let actual_fields = PowLoc.append_field (Dom.Val.get_all_locs actual) ~fn in
                 Dom.Val.subst v subst_map location
                 |> Fn.flip (Dom.Mem.strong_update_heap actual_fields) mem
               in
@@ -500,7 +500,7 @@ module Report = struct
         if Typ.Procname.equal pname caller_pname then
           let description = PO.description cond trace in
           let error_desc = Localise.desc_buffer_overrun description in
-          let exn = Exceptions.Checkers (issue_type.IssueType.unique_id, error_desc) in
+          let exn = Exceptions.Checkers (issue_type, error_desc) in
           let trace =
             match TraceSet.choose_shortest trace.PO.ConditionTrace.val_traces with
             | trace ->
@@ -546,10 +546,11 @@ let checker : Callbacks.proc_callback_args -> Specs.summary =
   fun {proc_desc; tenv; summary; get_proc_desc} ->
     let proc_name = Specs.get_proc_name summary in
     let proc_data = ProcData.make proc_desc tenv get_proc_desc in
-    Preanal.do_preanalysis proc_desc None tenv ;
+    Preanal.do_preanalysis proc_desc tenv ;
     match compute_post proc_data with
     | Some post ->
         if Config.bo_debug >= 1 then print_summary proc_name post ;
         Summary.update_summary post summary
     | None ->
         summary
+

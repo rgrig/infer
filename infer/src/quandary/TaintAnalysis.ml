@@ -118,14 +118,11 @@ module Make (TaintSpecification : TaintSpec.S) = struct
       lazy (String.Set.of_list (QuandaryConfig.Endpoint.of_json Config.quandary_endpoints))
 
 
-    let is_endpoint = function
-      | TraceDomain.Known source -> (
-        match CallSite.pname (TraceDomain.Source.call_site source) with
-        | Typ.Procname.Java java_pname ->
-            String.Set.mem (Lazy.force endpoints) (Typ.Procname.java_get_class_name java_pname)
-        | _ ->
-            false )
-      | TraceDomain.Footprint _ ->
+    let is_endpoint source =
+      match CallSite.pname (TraceDomain.Source.call_site source) with
+      | Typ.Procname.Java java_pname ->
+          String.Set.mem (Lazy.force endpoints) (Typ.Procname.java_get_class_name java_pname)
+      | _ ->
           false
 
 
@@ -142,10 +139,46 @@ module Make (TaintSpecification : TaintSpec.S) = struct
           | None ->
               TaintDomain.empty
       in
-      let get_short_trace_string original_path_source final_sink =
-        F.asprintf "%a -> %a%s" TraceDomain.pp_path_source original_path_source TraceDomain.Sink.pp
-          final_sink
-          (if is_endpoint original_path_source then ". Note: source is an endpoint." else "")
+      let get_caller_string caller_site =
+        let caller_pname = CallSite.pname caller_site in
+        F.sprintf " in procedure %s"
+          (Typ.Procname.to_simplified_string ~withclass:true caller_pname)
+      in
+      let pp_trace_elem site fmt caller_string =
+        F.fprintf fmt "(%s)%s at %a"
+          (Typ.Procname.to_simplified_string ~withclass:true (CallSite.pname site))
+          caller_string Location.pp (CallSite.loc site)
+      in
+      let pp_source source_caller_opt fmt initial_source =
+        let source_caller_string =
+          match source_caller_opt with
+          | Some source_caller ->
+              get_caller_string (TraceDomain.Source.call_site source_caller)
+          | None ->
+              ""
+        in
+        F.fprintf fmt "%a%a" TraceDomain.Source.Kind.pp
+          (TraceDomain.Source.kind initial_source)
+          (pp_trace_elem (TraceDomain.Source.call_site initial_source))
+          source_caller_string
+      in
+      let pp_sink sink_caller_opt fmt final_sink =
+        let sink_caller_string =
+          match sink_caller_opt with
+          | Some sink_caller ->
+              get_caller_string (TraceDomain.Sink.call_site sink_caller)
+          | None ->
+              ""
+        in
+        F.fprintf fmt "%a%a" TraceDomain.Sink.Kind.pp
+          (TraceDomain.Sink.kind final_sink)
+          (pp_trace_elem (TraceDomain.Sink.call_site final_sink))
+          sink_caller_string
+      in
+      let get_short_trace_string initial_source source_caller_opt final_sink sink_caller_opt =
+        F.asprintf "%a ~> %a%s" (pp_source source_caller_opt) initial_source
+          (pp_sink sink_caller_opt) final_sink
+          (if is_endpoint initial_source then ". Note: source is an endpoint." else "")
       in
       let report_one {TraceDomain.issue; path_source; path_sink} =
         let open TraceDomain in
@@ -219,12 +252,7 @@ module Make (TaintSpecification : TaintSpec.S) = struct
                 acc
         in
         let expanded_sources, _ =
-          match path_source with
-          | Known source ->
-              let sources, calls = expand_source source ([(None, source)], CallSite.Set.empty) in
-              (List.map ~f:(fun (ap_opt, source) -> (ap_opt, Known source)) sources, calls)
-          | Footprint _ ->
-              ([(None, path_source)], CallSite.Set.empty)
+          expand_source path_source ([(None, path_source)], CallSite.Set.empty)
         in
         let expanded_sinks, _ =
           expand_sink path_sink sink_indexes ([path_sink], CallSite.Set.empty)
@@ -244,14 +272,10 @@ module Make (TaintSpecification : TaintSpec.S) = struct
           List.map
             ~f:(fun (access_path_opt, path_source) ->
               let desc, loc =
-                match path_source with
-                | Known source ->
-                    let call_site = Source.call_site source in
-                    ( Format.asprintf "Return from %a%a" Typ.Procname.pp (CallSite.pname call_site)
-                        pp_access_path_opt access_path_opt
-                    , CallSite.loc call_site )
-                | Footprint access_path ->
-                    (Format.asprintf "Read from %a" AccessPath.Abs.pp access_path, Location.dummy)
+                let call_site = Source.call_site path_source in
+                ( Format.asprintf "Return from %a%a" Typ.Procname.pp (CallSite.pname call_site)
+                    pp_access_path_opt access_path_opt
+                , CallSite.loc call_site )
               in
               Errlog.make_trace_element 0 loc desc [])
             expanded_sources
@@ -264,11 +288,15 @@ module Make (TaintSpecification : TaintSpec.S) = struct
               Errlog.make_trace_element 0 (CallSite.loc call_site) desc [])
             expanded_sinks
         in
-        let _, original_path_source = List.hd_exn expanded_sources in
+        let _, initial_source = List.hd_exn expanded_sources in
+        let initial_source_caller = Option.map ~f:snd (List.nth expanded_sources 1) in
         let final_sink = List.hd_exn expanded_sinks in
-        let trace_str = get_short_trace_string original_path_source final_sink in
+        let final_sink_caller = List.nth expanded_sinks 1 in
+        let trace_str =
+          get_short_trace_string initial_source initial_source_caller final_sink final_sink_caller
+        in
         let ltr = source_trace @ List.rev sink_trace in
-        let exn = Exceptions.Checkers (issue.unique_id, Localise.verbatim_desc trace_str) in
+        let exn = Exceptions.Checkers (issue, Localise.verbatim_desc trace_str) in
         Reporting.log_error proc_data.extras.summary ~loc:(CallSite.loc cur_site) ~ltr exn
       in
       List.iter ~f:report_one (TraceDomain.get_reports ~cur_site trace)
