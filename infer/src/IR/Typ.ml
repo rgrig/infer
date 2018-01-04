@@ -467,6 +467,8 @@ let rec is_array_of_cpp_class typ =
   match typ.desc with Tarray (typ, _, _) -> is_array_of_cpp_class typ | _ -> is_cpp_class typ
 
 
+let is_pointer typ = match typ.desc with Tptr _ -> true | _ -> false
+
 let is_pointer_to_cpp_class typ = match typ.desc with Tptr (t, _) -> is_cpp_class t | _ -> false
 
 let has_block_prefix s =
@@ -816,8 +818,8 @@ module Procname = struct
     | Simple ->
         (* methodname(...) or without ... if there are no parameters *)
         let cls_prefix =
-          if withclass then java_type_to_string_verbosity (split_typename j.class_name) verbosity
-            ^ "."
+          if withclass then
+            java_type_to_string_verbosity (split_typename j.class_name) verbosity ^ "."
           else ""
         in
         let params = match j.parameters with [] -> "" | _ -> "..." in
@@ -1186,7 +1188,6 @@ module Procname = struct
     let serialize pname =
       let default () = Sqlite3.Data.TEXT (to_filename pname) in
       Base.Hashtbl.find_or_add pname_to_key pname ~default
-
   end
 
   (** given two template arguments, try to generate mapping from generic ones to concrete ones. *)
@@ -1242,7 +1243,6 @@ module Procname = struct
         |> extract_mapping
     | _ ->
         None
-
 end
 
 (** Return the return type of [pname_java]. *)
@@ -1352,7 +1352,6 @@ module Fieldname = struct
           String.is_prefix ~prefix:"val$" (to_flat_string field_name)
       | Clang _ ->
           false
-
   end
 end
 
@@ -1439,11 +1438,10 @@ module Struct = struct
       | Some {fields; statics} ->
           List.find_map
             ~f:(fun (f, t, a) ->
-              match Fieldname.equal f fn with true -> Some (t, a) | false -> None)
+              match Fieldname.equal f fn with true -> Some (t, a) | false -> None )
             (fields @ statics)
       | None ->
           None )
     | _ ->
         None
-
 end

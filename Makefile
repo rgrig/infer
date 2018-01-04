@@ -70,7 +70,7 @@ BUILD_SYSTEMS_TESTS += xcodebuild_no_xcpretty objc_getters_setters
 DIRECT_TESTS += \
   objc_frontend objc_errors objc_linters objc_ioslints \
 	objcpp_frontend objcpp_linters objc_linters-for-test-only objcpp_linters-for-test-only \
-	objc_linters-def-folder objc_checkers objc_liveness objc_uninit
+	objc_linters-def-folder objc_nullable objc_liveness objc_uninit
 ifneq ($(XCPRETTY),no)
 BUILD_SYSTEMS_TESTS += xcodebuild
 endif
@@ -600,7 +600,6 @@ endif
 devsetup: Makefile.autoconf
 	$(QUIET)[ $(OPAM) != "no" ] || (echo 'No `opam` found, aborting setup.' >&2; exit 1)
 	$(QUIET)$(call silent_on_success,installing $(OPAM_DEV_DEPS),\
-	  OPAMSWITCH=$(OPAMSWITCH); $(OPAM) pin remove --yes ocamlformat; \
 	  OPAMSWITCH=$(OPAMSWITCH); $(OPAM) install --yes --no-checksum user-setup $(OPAM_DEV_DEPS))
 	$(QUIET)echo '$(TERM_INFO)*** Running `opam config setup -a`$(TERM_RESET)' >&2
 	$(QUIET)OPAMSWITCH=$(OPAMSWITCH); $(OPAM) config --yes setup -a

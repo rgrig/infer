@@ -24,6 +24,8 @@ let remove_proc_desc cfg pname = Typ.Procname.Hash.remove cfg pname
 
 let iter_proc_desc cfg f = Typ.Procname.Hash.iter f cfg
 
+let fold_proc_desc cfg f init = Typ.Procname.Hash.fold f cfg init
+
 let find_proc_desc_from_name cfg pname =
   try Some (Typ.Procname.Hash.find cfg pname) with Not_found -> None
 
@@ -46,7 +48,7 @@ let iter_all_nodes ?(sorted= false) f cfg =
       (fun _ pdesc desc_nodes ->
         List.fold
           ~f:(fun desc_nodes node -> (pdesc, node) :: desc_nodes)
-          ~init:desc_nodes (Procdesc.get_nodes pdesc))
+          ~init:desc_nodes (Procdesc.get_nodes pdesc) )
       cfg []
     |> List.sort ~cmp:[%compare : Procdesc.t * Procdesc.Node.t]
     |> List.iter ~f:(fun (d, n) -> f d n)
@@ -58,9 +60,6 @@ let get_all_procs cfg =
   let f _ pdesc = procs := pdesc :: !procs in
   iter_proc_desc cfg f ; !procs
 
-
-(** Get the procedures whose body is defined in this cfg *)
-let get_defined_procs cfg = List.filter ~f:Procdesc.is_defined (get_all_procs cfg)
 
 (** checks whether a cfg is connected or not *)
 let check_cfg_connectedness cfg =
@@ -83,15 +82,13 @@ let check_cfg_connectedness cfg =
       (* if the if brances end with a return *)
       match succs with [n'] when is_exit_node n' -> false | _ -> Int.equal (List.length preds) 0
   in
-  let do_pdesc pd =
-    let pname = Procdesc.get_proc_name pd in
+  let do_pdesc pname pd =
     let nodes = Procdesc.get_nodes pd in
     (* TODO (T20302015): also check the CFGs for the C-like procedures *)
     if not Config.keep_going && Typ.Procname.is_java pname && List.exists ~f:broken_node nodes then
       L.(die InternalError) "Broken CFG on %a" Typ.Procname.pp pname
   in
-  let pdescs = get_all_procs cfg in
-  List.iter ~f:do_pdesc pdescs
+  iter_proc_desc cfg do_pdesc
 
 
 let get_load_statement =
@@ -112,7 +109,7 @@ let load source =
 
 (** Save the .attr files for the procedures in the cfg. *)
 let save_attributes source_file cfg =
-  let save_proc pdesc =
+  let save_proc _ pdesc =
     let attributes = Procdesc.get_attributes pdesc in
     let loc = attributes.loc in
     let attributes' =
@@ -121,7 +118,7 @@ let save_attributes source_file cfg =
     in
     Attributes.store attributes'
   in
-  List.iter ~f:save_proc (get_all_procs cfg)
+  iter_proc_desc cfg save_proc
 
 
 (** Inline a synthetic (access or bridge) method. *)
@@ -248,7 +245,7 @@ let mark_unchanged_pdescs cfg_new cfg_old =
             ~equal:(fun i1 i2 ->
               let n, exp_map' = Sil.compare_structural_instr i1 i2 !exp_map in
               exp_map := exp_map' ;
-              Int.equal n 0)
+              Int.equal n 0 )
             instrs1 instrs2
         in
         Int.equal (compare_id n1 n2) 0
@@ -443,7 +440,7 @@ let specialize_types callee_pdesc resolved_pname args =
             (* Replace the type of the parameter by the type of the argument *)
             ((param_name, arg_typ) :: params, Mangled.Map.add param_name typename subts)
         | _ ->
-            ((param_name, param_typ) :: params, subts))
+            ((param_name, param_typ) :: params, subts) )
       ~init:([], Mangled.Map.empty) callee_attributes.formals args
   in
   let resolved_attributes =
@@ -561,7 +558,7 @@ let specialize_with_block_args callee_pdesc pname_with_block_args block_args =
                 ~f:(fun (_, var, typ) ->
                   (* Here we create fresh names for the new formals, based on the names of the captured
                    variables annotated with the name of the caller method *)
-                  (Pvar.get_name_of_local_with_procname var, typ))
+                  (Pvar.get_name_of_local_with_procname var, typ) )
                 cl.captured_vars
             in
             Mangled.Map.add param_name (cl.name, formals_from_captured) subts
@@ -631,4 +628,3 @@ let pp_proc_signatures fmt cfg =
 let exists_for_source_file source =
   (* simplistic implementation that allocates the cfg as this is only used for reactive capture for now *)
   load source |> Option.is_some
-

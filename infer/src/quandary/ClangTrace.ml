@@ -42,7 +42,7 @@ module SourceKind = struct
   let external_sources =
     List.map
       ~f:(fun {QuandaryConfig.Source.procedure; kind; index} ->
-        (QualifiedCppName.Match.of_fuzzy_qual_names [procedure], kind, index))
+        (QualifiedCppName.Match.of_fuzzy_qual_names [procedure], kind, index) )
       (QuandaryConfig.Source.of_json Config.quandary_sources)
 
 
@@ -56,7 +56,7 @@ module SourceKind = struct
         if QualifiedCppName.Match.match_qualifiers qualifiers qualified_pname then
           let source_index = try Some (int_of_string index) with Failure _ -> return in
           Some (of_string kind, source_index)
-        else None)
+        else None )
       external_sources
 
 
@@ -76,7 +76,8 @@ module SourceKind = struct
             Some (ReadFile, Some 1)
         | _ ->
             get_external_source qualified_pname )
-    | Typ.Procname.C _ when Typ.Procname.equal pname BuiltinDecl.__global_access
+    | Typ.Procname.C _
+      when Config.developer_mode && Typ.Procname.equal pname BuiltinDecl.__global_access
       -> (
         (* is this var a command line flag created by the popular C++ gflags library for creating
            command-line flags (https://github.com/gflags/gflags)? *)
@@ -142,7 +143,7 @@ module SourceKind = struct
               | _ ->
                   Some (make_source name typ.Typ.desc)
             in
-            (name, typ, taint))
+            (name, typ, taint) )
           (Procdesc.get_formals pdesc)
       in
       match Procdesc.get_proc_name pdesc with
@@ -174,7 +175,6 @@ module SourceKind = struct
         F.fprintf fmt "Other"
     | UserControlledEndpoint (formal_name, _) ->
         F.fprintf fmt "UserControlledEndpoint[%s]" (Mangled.to_string formal_name)
-
 end
 
 module CppSource = Source.Make (SourceKind)
@@ -215,7 +215,7 @@ module SinkKind = struct
   let external_sinks =
     List.map
       ~f:(fun {QuandaryConfig.Sink.procedure; kind; index} ->
-        (QualifiedCppName.Match.of_fuzzy_qual_names [procedure], kind, index))
+        (QualifiedCppName.Match.of_fuzzy_qual_names [procedure], kind, index) )
       (QuandaryConfig.Sink.of_json Config.quandary_sinks)
 
 
@@ -252,7 +252,7 @@ module SinkKind = struct
           with Failure _ ->
             (* couldn't parse the index, just taint everything *)
             taint_all kind actuals
-        else None)
+        else None )
       external_sinks
 
 
@@ -328,12 +328,7 @@ module SinkKind = struct
       | "strcpy" when Config.developer_mode ->
           (* warn if source array is tainted *)
           taint_nth 1 BufferAccess actuals
-      | "memcpy"
-      | "memmove"
-      | "memset"
-      | "strncpy"
-      | "wmemcpy"
-      | "wmemmove"
+      | ("memcpy" | "memmove" | "memset" | "strncpy" | "wmemcpy" | "wmemmove")
         when Config.developer_mode ->
           (* warn if count argument is tainted *)
           taint_nth 2 BufferAccess actuals
@@ -364,7 +359,6 @@ module SinkKind = struct
           "StackAllocation"
       | Other ->
           "Other" )
-
 end
 
 module CppSink = Sink.Make (SinkKind)
@@ -382,7 +376,7 @@ module CppSanitizer = struct
   let external_sanitizers =
     List.map
       ~f:(fun {QuandaryConfig.Sanitizer.procedure; kind} ->
-        (QualifiedCppName.Match.of_fuzzy_qual_names [procedure], of_string kind))
+        (QualifiedCppName.Match.of_fuzzy_qual_names [procedure], of_string kind) )
       (QuandaryConfig.Sanitizer.of_json Config.quandary_sanitizers)
 
 
@@ -391,7 +385,7 @@ module CppSanitizer = struct
     List.find_map
       ~f:(fun (qualifiers, kind) ->
         if QualifiedCppName.Match.match_qualifiers qualifiers qualified_pname then Some kind
-        else None)
+        else None )
       external_sanitizers
 
 
@@ -480,5 +474,4 @@ include Trace.Make (struct
         Some IssueType.quandary_taint_error
     | _, Other ->
         Some IssueType.quandary_taint_error
-
 end)

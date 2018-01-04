@@ -181,7 +181,6 @@ end = struct
           let set = lookup_const' const_tbl r in
           List.for_all ~f:(fun v' -> Exp.equal (find' tbl v') r) vars'
           && List.for_all ~f:(fun c -> Exp.Set.mem c set) nonvars
-
 end
 
 (** {2 Modules for checking whether join or meet loses too much info} *)
@@ -234,7 +233,6 @@ end = struct
         not (Exp.Set.mem e lexps)
     | _ ->
         false
-
 end
 
 module CheckJoinPre : InfoLossCheckerSig = struct
@@ -356,7 +354,6 @@ end = struct
         CheckJoinPre.add side e1 e2
     | JoinState.Post ->
         CheckJoinPost.add side e1 e2
-
 end
 
 module CheckMeet : InfoLossCheckerSig = struct
@@ -452,7 +449,6 @@ end = struct
     let res = !tbl in
     tbl := [] ;
     res
-
 end
 
 (** {2 Module for introducing fresh variables} *)
@@ -553,7 +549,6 @@ end = struct
           acc
     in
     List.fold ~f:f_ineqs ~init:eqs t_minimal
-
 end
 
 (** {2 Modules for renaming} *)
@@ -617,15 +612,16 @@ end = struct
 
   let reset () =
     let f = function
-      | Exp.Var id, e, _ | e, Exp.Var id, _
-       -> Ident.is_footprint id
+      | Exp.Var id, e, _ | e, Exp.Var id, _ ->
+          Ident.is_footprint id
           && Sil.fav_for_all (Sil.exp_fav e) (fun id -> not (Ident.is_primed id))
-      | _
-       -> false
+      | _ ->
+          false
     in
     let t' = List.filter ~f !tbl in
     tbl := t' ;
     t'
+
 
   let push v = tbl := v :: !tbl
 
@@ -758,26 +754,29 @@ end = struct
     let r = f_lookup side e in
     match r with [] -> None | [(e1, e2, e')] -> Some (e', select side_op e1 e2) | _ -> None
 
+
   let get_others = get_others' lookup_side'
 
   let get_others_direct_or_induced side e =
     let others = get_others side e in
     match others with None -> get_others' lookup_side_induced' side e | Some _ -> others
 
+
   let get_others_deep side = function
     | Exp.BinOp (op, e, e')
-     -> (
+      -> (
         let others = get_others_direct_or_induced side e in
         let others' = get_others_direct_or_induced side e' in
         match (others, others') with
-        | None, _ | _, None
-         -> None
-        | Some (e_res, e_op), Some (e_res', e_op')
-         -> let e_res'' = Exp.BinOp (op, e_res, e_res') in
+        | None, _ | _, None ->
+            None
+        | Some (e_res, e_op), Some (e_res', e_op') ->
+            let e_res'' = Exp.BinOp (op, e_res, e_res') in
             let e_op'' = Exp.BinOp (op, e_op, e_op') in
             Some (e_res'', e_op'') )
-    | _
-     -> None
+    | _ ->
+        None
+
 
   let get_other_atoms tenv side atom_in =
     let build_other_atoms construct side e =
@@ -1690,7 +1689,7 @@ let sigma_partial_join tenv mode (sigma1: Prop.sigma) (sigma2: Prop.sigma)
   SymOp.try_finally
     ~f:(fun () ->
       if Rename.check lost_little then (s1, s2, s3)
-      else ( L.d_strln "failed Rename.check" ; raise Sil.JoinFail ))
+      else ( L.d_strln "failed Rename.check" ; raise Sil.JoinFail ) )
     ~finally:CheckJoin.final
 
 
@@ -1951,8 +1950,9 @@ let prop_partial_meet tenv p1 p2 =
   FreshVarExp.init () ;
   Todo.init () ;
   try
-    SymOp.try_finally ~f:(fun () -> Some (eprop_partial_meet tenv p1 p2)) ~finally:(fun () ->
-        Rename.final () ; FreshVarExp.final () ; Todo.final () )
+    SymOp.try_finally
+      ~f:(fun () -> Some (eprop_partial_meet tenv p1 p2))
+      ~finally:(fun () -> Rename.final () ; FreshVarExp.final () ; Todo.final ())
   with Sil.JoinFail -> None
 
 
@@ -2065,7 +2065,8 @@ let prop_partial_join pname tenv mode p1 p2 =
             Todo.reset rename_footprint ;
             let res = eprop_partial_join' tenv mode (Prop.expose p1') (Prop.expose p2') in
             if !Config.footprint then JoinState.set_footprint false ;
-            Some res) ~finally:(fun () -> Rename.final () ; FreshVarExp.final () ; Todo.final () )
+            Some res )
+          ~finally:(fun () -> Rename.final () ; FreshVarExp.final () ; Todo.final ())
       with Sil.JoinFail -> None )
   | Some _ ->
       res_by_implication_only
@@ -2076,8 +2077,9 @@ let eprop_partial_join tenv mode (ep1: Prop.exposed Prop.t) (ep2: Prop.exposed P
   Rename.init () ;
   FreshVarExp.init () ;
   Todo.init () ;
-  SymOp.try_finally ~f:(fun () -> eprop_partial_join' tenv mode ep1 ep2) ~finally:(fun () ->
-      Rename.final () ; FreshVarExp.final () ; Todo.final () )
+  SymOp.try_finally
+    ~f:(fun () -> eprop_partial_join' tenv mode ep1 ep2)
+    ~finally:(fun () -> Rename.final () ; FreshVarExp.final () ; Todo.final ())
 
 
 (** {2 Join and Meet for Propset} *)
@@ -2298,4 +2300,3 @@ let propset_meet_generate_pre tenv pset =
     let plist_old = Propset.to_proplist pset in
     let plist_new = Propset.to_proplist pset_new in
     plist_new @ plist_old
-

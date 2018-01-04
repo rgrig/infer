@@ -250,6 +250,8 @@ val is_array_of_cpp_class : t -> bool
 
 val is_pointer_to_cpp_class : t -> bool
 
+val is_pointer : t -> bool
+
 val has_block_prefix : string -> bool
 
 val is_block_type : t -> bool
@@ -640,5 +642,4 @@ module Struct : sig
   val get_field_type_and_annotation :
     lookup:lookup -> Fieldname.t -> typ -> (typ * Annot.Item.t) option
   (** Return the type of the field [fn] and its annotation, None if [typ] has no field named [fn] *)
-
 end

@@ -151,7 +151,6 @@ end = struct
     let fd = Hashtbl.find log_files (node_fname, source) in
     Unix.close fd ;
     curr_html_formatter := F.std_formatter
-
 end
 
 (* =============== END of module NodesHtml =============== *)
@@ -380,7 +379,7 @@ let write_proc_html pdesc =
           ~succs:(List.map ~f:Procdesc.Node.get_id (Procdesc.Node.get_succs n) :> int list)
           ~exn:(List.map ~f:Procdesc.Node.get_id (Procdesc.Node.get_exn n) :> int list)
           ~isvisited:(is_visited n) ~isproof:false fmt
-          (Procdesc.Node.get_id n :> int))
+          (Procdesc.Node.get_id n :> int) )
       nodes ;
     match Specs.get_summary pname with
     | None ->
@@ -483,7 +482,7 @@ let write_html_file linereader filename procs =
           ~succs:(List.map ~f:Procdesc.Node.get_id (Procdesc.Node.get_succs n) :> int list)
           ~exn:(List.map ~f:Procdesc.Node.get_id (Procdesc.Node.get_exn n) :> int list)
           ~isvisited:(is_visited n) ~isproof fmt
-          (Procdesc.Node.get_id n :> int))
+          (Procdesc.Node.get_id n :> int) )
       nodes_at_linenum ;
     List.iter
       ~f:(fun n ->
@@ -502,7 +501,7 @@ let write_html_file linereader filename procs =
             in
             Io_infer.Html.pp_proc_link [fname_encoding] proc_name fmt label
         | _ ->
-            ())
+            () )
       nodes_at_linenum ;
     List.iter
       ~f:(fun err_string -> F.fprintf fmt "%s" (create_err_message err_string))
@@ -547,15 +546,19 @@ let write_all_html_files cluster =
   let linereader = LineReader.create () in
   Exe_env.iter_files
     (fun _ cfg ->
-      let source_files_in_cfg =
-        let files = ref SourceFile.Set.empty in
-        Cfg.iter_proc_desc cfg (fun _ proc_desc ->
-            if Procdesc.is_defined proc_desc then
-              let file = (Procdesc.get_loc proc_desc).Location.file in
-              if is_whitelisted file then files := SourceFile.Set.add file !files else () ) ;
-        !files
+      let source_files_in_cfg, pdescs_in_cfg =
+        Cfg.fold_proc_desc cfg
+          (fun _ proc_desc (files, pdescs) ->
+            let updated_files =
+              if Procdesc.is_defined proc_desc then
+                let file = (Procdesc.get_loc proc_desc).Location.file in
+                if is_whitelisted file then SourceFile.Set.add file files else files
+              else files
+            in
+            (updated_files, proc_desc :: pdescs) )
+          (SourceFile.Set.empty, [])
       in
       SourceFile.Set.iter
-        (fun file -> write_html_file linereader file (Cfg.get_all_procs cfg))
-        source_files_in_cfg)
+        (fun file -> write_html_file linereader file pdescs_in_cfg)
+        source_files_in_cfg )
     exe_env

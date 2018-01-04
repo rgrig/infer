@@ -408,7 +408,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     let tenv = trans_state.context.CContext.tenv in
     let typ = CType_decl.qual_type_to_sil_type tenv expr_info.Clang_ast_t.ei_qual_type in
     match unary_expr_or_type_trait_expr_info.Clang_ast_t.uttei_kind with
-    | `SizeOf | `SizeOfWithSize _ as size ->
+    | (`SizeOf | `SizeOfWithSize _) as size ->
         let qt_opt =
           CAst_utils.type_from_unary_expr_or_type_trait_expr_info
             unary_expr_or_type_trait_expr_info
@@ -500,7 +500,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
       extract_exp_from_list pre_trans_result.exps
         "WARNING: in Field dereference we expect to know the object@\n"
     in
-    let is_pointer_typ = match class_typ.desc with Typ.Tptr _ -> true | _ -> false in
+    let is_pointer_typ = Typ.is_pointer class_typ in
     let class_typ = match class_typ.desc with Typ.Tptr (t, _) -> t | _ -> class_typ in
     L.(debug Capture Verbose) "Type is  '%s' @." (Typ.to_string class_typ) ;
     let class_tname =
@@ -1705,7 +1705,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
         in
         List.iter
           ~f:(fun n' ->
-            Procdesc.node_set_succs_exn context.procdesc n' [switch_special_cond_node] [])
+            Procdesc.node_set_succs_exn context.procdesc n' [switch_special_cond_node] [] )
           res_trans_cond_tmp.leaf_nodes ;
         let root_nodes =
           if res_trans_cond_tmp.root_nodes <> [] then res_trans_cond_tmp.root_nodes
@@ -3465,5 +3465,4 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     let instrs_trans = List.map ~f:get_custom_stmt_trans instrs in
     let res_trans = exec_trans_instrs trans_state' instrs_trans in
     res_trans.root_nodes
-
 end
