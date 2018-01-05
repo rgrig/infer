@@ -2231,49 +2231,123 @@ let pathset_join pname tenv (pset1: Paths.PathSet.t) (pset2: Paths.PathSet.t)
   join_time := !join_time +. (Unix.gettimeofday () -. initial_time) ;
   res
 
-(* Computes x1+...+xk for maximal subsets {x1,...,xk} of xs such that
- sum is defined. |plus| returns an option, which is None for 'undefined'.
- The subsets are also limited to have size at most n. *)
-let maximal_combine n plus xs =
+let xxx_L_incompat (plus : 'a -> 'a -> 'a option) (xs : 'a list) : unit =
+  let xs, _ =
+    List.fold
+      ~init:([], 0)
+      ~f:(fun (xs, i) x -> ((x,i)::xs, i+1))
+      xs in
+  let edges = ref [] in
+  let add1 (x, i) (y, j) = match plus x y with
+    | None -> ()
+    | Some _ -> edges := (i, j) :: !edges in
+  let add2 x ys = List.iter ~f:(add1 x) ys in
+  let rec go = function
+    | [] -> ()
+    | x :: xs -> add2 x xs; go xs in
+  go xs;
+(*   L.d_str *)
+  (Printf.printf "GRAPH-compat vertices %d edges %d :"
+    (List.length xs) (List.length !edges));
+  let d_e (i, j) = (*L.d_str*) (Printf.printf " %d-%d" i j) in
+  List.iter ~f:d_e !edges;
+(*   L.d_ln () *)
+  Printf.printf "\n"
+
+(* Find maximal subsets of [xs] that can be combined with an operator [plus]
+that is associative, commutative, but not necessarily defined everywhere. We
+are not told the identity element of [plus] so we require that the multiset
+[xs] is nonempty.
+
+
+First, let us see the behavior if the [timeout] would be infinity. To describe
+the behaviour, we use a helper function:
+  let plus' a b = match plus a b with Some x -> x | _ -> raise Not_found
+Let n be [List.length xs]. For a nonempty set S⊆{0,...,n-1} of indices in [xs],
+let ΣS be [List.fold ~f:plus' ~init (List.map (List.nth xs) S)], where [init]
+is the (not explicitly available) identity of [plus']; if this code would throw
+[Not_found], we say that ΣS is undefined. We have
+  ΣS is (once) in the list returned by [maximal_combine]
+    iff
+  ΣS is defined, and ΣS' is undefined for all S'⊃S.
+
+In case the timeout is reached, the result will contain some list of (defined)
+values ΣS, but with no guarantee of maximality of S.
+
+
+IMPLEMENTATION NOTES: We consider a directed acyclic graph that has an arc S→S'
+iff S⊂S' and |S|+1=|S'|. We explore it in a DFS manner, starting from the
+singletons {0},...,{n-1}. (BFS would use lots of time and memory before
+reaching the first maximal S.) There is a twist. Instead of the usual marking
+of vertices as seen, once we find a maximal S', we consider as seen/visited all
+S⊆S'. XXX
+
+*)
+let maximal_combine (timeout : int) (plus : 'a -> 'a -> 'a option) (xs : 'a list)  : 'a list =
+(*   xxx_L_incompat plus xs; *)
+  let len_xs = List.length xs in
   let oops = ref 0 in
-  let module MapIS = Caml.Map.Make (IntSet) in
-  let maximal_values = ref [] in
-  let rec loop k xss =
-    if k < n then begin
-      let add_one old_set old_value yss = match old_value with
-        | None -> yss
-        | Some old_value ->
-            let is_maximal = ref true in
-            let f (i, yss) x =
-              incr oops;
-              if IntSet.mem i old_set then (i+1, yss) else
-              let new_set = IntSet.add i old_set in
-              if MapIS.mem new_set yss then (i+1, yss) else
-              let new_value = plus old_value x in
-              (match new_value with None -> () | Some _ -> is_maximal := false);
-              (i+1, MapIS.add new_set new_value yss) in
-            let _, yss = List.fold ~f ~init:(0, yss) xs in
-            if !is_maximal then maximal_values := old_value :: !maximal_values;
-            yss
-      in
-      let yss = MapIS.fold add_one xss MapIS.empty in
-      loop (k+1) yss
-    end in
-  let f (i, xss) x = (i+1, MapIS.add (IntSet.singleton i) (Some x) xss) in
-  let _, xss = List.fold ~f ~init:(0, MapIS.empty) xs in
-  loop 1 xss;
-  L.d_str (Printf.sprintf
-    "PERF: maximal_combine inlen=%d outlen=%d oops=%d"
-    (List.length xs) (List.length !maximal_values) !oops
-  ); L.d_ln ();
-  !maximal_values
-  (* xss, yss : (* set of ints *) -> 'a option *)
+  let plus a b = incr oops; if !oops >= timeout then None else plus a b in
+  let result = ref [] in
+  let seen = ref [] in
+  let hash x =
+    let open Int64 in
+    let p = to_int_exn (bit_and 63L (of_int x * 100623947L)) in
+    shift_left 1L p in
+  let not_seen =
+    let mark = Array.create ~len:len_xs 0 in
+    function (_, (sig_y, ys)) ->
+      let len_ys = List.length ys in
+      let subset (sig_x, xs) =
+        (incr oops; (Int64.equal 0L (Int64.bit_and (Int64.bit_not sig_x) sig_y))) &&
+        (List.fold ~f:(fun n x -> incr oops; n + mark.(x)) ~init:0 xs) >= len_ys in
+      let xxx_eq (sig_x, xs) =
+        (incr oops; Int64.equal sig_x sig_y)
+        && (incr oops; Int.equal len_xs len_ys)
+        && Int.equal len_ys (List.fold ~init:0 ~f:(fun n x-> incr oops; n+mark.(x)) xs) in
+      List.iter ~f:(fun y -> mark.(y) <- 1) ys;
+      let r = not (List.exists ~f:subset !seen) in
+      List.iter ~f:(fun y -> mark.(y) <- 0) ys;
+      r in
+  let set_seen (_, ys) =
+    seen := ys :: !seen in
+  let record (v, _) =
+    result := v :: !result  in
+  let possible_moves =
+    let mark = Array.create ~len:len_xs false in
+    function (_, (_, ys)) ->
+      let f (zss, i) x =
+        if mark.(i) then (zss, i + 1) else ((i, x) :: zss, i + 1) in
+      List.iter ~f:(fun y -> mark.(y) <- true) ys;
+      let r, _ = List.fold ~f ~init:([], 0) xs in
+      List.iter ~f:(fun y -> mark.(y) <- false) ys;
+      r in
+  let make_move (i, x) (v, (sig_y, ys)) = match plus v x with
+    | None -> None
+    | Some v -> Some (v, (Int64.bit_or sig_y (hash i), i :: ys)) in
+  let rec dfs ys =
+    let ms = possible_moves ys in
+    let f maximal m = match make_move m ys with
+      | Some zs when not_seen zs -> dfs zs; false
+      | _ -> maximal in
+    set_seen ys;
+    if List.fold ~f ~init:true ms then record ys in
+  let zss, _ =
+    let f (zss, i) x = ((x, (hash i, [i])) :: zss, i + 1) in
+    List.fold ~f ~init:([], 0) xs in
+  List.iter ~f:dfs zss;
+  L.d_strln (Printf.sprintf
+    "PERF maximal_combine inlen=%d outlen=%d oops=%d timeout=%b"
+    len_xs (List.length !result) !oops (!oops >= timeout));
+  !result
+
 
 (**
   The meet operator does two things:
   1) makes the result logically stronger (just like additive conjunction)
   2) makes the result spatially larger (just like multiplicative conjunction).
-  Produces meets only for the maximal subsets that have a meet.
+  Produces meets only for the subsets that have a meet, targeting such subsets
+  that are maximal, but settling for smaller ones on meet-timeout.
 *)
 let proplist_meet_generate tenv plist =
   let plus a b =
@@ -2287,7 +2361,7 @@ let proplist_meet_generate tenv plist =
           L.d_strln_color Green ".... MEET SUCCEEDED ....";
           L.d_strln "RESULT SYM HEAP:"; Prop.d_prop c; L.d_ln (); L.d_ln ());
       r in
-  let xs = maximal_combine 10 plus plist in
+  let xs = maximal_combine Config.max_meet plus plist in
   List.fold ~f:(fun p x -> Propset.add tenv x p) ~init:Propset.empty xs
 
 

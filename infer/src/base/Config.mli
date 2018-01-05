@@ -183,6 +183,8 @@ val log_analysis_wallclock_timeout : string
 
 val log_dir_name : string
 
+val max_meet : int
+
 val max_recursion : int
 
 val max_widens : int
