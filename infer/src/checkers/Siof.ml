@@ -181,7 +181,7 @@ let is_foreign tu_opt v =
   match (Pvar.get_translation_unit v, tu_opt) with
   | TUFile v_tu, Some current_tu ->
       not (SourceFile.equal current_tu v_tu)
-  | TUExtern, Some _ ->
+  | TUAnonymous, Some _ ->
       true
   | TUAnonymous, _ ->
       L.(die InternalError) "for C/++, translation units should be known"
