@@ -171,11 +171,12 @@ let add_topl_warnings summary =
         let post = ceq pre_state Exp.zero post in
         let post = ceq pre_qsize Exp.zero post in
         let post = ceq post_state Exp.one post in
-        Format.printf "ASK if consistent: %a@\n" (Prop.pp_prop Pp.text) post; (* XXX *)
+        let dbg = false in (* XXX to remove *)
+        if dbg then Format.printf "ASK if consistent: %a@\n" (Prop.pp_prop Pp.text) post;
         if not (Prover.check_inconsistency env post) then
-          (Format.printf "YES adding TOPL_ERR@\n";
+          ((if dbg then Format.printf "YES adding TOPL_ERR@\n");
           Reporting.log_error summary Exceptions.Topl_error)
-        else Format.printf "NOT adding TOPL_ERR@\n"
+        else (if dbg then Format.printf "NOT adding TOPL_ERR@\n")
       with Not_found -> () in
     List.iter ~f:handle_post posts in
   let handle_all_preposts xs =

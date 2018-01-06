@@ -255,7 +255,7 @@ let manual_racerd = "RACERD CHECKER OPTIONS"
 let manual_siof = "SIOF CHECKER OPTIONS"
 
 (** Maximum number of operations in [Dom.proplist_meet_generate]. *)
-let max_meet = 1000
+let max_meet = 10000
 
 (** Maximum level of recursion during the analysis, after which a timeout is generated *)
 let max_recursion = 5
