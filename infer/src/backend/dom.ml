@@ -2254,34 +2254,86 @@ let xxx_L_incompat (plus : 'a -> 'a -> 'a option) (xs : 'a list) : unit =
 (*   L.d_ln () *)
   Printf.printf "\n"
 
-(* Find maximal subsets of [xs] that can be combined with an operator [plus]
-that is associative, commutative, but not necessarily defined everywhere. We
-are not told the identity element of [plus] so we require that the multiset
-[xs] is nonempty.
+let xxx_is_sorted xs =
+  let rec f x = function
+    | [] -> ()
+    | y :: zs -> assert (x < y); f y zs in
+  (match xs with [] -> () | x :: ys -> f x ys )
 
+module MaxCliqueState = Caml.Set.Make (struct
+  type t = int list (* invariant: increasing *)
+  let rec compare xs ys =
+    (xxx_is_sorted xs; xxx_is_sorted ys);
+    match xs, ys with
+    | [], [] -> 0
+    | [], _ -> -1
+    | _, [] -> +1
+    | x ::  _, y ::  _ when x < y -> -1
+    | x ::  _, y ::  _ when x > y -> +1
+    | _ :: xs, _ :: ys -> compare xs ys
+end)
 
-First, let us see the behavior if the [timeout] would be infinity. To describe
-the behaviour, we use a helper function:
-  let plus' a b = match plus a b with Some x -> x | _ -> raise Not_found
-Let n be [List.length xs]. For a nonempty set S⊆{0,...,n-1} of indices in [xs],
-let ΣS be [List.fold ~f:plus' ~init (List.map (List.nth xs) S)], where [init]
-is the (not explicitly available) identity of [plus']; if this code would throw
-[Not_found], we say that ΣS is undefined. We have
-  ΣS is (once) in the list returned by [maximal_combine]
-    iff
-  ΣS is defined, and ΣS' is undefined for all S'⊃S.
+let rec filter_to n predicate xs x =
+  if x >= n then List.rev xs
+  else if predicate x xs then filter_to n predicate (x :: xs) (x + 1)
+  else filter_to n predicate xs (x + 1)
 
-In case the timeout is reached, the result will contain some list of (defined)
-values ΣS, but with no guarantee of maximality of S.
+(* Given a graph, initialize a maxclique generator. The vertices of the
+(undirected) graph are the integers 0,...,n-1, and its edges are given by the
+function [edge]. *)
+let initgen_maxclique (n : int) (edge : int -> int -> bool) =
+  let compatible x xs = List.for_all xs ~f:(edge x) in
+  let first = filter_to n compatible [] 0 in
+  let module S = MaxCliqueState in
+  (S.add first S.empty, n, edge)
 
+(* Given a maxclique generator, returns a pair (xs, g) with the next maxclique
+[xs] and the updated generator state [g]. If no more maxclique, raises
+[Not_found]. For the algorithm, see the JYP paper mentioned below. *)
+let next_maxclique (queue, n, edge) =
+  let module S = MaxCliqueState in
+  let xs = S.min_elt queue in (* raises [Not_found] at the end *)
+  let queue = S.remove xs queue in
+  let ys =
+    let ok_yx y x = x < y && not (edge x y) in
+    let ok_y y _ = List.exists xs ~f:(ok_yx y) in
+    filter_to n ok_y [] 0 in
+  let do_y queue y =
+    let xy_compat x = x < y && edge x y in
+    let zs = List.filter xs ~f:xy_compat @ [y] in
+    let maxclique zs = (* is zs a maxclique for the subgraph induced by 0..y? *)
+      let rec loop u vs = u > y || (match u, vs with
+        | u, v :: vs when Int.equal u v -> loop (u + 1) vs
+        | u, vs -> not (List.for_all zs ~f:(edge u)) && loop (u + 1) vs) in
+      loop 0 zs in
+    let fillup zs = (* greedily add vertices from y+1..n-1 to clique *)
+      let compatible z zs = List.for_all zs ~f:(edge z) in
+      filter_to n compatible (List.rev zs) (y + 1) in
+    if maxclique zs then S.add (fillup zs) queue else queue in
+  let queue = List.fold ~init:queue ~f:do_y ys in
+  (xs, (queue, n, edge))
 
-IMPLEMENTATION NOTES: We consider a directed acyclic graph that has an arc S→S'
-iff S⊂S' and |S|+1=|S'|. We explore it in a DFS manner, starting from the
-singletons {0},...,{n-1}. (BFS would use lots of time and memory before
-reaching the first maximal S.) There is a twist. Instead of the usual marking
-of vertices as seen, once we find a maximal S', we consider as seen/visited all
-S⊆S'. XXX
+(* Find maximal subsets of [xs] that can be combined with a binary operator
+[plus] that is associative, commutative, but not necessarily defined
+everywhere.
 
+Let's call set S={x1,...,xn} *consistent* when ΣS=x1+...+xn is defined.  When
+x1,...,xn are preconditions and [plus] is the meet operator, it happens often
+(but not always) that pairwise consistency implies set consistency.  Therefore,
+we will use an algorithm that works fast in this case, and degrades (but has a
+timeout) otherwise.
+
+Suppose pairwise consistency implies set consistency.  Define a graph whose
+vertices are the [xs] and has an (undirected) edge xy when x+y is defined. In
+terms of this graph, the problem is to generate all maximal cliques. This can
+be done with polynomial delay using the JYP algorithm:
+  Johnson, Yannakakkis, Papadimitriou,
+  On Generating All Maximal Independent Sets, 1987
+A maximal clique S found by this algorithm will be pairwise consistent, and
+often but not always consistent. Thus for each such clique we search for *its*
+maximally consistent subsets using a complete algorithm -- DFS with timeout.
+With DFS (as opposed to BFS) it is natural to finish quickly when S is wholly
+consistent.
 *)
 let maximal_combine (timeout : int) (plus : 'a -> 'a -> 'a option) (xs : 'a list)  : 'a list =
 (*   xxx_L_incompat plus xs; *)
@@ -2342,6 +2394,58 @@ let maximal_combine (timeout : int) (plus : 'a -> 'a -> 'a option) (xs : 'a list
   !result
 
 
+let maximal_combine ~pp ~(timeout : int) ~(init : 'a) ~(plus : 'a -> 'a -> 'a option) (xs : 'a list)  : 'a list =
+  let n = List.length xs in
+  let by_idx =
+    let xs = Array.of_list xs in
+    Array.get xs in
+  let oops = ref 0 in (* counts basic operations, for timeout *)
+  let plus x y = if !oops >= timeout then None else plus x y in
+  let exception Undefined in
+  let plus_exc x y = match plus x y with
+    | None -> raise Undefined
+    | Some z -> z in
+  let pairs = (* first, build graph with pairwise consistency *)
+    let h = Hashtbl.create (n * n) in
+    for i = 0 to n - 1 do
+      for j = i + 1 to n - 1 do
+        (try
+          let z = plus_exc (by_idx i) (by_idx j) in
+          Hashtbl.add h (i, j) z;
+          Hashtbl.add h (j, i) z
+        with Undefined -> ())
+      done
+    done; h in
+  Format.printf "XXX VERTICES %d EDGES %d@\n" n (Hashtbl.length pairs);
+  let edge i j = incr oops; Hashtbl.mem pairs (i, j) in
+  let result = ref [] in
+  let rec loop g =
+    let xs, ng = next_maxclique g in (* xs is a pairwise consistent set *)
+    Format.printf "XXX SET {";
+    List.iter ~f:(Format.printf " %d") xs;
+    Format.printf " }@\n";
+    let zs = List.map ~f:by_idx xs in
+(*       Format.printf "XXX MISS {@\n"; *)
+      let pz z = Format.printf "  >> %a%!@\n" (pp Pp.text) z in
+(*       List.iter ~f:pz zs; *)
+(*       Format.printf "}@\n"; *)
+    (try
+      let z = List.fold ~init ~f:plus_exc zs in
+      result := z :: !result;
+      Format.printf "XXX HIT@\n"
+    with Undefined ->
+      Format.printf "XXX MISS {@\n";
+      List.iter ~f:pz zs;
+      Format.printf "}@\n"
+    );
+    loop ng in
+  (try loop (initgen_maxclique n edge)
+  with Not_found -> Format.printf "XXX DONE@\n");
+  Format.printf "XXX OOPS %d@\n%!" !oops;
+  !result
+
+
+
 (**
   The meet operator does two things:
   1) makes the result logically stronger (just like additive conjunction)
@@ -2361,7 +2465,7 @@ let proplist_meet_generate tenv plist =
           L.d_strln_color Green ".... MEET SUCCEEDED ....";
           L.d_strln "RESULT SYM HEAP:"; Prop.d_prop c; L.d_ln (); L.d_ln ());
       r in
-  let xs = maximal_combine Config.max_meet plus plist in
+  let xs = maximal_combine ~pp:Prop.pp_prop ~timeout:Config.max_meet ~init:Prop.prop_emp ~plus plist in
   List.fold ~f:(fun p x -> Propset.add tenv x p) ~init:Propset.empty xs
 
 
