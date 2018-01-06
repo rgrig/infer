@@ -2231,40 +2231,9 @@ let pathset_join pname tenv (pset1: Paths.PathSet.t) (pset2: Paths.PathSet.t)
   join_time := !join_time +. (Unix.gettimeofday () -. initial_time) ;
   res
 
-let xxx_L_incompat (plus : 'a -> 'a -> 'a option) (xs : 'a list) : unit =
-  let xs, _ =
-    List.fold
-      ~init:([], 0)
-      ~f:(fun (xs, i) x -> ((x,i)::xs, i+1))
-      xs in
-  let edges = ref [] in
-  let add1 (x, i) (y, j) = match plus x y with
-    | None -> ()
-    | Some _ -> edges := (i, j) :: !edges in
-  let add2 x ys = List.iter ~f:(add1 x) ys in
-  let rec go = function
-    | [] -> ()
-    | x :: xs -> add2 x xs; go xs in
-  go xs;
-(*   L.d_str *)
-  (Printf.printf "GRAPH-compat vertices %d edges %d :"
-    (List.length xs) (List.length !edges));
-  let d_e (i, j) = (*L.d_str*) (Printf.printf " %d-%d" i j) in
-  List.iter ~f:d_e !edges;
-(*   L.d_ln () *)
-  Printf.printf "\n"
-
-let xxx_is_sorted xs =
-  let rec f x = function
-    | [] -> ()
-    | y :: zs -> assert (x < y); f y zs in
-  (match xs with [] -> () | x :: ys -> f x ys )
-
 module MaxCliqueState = Caml.Set.Make (struct
   type t = int list (* invariant: increasing *)
-  let rec compare xs ys =
-    (xxx_is_sorted xs; xxx_is_sorted ys);
-    match xs, ys with
+  let rec compare xs ys = match xs, ys with
     | [], [] -> 0
     | [], _ -> -1
     | _, [] -> +1
@@ -2320,8 +2289,8 @@ everywhere.
 Let's call set S={x1,...,xn} *consistent* when ΣS=x1+...+xn is defined.  When
 x1,...,xn are preconditions and [plus] is the meet operator, it happens often
 (but not always) that pairwise consistency implies set consistency.  Therefore,
-we will use an algorithm that works fast in this case, and degrades (but has a
-timeout) otherwise.
+we will use an algorithm that works fast in this case, and is incomplete
+otherwise.
 
 Suppose pairwise consistency implies set consistency.  Define a graph whose
 vertices are the [xs] and has an (undirected) edge xy when x+y is defined. In
@@ -2330,75 +2299,15 @@ be done with polynomial delay using the JYP algorithm:
   Johnson, Yannakakkis, Papadimitriou,
   On Generating All Maximal Independent Sets, 1987
 A maximal clique S found by this algorithm will be pairwise consistent, and
-often but not always consistent. Thus for each such clique we search for *its*
-maximally consistent subsets using a complete algorithm -- DFS with timeout.
-With DFS (as opposed to BFS) it is natural to finish quickly when S is wholly
-consistent.
+often but not always consistent. The current implementation simply filters
+out inconsistent maximal cliques.
 *)
-let maximal_combine (timeout : int) (plus : 'a -> 'a -> 'a option) (xs : 'a list)  : 'a list =
-(*   xxx_L_incompat plus xs; *)
-  let len_xs = List.length xs in
-  let oops = ref 0 in
-  let plus a b = incr oops; if !oops >= timeout then None else plus a b in
-  let result = ref [] in
-  let seen = ref [] in
-  let hash x =
-    let open Int64 in
-    let p = to_int_exn (bit_and 63L (of_int x * 100623947L)) in
-    shift_left 1L p in
-  let not_seen =
-    let mark = Array.create ~len:len_xs 0 in
-    function (_, (sig_y, ys)) ->
-      let len_ys = List.length ys in
-      let subset (sig_x, xs) =
-        (incr oops; (Int64.equal 0L (Int64.bit_and (Int64.bit_not sig_x) sig_y))) &&
-        (List.fold ~f:(fun n x -> incr oops; n + mark.(x)) ~init:0 xs) >= len_ys in
-      let xxx_eq (sig_x, xs) =
-        (incr oops; Int64.equal sig_x sig_y)
-        && (incr oops; Int.equal len_xs len_ys)
-        && Int.equal len_ys (List.fold ~init:0 ~f:(fun n x-> incr oops; n+mark.(x)) xs) in
-      List.iter ~f:(fun y -> mark.(y) <- 1) ys;
-      let r = not (List.exists ~f:subset !seen) in
-      List.iter ~f:(fun y -> mark.(y) <- 0) ys;
-      r in
-  let set_seen (_, ys) =
-    seen := ys :: !seen in
-  let record (v, _) =
-    result := v :: !result  in
-  let possible_moves =
-    let mark = Array.create ~len:len_xs false in
-    function (_, (_, ys)) ->
-      let f (zss, i) x =
-        if mark.(i) then (zss, i + 1) else ((i, x) :: zss, i + 1) in
-      List.iter ~f:(fun y -> mark.(y) <- true) ys;
-      let r, _ = List.fold ~f ~init:([], 0) xs in
-      List.iter ~f:(fun y -> mark.(y) <- false) ys;
-      r in
-  let make_move (i, x) (v, (sig_y, ys)) = match plus v x with
-    | None -> None
-    | Some v -> Some (v, (Int64.bit_or sig_y (hash i), i :: ys)) in
-  let rec dfs ys =
-    let ms = possible_moves ys in
-    let f maximal m = match make_move m ys with
-      | Some zs when not_seen zs -> dfs zs; false
-      | _ -> maximal in
-    set_seen ys;
-    if List.fold ~f ~init:true ms then record ys in
-  let zss, _ =
-    let f (zss, i) x = ((x, (hash i, [i])) :: zss, i + 1) in
-    List.fold ~f ~init:([], 0) xs in
-  List.iter ~f:dfs zss;
-  L.d_strln (Printf.sprintf
-    "PERF maximal_combine inlen=%d outlen=%d oops=%d timeout=%b"
-    len_xs (List.length !result) !oops (!oops >= timeout));
-  !result
-
-
-let maximal_combine ~pp ~(timeout : int) ~(init : 'a) ~(plus : 'a -> 'a -> 'a option) (xs : 'a list)  : 'a list =
+let maximal_combine ~(timeout : int) ~(init : 'a) ~(plus : 'a -> 'a -> 'a option) (xs : 'a list)  : 'a list =
   let n = List.length xs in
   let by_idx =
     let xs = Array.of_list xs in
     Array.get xs in
+  let lost = ref 0 in (* counts inconsistent maximal cliques *)
   let oops = ref 0 in (* counts basic operations, for timeout *)
   let plus x y = if !oops >= timeout then None else plus x y in
   let exception Undefined in
@@ -2410,38 +2319,25 @@ let maximal_combine ~pp ~(timeout : int) ~(init : 'a) ~(plus : 'a -> 'a -> 'a op
     for i = 0 to n - 1 do
       for j = i + 1 to n - 1 do
         (try
+          incr oops;
           let z = plus_exc (by_idx i) (by_idx j) in
           Hashtbl.add h (i, j) z;
           Hashtbl.add h (j, i) z
         with Undefined -> ())
       done
     done; h in
-  Format.printf "XXX VERTICES %d EDGES %d@\n" n (Hashtbl.length pairs);
   let edge i j = incr oops; Hashtbl.mem pairs (i, j) in
   let result = ref [] in
   let rec loop g =
     let xs, ng = next_maxclique g in (* xs is a pairwise consistent set *)
-    Format.printf "XXX SET {";
-    List.iter ~f:(Format.printf " %d") xs;
-    Format.printf " }@\n";
     let zs = List.map ~f:by_idx xs in
-(*       Format.printf "XXX MISS {@\n"; *)
-      let pz z = Format.printf "  >> %a%!@\n" (pp Pp.text) z in
-(*       List.iter ~f:pz zs; *)
-(*       Format.printf "}@\n"; *)
-    (try
-      let z = List.fold ~init ~f:plus_exc zs in
-      result := z :: !result;
-      Format.printf "XXX HIT@\n"
-    with Undefined ->
-      Format.printf "XXX MISS {@\n";
-      List.iter ~f:pz zs;
-      Format.printf "}@\n"
-    );
+    (try result :=  (List.fold ~init ~f:plus_exc zs) :: !result
+    with Undefined -> incr lost);
     loop ng in
-  (try loop (initgen_maxclique n edge)
-  with Not_found -> Format.printf "XXX DONE@\n");
-  Format.printf "XXX OOPS %d@\n%!" !oops;
+  (try loop (initgen_maxclique n edge) with Not_found -> (* done *) ());
+  L.d_strln (Printf.sprintf
+    "PERF maximal_combine inlen=%d outlen=%d filtered=%d operations=%d"
+    n (List.length !result) !lost !oops);
   !result
 
 
@@ -2465,7 +2361,7 @@ let proplist_meet_generate tenv plist =
           L.d_strln_color Green ".... MEET SUCCEEDED ....";
           L.d_strln "RESULT SYM HEAP:"; Prop.d_prop c; L.d_ln (); L.d_ln ());
       r in
-  let xs = maximal_combine ~pp:Prop.pp_prop ~timeout:Config.max_meet ~init:Prop.prop_emp ~plus plist in
+  let xs = maximal_combine ~timeout:Config.max_meet ~init:Prop.prop_emp ~plus plist in
   List.fold ~f:(fun p x -> Propset.add tenv x p) ~init:Propset.empty xs
 
 
