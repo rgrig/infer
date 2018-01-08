@@ -106,6 +106,15 @@ let resume_previous_timeout () =
   let status_opt = unwind () in
   Option.iter ~f:set_status status_opt
 
+let exe suspend f x =
+  try
+    SymOp.try_finally
+      ~f:(fun () -> suspend (); f x; None)
+      ~finally:resume_previous_timeout
+  with SymOp.Analysis_failure_exe kind ->
+    L.progressbar_timeout_event kind ;
+    Errdesc.warning_err (State.get_loc ()) "TIMEOUT: %a@." SymOp.pp_failure_kind kind ;
+    Some kind
 
 let exe_timeout f x =
   let suspend_existing_timeout_and_start_new_one () =
@@ -113,14 +122,13 @@ let exe_timeout f x =
     Option.iter (SymOp.get_timeout_seconds ()) ~f:set_alarm ;
     SymOp.set_alarm ()
   in
-  try
-    SymOp.try_finally
-      ~f:(fun () ->
-        suspend_existing_timeout_and_start_new_one () ;
-        f x ;
-        None )
-      ~finally:resume_previous_timeout
-  with SymOp.Analysis_failure_exe kind ->
-    L.progressbar_timeout_event kind ;
-    Errdesc.warning_err (State.get_loc ()) "TIMEOUT: %a@." SymOp.pp_failure_kind kind ;
-    Some kind
+  exe suspend_existing_timeout_and_start_new_one f x
+
+let exe_no_timeout f x =
+  let suspend_existing_timeout_and_start_new_one () =
+    suspend_existing_timeout ~keep_symop_total:true ;
+    unset_alarm ();
+    SymOp.unset_alarm ()
+  in
+  exe suspend_existing_timeout_and_start_new_one f x
+

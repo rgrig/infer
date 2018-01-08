@@ -1204,6 +1204,12 @@ let update_summary tenv prev_summary specs phase res =
   let payload = {prev_summary.Specs.payload with Specs.preposts} in
   {prev_summary with Specs.phase; stats; payload}
 
+let should_run_with_timeout proc_name = match proc_name with
+  | Typ.Procname.Java java_name ->
+      (match Typ.Procname.java_get_package java_name with
+      | Some package when String.equal package "topl" -> false
+      | _ -> true)
+  | _ -> true
 
 (** Analyze the procedure and return the resulting summary. *)
 let analyze_proc tenv proc_cfg : Specs.summary =
@@ -1212,7 +1218,10 @@ let analyze_proc tenv proc_cfg : Specs.summary =
   reset_global_values proc_desc ;
   let summary = Specs.get_summary_unsafe "analyze_proc" proc_name in
   let go, get_results = perform_analysis_phase tenv summary proc_cfg in
-  let res = Timeout.exe_timeout go () in
+  let res =
+    if should_run_with_timeout proc_name
+    then Timeout.exe_timeout go ()
+    else Timeout.exe_no_timeout go () in
   let specs, phase = get_results () in
   let updated_summary = update_summary tenv summary specs phase res in
   if Config.curr_language_is Config.Clang && Config.report_custom_error then

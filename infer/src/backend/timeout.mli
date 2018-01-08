@@ -14,6 +14,8 @@ open! IStd
 val exe_timeout : ('a -> unit) -> 'a -> SymOp.failure_kind option
 (** Execute the function up to a given timeout. *)
 
+val exe_no_timeout : ('a -> unit) -> 'a -> SymOp.failure_kind option
+
 val resume_previous_timeout : unit -> unit
 (** Resume a previously suspended timeout. *)
 
