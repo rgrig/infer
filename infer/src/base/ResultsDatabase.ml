@@ -81,7 +81,9 @@ let db_canonicalize () =
   SqliteUtils.exec db ~log:"running VACUUM" ~stmt:"VACUUM"
 
 
-let register_statement stmt_fmt =
+type registered_stmt = unit -> Sqlite3.stmt * Sqlite3.db
+
+let register_statement =
   let k stmt0 =
     let stmt_ref = ref None in
     let new_statement db =
@@ -90,21 +92,27 @@ let register_statement stmt_fmt =
           L.die InternalError "Could not prepare the following statement:@\n%s@\nReason: %s" stmt0
             error
       in
-      on_close_database ~f:(fun _ -> SqliteUtils.finalize ~log:"db close callback" stmt) ;
-      stmt_ref := Some stmt
+      on_close_database ~f:(fun _ -> SqliteUtils.finalize db ~log:"db close callback" stmt) ;
+      stmt_ref := Some (stmt, db)
     in
     on_new_database_connection ~f:new_statement ;
     fun () ->
       match !stmt_ref with
       | None ->
           L.(die InternalError) "database not initialized"
-      | Some stmt ->
-          Sqlite3.reset stmt |> SqliteUtils.check_sqlite_error ~log:"reset prepared statement" ;
+      | Some (stmt, db) ->
           Sqlite3.clear_bindings stmt
-          |> SqliteUtils.check_sqlite_error ~log:"clear bindings of prepared statement" ;
-          stmt
+          |> SqliteUtils.check_sqlite_error db ~log:"clear bindings of prepared statement" ;
+          (stmt, db)
   in
-  Printf.ksprintf k stmt_fmt
+  fun stmt_fmt -> Printf.ksprintf k stmt_fmt
+
+
+let with_registered_statement get_stmt ~f =
+  let stmt, db = get_stmt () in
+  let result = f db stmt in
+  Sqlite3.reset stmt |> SqliteUtils.check_sqlite_error db ~log:"reset prepared statement" ;
+  result
 
 
 let do_db_close db =
