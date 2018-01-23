@@ -123,6 +123,8 @@ val classnames_dir_name : string
 
 val classpath : string option
 
+val coalesce_paths : bool
+
 val cpp_extra_include_dir : string
 
 val duplicates_filename : string

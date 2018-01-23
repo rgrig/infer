@@ -1178,6 +1178,10 @@ and () =
   mk true ~long:"enable-issue-type" ~deprecated:["enable_checks"; "-enable-checks"]
     "Show reports coming from this type of issue. By default, all issue types are enabled except the ones listed in $(b,--disable-issue-type). Note that enabling issue types does not make the corresponding checker run; see individual checker options to turn them on or off."
 
+and coalesce_paths =
+  CLOpt.mk_bool ~long:"coalesce-paths"
+    ~in_help:CLOpt.([Report, manual_generic])
+    "When --dump-paths, coalesce vertices that correspond to the same program location."
 
 and dotty_cfg_libs =
   CLOpt.mk_bool ~deprecated:["dotty_no_cfg_libs"] ~long:"dotty-cfg-libs" ~default:true
@@ -2348,6 +2352,8 @@ and clang_include_to_override_regex = !clang_include_to_override_regex
 and classpath = !classpath
 
 and cluster_cmdline = !cluster
+
+and coalesce_paths = !coalesce_paths
 
 and compute_analytics = !compute_analytics
 

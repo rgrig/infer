@@ -71,8 +71,9 @@ module Path : sig
   val join : t -> t -> t
   (** join two paths *)
 
-  val get_calls : Typ.Procname.t -> t -> path_calls
-  (** keep only information about calls *)
+  val get_calls : ?coalesce:bool -> Typ.Procname.t -> t -> path_calls
+  (** keep only information about calls, perhaps coalescing vertices that
+  correspond to the same place in the program *)
 
   val pp : Format.formatter -> t -> unit
   (** pretty print a path *)
@@ -124,6 +125,8 @@ end = struct
     | Pjoin of t * t * stats_  (** join of two paths *)
     | Pcall of t * procname_ * path_exec_ * stats_  (** add a sub-path originating from a call *)
     [@@deriving compare]
+
+  type path = t [@@deriving compare] (* Internal, for readability only. *)
 
   let get_dummy_stats () = {max_length= -1; linear_num= -1.0}
 
@@ -472,11 +475,7 @@ end = struct
     add_delayed path ; doit 0 fmt path ; print_delayed ()
 
   module ProcPathMap = Caml.Map.Make (struct
-    type nonrec t = Typ.Procname.t * t
-    let compare (n1, p1) (n2, p2) = (* @@deriving confuses merlin :( *)
-      let nc = Typ.Procname.compare n1 n2 in
-      if not (Int.equal nc 0) then nc
-      else compare p1 p2
+    type t = Typ.Procname.t * path [@@deriving compare]
   end)
 
   (* For debug. *)
@@ -499,22 +498,65 @@ end = struct
           go (go ids pname path1) pname2 path2 in
     (go ProcPathMap.empty pname path, next_id)
 
-(* CONTINUE HERE
-  let get_unique_node_ids path : (int PathMap.t * (unit -> int)) =
+  (** Maps (pname, path) pairs (of type Typ.Procname.t * path) to unique ids
+  (of type int), with one important exception. A path is eligible for
+  coalescing when it corresponds to a node (of type Procdesc.Node.t) and has no
+  predecessor that corresponds to the same node. If path1 and path2 are
+  eligible for coalescing and they correspond to the same nodes, then pairs
+  (pname, path1) and (pname, path2) will map to the same identifier. *)
+  let get_path_ids pname path : (int ProcPathMap.t * (unit -> int)) =
     let next_id = let n = ref (-1) in fun () -> incr n; !n in
-    let add path p_ids n_ids = PathMap.add path (next_id ()) ids in
-    let rec go ids path =
-      if PathMap.mem path ids then ids else descend (add path ids) path
-    and descend ids = function
+    let module NodeMap = Procdesc.NodeMap in
+    let module ProcMap = Typ.Procname.Map in
+    let add pname path (ids : (int PathMap.t * int NodeMap.t) ProcMap.t) =
+      let is_coalescing =
+        let (<>) a b = match a, b with
+          | Some a, Some b -> not (Procdesc.Node.equal a b)
+          | None, None -> true
+          | _ -> false in
+        match path with
+        | Pstart _ -> true
+        | Pnode (_, _, _, p, _, _) ->  curr_node path <> curr_node p
+        | Pcall _ | Pjoin _ -> false (* only coalesce if they surely have node *)
+      in
+      let node_of path = Option.value_exn (curr_node path) in
+      let by_path, by_node =
+        try ProcMap.find pname ids
+        with Not_found -> (PathMap.empty, NodeMap.empty) in
+      let i =
+        if is_coalescing then
+          (try NodeMap.find (node_of path) by_node
+          with Not_found -> next_id ())
+        else next_id () in
+      let by_node = match curr_node path with
+        | Some node -> NodeMap.add node i by_node
+        | None -> by_node in
+      let by_path =
+        assert (not (PathMap.mem path by_path));
+        PathMap.add path i by_path in
+      ProcMap.add pname (by_path, by_node) ids in
+    let rec go ids pname path =
+      try
+        let by_path, _ = ProcMap.find pname ids in
+        ignore (PathMap.find path by_path);
+        ids (* do nothing if (pname, path) was seen *)
+      with Not_found ->
+        descend (add pname path ids) pname path
+    and descend ids pname = function
       | Pstart _ -> ids
       | Pnode (_, _, _, path, _, _)
       | Pcall (path, _, ExecSkipped _, _) ->
-          go ids path
-      | Pjoin (path1, path2, _)
-      | Pcall (path1, _, ExecCompleted path2, _) ->
-          go (go ids path1) path2 in
-    (go PathMap.empty path, next_id)
-*)
+          go ids pname path
+      | Pjoin (path1, path2, _) ->
+          go (go ids pname path1) pname path2
+      | Pcall (path1, pname2, ExecCompleted path2, _) ->
+          go (go ids pname path1) pname2 path2 in
+    let ids = go ProcMap.empty pname path in
+    let p_ids = (* drop by_node, and convert by_path to declared return type *)
+      let g pname path = ProcPathMap.add (pname, path) in
+      let f pname (by_path, _by_node) = PathMap.fold (g pname) by_path in
+      ProcMap.fold f ids ProcPathMap.empty in
+    (p_ids, next_id)
 
   (* To be memoized below. *)
   let get_starts get_starts' pname = function
@@ -548,8 +590,9 @@ end = struct
     ignore (memo pname path);
     !cache
 
-  let get_calls pname path =
-    let ids, next_id = get_unique_ids pname path in (* TODO: ids by node *)
+  let get_calls ?(coalesce = false) pname path =
+    let get_ids = if coalesce then get_path_ids else get_unique_ids in
+    let ids, next_id = get_ids pname path in
     let i pname path =
       try ProcPathMap.find (pname, path) ids
       with Not_found -> L.(die InternalError) "Path without ID." in

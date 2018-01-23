@@ -72,8 +72,9 @@ module Path : sig
   val join : t -> t -> t
   (** join two paths *)
 
-  val get_calls : Typ.Procname.t -> t -> path_calls
-  (** keep only information about calls *)
+  val get_calls : ?coalesce:bool -> Typ.Procname.t -> t -> path_calls
+  (** keep only information about calls, perhaps coalescing vertices that
+  correspond to the same place in the program *)
 
   val pp : Format.formatter -> t -> unit
   (** pretty print a path *)

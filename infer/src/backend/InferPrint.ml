@@ -997,7 +997,7 @@ let dump_paths (_fname, summary) =
       F.fprintf fmt "@[<2>(PATH:@\n";
       F.fprintf fmt "%a" Paths.Path.pp path;
       F.fprintf fmt "@]@\n)@\n";
-      let graph = Paths.Path.get_calls proc_name path in
+      let graph = Paths.Path.get_calls ~coalesce:Config.coalesce_paths proc_name path in
       F.fprintf fmt "@[<2>(digraph sfg {@\n";
       F.fprintf fmt "// START %d STOP %d@\n" graph.Paths.start_node graph.Paths.stop_node;
       let pp_k fmt = Paths.(function
