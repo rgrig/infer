@@ -10,6 +10,17 @@
 
 open! IStd
 
+(* For temporal properties on sequences of method calls. This is a graph whose
+vertices are integers. *)
+type edge_label =
+  | Epsilon
+  | Call of Typ.Procname.t
+  | Return of Typ.Procname.t
+type path_calls =
+  { start_node : int
+  ; stop_node : int
+  ; edges : (int * int * edge_label) list }
+
 (** Execution Paths *)
 
 module Path : sig
@@ -60,6 +71,9 @@ module Path : sig
 
   val join : t -> t -> t
   (** join two paths *)
+
+  val get_calls : Typ.Procname.t -> t -> path_calls
+  (** keep only information about calls *)
 
   val pp : Format.formatter -> t -> unit
   (** pretty print a path *)

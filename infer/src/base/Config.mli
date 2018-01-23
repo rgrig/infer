@@ -137,6 +137,8 @@ val default_in_zip_results_dir : string
 
 val dotty_output : string
 
+val dump_paths : bool
+
 val events_dir_name : string
 
 val etc_dir : string

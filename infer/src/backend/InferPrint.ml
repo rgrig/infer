@@ -982,11 +982,49 @@ let finalize_and_close_files format_list_by_kind stats =
   List.iter ~f:close_files_of_report_kind format_list_by_kind
 
 
+let dump_paths (_fname, summary) =
+  let proc_name = Specs.get_proc_name summary in
+  let fname = Typ.Procname.to_filename proc_name in
+  F.printf "Dumping paths for %s@\n%!" fname;
+  Unix.close DB.Results_dir.(create_file Abs_root ["paths"; fname]);
+  let fname = DB.Results_dir.(path_to_filename Abs_root ["paths"; fname]) in
+  let fname = DB.filename_to_string fname in
+  let o_outfile = Utils.create_outfile fname in
+  let dump_specs outfile specs =
+    let specs = Specs.normalized_specs_to_specs specs in
+    let fmt = outfile.Utils.fmt in
+    let dump_path (_post, path) =
+      F.fprintf fmt "@[<2>(PATH:@\n";
+      F.fprintf fmt "%a" Paths.Path.pp path;
+      F.fprintf fmt "@]@\n)@\n";
+      let graph = Paths.Path.get_calls proc_name path in
+      F.fprintf fmt "@[<2>(digraph sfg {@\n";
+      F.fprintf fmt "// START %d STOP %d@\n" graph.Paths.start_node graph.Paths.stop_node;
+      let pp_k fmt = Paths.(function
+        | Epsilon -> F.fprintf fmt "ε"
+        | Call p -> F.fprintf fmt "call %s" (Typ.Procname.to_filename p)
+        | Return p -> F.fprintf fmt "return %s" (Typ.Procname.to_filename p)) in
+      let pp_edge (src, tgt, kind) =
+        F.fprintf fmt "  %d -> %d [label=\"%a\"];@\n" src tgt pp_k kind in
+      List.iter ~f:pp_edge graph.Paths.edges;
+      F.fprintf fmt "@]@\n})@\n";
+    in
+    let dump_one_spec spec =
+      F.fprintf fmt "@[<2>(PRE: %a@\n" (Specs.Jprop.pp_short Pp.text) spec.Specs.pre;
+      List.iter ~f:dump_path spec.Specs.posts;
+      F.fprintf fmt "@]@\n)@\n%!" in
+    List.iter ~f:dump_one_spec specs
+  in
+  let o_iter2 ~f a b = match a, b with Some a, Some b -> f a b | _ -> () in
+  o_iter2 ~f:dump_specs o_outfile Specs.(summary.payload.preposts);
+  Option.iter ~f:Utils.close_outf o_outfile
+
 let pp_summary_and_issues formats_by_report_kind issue_formats =
   let stats = Stats.create () in
   let linereader = Printer.LineReader.create () in
   let filters = Inferconfig.create_filters Config.analyzer in
   let iterate_summaries = AnalysisResults.get_summary_iterator () in
+  if Config.dump_paths then iterate_summaries dump_paths;
   let all_issues = ref [] in
   iterate_summaries (fun (_, summary) ->
       all_issues

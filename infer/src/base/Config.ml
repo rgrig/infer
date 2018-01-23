@@ -1189,6 +1189,10 @@ and dump_duplicate_symbols =
     ~in_help:CLOpt.([(Capture, manual_clang)])
     "Dump all symbols with the same name that are defined in more than one file."
 
+and dump_paths =
+  CLOpt.mk_bool ~long:"dump-paths"
+    ~in_help:CLOpt.([Report, manual_generic])
+    "Print stats about preconditions to standard output"
 
 and eradicate_condition_redundant =
   CLOpt.mk_bool ~long:"eradicate-condition-redundant" "Condition redundant warnings"
@@ -2382,6 +2386,8 @@ and differential_filter_set = !differential_filter_set
 and dotty_cfg_libs = !dotty_cfg_libs
 
 and dump_duplicate_symbols = !dump_duplicate_symbols
+
+and dump_paths = !dump_paths
 
 and eradicate = !eradicate
 

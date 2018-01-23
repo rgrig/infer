@@ -15,6 +15,15 @@ open! IStd
 module L = Logging
 module F = Format
 
+type edge_label =
+  | Epsilon
+  | Call of Typ.Procname.t
+  | Return of Typ.Procname.t
+type path_calls =
+  { start_node : int
+  ; stop_node : int
+  ; edges : (int * int * edge_label) list }
+
 (* =============== START of the Path module ===============*)
 
 module Path : sig
@@ -61,6 +70,9 @@ module Path : sig
 
   val join : t -> t -> t
   (** join two paths *)
+
+  val get_calls : Typ.Procname.t -> t -> path_calls
+  (** keep only information about calls *)
 
   val pp : Format.formatter -> t -> unit
   (** pretty print a path *)
@@ -155,8 +167,13 @@ end = struct
 
   let join p1 p2 = Pjoin (p1, p2, get_dummy_stats ())
 
+  let equal path1 path2 =
+    Int.equal (compare path1 path2) 0
+
   let add_call include_subtrace p pname p_sub =
-    if include_subtrace then Pcall (p, pname, ExecCompleted p_sub, get_dummy_stats ()) else p
+    if include_subtrace
+    then Pcall (p, pname, ExecCompleted p_sub, get_dummy_stats ())
+    else p
 
 
   let add_skipped_call p pname reason loc_opt =
@@ -425,6 +442,9 @@ end = struct
             (* delay paths occurring in a join *)
             add_delayed p1 ; add_delayed p2 ; add_path p1 ; add_path p2
     in
+    let pp_node f n =
+      let module N = Procdesc.Node in
+      F.fprintf f "n%a[%a]" N.pp n Location.pp_file_pos (N.get_loc n) in
     let rec doit n fmt path =
       try
         if n > 0 then raise Not_found ;
@@ -433,9 +453,9 @@ end = struct
       with Not_found ->
         match path with
         | Pstart (node, _) ->
-            F.fprintf fmt "n%a" Procdesc.Node.pp node
+            F.fprintf fmt "%a" pp_node node
         | Pnode (node, _, session, path, _, _) ->
-            F.fprintf fmt "%a(s%d).n%a" (doit (n - 1)) path (session :> int) Procdesc.Node.pp node
+            F.fprintf fmt "%a(s%d).%a" (doit (n - 1)) path (session :> int) pp_node node
         | Pjoin (path1, path2, _) ->
             F.fprintf fmt "(%a + %a)" (doit (n - 1)) path1 (doit (n - 1)) path2
         | Pcall (path1, _, ExecCompleted path2, _) ->
@@ -446,10 +466,121 @@ end = struct
     let print_delayed () =
       if not (PathMap.is_empty !delayed) then
         let f path num = F.fprintf fmt "P%d = %a@\n" num (doit 1) path in
-        F.fprintf fmt "where@\n" ;
+        F.fprintf fmt "@\nwhere@\n" ;
         PathMap.iter f !delayed
     in
     add_delayed path ; doit 0 fmt path ; print_delayed ()
+
+  module ProcPathMap = Caml.Map.Make (struct
+    type nonrec t = Typ.Procname.t * t
+    let compare (n1, p1) (n2, p2) = (* @@deriving confuses merlin :( *)
+      let nc = Typ.Procname.compare n1 n2 in
+      if not (Int.equal nc 0) then nc
+      else compare p1 p2
+  end)
+
+  (* For debug. *)
+  let get_unique_ids pname path : (int ProcPathMap.t * (unit -> int)) =
+    let next_id = let n = ref (-1) in fun () -> incr n; !n in
+    let add pname path ids =
+      ProcPathMap.add (pname, path) (next_id ()) ids in
+    let rec go ids pname path =
+      if ProcPathMap.mem (pname, path) ids
+      then ids
+      else descend (add pname path ids) pname path
+    and descend ids pname = function
+      | Pstart _ -> ids
+      | Pnode (_, _, _, path, _, _)
+      | Pcall (path, _, ExecSkipped _, _) ->
+          go ids pname path
+      | Pjoin (path1, path2, _) ->
+          go (go ids pname path1) pname path2
+      | Pcall (path1, pname2, ExecCompleted path2, _) ->
+          go (go ids pname path1) pname2 path2 in
+    (go ProcPathMap.empty pname path, next_id)
+
+(* CONTINUE HERE
+  let get_unique_node_ids path : (int PathMap.t * (unit -> int)) =
+    let next_id = let n = ref (-1) in fun () -> incr n; !n in
+    let add path p_ids n_ids = PathMap.add path (next_id ()) ids in
+    let rec go ids path =
+      if PathMap.mem path ids then ids else descend (add path ids) path
+    and descend ids = function
+      | Pstart _ -> ids
+      | Pnode (_, _, _, path, _, _)
+      | Pcall (path, _, ExecSkipped _, _) ->
+          go ids path
+      | Pjoin (path1, path2, _)
+      | Pcall (path1, _, ExecCompleted path2, _) ->
+          go (go ids path1) path2 in
+    (go PathMap.empty path, next_id)
+*)
+
+  (* To be memoized below. *)
+  let get_starts get_starts' pname = function
+    | Pstart _ as p ->
+        (pname, p)
+    | Pnode (_, _, _, p, _, _) ->
+        get_starts' pname p
+    | Pcall (p, pname', ExecCompleted p_sub, _) ->
+        ignore (get_starts' pname' p_sub);
+        get_starts' pname p
+    | Pcall (p, _, _, _) ->
+        get_starts' pname p
+    | Pjoin (p1, p2, _) ->
+        let s1, s2 = get_starts' pname p1, get_starts' pname p2 in
+        let n1, sp1 = s1 in
+        let n2, sp2 = s2 in
+        if not (Typ.Procname.equal n1 n2 && equal sp1 sp2) then
+          L.(die InternalError) "Path with two starts?";
+        s1
+
+  (* Redefines and memoizes the one from above. Also, returns all cache! *)
+  let get_starts pname path : (Typ.Procname.t * t) ProcPathMap.t =
+    let module C = ProcPathMap in
+    let cache = ref C.empty in
+    let rec memo pname path =
+      try C.find (pname, path) !cache
+      with Not_found ->
+        let start = get_starts memo pname path in
+        cache := C.add (pname, path) start !cache;
+        start in
+    ignore (memo pname path);
+    !cache
+
+  let get_calls pname path =
+    let ids, next_id = get_unique_ids pname path in (* TODO: ids by node *)
+    let i pname path =
+      try ProcPathMap.find (pname, path) ids
+      with Not_found -> L.(die InternalError) "Path without ID." in
+    let s pname =
+      let starts = get_starts pname path in
+      (fun p -> (
+        try
+          let pname, path = ProcPathMap.find (pname, p) starts in
+          i pname path
+        with Not_found -> L.(die InternalError) "Path without a start.")) in
+    let mk_edges (pname_r, r) ir edges = match r with (* p, q, r are paths *)
+      | Pstart _ ->
+          edges
+      | Pnode (_, _, _, p, _, _) ->
+          (i pname_r p, ir, Epsilon) :: edges
+      | Pcall (p, pname, ExecSkipped _, _) ->
+          let j = next_id () in
+          (i pname_r p, j, Call pname) :: (j, ir, Return pname) :: edges
+      | Pcall (p, pname_q, ExecCompleted q, _) ->
+          if Int.equal (s pname_r p) (s pname_q q) then
+            L.(die InternalError) "Same start??";
+          (i pname_r p, s pname_q q, Call pname) :: (i pname_q q, ir, Return pname) :: edges
+      | Pjoin (p, q, _) ->
+          (i pname_r p, ir, Epsilon) :: (i pname_r q, ir, Epsilon) :: edges
+    in
+    let edges = ProcPathMap.fold mk_edges ids [] in
+    { start_node = s pname path
+    ; stop_node = i pname path
+    ; edges }
+
+  (* TODO: Remove Epsilon edges. *)
 
 
   let d p = L.add_print_action (L.PTpath, Obj.repr p)
