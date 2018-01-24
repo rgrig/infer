@@ -71,7 +71,9 @@ module Path : sig
   val join : t -> t -> t
   (** join two paths *)
 
-  val get_calls : ?coalesce:bool -> Typ.Procname.t -> t -> path_calls
+  val get_calls :
+    ?coalesce:bool -> ?with_epsilon:bool
+    -> Typ.Procname.t -> t -> path_calls
   (** keep only information about calls, perhaps coalescing vertices that
   correspond to the same place in the program *)
 
@@ -474,11 +476,43 @@ end = struct
     in
     add_delayed path ; doit 0 fmt path ; print_delayed ()
 
+
+  (* Shrinks paths x1 -ε-> x2 -ε-> x3 -ε-> x4 -a-> x5 into arcs x1 -a-> x5.
+  Note that the stop_node becomes unreachable if it is not the target of a
+  non-ε-transition. (FIX?) *)
+  let remove_epsilon (g : path_calls) : path_calls =
+    let starts =
+      let f (_, target, label) = match label with
+        | Epsilon -> []
+        | Call _ | Return _ -> [target] in
+      g.start_node :: List.concat_map ~f g.edges in
+    let module H = Int.Table in
+    let out : int -> (int * edge_label) list =
+      let h = H.create () in
+      let f (source, target, label) =
+        let ts = H.find_or_add h ~default:(fun ()->[]) source in
+        H.set h ~key:source ~data:((target, label) :: ts) in
+      List.iter ~f g.edges;
+      (fun x -> H.find_or_add h ~default:(fun ()->[]) x) in
+    let seen = H.create () in (* TODO: Int.Hash_set missing .mem ?? *)
+    let rec dfs edges source x = if not (H.mem seen x) then begin
+      H.set seen ~key:x ~data:();
+      let do_edge edges (target, label) = match label with
+        | Epsilon -> dfs edges source target
+        | label -> (source, target, label) :: edges in
+      List.fold ~init:edges ~f:do_edge (out x)
+    end else edges in
+    let start_dfs edges source =
+      H.clear seen;
+      dfs edges source source in
+    let edges = List.fold ~init:[] ~f:start_dfs starts in
+    { g with edges }
+
   module ProcPathMap = Caml.Map.Make (struct
     type t = Typ.Procname.t * path [@@deriving compare]
   end)
 
-  (* For debug. *)
+  (* Mostly for debug: a simpler version of [get_path_ids], which is below. *)
   let get_unique_ids pname path : (int ProcPathMap.t * (unit -> int)) =
     let next_id = let n = ref (-1) in fun () -> incr n; !n in
     let add pname path ids =
@@ -590,7 +624,7 @@ end = struct
     ignore (memo pname path);
     !cache
 
-  let get_calls ?(coalesce = false) pname path =
+  let get_calls ?(coalesce = true) ?(with_epsilon = false) pname path =
     let get_ids = if coalesce then get_path_ids else get_unique_ids in
     let ids, next_id = get_ids pname path in
     let i pname path =
@@ -619,11 +653,8 @@ end = struct
           (i pname_r p, ir, Epsilon) :: (i pname_r q, ir, Epsilon) :: edges
     in
     let edges = ProcPathMap.fold mk_edges ids [] in
-    { start_node = s pname path
-    ; stop_node = i pname path
-    ; edges }
-
-  (* TODO: Remove Epsilon edges. *)
+    let result = { start_node = s pname path; stop_node = i pname path; edges } in
+    if with_epsilon then result else remove_epsilon result
 
 
   let d p = L.add_print_action (L.PTpath, Obj.repr p)
