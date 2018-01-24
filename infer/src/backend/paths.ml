@@ -486,24 +486,23 @@ end = struct
         | Epsilon -> []
         | Call _ | Return _ -> [target] in
       g.start_node :: List.concat_map ~f g.edges in
-    let module H = Int.Table in
     let out : int -> (int * edge_label) list =
-      let h = H.create () in
+      let h = Int.Table.create () in
       let f (source, target, label) =
-        let ts = H.find_or_add h ~default:(fun ()->[]) source in
-        H.set h ~key:source ~data:((target, label) :: ts) in
+        let ts = Hashtbl.find_or_add h ~default:(fun ()->[]) source in
+        Hashtbl.set h ~key:source ~data:((target, label) :: ts) in
       List.iter ~f g.edges;
-      (fun x -> H.find_or_add h ~default:(fun ()->[]) x) in
-    let seen = H.create () in (* TODO: Int.Hash_set missing .mem ?? *)
-    let rec dfs edges source x = if not (H.mem seen x) then begin
-      H.set seen ~key:x ~data:();
+      (fun x -> Hashtbl.find_or_add h ~default:(fun ()->[]) x) in
+    let seen = Int.Hash_set.create () in
+    let rec dfs edges source x = if not (Hash_set.mem seen x) then begin
+      Hash_set.add seen x;
       let do_edge edges (target, label) = match label with
         | Epsilon -> dfs edges source target
         | label -> (source, target, label) :: edges in
       List.fold ~init:edges ~f:do_edge (out x)
     end else edges in
     let start_dfs edges source =
-      H.clear seen;
+      Hash_set.clear seen;
       dfs edges source source in
     let edges = List.fold ~init:[] ~f:start_dfs starts in
     { g with edges }

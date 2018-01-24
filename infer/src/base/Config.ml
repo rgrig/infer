@@ -1178,11 +1178,6 @@ and () =
   mk true ~long:"enable-issue-type" ~deprecated:["enable_checks"; "-enable-checks"]
     "Show reports coming from this type of issue. By default, all issue types are enabled except the ones listed in $(b,--disable-issue-type). Note that enabling issue types does not make the corresponding checker run; see individual checker options to turn them on or off."
 
-and coalesce_paths =
-  CLOpt.mk_bool ~long:"coalesce-paths"
-    ~in_help:CLOpt.([Report, manual_generic])
-    "When --dump-paths, coalesce vertices that correspond to the same program location."
-
 and dotty_cfg_libs =
   CLOpt.mk_bool ~deprecated:["dotty_no_cfg_libs"] ~long:"dotty-cfg-libs" ~default:true
     "Print the cfg of the code coming from the libraries"
@@ -1192,11 +1187,6 @@ and dump_duplicate_symbols =
   CLOpt.mk_bool ~long:"dump-duplicate-symbols"
     ~in_help:CLOpt.([(Capture, manual_clang)])
     "Dump all symbols with the same name that are defined in more than one file."
-
-and dump_paths =
-  CLOpt.mk_bool ~long:"dump-paths"
-    ~in_help:CLOpt.([Report, manual_generic])
-    "Print stats about preconditions to standard output"
 
 and eradicate_condition_redundant =
   CLOpt.mk_bool ~long:"eradicate-condition-redundant" "Condition redundant warnings"
@@ -1776,6 +1766,26 @@ and select =
     "Select bug number $(i,N). If omitted, prompt for input."
 
 
+and sfg_coalesce =
+  CLOpt.mk_bool ~long:"sfg-coalesce" ~default:true
+    ~in_help:CLOpt.([Report, manual_generic])
+    "In symbolic flowgraphs, coalesce vertices known to correspond to the same program location."
+
+and sfg_keep_epsilon =
+  CLOpt.mk_bool ~long:"sfg-keep-epsilon"
+    ~in_help:CLOpt.([Report, manual_generic])
+    "In symbolic flowgraphs, do not remove epsilon transitions."
+
+and sfg_output =
+  CLOpt.mk_bool ~long:"sfg-output"
+    ~in_help:CLOpt.([Report, manual_generic])
+    "Output symbolic flowgraphs, in .sfg.dot files."
+
+and sfg_selmon =
+  CLOpt.mk_string_opt ~long:"sfg-selmon"
+    ~in_help:CLOpt.([Report, manual_generic])
+    "Specialize the named monitor for each of the named symbolic flowgraphs."
+
 and siof_safe_methods =
   CLOpt.mk_string_list ~long:"siof-safe-methods"
     ~in_help:CLOpt.([(Analyze, manual_siof)])
@@ -2353,8 +2363,6 @@ and classpath = !classpath
 
 and cluster_cmdline = !cluster
 
-and coalesce_paths = !coalesce_paths
-
 and compute_analytics = !compute_analytics
 
 and continue_capture = !continue
@@ -2392,8 +2400,6 @@ and differential_filter_set = !differential_filter_set
 and dotty_cfg_libs = !dotty_cfg_libs
 
 and dump_duplicate_symbols = !dump_duplicate_symbols
-
-and dump_paths = !dump_paths
 
 and eradicate = !eradicate
 
@@ -2648,6 +2654,14 @@ and select = !select
 and show_buckets = !print_buckets
 
 and show_progress_bar = !progress_bar
+
+and sfg_coalesce = !sfg_coalesce
+
+and sfg_keep_epsilon = !sfg_keep_epsilon
+
+and sfg_output = !sfg_output
+
+and sfg_selmon = !sfg_selmon
 
 and siof = !siof
 

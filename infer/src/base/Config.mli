@@ -123,8 +123,6 @@ val classnames_dir_name : string
 
 val classpath : string option
 
-val coalesce_paths : bool
-
 val cpp_extra_include_dir : string
 
 val duplicates_filename : string
@@ -138,8 +136,6 @@ val default_failure_name : string
 val default_in_zip_results_dir : string
 
 val dotty_output : string
-
-val dump_paths : bool
 
 val events_dir_name : string
 
@@ -242,6 +238,14 @@ val report_nullable_inconsistency : bool
 val reporting_stats_dir_name : string
 
 val save_compact_summaries : bool
+
+val sfg_coalesce : bool
+
+val sfg_keep_epsilon : bool
+
+val sfg_output : bool
+
+val sfg_selmon : string option
 
 val smt_output : bool
 
