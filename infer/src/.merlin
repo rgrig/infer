@@ -46,6 +46,7 @@ PKG oUnit
 PKG oUnit.advanced
 PKG parmap
 PKG ppx_compare
+PKG ppx_sexp_conv
 PKG ptrees
 PKG react
 PKG result

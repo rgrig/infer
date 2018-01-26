@@ -5,6 +5,8 @@ type probability = float
 type letter = string
 type guard = Str.regexp * bool (* re, possibly negated *)
 
+val initial_vertex : vertex
+
 type 'a arc = { arc_label : 'a ; arc_target : vertex }
 type 'a digraph = 'a arc list Int.Table.t
 type dfa = guard digraph * (* final *) vertex
