@@ -1001,11 +1001,13 @@ let sfg_output (_fname, summary) =
     let mon = Selmon.product dfa mc in
     let fmt = monfile.Utils.fmt in
     let pp_arc src Selmon.{ arc_label = (prob, letter); arc_target = tgt } =
-      F.fprintf fmt "  %d -> %d [label=\"%.2f:%s\"];@\n"
+      F.fprintf fmt "%d -> %d [label=\"%.2f:%s\"];@\n"
         src tgt prob letter in
     let pp_vertex ~key:src ~data:arcs =
       List.iter ~f:(pp_arc src) arcs in
     F.fprintf fmt "@[<2>digraph mon {@\n";
+    F.fprintf fmt "%d [style=\"filled\" fillcolor=\"yellow\"]; // INITIAL@\n"
+      Selmon.initial_vertex;
     Int.Table.iteri mon ~f:pp_vertex;
     F.fprintf fmt "@]@\n}@\n" in
   let dump_specs sfgfile specs =
@@ -1025,10 +1027,7 @@ let sfg_output (_fname, summary) =
       in
       F.fprintf fmt "@[<2>digraph sfg {@\n";
       F.fprintf fmt "// START %d STOP %d@\n" graph.Paths.start_node graph.Paths.stop_node;
-      let pp_k fmt = Paths.(function
-        | Epsilon -> F.fprintf fmt "ε"
-        | Call p -> F.fprintf fmt "call %s" (Typ.Procname.to_filename p)
-        | Return p -> F.fprintf fmt "return %s" (Typ.Procname.to_filename p)) in
+      let pp_k fmt label = F.fprintf fmt "%s" (Selmon.string_of_label label) in
       let pp_edge (src, tgt, kind) =
         F.fprintf fmt "  %d -> %d [label=\"%a\"];@\n" src tgt pp_k kind in
       List.iter ~f:pp_edge graph.Paths.edges;

@@ -18,3 +18,5 @@ val cost_optim : mc -> float
 val mc_of_calls : Paths.path_calls -> mc (* probabilities are random *)
 
 val load_monitor : string -> dfa option
+
+val string_of_label : Paths.edge_label -> string

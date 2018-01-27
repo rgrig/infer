@@ -4,7 +4,7 @@ module L = Logging
 type vertex = int
 type probability = float
 type letter = string
-type guard = Str.regexp * bool (* re, possibly negated *)
+type guard = Str.regexp * bool (* true = must match; false = must not match *)
 
 let initial_vertex = 0
 
@@ -13,15 +13,16 @@ type 'a digraph = 'a arc list Int.Table.t
 type dfa = guard digraph * (* final *) vertex
 type mc = (probability * letter) digraph
 
+let make_next_id () =
+  let n = ref initial_vertex in
+  (fun () -> incr n; !n)
 
-let eval_guard (regexp, neg) (_probability, letter) =
-  not (Bool.equal neg (Str.string_match regexp letter 0))
+let eval_guard (regexp, pos) (_probability, letter) =
+  Bool.equal pos (Str.string_match regexp letter 0)
 
 let product ((dfa, _dfa_final) : dfa) (markov_chain : mc) : mc =
   let state : (vertex * vertex) -> vertex =
-    let next_id : unit -> int =
-      let n = ref initial_vertex in
-      (fun () -> incr n; !n) in
+    let next_id = make_next_id () in
     let module IP = struct
       type t = int * int [@@deriving compare,sexp_of]
       let hash (x, y) = x + y (* TODO: @@deriving hash *)
@@ -46,6 +47,7 @@ let product ((dfa, _dfa_final) : dfa) (markov_chain : mc) : mc =
       Hashtbl.set result ~key:sq ~data:sq_trans
     end in
   go (initial_vertex, initial_vertex); result
+  (* TODO: minimization goes here *)
 
 let cost_seeall _m =
   L.(die InternalError) "todo"
@@ -53,9 +55,35 @@ let cost_seeall _m =
 let cost_optim _m =
   L.(die InternalError) "todo"
 
-let mc_of_calls _calls =
-  (* CONTINUE HERE *)
-  L.(die InternalError) "todo"
+let string_of_label = Paths.(function
+  | Epsilon -> "ε"
+  | Call proc_name ->
+      Printf.sprintf "CALL %s" (Typ.Procname.to_filename proc_name)
+  | Return proc_name ->
+      Printf.sprintf "RETURN %s" (Typ.Procname.to_filename proc_name))
+
+let mc_of_calls (Paths.{ start_node; edges; _ } : Paths.path_calls) : mc =
+  let mc = Int.Table.create () in
+  let v = (* TODO: refactor; see product *)
+    let next_id = make_next_id () in
+    let cache = Int.Table.create () in
+    Hashtbl.set cache ~key:start_node ~data:initial_vertex;
+    (fun x -> Hashtbl.find_or_add cache ~default:next_id x) in
+  let do_edge (source, target, label) =
+    let arc = { arc_label = string_of_label label; arc_target = v target } in
+    let old_arcs = Hashtbl.find_or_add mc ~default:(fun ()->[]) (v source) in
+    Hashtbl.set mc ~key:(v source) ~data:(arc :: old_arcs) in
+  let add_probabilities arcs =
+    let n = List.length arcs in
+    let xs = List.init (n - 1) ~f:(fun _ -> Random.float_range 0.0 1.0) in
+    let xs = List.sort ~cmp:Float.compare xs in
+    let probs = List.map2_exn ~f:(-.) (xs @ [1.0]) (0.0 :: xs) in
+    let add_one p { arc_label; arc_target } =
+      { arc_label = (p, arc_label); arc_target } in
+    List.map2_exn ~f:add_one probs arcs
+  in
+  List.iter ~f:do_edge edges;
+  Hashtbl.map ~f:add_probabilities mc
 
 let load_monitor _filename =
   (* TODO *)
