@@ -1006,6 +1006,7 @@ let sfg_output (_fname, summary) =
     let pp_vertex ~key:src ~data:arcs =
       List.iter ~f:(pp_arc src) arcs in
     F.fprintf fmt "@[<2>digraph mon {@\n";
+    F.fprintf fmt "// SIZE %d@\n" (Selmon.size mon);
     F.fprintf fmt "%d [style=\"filled\" fillcolor=\"yellow\"]; // INITIAL@\n"
       Selmon.initial_vertex;
     Int.Table.iteri mon ~f:pp_vertex;

@@ -12,6 +12,8 @@ type 'a digraph = 'a arc list Int.Table.t
 type dfa = guard digraph * (* final *) vertex
 type mc = (probability * letter) digraph
 
+val size : 'a digraph -> int
+
 val product : dfa -> mc -> mc
 val cost_seeall : mc -> float
 val cost_optim : mc -> float
