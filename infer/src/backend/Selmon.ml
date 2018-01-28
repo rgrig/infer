@@ -34,15 +34,114 @@ module IntPair = struct
   let hash (x, y) = 31 * Int.hash x + Int.hash y (* TODO: @@deriving hash *)
 end
 
+type decision = Yes | No | Maybe
+
+let fold_arcs
+  (g : 'a digraph)
+  ~(init : 'b)
+  ~(f : ('b -> source:vertex -> label:'a -> target:vertex -> 'b))
+=
+  let do_arc source acc { arc_label; arc_target } =
+    f acc ~source ~label:arc_label ~target:arc_target in
+  let do_vertex ~key:source ~data:outgoing init =
+    List.fold ~init ~f:(do_arc source) outgoing in
+  Hashtbl.fold g ~init ~f:do_vertex
+
+let iter_arcs
+  (g : 'a digraph)
+  ~(f : (source:vertex -> label:'a -> target:vertex -> unit))
+=
+  let f () ~source ~label ~target = f ~source ~label ~target in
+  fold_arcs ~init:() ~f g
+
+let find_sccs markov_chain =
+  let rev = Int.Table.create () in
+  let rev_arc ~source ~label:_ ~target =
+    let old = Hashtbl.find_or_add rev ~default:(fun ()->[]) target in
+    Hashtbl.set rev ~key:target ~data:(source :: old) in
+  iter_arcs ~f:rev_arc markov_chain;
+  let seen1 = Int.Hash_set.create () in
+  let rec dfs1 rev_post x = if not (Hash_set.mem seen1 x) then begin
+    Hash_set.add seen1 x;
+    let out = Hashtbl.find_or_add rev ~default:(fun ()->[]) x in
+    x :: List.fold ~init:rev_post ~f:dfs1 out
+  end else rev_post in
+  let rev_post = List.fold ~init:[] ~f:dfs1 (Hashtbl.keys markov_chain) in
+  let sccs = Int.Table.create () in
+  let rec dfs2 rep x = if not (Hashtbl.mem sccs x) then begin
+    Hashtbl.set sccs ~key:x ~data:rep;
+    let out = Hashtbl.find_or_add markov_chain ~default:(fun ()->[]) x in
+    let f { arc_target; _ } = dfs2 rep arc_target in
+    List.iter ~f out
+  end in
+  let start_dfs2 x = dfs2 x x in
+  List.iter ~f:start_dfs2 rev_post;
+  sccs
+
+let get_deciding markov_chain is_final =
+  let sccs = find_sccs markov_chain in
+  let scc_digraph = Int.Table.create () in
+  let make_scc_arc ~source ~label:_ ~target =
+    let s_scc = Hashtbl.find_exn sccs source in
+    let t_scc = Hashtbl.find_exn sccs target in
+    let old = Hashtbl.find_or_add scc_digraph ~default:(fun ()->[]) s_scc in
+    Hashtbl.set scc_digraph ~key:s_scc ~data:(t_scc :: old) in
+  iter_arcs ~f:make_scc_arc markov_chain;
+  let seen = Int.Hash_set.create () in
+  let decision = Int.Table.create () in
+  let rec dfs x =
+    assert (not (Hashtbl.mem decision x));
+    let do_arc (all_yes, all_no, _some) arc_target =
+      let is_s = Hash_set.mem seen arc_target in
+      let is_d = Hashtbl.mem decision arc_target in
+      if is_s && not is_d
+      then L.(die InternalError) "scc_digraph should be acyclic"
+      else begin
+        if not is_s then dfs arc_target;
+        (match Hashtbl.find_exn decision arc_target with
+        | Yes -> (all_yes, false, true)
+        | No -> (false, all_no, true)
+        | Maybe -> (false, false, true))
+    end in
+    let outgoing = Hashtbl.find_exn scc_digraph x in
+    let all_yes, all_no, some =
+      List.fold ~init:(true,true,false) ~f:do_arc outgoing in
+    let t =
+      if some && all_yes then Yes
+      else if all_no then No
+      else Maybe in
+    Hashtbl.set decision ~key:x ~data:t
+  in
+  let tag_if_final x =
+    if is_final x then
+      let c = Hashtbl.find_exn sccs x in
+      Hashtbl.set decision ~key:c ~data:Yes
+  in
+  Hashtbl.iter_keys ~f:tag_if_final markov_chain;
+  let maybe_dfs x =
+    if not (Hashtbl.mem decision x) then dfs x in
+  Hashtbl.iter_keys ~f:maybe_dfs scc_digraph;
+  let decide_yes = ref [] in
+  let decide_no = ref [] in
+  let bin_it x =
+    let c = Hashtbl.find_exn sccs x in
+    (match Hashtbl.find_exn decision c with
+    | Yes -> decide_yes := x :: !decide_yes
+    | No -> decide_no := x :: !decide_no
+    | _ -> ()) in
+  Hashtbl.iter_keys ~f:bin_it markov_chain;
+  (!decide_yes, !decide_no)
 
 (* NOTE: does not glue if markov component is distinct *)
-let minimize_product markov_chain _dfa_final pair =
+let minimize_product markov_chain dfa_final pair =
   assert (Int.equal initial_vertex 0); (* fails badly otherwise :( *)
   let keys_of h = List.sort ~cmp:Int.compare (Hashtbl.keys h) in
   let old_vertices = keys_of markov_chain in
+  let old_decide_yes, old_decide_no =
+    get_deciding markov_chain (fun sq -> Int.equal dfa_final (snd (pair sq))) in
   let check_keys h =
     assert (List.equal ~equal:Int.equal old_vertices (keys_of h)) in
-  let initial_classes = (* each MC state is an initial class *)
+  let initial_classes = (* FIX: classes should be MCx{maybe,y,n} *)
     let h = Int.Table.create () in
     let f sq = Hashtbl.set h ~key:sq ~data:(fst (pair sq)) in
     Hashtbl.iter_keys ~f markov_chain; h in
@@ -111,9 +210,13 @@ let minimize_product markov_chain _dfa_final pair =
       Hashtbl.set small_mc ~key:nx ~data:narcs
     end in
   Hashtbl.iteri ~f:min_vertex markov_chain;
+  let map_vertices (xs : vertex list) : vertex list = (* image via classes *)
+    let h = Int.Hash_set.create () in
+    List.iter ~f:(Hash_set.add h) xs;
+    Hash_set.to_list h in
   { mon_mc = small_mc
-  ; mon_decide_yes = [] (* TODO *)
-  ; mon_decide_no = [] (* TODO *) }
+  ; mon_decide_yes = map_vertices old_decide_yes
+  ; mon_decide_no = map_vertices old_decide_no }
 
 let product ((dfa, dfa_final) : dfa) (markov_chain : mc) : monitor =
   let
