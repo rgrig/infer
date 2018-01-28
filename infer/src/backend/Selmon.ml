@@ -12,6 +12,10 @@ type 'a arc = { arc_label : 'a ; arc_target : vertex }
 type 'a digraph = 'a arc list Int.Table.t
 type dfa = guard digraph * (* final *) vertex
 type mc = (probability * letter) digraph
+type monitor =
+  { mon_mc : mc
+  ; mon_decide_yes : vertex list
+  ; mon_decide_no : vertex list }
 
 let make_next_id last =
   let n = ref last in
@@ -24,25 +28,28 @@ let size g =
   let vertex_size ~key:_ ~data:arcs zero = zero + 1 + List.length arcs in
   Hashtbl.fold ~init:0 ~f:vertex_size g
 
-(* TODO: the treatment of initial_vertex is super-annoying *)
-let minimize_product markov_chain dfa_final pair =
+
+module IntPair = struct
+  type t = int * int [@@deriving compare,sexp_of]
+  let hash (x, y) = 31 * Int.hash x + Int.hash y (* TODO: @@deriving hash *)
+end
+
+
+(* NOTE: does not glue if markov component is distinct *)
+let minimize_product markov_chain _dfa_final pair =
   assert (Int.equal initial_vertex 0); (* fails badly otherwise :( *)
-  let is_final x =
-    let _, q = pair x in
-    Int.equal q dfa_final in
-  let initial_classes =
-    (* CONTINUE HERE: initial partition must distinguish by markov component of state *)
+  let keys_of h = List.sort ~cmp:Int.compare (Hashtbl.keys h) in
+  let old_vertices = keys_of markov_chain in
+  let check_keys h =
+    assert (List.equal ~equal:Int.equal old_vertices (keys_of h)) in
+  let initial_classes = (* each MC state is an initial class *)
     let h = Int.Table.create () in
-    let a, b =
-      assert (not (Int.equal initial_vertex 1));
-      if is_final initial_vertex
-      then (initial_vertex, 1)
-      else (1, initial_vertex) in
-    let f x = Hashtbl.set h ~key:x ~data:(if is_final x then a else b) in
+    let f sq = Hashtbl.set h ~key:sq ~data:(fst (pair sq)) in
     Hashtbl.iter_keys ~f markov_chain; h in
   let rec loop (old_classes : int Int.Table.t) =
-    let next_class = make_next_id (-1) in
-    let new_classes = Int.Table.create () in
+    check_keys old_classes;
+    let next_refinement = make_next_id (-1) in
+    let refinement = Int.Table.create () in
     let module SIL = struct
       type t = (string * int) list [@@deriving compare,sexp_of]
       let rec hash = function (* TODO: deriving *)
@@ -62,15 +69,26 @@ let minimize_product markov_chain dfa_final pair =
         let cs = String.compare s1 s2 in
         if Int.equal cs 0 then Int.compare x1 x2 else cs in
       let ts = List.sort ~cmp ts in
-      let nc = Hashtbl.find_or_add by_targets ~default:next_class ts in
-      Hashtbl.set new_classes ~key:x ~data:nc in
-    (* make sure its class is initial_vertex *)
-    do_vertex ~key:initial_vertex ~data:(Hashtbl.find_exn markov_chain initial_vertex);
+      let nc = Hashtbl.find_or_add by_targets ~default:next_refinement ts in
+      Hashtbl.set refinement ~key:x ~data:nc in
     Hashtbl.iteri ~f:do_vertex markov_chain;
-    let same =
-      let xs = List.sort ~cmp:Int.compare (Hashtbl.keys old_classes) in
-      let ys = List.sort ~cmp:Int.compare (Hashtbl.keys new_classes) in
-      assert (List.equal ~equal:Int.equal xs ys);
+    check_keys refinement;
+    let new_classes =
+      let h = Int.Table.create () in
+      let g = Hashtbl.create (module IntPair) () in
+      let cr x = (* old-class and refinement of vertex x *)
+        ( Hashtbl.find_exn old_classes x
+        , Hashtbl.find_exn refinement x ) in
+      let iv_oc, iv_r = cr 0 in
+      assert (Int.equal iv_oc 0);
+      Hashtbl.set g ~key:(iv_oc,iv_r) ~data:0; (* initial_vertex *)
+      let next_class = make_next_id 0 in
+      let do_x x =
+        let nc = Hashtbl.find_or_add g ~default:next_class (cr x) in
+        Hashtbl.set h ~key:x ~data:nc in
+      List.iter ~f:do_x old_vertices; h in
+    check_keys new_classes;
+    let same = (* TODO: simplify *)
       let h = Int.Table.create () in
       let f x =
         let co = Hashtbl.find_exn old_classes x in
@@ -78,7 +96,7 @@ let minimize_product markov_chain dfa_final pair =
         (match Hashtbl.find h co with
         | Some cn2 -> Int.equal cn cn2
         | None -> Hashtbl.set h ~key:co ~data:cn; true) in
-      List.for_all ~f xs in
+      List.for_all ~f old_vertices in
     if same then old_classes else loop new_classes in
   let classes = loop initial_classes in
   assert (Option.equal Int.equal
@@ -93,18 +111,17 @@ let minimize_product markov_chain dfa_final pair =
       Hashtbl.set small_mc ~key:nx ~data:narcs
     end in
   Hashtbl.iteri ~f:min_vertex markov_chain;
-  small_mc
+  { mon_mc = small_mc
+  ; mon_decide_yes = [] (* TODO *)
+  ; mon_decide_no = [] (* TODO *) }
 
-let product ((dfa, dfa_final) : dfa) (markov_chain : mc) : mc =
+let product ((dfa, dfa_final) : dfa) (markov_chain : mc) : monitor =
   let
     (new_state : (vertex * vertex) -> vertex),
     (old_state : vertex -> (vertex * vertex))
   =
     let next_id = make_next_id initial_vertex in
-    let module IP = struct
-      type t = int * int [@@deriving compare,sexp_of]
-      let hash (x, y) = 31 * Int.hash x + Int.hash y (* TODO: @@deriving hash *)
-    end in
+    let module IP = IntPair in
     let new_of_old = Hashtbl.create (module IP) () in
     let old_of_new = Int.Table.create () in
     Hashtbl.set new_of_old ~key:(initial_vertex, initial_vertex) ~data:initial_vertex;
@@ -175,7 +192,7 @@ let mc_of_calls (Paths.{ start_node; edges; _ } : Paths.path_calls) : mc =
   List.iter ~f:do_edge edges;
   Hashtbl.map ~f:add_probabilities mc
 
-let load_monitor _filename =
+let load_dfa _filename =
   (* TODO *)
   let dfa = Int.Table.create () in
   Hashtbl.set dfa

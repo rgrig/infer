@@ -994,7 +994,7 @@ let sfg_output (_fname, summary) =
     | None -> None
     | Some mname ->
         let o_monfile = Utils.create_outfile (Printf.sprintf "%s.mon.dot" fname) in
-        let o_mondfa = Selmon.load_monitor mname in
+        let o_mondfa = Selmon.load_dfa mname in
         Option.both o_monfile o_mondfa in
   let dump_monitor graph (monfile, dfa) =
     let mc = Selmon.mc_of_calls graph in
@@ -1005,11 +1005,14 @@ let sfg_output (_fname, summary) =
         src tgt prob letter in
     let pp_vertex ~key:src ~data:arcs =
       List.iter ~f:(pp_arc src) arcs in
+    let color c m x =
+      F.fprintf fmt "%d [style=\"filled\" fillcolor=\"%s\"] // %s@\n" x c m in
     F.fprintf fmt "@[<2>digraph mon {@\n";
-    F.fprintf fmt "// SIZE %d@\n" (Selmon.size mon);
-    F.fprintf fmt "%d [style=\"filled\" fillcolor=\"yellow\"]; // INITIAL@\n"
-      Selmon.initial_vertex;
-    Int.Table.iteri mon ~f:pp_vertex;
+    F.fprintf fmt "// SIZE %d@\n" Selmon.(size mon.mon_mc);
+    color "yellow" "INITIAL" Selmon.initial_vertex;
+    Int.Table.iteri mon.Selmon.mon_mc ~f:pp_vertex;
+    List.iter ~f:(color "green" "YES") mon.Selmon.mon_decide_yes;
+    List.iter ~f:(color "red" "NO") mon.Selmon.mon_decide_no;
     F.fprintf fmt "@]@\n}@\n" in
   let dump_specs sfgfile specs =
     let debug = false in
