@@ -132,6 +132,15 @@ let get_deciding markov_chain is_final =
   Hashtbl.iter_keys ~f:bin_it markov_chain;
   (!decide_yes, !decide_no)
 
+let dummy_yes =
+  { mon_mc = (let h = Int.Table.create () in Hashtbl.set h ~key:0 ~data:[]; h)
+  ; mon_decide_yes = [ initial_vertex ]
+  ; mon_decide_no = [] }
+let dummy_no =
+  { mon_mc = (let h = Int.Table.create () in Hashtbl.set h ~key:0 ~data:[]; h)
+  ; mon_decide_yes = [ initial_vertex ]
+  ; mon_decide_no = [] }
+
 (* NOTE: does not glue if markov component is distinct *)
 let minimize_product markov_chain dfa_final pair =
   assert (Int.equal initial_vertex 0); (* fails badly otherwise :( *)
@@ -139,84 +148,97 @@ let minimize_product markov_chain dfa_final pair =
   let old_vertices = keys_of markov_chain in
   let old_decide_yes, old_decide_no =
     get_deciding markov_chain (fun sq -> Int.equal dfa_final (snd (pair sq))) in
-  let check_keys h =
-    assert (List.equal ~equal:Int.equal old_vertices (keys_of h)) in
-  let initial_classes = (* FIX: classes should be MCx{maybe,y,n} *)
-    let h = Int.Table.create () in
-    let f sq = Hashtbl.set h ~key:sq ~data:(fst (pair sq)) in
-    Hashtbl.iter_keys ~f markov_chain; h in
-  let rec loop (old_classes : int Int.Table.t) =
-    check_keys old_classes;
-    let next_refinement = make_next_id (-1) in
-    let refinement = Int.Table.create () in
-    let module SIL = struct
-      type t = (string * int) list [@@deriving compare,sexp_of]
-      let rec hash = function (* TODO: deriving *)
-        | [] -> 0
-        | (s, i) :: tail ->
-            String.hash s + 31 * (Int.hash i + 31 * hash tail)
-    end in
-    let by_targets = Hashtbl.create (module SIL) () in
-    let do_vertex ~key:x ~data:arcs =
-      let ts = String.Table.create () in
-      let rec_arc { arc_label = (_prob, l); arc_target } =
-        let cls = Hashtbl.find_exn old_classes arc_target in
-        Hashtbl.set ts ~key:l ~data:cls in
-      List.iter ~f:rec_arc arcs;
-      let ts = Hashtbl.fold ~init:[] ~f:(fun ~key ~data xs -> (key,data)::xs) ts in
-      let cmp (s1, x1) (s2, x2) =
-        let cs = String.compare s1 s2 in
-        if Int.equal cs 0 then Int.compare x1 x2 else cs in
-      let ts = List.sort ~cmp ts in
-      let nc = Hashtbl.find_or_add by_targets ~default:next_refinement ts in
-      Hashtbl.set refinement ~key:x ~data:nc in
-    Hashtbl.iteri ~f:do_vertex markov_chain;
-    check_keys refinement;
-    let new_classes =
-      let h = Int.Table.create () in
-      let g = Hashtbl.create (module IntPair) () in
-      let cr x = (* old-class and refinement of vertex x *)
-        ( Hashtbl.find_exn old_classes x
-        , Hashtbl.find_exn refinement x ) in
-      let iv_oc, iv_r = cr 0 in
-      assert (Int.equal iv_oc 0);
-      Hashtbl.set g ~key:(iv_oc,iv_r) ~data:0; (* initial_vertex *)
-      let next_class = make_next_id 0 in
-      let do_x x =
-        let nc = Hashtbl.find_or_add g ~default:next_class (cr x) in
-        Hashtbl.set h ~key:x ~data:nc in
-      List.iter ~f:do_x old_vertices; h in
-    check_keys new_classes;
-    let same = (* TODO: simplify *)
-      let h = Int.Table.create () in
-      let f x =
-        let co = Hashtbl.find_exn old_classes x in
-        let cn = Hashtbl.find_exn new_classes x in
-        (match Hashtbl.find h co with
-        | Some cn2 -> Int.equal cn cn2
-        | None -> Hashtbl.set h ~key:co ~data:cn; true) in
-      List.for_all ~f old_vertices in
-    if same then old_classes else loop new_classes in
-  let classes = loop initial_classes in
-  assert (Option.equal Int.equal
-    (Hashtbl.find classes initial_vertex) (Some initial_vertex));
-  let small_mc = Int.Table.create () in
-  let min_vertex ~key:x ~data:arcs =
-    let nx = Hashtbl.find_exn classes x in
-    if not (Hashtbl.mem small_mc nx) then begin
-      let min_arc { arc_label; arc_target } =
-        { arc_label; arc_target = Hashtbl.find_exn classes arc_target } in
-      let narcs = List.map ~f:min_arc arcs in
-      Hashtbl.set small_mc ~key:nx ~data:narcs
-    end in
-  Hashtbl.iteri ~f:min_vertex markov_chain;
-  let map_vertices (xs : vertex list) : vertex list = (* image via classes *)
-    let h = Int.Hash_set.create () in
-    List.iter ~f:(Hash_set.add h) xs;
-    Hash_set.to_list h in
-  { mon_mc = small_mc
-  ; mon_decide_yes = map_vertices old_decide_yes
-  ; mon_decide_no = map_vertices old_decide_no }
+  (* TODO: if initial is deciding then return some dummy immediately *)
+  if List.mem ~equal:Int.equal old_decide_yes 0 then dummy_yes
+  else if List.mem ~equal:Int.equal old_decide_no 0 then dummy_no
+  else begin
+    let check_keys h =
+      assert (List.equal ~equal:Int.equal old_vertices (keys_of h)) in
+    let initial_classes = (* classes are MCx{maybe,n,y} *)
+      let classes = Int.Table.create () in
+      let offset = Int.Table.create () in
+      let seto o x = Hashtbl.set offset ~key:x ~data:o in
+      List.iter ~f:(seto 1) old_decide_no;
+      List.iter ~f:(seto 2) old_decide_yes;
+      let f sq =
+        let s, _ = pair sq in
+        let data = 3 * s + (Hashtbl.find_or_add offset ~default:(fun ()->0) sq) in
+        Hashtbl.set classes ~key:sq ~data in
+      Hashtbl.iter_keys ~f markov_chain; classes in
+    assert (Int.equal 0 (Hashtbl.find_exn initial_classes 0));
+    let rec loop (old_classes : int Int.Table.t) =
+      check_keys old_classes;
+      let next_refinement = make_next_id (-1) in
+      let refinement = Int.Table.create () in
+      let module SIL = struct
+        type t = (string * int) list [@@deriving compare,sexp_of]
+        let rec hash = function (* TODO: deriving *)
+          | [] -> 0
+          | (s, i) :: tail ->
+              String.hash s + 31 * (Int.hash i + 31 * hash tail)
+      end in
+      let by_targets = Hashtbl.create (module SIL) () in
+      let do_vertex ~key:x ~data:arcs =
+        let ts = String.Table.create () in
+        let rec_arc { arc_label = (_prob, l); arc_target } =
+          let cls = Hashtbl.find_exn old_classes arc_target in
+          Hashtbl.set ts ~key:l ~data:cls in
+        List.iter ~f:rec_arc arcs;
+        let ts = Hashtbl.fold ~init:[] ~f:(fun ~key ~data xs -> (key,data)::xs) ts in
+        let cmp (s1, x1) (s2, x2) =
+          let cs = String.compare s1 s2 in
+          if Int.equal cs 0 then Int.compare x1 x2 else cs in
+        let ts = List.sort ~cmp ts in
+        let nc = Hashtbl.find_or_add by_targets ~default:next_refinement ts in
+        Hashtbl.set refinement ~key:x ~data:nc in
+      Hashtbl.iteri ~f:do_vertex markov_chain;
+      check_keys refinement;
+      let new_classes =
+        let h = Int.Table.create () in
+        let g = Hashtbl.create (module IntPair) () in
+        let cr x = (* old-class and refinement of vertex x *)
+          ( Hashtbl.find_exn old_classes x
+          , Hashtbl.find_exn refinement x ) in
+        let iv_oc, iv_r = cr 0 in
+        assert (Int.equal iv_oc 0);
+        Hashtbl.set g ~key:(iv_oc,iv_r) ~data:0; (* initial_vertex *)
+        let next_class = make_next_id 0 in
+        let do_x x =
+          let nc = Hashtbl.find_or_add g ~default:next_class (cr x) in
+          Hashtbl.set h ~key:x ~data:nc in
+        List.iter ~f:do_x old_vertices; h in
+      check_keys new_classes;
+      let same = (* TODO: simplify *)
+        let h = Int.Table.create () in
+        let f x =
+          let co = Hashtbl.find_exn old_classes x in
+          let cn = Hashtbl.find_exn new_classes x in
+          (match Hashtbl.find h co with
+          | Some cn2 -> Int.equal cn cn2
+          | None -> Hashtbl.set h ~key:co ~data:cn; true) in
+        List.for_all ~f old_vertices in
+      if same then old_classes else loop new_classes in
+    let classes = loop initial_classes in
+    assert (Option.equal Int.equal
+      (Hashtbl.find classes initial_vertex) (Some initial_vertex));
+    let small_mc = Int.Table.create () in
+    let min_vertex ~key:x ~data:arcs =
+      let nx = Hashtbl.find_exn classes x in
+      if not (Hashtbl.mem small_mc nx) then begin
+        let min_arc { arc_label; arc_target } =
+          { arc_label; arc_target = Hashtbl.find_exn classes arc_target } in
+        let narcs = List.map ~f:min_arc arcs in
+        Hashtbl.set small_mc ~key:nx ~data:narcs
+      end in
+    Hashtbl.iteri ~f:min_vertex markov_chain;
+    let map_vertices (xs : vertex list) : vertex list = (* image via classes *)
+      let h = Int.Hash_set.create () in
+      List.iter ~f:(Hash_set.add h) xs;
+      Hash_set.to_list h in
+    { mon_mc = small_mc
+    ; mon_decide_yes = map_vertices old_decide_yes
+    ; mon_decide_no = map_vertices old_decide_no }
+  end (* the non-dummy case *)
 
 let product ((dfa, dfa_final) : dfa) (markov_chain : mc) : monitor =
   let
