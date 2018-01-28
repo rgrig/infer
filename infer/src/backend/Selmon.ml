@@ -81,16 +81,23 @@ let find_sccs markov_chain =
 let get_deciding markov_chain is_final =
   let sccs = find_sccs markov_chain in
   let scc_digraph = Int.Table.create () in
+  let make_scc_vertex x =
+    let c = Hashtbl.find_exn sccs x in
+    Hashtbl.set scc_digraph ~key:c ~data:[] in
+  Hashtbl.iter_keys ~f:make_scc_vertex markov_chain;
   let make_scc_arc ~source ~label:_ ~target =
     let s_scc = Hashtbl.find_exn sccs source in
     let t_scc = Hashtbl.find_exn sccs target in
-    let old = Hashtbl.find_or_add scc_digraph ~default:(fun ()->[]) s_scc in
-    Hashtbl.set scc_digraph ~key:s_scc ~data:(t_scc :: old) in
+    if not (Int.equal s_scc t_scc) then begin (* NOTE: we drop loops *)
+      let old = Hashtbl.find_exn scc_digraph  s_scc in
+      Hashtbl.set scc_digraph ~key:s_scc ~data:(t_scc :: old)
+    end in
   iter_arcs ~f:make_scc_arc markov_chain;
   let seen = Int.Hash_set.create () in
   let decision = Int.Table.create () in
   let rec dfs x =
     assert (not (Hashtbl.mem decision x));
+    Hash_set.add seen x;
     let do_arc (all_yes, all_no, _some) arc_target =
       let is_s = Hash_set.mem seen arc_target in
       let is_d = Hashtbl.mem decision arc_target in
@@ -115,7 +122,8 @@ let get_deciding markov_chain is_final =
   let tag_if_final x =
     if is_final x then
       let c = Hashtbl.find_exn sccs x in
-      Hashtbl.set decision ~key:c ~data:Yes
+      Hashtbl.set decision ~key:c ~data:Yes;
+      Hash_set.add seen c
   in
   Hashtbl.iter_keys ~f:tag_if_final markov_chain;
   let maybe_dfs x =
@@ -319,11 +327,21 @@ let mc_of_calls (Paths.{ start_node; edges; _ } : Paths.path_calls) : mc =
 
 let load_dfa _filename =
   (* TODO *)
+  assert (Int.equal initial_vertex 0);
   let dfa = Int.Table.create () in
   Hashtbl.set dfa
-    ~key:initial_vertex
+    ~key:0
     ~data:
-      [ { arc_label = (Str.regexp ".*", true)
-      ; arc_target = initial_vertex } ];
-  Some (dfa, initial_vertex)
+      [ { arc_label = (Str.regexp ".*next", true); arc_target = 1 }
+      ; { arc_label = (Str.regexp ".*next", false); arc_target = 0 } ];
+  Hashtbl.set dfa
+    ~key:1
+    ~data:
+      [ { arc_label = (Str.regexp ".*next", true); arc_target = 2 }
+      ; { arc_label = (Str.regexp ".*hasNext", true); arc_target = 0 }
+      ; { arc_label = (Str.regexp ".*next\\|.*hasNext", false); arc_target = 1 } ];
+  Hashtbl.set dfa
+    ~key:2
+    ~data:[ { arc_label = (Str.regexp ".*", true); arc_target = 2 } ];
+  Some (dfa, 2)
 
