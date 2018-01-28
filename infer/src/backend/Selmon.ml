@@ -3,7 +3,7 @@ module L = Logging
 
 type vertex = int
 type probability = float
-type letter = string [@deriving compare,sexp_of]
+type letter = string [@@deriving compare,sexp_of]
 type guard = Str.regexp * bool (* true = must match; false = must not match *)
 
 let initial_vertex = 0
@@ -156,7 +156,6 @@ let minimize_product markov_chain dfa_final pair =
   let old_vertices = keys_of markov_chain in
   let old_decide_yes, old_decide_no =
     get_deciding markov_chain (fun sq -> Int.equal dfa_final (snd (pair sq))) in
-  (* TODO: if initial is deciding then return some dummy immediately *)
   if List.mem ~equal:Int.equal old_decide_yes 0 then dummy_yes
   else if List.mem ~equal:Int.equal old_decide_no 0 then dummy_no
   else begin
@@ -179,7 +178,7 @@ let minimize_product markov_chain dfa_final pair =
       let next_refinement = make_next_id (-1) in
       let refinement = Int.Table.create () in
       let module SIL = struct
-        type t = (string * int) list [@@deriving compare,sexp_of]
+        type t = (letter * int) list [@@deriving compare,sexp_of]
         let rec hash = function (* TODO: deriving *)
           | [] -> 0
           | (s, i) :: tail ->
