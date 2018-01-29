@@ -1,7 +1,7 @@
 open !IStd
 module L = Logging
 
-type vertex = int
+type vertex = int [@@deriving compare,sexp_of]
 type probability = float
 type letter = string [@@deriving compare,sexp_of]
 type guard = Str.regexp * bool (* true = must match; false = must not match *)
@@ -34,9 +34,14 @@ let size g =
   Hashtbl.fold ~init:0 ~f:vertex_size g
 
 
-module IntPair = struct
+module IntIntPair = struct
   type t = int * int [@@deriving compare,sexp_of]
   let hash (x, y) = 31 * Int.hash x + Int.hash y (* TODO: @@deriving hash *)
+end
+
+module StringIntPair = struct
+  type t = string * int [@@ deriving compare,sexp_of]
+  let hash (x, y) = 31 * String.hash x + Int.hash y (* TODO: deriving *)
 end
 
 type decision = Yes | No | Maybe
@@ -207,7 +212,7 @@ let minimize_product markov_chain dfa_final pair =
       check_keys refinement;
       let new_classes =
         let h = Int.Table.create () in
-        let g = Hashtbl.create (module IntPair) () in
+        let g = Hashtbl.create (module IntIntPair) () in
         let cr x = (* old-class and refinement of vertex x *)
           ( Hashtbl.find_exn old_classes x
           , Hashtbl.find_exn refinement x ) in
@@ -266,8 +271,7 @@ let product ((dfa, dfa_final) : dfa) (markov_chain : mc) : monitor =
     (old_state : vertex -> (vertex * vertex))
   =
     let next_id = make_next_id initial_vertex in
-    let module IP = IntPair in
-    let new_of_old = Hashtbl.create (module IP) () in
+    let new_of_old = Hashtbl.create (module IntIntPair) () in
     let old_of_new = Int.Table.create () in
     Hashtbl.set new_of_old ~key:(initial_vertex, initial_vertex) ~data:initial_vertex;
     Hashtbl.set old_of_new ~key:initial_vertex ~data:(initial_vertex, initial_vertex);
@@ -304,8 +308,35 @@ let product ((dfa, dfa_final) : dfa) (markov_chain : mc) : monitor =
 let cost_seeall _m =
   L.(die InternalError) "todo"
 
-let cost_optim _m =
-  L.(die InternalError) "todo"
+let compute_confused_pairs product =
+  (* group arcs in a (nested) map: letter->target->(source list) *)
+  let groups = Hashtbl.create (module StringIntPair) () in
+  let bin_arc ~source ~label:{ nh_letter; nh_target; _ } ~target =
+    let letter = (nh_letter, nh_target) in
+    let g = Hashtbl.find_or_add groups ~default:Int.Table.create letter in
+    let ss = Hashtbl.find_or_add g ~default:(fun ()->[]) target in
+    Hashtbl.set g ~key:target ~data:(source :: ss) in
+  iter_arcs ~f:bin_arc product;
+
+  (* for each letter, cross product sources on different targets *)
+  let do_two_targets pairs (sources1, sources2) =
+    List.unordered_append (List.cartesian_product sources1 sources2) pairs in
+  let do_letter pairs (bin : vertex list Int.Table.t) =
+    let rec make_pairs ps = function (* builds (n choose 2) pairs *)
+      | [] -> ps
+      | x :: xs ->
+          let ps = List.fold ~init:ps ~f:(fun ps y -> (x,y)::ps) xs in
+          make_pairs ps xs in
+    let sss = Hashtbl.data bin in
+    let ssp : (vertex list * vertex list) list = make_pairs [] sss in
+    List.fold ~init:pairs ~f:do_two_targets ssp in
+  List.fold ~init:[] ~f:do_letter (Hashtbl.data groups)
+
+let cost_optim { mon_mc; mon_decide_yes; mon_decide_no } =
+  let bad_pairs = compute_confused_pairs mon_mc in
+  Printf.printf "BAD_PAIR_COUNT %d\n%!" (List.length bad_pairs);
+  1.0
+(*   L.(die InternalError) "todo" *)
 
 let string_of_label = Paths.(function
   | Epsilon -> "ε"

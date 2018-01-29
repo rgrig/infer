@@ -999,9 +999,10 @@ let sfg_output (_fname, summary) =
   let dump_monitor graph (monfile, dfa) =
     let mc = Selmon.mc_of_calls graph in
     let mon = Selmon.product dfa mc in
+    let _ = Selmon.cost_optim mon in (* XXX *)
     let fmt = monfile.Utils.fmt in
-    let pp_arc 
-      src 
+    let pp_arc
+      src
       Selmon.
         { arc_label = { nh_probability; nh_letter; nh_target }
         ; arc_target = tgt }
