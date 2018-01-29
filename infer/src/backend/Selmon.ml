@@ -341,14 +341,14 @@ let load_dfa _filename =
   Hashtbl.set dfa
     ~key:0
     ~data:
-      [ { arc_label = (Str.regexp ".*next", true); arc_target = 1 }
-      ; { arc_label = (Str.regexp ".*next", false); arc_target = 0 } ];
+      [ { arc_label = (Str.regexp "CALL.*next", true); arc_target = 1 }
+      ; { arc_label = (Str.regexp "CALL.*next", false); arc_target = 0 } ];
   Hashtbl.set dfa
     ~key:1
     ~data:
-      [ { arc_label = (Str.regexp ".*next", true); arc_target = 2 }
-      ; { arc_label = (Str.regexp ".*hasNext", true); arc_target = 0 }
-      ; { arc_label = (Str.regexp ".*next\\|.*hasNext", false); arc_target = 1 } ];
+      [ { arc_label = (Str.regexp "CALL.*next", true); arc_target = 2 }
+      ; { arc_label = (Str.regexp "RET.*hasNext", true); arc_target = 0 }
+      ; { arc_label = (Str.regexp "CALL.*next\\|RET.*hasNext", false); arc_target = 1 } ];
   Hashtbl.set dfa
     ~key:2
     ~data:[ { arc_label = (Str.regexp ".*", true); arc_target = 2 } ];
