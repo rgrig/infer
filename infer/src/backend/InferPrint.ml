@@ -996,10 +996,14 @@ let sfg_output (_fname, summary) =
         let o_monfile = Utils.create_outfile (Printf.sprintf "%s.mon.dot" fname) in
         let o_mondfa = Selmon.load_dfa mname in
         Option.both o_monfile o_mondfa in
+  let cost_filename = (* HACK *)
+    let id = ref 0 in
+    (fun s -> incr id; Printf.sprintf "%s-%s-%05d.cost" fname s !id) in
   let dump_monitor graph (monfile, dfa) =
     let mc = Selmon.mc_of_calls graph in
     let mon = Selmon.product dfa mc in
-    let _ = Selmon.cost_optim mon in (* XXX *)
+    Selmon.cost_optim (cost_filename "optim") fname mon;
+    Selmon.cost_seeall (cost_filename "seeall") fname mon;
     let fmt = monfile.Utils.fmt in
     let pp_arc
       src

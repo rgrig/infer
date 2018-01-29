@@ -305,8 +305,36 @@ let product ((dfa, dfa_final) : dfa) (markov_chain : mc) : monitor =
   go (initial_vertex, initial_vertex);
   minimize_product result dfa_final old_state
 
-let cost_seeall _m =
-  L.(die InternalError) "todo"
+let cost_seeall filename comment { mon_mc; mon_decide_yes; mon_decide_no } =
+  Printf.printf "cost-pb %s\n" filename;
+  let is_deciding =
+    let h = Int.Hash_set.create () in
+    List.iter ~f:(Hash_set.add h) mon_decide_yes;
+    List.iter ~f:(Hash_set.add h) mon_decide_no;
+    (fun x -> Hash_set.mem h x) in
+  let o_outf = Utils.create_outfile filename in
+  let doit outf =
+    let module F = Format in
+    let fmt = outf.Utils.fmt in
+    let do_arc { arc_label = { nh_probability; _ }; arc_target } =
+      F.fprintf fmt " - %f c%d" nh_probability arc_target in
+    let do_vertex ~key:x ~data:outgoing =
+      F.fprintf fmt "@\n";
+      if is_deciding x then
+        F.fprintf fmt "c%d = 0" x
+      else begin
+        F.fprintf fmt "c%d" x;
+        List.iter ~f:do_arc outgoing;
+        F.fprintf fmt " = 1"
+      end in
+    F.fprintf fmt "\\ %s@\n" comment;
+    F.fprintf fmt "Maximize@\n  c0@\n";
+    F.fprintf fmt "@[<2>Subject To";
+    Hashtbl.iteri ~f:do_vertex mon_mc;
+    F.fprintf fmt "@]@\nEnd@\n"
+  in
+  Option.iter ~f:doit o_outf;
+  Option.iter ~f:Utils.close_outf o_outf
 
 let compute_confused_pairs product =
   (* group arcs in a (nested) map: letter->target->(source list) *)
@@ -332,7 +360,7 @@ let compute_confused_pairs product =
     List.fold ~init:pairs ~f:do_two_targets ssp in
   List.fold ~init:[] ~f:do_letter (Hashtbl.data groups)
 
-let cost_optim { mon_mc; mon_decide_yes; mon_decide_no } =
+let cost_optim filename comment { mon_mc; mon_decide_yes; mon_decide_no } =
   let bad_pairs = compute_confused_pairs mon_mc in
   let bad_indices = Int.Table.create () in (* maps vertices to indices in bad_hits *)
   let index_pair i (x, y) =
@@ -342,7 +370,8 @@ let cost_optim { mon_mc; mon_decide_yes; mon_decide_no } =
     index x; index y in
   List.iteri ~f:index_pair bad_pairs;
   let mpro = Hashtbl.map mon_mc ~f:(fun _->[]) in (* max procrastination dfa *)
-  let dummy_deciding = Hashtbl.length mon_mc in (* simulates inf procrastination *)
+  let dummy_deciding = (* simulates inf procrastination *)
+    1 + List.fold ~init:0 ~f:Int.max (Hashtbl.keys mpro) in
   assert (not (Hashtbl.mem mon_mc dummy_deciding));
   Hashtbl.set mpro ~key:dummy_deciding ~data:[];
   let bad_hits = Array.create ~len:(List.length bad_pairs) 0 in
@@ -406,7 +435,7 @@ let cost_optim { mon_mc; mon_decide_yes; mon_decide_no } =
     if nok then L.(die InternalError) "vertex %d confused with itself?" x;
     loop x (Int.Hash_set.of_list (Hashtbl.keys start_belief)) start_belief in
   Hashtbl.iter_keys ~f:start_loop mon_mc;
-  cost_seeall
+  cost_seeall filename comment
     { mon_mc = mpro
     ; mon_decide_yes = dummy_deciding :: mon_decide_yes
     ; mon_decide_no = mon_decide_no }

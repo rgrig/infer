@@ -24,8 +24,8 @@ type monitor =
 val size : 'a digraph -> int
 
 val product : dfa -> mc -> monitor
-val cost_seeall : monitor -> float
-val cost_optim : monitor -> float
+val cost_seeall : (*filename*) string -> (*comment*) string -> monitor -> unit
+val cost_optim : (*filename*) string -> (*comment*) string -> monitor -> unit
 val mc_of_calls : Paths.path_calls -> mc (* probabilities are random *)
 
 val load_dfa : string -> dfa option
