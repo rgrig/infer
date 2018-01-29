@@ -1000,9 +1000,14 @@ let sfg_output (_fname, summary) =
     let mc = Selmon.mc_of_calls graph in
     let mon = Selmon.product dfa mc in
     let fmt = monfile.Utils.fmt in
-    let pp_arc src Selmon.{ arc_label = (prob, letter); arc_target = tgt } =
-      F.fprintf fmt "%d -> %d [label=\"%.2f:%s\"];@\n"
-        src tgt prob letter in
+    let pp_arc 
+      src 
+      Selmon.
+        { arc_label = { nh_probability; nh_letter; nh_target }
+        ; arc_target = tgt }
+    =
+      F.fprintf fmt "%d -> %d [label=\"%.2f:%s:%d\"];@\n"
+        src tgt nh_probability nh_letter nh_target in
     let pp_vertex ~key:src ~data:arcs =
       List.iter ~f:(pp_arc src) arcs in
     let color c m x =

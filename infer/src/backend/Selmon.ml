@@ -12,8 +12,13 @@ type 'a arc = { arc_label : 'a ; arc_target : vertex }
 type 'a digraph = 'a arc list Int.Table.t
 type dfa = guard digraph * (* final *) vertex
 type mc = (probability * letter) digraph
+type nonhidden_arc =
+  { nh_probability : float
+  ; nh_letter : string
+  ; nh_target : vertex (* tracks the mc target before product *) }
+type product = nonhidden_arc digraph
 type monitor =
-  { mon_mc : mc
+  { mon_mc : product
   ; mon_decide_yes : vertex list
   ; mon_decide_no : vertex list }
 
@@ -232,8 +237,13 @@ let minimize_product markov_chain dfa_final pair =
     let min_vertex ~key:x ~data:arcs =
       let nx = Hashtbl.find_exn classes x in
       if not (Hashtbl.mem small_mc nx) then begin
-        let min_arc { arc_label; arc_target } =
-          { arc_label; arc_target = Hashtbl.find_exn classes arc_target } in
+        let min_arc { arc_label = (prob, letter); arc_target } =
+          let arc_label =
+            { nh_probability = prob
+            ; nh_letter = letter
+            ; nh_target = fst (pair arc_target) } in
+          let arc_target = Hashtbl.find_exn classes arc_target in
+          { arc_label; arc_target } in
         let narcs = List.map ~f:min_arc arcs in
         Hashtbl.set small_mc ~key:nx ~data:narcs
       end in

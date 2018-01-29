@@ -11,8 +11,13 @@ type 'a arc = { arc_label : 'a ; arc_target : vertex }
 type 'a digraph = 'a arc list Int.Table.t
 type dfa = guard digraph * (* final *) vertex
 type mc = (probability * letter) digraph
+type nonhidden_arc =
+  { nh_probability : float
+  ; nh_letter : string
+  ; nh_target : vertex (* tracks the mc target before product *) }
+type product = nonhidden_arc digraph
 type monitor =
-  { mon_mc : mc
+  { mon_mc : product
   ; mon_decide_yes : vertex list
   ; mon_decide_no : vertex list }
 
