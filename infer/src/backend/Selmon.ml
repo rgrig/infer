@@ -334,9 +334,30 @@ let compute_confused_pairs product =
 
 let cost_optim { mon_mc; mon_decide_yes; mon_decide_no } =
   let bad_pairs = compute_confused_pairs mon_mc in
-  Printf.printf "BAD_PAIR_COUNT %d\n%!" (List.length bad_pairs);
-  1.0
-(*   L.(die InternalError) "todo" *)
+  let bad_indices = Int.Table.create () in (* maps vertices to indices in bad_hits *)
+  let index_pair i (x, y) =
+    let index z =
+      let old = Hashtbl.find_or_add bad_indices ~default:(fun ()->[]) z in
+      Hashtbl.set bad_indices ~key:z ~data:(i :: old) in
+    index x; index y in
+  List.iteri ~f:index_pair bad_pairs;
+  let _mpro = Hashtbl.map mon_mc ~f:(fun _->[]) in (* max procrastination dfa *)
+  let bad_hits = Array.create ~len:(List.length bad_pairs) 0 in
+  let rec loop (_old_belief : float Int.Table.t) : unit =
+    L.(die InternalError) "todo"
+  in
+  let start_loop x =
+    Array.fill bad_hits ~pos:0 ~len:(Array.length bad_hits) 0;
+    let start_belief = Int.Table.create () in
+    Hashtbl.set start_belief ~key:x ~data:1.0;
+    let occ = Hashtbl.find_or_add bad_indices ~default:(fun ()->[]) x in
+    let increase i =
+      bad_hits.(i) <- bad_hits.(i) + 1;
+      assert (bad_hits.(i) < 2) in
+    List.iter ~f:increase occ;
+    loop start_belief in
+  Hashtbl.iter_keys ~f:start_loop mon_mc;
+  L.(die InternalError) "todo"
 
 let string_of_label = Paths.(function
   | Epsilon -> "ε"
