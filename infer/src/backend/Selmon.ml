@@ -94,7 +94,7 @@ let get_deciding markov_chain is_final =
     let s_scc = Hashtbl.find_exn sccs source in
     let t_scc = Hashtbl.find_exn sccs target in
     if not (Int.equal s_scc t_scc) then begin (* NOTE: we drop loops *)
-      let old = Hashtbl.find_exn scc_digraph  s_scc in
+      let old = Hashtbl.find_exn scc_digraph s_scc in
       Hashtbl.set scc_digraph ~key:s_scc ~data:(t_scc :: old)
     end in
   iter_arcs ~f:make_scc_arc markov_chain;
@@ -250,7 +250,10 @@ let minimize_product markov_chain dfa_final pair =
     Hashtbl.iteri ~f:min_vertex markov_chain;
     let map_vertices (xs : vertex list) : vertex list = (* image via classes *)
       let h = Int.Hash_set.create () in
-      List.iter ~f:(Hash_set.add h) xs;
+      let f x =
+        let c = Hashtbl.find_exn classes x in
+        Hash_set.add h c in
+      List.iter ~f xs;
       Hash_set.to_list h in
     { mon_mc = small_mc
     ; mon_decide_yes = map_vertices old_decide_yes
