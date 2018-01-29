@@ -341,23 +341,75 @@ let cost_optim { mon_mc; mon_decide_yes; mon_decide_no } =
       Hashtbl.set bad_indices ~key:z ~data:(i :: old) in
     index x; index y in
   List.iteri ~f:index_pair bad_pairs;
-  let _mpro = Hashtbl.map mon_mc ~f:(fun _->[]) in (* max procrastination dfa *)
+  let mpro = Hashtbl.map mon_mc ~f:(fun _->[]) in (* max procrastination dfa *)
+  let dummy_deciding = Hashtbl.length mon_mc in (* simulates inf procrastination *)
+  assert (not (Hashtbl.mem mon_mc dummy_deciding));
+  Hashtbl.set mpro ~key:dummy_deciding ~data:[];
   let bad_hits = Array.create ~len:(List.length bad_pairs) 0 in
-  let rec loop (_old_belief : float Int.Table.t) : unit =
-    L.(die InternalError) "todo"
-  in
+  let reset_hits () =
+    Array.fill bad_hits ~pos:0 ~len:(Array.length bad_hits) 0 in
+  let bump_up nok (x : vertex) : bool = (* true if count 2 reached *)
+    let occ = Hashtbl.find_or_add bad_indices ~default:(fun ()->[]) x in
+    let increase nok i =
+      bad_hits.(i) <- bad_hits.(i) + 1;
+      nok || bad_hits.(i) >= 2 in
+    List.fold ~init:nok ~f:increase occ in
+  let bump_down (x : vertex) : unit =
+    let occ = Hashtbl.find_or_add bad_indices ~default:(fun ()->[]) x in
+    let decrease i =
+      bad_hits.(i) <- bad_hits.(i) - 1;
+      assert (bad_hits.(i) >= 0) in
+    List.iter ~f:decrease occ in
+  let rec loop root (seen : Int.Hash_set.t) (old_belief : float Int.Table.t) : unit =
+    let new_belief = Int.Table.create () in
+    let do_arc p_src { arc_label ; arc_target = tgt } =
+      let { nh_probability = p_trans; _ } = arc_label in
+      let p_tgt = Hashtbl.find_or_add new_belief ~default:(fun ()->0.0) tgt in
+      let p_tgt = p_tgt +. p_src *. p_trans in
+      Hashtbl.set new_belief ~key:tgt ~data:p_tgt in
+    let do_vertex ~key:x ~data:prob =
+      let outgoing = Hashtbl.find_exn mon_mc x in
+      List.iter ~f:(do_arc prob) outgoing in
+    Hashtbl.iteri ~f:do_vertex old_belief;
+    if List.for_all ~f:(Hash_set.mem seen) (Hashtbl.keys new_belief) then begin
+      (* infinite procrastination possible:
+      simulate with transition to dummy_deciding *)
+      let arc =
+        { arc_label =
+          { nh_probability = 1.0
+          ; nh_letter = "***ANY***" ; nh_target = -1  (* should not be used later AFAICT *) }
+        ; arc_target = dummy_deciding } in
+      Hashtbl.set mpro ~key:root ~data:[ arc ]
+    end else begin
+      List.iter ~f:bump_down (Hashtbl.keys old_belief);
+      let nok = List.fold ~init:false ~f:bump_up (Hashtbl.keys new_belief) in
+      if nok then begin (* hit confusion: add transitions to mpro *)
+        let do_arc px { arc_label; arc_target } =
+          let { nh_probability = p_trans; nh_letter; nh_target } = arc_label in
+          let arc_label = { nh_probability = px *. p_trans; nh_letter; nh_target } in
+          let old_arcs = Hashtbl.find_exn mpro root in
+          Hashtbl.set mpro ~key:root ~data:({ arc_label; arc_target } :: old_arcs) in
+        let do_vertex ~key:x ~data:px =
+          let outgoing = Hashtbl.find_exn mon_mc x in
+          List.iter ~f:(do_arc px) outgoing in
+        Hashtbl.iteri ~f:do_vertex old_belief
+      end else begin (* continue bfs/simulation *)
+        Hashtbl.iter_keys ~f:(Hash_set.add seen) new_belief;
+        loop root seen new_belief
+      end
+    end in
   let start_loop x =
-    Array.fill bad_hits ~pos:0 ~len:(Array.length bad_hits) 0;
     let start_belief = Int.Table.create () in
     Hashtbl.set start_belief ~key:x ~data:1.0;
-    let occ = Hashtbl.find_or_add bad_indices ~default:(fun ()->[]) x in
-    let increase i =
-      bad_hits.(i) <- bad_hits.(i) + 1;
-      assert (bad_hits.(i) < 2) in
-    List.iter ~f:increase occ;
-    loop start_belief in
+    reset_hits ();
+    let nok = bump_up false x in
+    if nok then L.(die InternalError) "vertex %d confused with itself?" x;
+    loop x (Int.Hash_set.of_list (Hashtbl.keys start_belief)) start_belief in
   Hashtbl.iter_keys ~f:start_loop mon_mc;
-  L.(die InternalError) "todo"
+  cost_seeall
+    { mon_mc = mpro
+    ; mon_decide_yes = dummy_deciding :: mon_decide_yes
+    ; mon_decide_no = mon_decide_no }
 
 let string_of_label = Paths.(function
   | Epsilon -> "ε"
