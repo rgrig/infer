@@ -982,6 +982,7 @@ let finalize_and_close_files format_list_by_kind stats =
   List.iter ~f:close_files_of_report_kind format_list_by_kind
 
 
+let sfg_id = ref 0
 let sfg_output (_fname, summary) =
   let proc_name = Specs.get_proc_name summary in
   let fname = Typ.Procname.to_filename proc_name in
@@ -996,14 +997,13 @@ let sfg_output (_fname, summary) =
         let o_monfile = Utils.create_outfile (Printf.sprintf "%s.mon.dot" fname) in
         let o_mondfa = Selmon.load_dfa mname in
         Option.both o_monfile o_mondfa in
-  let cost_filename = (* HACK *)
-    let id = ref 0 in
-    (fun s -> incr id; Printf.sprintf "%s-%s-%05d.cost" fname s !id) in
   let dump_monitor graph (monfile, dfa) =
     let mc = Selmon.mc_of_calls graph in
     let mon = Selmon.product dfa mc in
-    Selmon.cost_optim (cost_filename "optim") fname mon;
-    Selmon.cost_seeall (cost_filename "seeall") fname mon;
+    let () =
+      let cost_filename t = Printf.sprintf "%s-%d.%s.lp" fname !sfg_id t in
+      Selmon.cost_optim (cost_filename "optim") fname mon;
+      Selmon.cost_seeall (cost_filename "seeall") fname mon in
     let fmt = monfile.Utils.fmt in
     let pp_arc
       src
@@ -1018,17 +1018,18 @@ let sfg_output (_fname, summary) =
     let color c m x =
       F.fprintf fmt "%d [style=\"filled\" fillcolor=\"%s\"] // %s@\n" x c m in
     F.fprintf fmt "@[<2>digraph mon {@\n";
-    F.fprintf fmt "// SIZE %d@\n" Selmon.(size mon.mon_mc);
+    F.fprintf fmt "// MON_SIZE %d ID %d@\n" Selmon.(size mon.mon_mc) !sfg_id;
     color "yellow" "INITIAL" Selmon.initial_vertex;
     Int.Table.iteri mon.Selmon.mon_mc ~f:pp_vertex;
     List.iter ~f:(color "green" "YES") mon.Selmon.mon_decide_yes;
     List.iter ~f:(color "red" "NO") mon.Selmon.mon_decide_no;
-    F.fprintf fmt "@]@\n}@\n" in
+    F.fprintf fmt "@]@\n}@\n%!" in
   let dump_specs sfgfile specs =
     let debug = false in
     let specs = Specs.normalized_specs_to_specs specs in
     let fmt = sfgfile.Utils.fmt in
     let dump_path (_post, path) =
+      incr sfg_id;
       if debug then begin
         F.fprintf fmt "@[<2>(PATH:@\n";
         F.fprintf fmt "%a" Paths.Path.pp path;
@@ -1040,12 +1041,13 @@ let sfg_output (_fname, summary) =
         proc_name path
       in
       F.fprintf fmt "@[<2>digraph sfg {@\n";
+      F.fprintf fmt "// SFG_SIZE %d ID %d@\n" (List.length graph.Paths.edges) !sfg_id;
       F.fprintf fmt "// START %d STOP %d@\n" graph.Paths.start_node graph.Paths.stop_node;
       let pp_k fmt label = F.fprintf fmt "%s" (Selmon.string_of_label label) in
       let pp_edge (src, tgt, kind) =
         F.fprintf fmt "  %d -> %d [label=\"%a\"];@\n" src tgt pp_k kind in
       List.iter ~f:pp_edge graph.Paths.edges;
-      F.fprintf fmt "@]@\n}@\n";
+      F.fprintf fmt "@]@\n}@\n%!";
       Option.iter ~f:(dump_monitor graph) o_mon
     in
     let dump_one_spec spec =
