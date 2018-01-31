@@ -1059,10 +1059,10 @@ let sfg_output (_fname, summary) =
   in
   let maybe_dump a b = match a, b with
     | Some a, Some b ->
-        F.printf "Generating symbolic flowgraphs into %s@\n" fname;
+        F.printf "Generating symbolic flowgraphs into %s@\n%!" fname;
         dump_specs a b
     | _ ->
-        F.printf "SKIP generating flowgraphs into %s@\n" fname in
+        F.printf "SKIP generating flowgraphs into %s@\n%!" fname in
   maybe_dump o_sfgfile Specs.(summary.payload.preposts);
   Option.iter ~f:Utils.close_outf o_sfgfile;
   Option.iter ~f:(function (file, _) -> Utils.close_outf file) o_mon

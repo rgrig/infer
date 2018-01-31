@@ -16,8 +16,11 @@ def main():
       i = int(m.group(1))
       t = m.group(2).upper()
       with solfile.open() as sf:
-        ws = sf.readline().split()
-        c = float(ws[-1])
+        for solline in sf:
+          if solline.startswith('c0 '):
+            ws = solline.split()
+            c = float(ws[1])
+            break
       costs[i][t] = c
     else:
       sys.stderr.write('MALFORMED solfilename: {}\n'.format(solfile))
