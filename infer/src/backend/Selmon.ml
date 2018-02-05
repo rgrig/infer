@@ -29,9 +29,13 @@ let make_next_id last =
 let eval_guard (regexp, pos) (_probability, letter) =
   Bool.equal pos (Str.string_match regexp letter 0)
 
+(*
 let size g =
   let vertex_size ~key:_ ~data:arcs zero = zero + 1 + List.length arcs in
   Hashtbl.fold ~init:0 ~f:vertex_size g
+*)
+let size g =
+  Hashtbl.length g
 
 
 module IntIntPair = struct
