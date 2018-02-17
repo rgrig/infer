@@ -28,7 +28,7 @@ let is_one_of_classes = QualifiedCppName.Match.match_qualifiers
 let is_method_of_objc_cpp_class pname matcher =
   match pname with
   | Typ.Procname.ObjC_Cpp objc_cpp ->
-      let class_qual_opt = Typ.Procname.objc_cpp_get_class_qualifiers objc_cpp in
+      let class_qual_opt = Typ.Procname.ObjC_Cpp.get_class_qualifiers objc_cpp in
       is_one_of_classes matcher class_qual_opt
   | _ ->
       false
@@ -63,11 +63,6 @@ let hpred_is_open_resource tenv prop = function
       None
 
 
-(** Produce a description of a persistent reference to an Android Context *)
-let explain_context_leak pname context_typ fieldname error_path =
-  Localise.desc_context_leak pname context_typ fieldname error_path
-
-
 (** Explain a deallocate stack variable error *)
 let explain_deallocate_stack_var pvar ra =
   let pvar_str = Pvar.to_string pvar in
@@ -99,71 +94,6 @@ let find_in_node_or_preds start_node f_node_instr =
           List.find_map ~f:find (Procdesc.Node.get_preds node) )
   in
   find start_node
-
-
-(** Find the Set instruction used to assign [id] to a program variable, if any *)
-let find_variable_assigment node id : Sil.instr option =
-  let find_set _ instr =
-    match instr with
-    | Sil.Store (Exp.Lvar _, _, e, _) when Exp.equal (Exp.Var id) e ->
-        Some instr
-    | _ ->
-        None
-  in
-  find_in_node_or_preds node find_set
-
-
-(** Check if a nullify instruction exists for the program variable after the given instruction *)
-let find_nullify_after_instr node instr pvar : bool =
-  let node_instrs = Procdesc.Node.get_instrs node in
-  let found_instr = ref false in
-  let find_nullify = function
-    | Sil.Nullify (pv, _) when !found_instr ->
-        Pvar.equal pv pvar
-    | instr_ ->
-        if Sil.equal_instr instr instr_ then found_instr := true ;
-        false
-  in
-  List.exists ~f:find_nullify node_instrs
-
-
-(** Find the other prune node of a conditional
-    (e.g. the false branch given the true branch of a conditional) *)
-let find_other_prune_node node =
-  match Procdesc.Node.get_preds node with
-  | [n_pre] -> (
-    match Procdesc.Node.get_succs n_pre with
-    | [n1; n2] ->
-        if Procdesc.Node.equal n1 node then Some n2 else Some n1
-    | _ ->
-        None )
-  | _ ->
-      None
-
-
-(** Return true if [id] is assigned to a program variable which is then nullified *)
-let id_is_assigned_then_dead node id =
-  match find_variable_assigment node id with
-  | Some (Sil.Store (Exp.Lvar pvar, _, _, _) as instr)
-    when Pvar.is_local pvar || Pvar.is_callee pvar ->
-      let is_prune =
-        match Procdesc.Node.get_kind node with Procdesc.Node.Prune_node _ -> true | _ -> false
-      in
-      let prune_check = function
-        (* if prune node, check that it's also nullified in the other branch *)
-        | Some node' -> (
-          match Procdesc.Node.get_instrs node' with
-          | instr' :: _ ->
-              find_nullify_after_instr node' instr' pvar
-          | _ ->
-              false )
-        | _ ->
-            false
-      in
-      find_nullify_after_instr node instr pvar
-      && (not is_prune || prune_check (find_other_prune_node node))
-  | _ ->
-      false
 
 
 (** Find the function call instruction used to initialize normal variable [id],
@@ -794,7 +724,7 @@ let access_opt ?(is_nullable= false) inst =
       Some (Localise.Last_accessed (n, is_nullable))
   | Sil.Ireturn_from_call n ->
       Some (Localise.Returned_from_call n)
-  | Sil.Ialloc when Config.curr_language_is Config.Java ->
+  | Sil.Ialloc when Language.curr_language_is Java ->
       Some Localise.Initialized_automatically
   | inst ->
       if verbose then
@@ -978,7 +908,7 @@ let create_dereference_desc proc_name tenv ?(use_buckets= false) ?(outermost_arr
   in
   let desc = Localise.dereference_string proc_name deref_str value_str access_opt' loc in
   let desc =
-    if Config.curr_language_is Config.Clang && not is_premature_nil then
+    if Language.curr_language_is Clang && not is_premature_nil then
       match de_opt with
       | Some DExp.Dpvar pvar | Some DExp.Dpvaraddr pvar -> (
         match Attribute.get_objc_null tenv prop (Exp.Lvar pvar) with
@@ -1126,9 +1056,6 @@ let explain_array_access tenv deref_str prop loc =
   explain_access_ tenv ~outermost_array:true deref_str prop loc
 
 
-(** Produce a description of the memory access performed in the current instruction, if any. *)
-let explain_memory_access tenv deref_str prop loc = explain_access_ tenv deref_str prop loc
-
 (* offset of an expression found following a program variable *)
 type pvar_off =
   (* value of a pvar *)
@@ -1264,23 +1191,8 @@ let explain_divide_by_zero tenv exp node loc =
       Localise.no_desc
 
 
-(** explain a return expression required *)
-let explain_return_expression_required loc typ =
-  let typ_str =
-    let pp fmt = Typ.pp_full Pp.text fmt typ in
-    F.asprintf "%t" pp
-  in
-  Localise.desc_return_expression_required typ_str loc
-
-
-(** explain a return statement missing *)
-let explain_return_statement_missing loc = Localise.desc_return_statement_missing loc
-
 (** explain a fronend warning *)
 let explain_frontend_warning loc = Localise.desc_frontend_warning loc
-
-(** explain a comparing floats for equality *)
-let explain_comparing_floats_for_equality loc = Localise.desc_comparing_floats_for_equality loc
 
 (** explain a condition which is always true or false *)
 let explain_condition_always_true_false tenv i cond node loc =

@@ -34,9 +34,7 @@ type t =
     each expression represents a path, with Dpvar being the simplest one *)
 type vpath = t option
 
-let java () = Config.equal_language !Config.curr_language Config.Java
-
-let eradicate_java () = Config.eradicate && java ()
+let eradicate_java () = Config.eradicate && Language.curr_language_is Java
 
 (** convert a dexp to a string *)
 let rec to_string = function
@@ -61,7 +59,7 @@ let rec to_string = function
             let s =
               match pname with
               | Typ.Procname.Java pname_java ->
-                  Typ.Procname.java_get_method pname_java
+                  Typ.Procname.Java.get_method pname_java
               | _ ->
                   Typ.Procname.to_string pname
             in
@@ -87,13 +85,13 @@ let rec to_string = function
       (* this->fieldname *)
       Typ.Fieldname.to_simplified_string f
   | Darrow (de, f) ->
-      if java () then to_string de ^ "." ^ Typ.Fieldname.to_flat_string f
+      if Language.curr_language_is Java then to_string de ^ "." ^ Typ.Fieldname.to_flat_string f
       else to_string de ^ "->" ^ Typ.Fieldname.to_string f
   | Ddot (Dpvar _, fe) when eradicate_java () ->
       (* static field access *)
       Typ.Fieldname.to_simplified_string fe
   | Ddot (de, f) ->
-      if java () then to_string de ^ "." ^ Typ.Fieldname.to_flat_string f
+      if Language.curr_language_is Java then to_string de ^ "." ^ Typ.Fieldname.to_flat_string f
       else to_string de ^ "." ^ Typ.Fieldname.to_string f
   | Dpvar pv ->
       Mangled.to_string (Pvar.get_name pv)

@@ -1034,28 +1034,6 @@ let check_junk ?original_prop pname tenv prop =
       in
       List.for_all ~f:predicate entries
     in
-    let hpred_in_cycle hpred =
-      (* check if the predicate belongs to a cycle in the heap *)
-      let id_in_cycle id =
-        let set1 = sigma_reachable (Sil.fav_from_list [id]) sigma in
-        let set2 = Ident.IdentSet.remove id set1 in
-        let fav2 = Sil.fav_from_list (Ident.IdentSet.elements set2) in
-        let set3 = sigma_reachable fav2 sigma in
-        Ident.IdentSet.mem id set3
-      in
-      let entries = Sil.hpred_entries hpred in
-      let predicate = function Exp.Var id -> id_in_cycle id | _ -> false in
-      let hpred_is_loop =
-        match hpred with
-        (* true if hpred has a self loop, ie one field points to id *)
-        | Sil.Hpointsto (Exp.Var id, se, _) ->
-            let fav = Sil.fav_new () in
-            Sil.strexp_fav_add fav se ; Sil.fav_mem fav id
-        | _ ->
-            false
-      in
-      hpred_is_loop || List.exists ~f:predicate entries
-    in
     let rec remove_junk_recursive sigma_done sigma_todo =
       match sigma_todo with
       | [] ->
@@ -1112,7 +1090,7 @@ let check_junk ?original_prop pname tenv prop =
             let ml_bucket_opt =
               match resource with
               | (PredSymb.Rmemory PredSymb.Mnew | PredSymb.Rmemory PredSymb.Mnew_array)
-                when Config.curr_language_is Config.Clang ->
+                when Language.curr_language_is Clang ->
                   Mleak_buckets.should_raise_cpp_leak
               | _ ->
                   None
@@ -1130,17 +1108,17 @@ let check_junk ?original_prop pname tenv prop =
               match (alloc_attribute, resource) with
               | Some PredSymb.Awont_leak, Rmemory _ ->
                   (true, exn_leak)
-              | Some _, Rmemory Mobjc when hpred_in_cycle hpred -> (
+              | Some _, Rmemory Mobjc -> (
                 match RetainCycles.report_cycle tenv hpred original_prop with
                 | Some exn ->
                     (false, exn)
                 | None ->
                     (true, exn_leak) )
-              | (Some _, Rmemory Mobjc | Some _, Rmemory Mnew | Some _, Rmemory Mnew_array)
-                when Config.curr_language_is Config.Clang ->
+              | (Some _, Rmemory Mnew | Some _, Rmemory Mnew_array)
+                when Language.curr_language_is Clang ->
                   (is_none ml_bucket_opt, exn_leak)
               | Some _, Rmemory _ ->
-                  (Config.curr_language_is Config.Java, exn_leak)
+                  (Language.curr_language_is Java, exn_leak)
               | Some _, Rignore ->
                   (true, exn_leak)
               | Some _, Rfile when Config.tracing ->
@@ -1149,7 +1127,7 @@ let check_junk ?original_prop pname tenv prop =
                   (false, exn_leak)
               | Some _, Rlock ->
                   (false, exn_leak)
-              | _ when hpred_in_cycle hpred && Sil.is_objc_object hpred -> (
+              | _ when Sil.is_objc_object hpred -> (
                 match
                   (* When it's a cycle and it is an Objective-C object then
                         we have a retain cycle. Objc object may not have the
@@ -1159,9 +1137,9 @@ let check_junk ?original_prop pname tenv prop =
                 | Some exn ->
                     (false, exn)
                 | None ->
-                    (true, exn_leak) )
+                    (Language.curr_language_is Java, exn_leak) )
               | _ ->
-                  (Config.curr_language_is Config.Java, exn_leak)
+                  (Language.curr_language_is Java, exn_leak)
             in
             let already_reported () =
               let attr_opt_equal ao1 ao2 =
@@ -1180,7 +1158,7 @@ let check_junk ?original_prop pname tenv prop =
             let ignore_leak =
               !Config.allow_leak || ignore_resource || is_undefined || already_reported ()
             in
-            let report_and_continue = Config.curr_language_is Config.Java || !Config.footprint in
+            let report_and_continue = Language.curr_language_is Java || !Config.footprint in
             let report_leak () =
               if not report_and_continue then raise exn
               else (

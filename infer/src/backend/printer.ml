@@ -529,8 +529,6 @@ let write_html_file linereader filename procs =
 (** Create filename.ext.html for each file in the cluster. *)
 let write_all_html_files cluster =
   let exe_env = Exe_env.mk cluster in
-  let load_proc_desc pname = ignore (Exe_env.get_proc_desc exe_env pname) in
-  let () = List.iter ~f:load_proc_desc (Cg.get_defined_nodes (Exe_env.get_cg exe_env)) in
   let opt_whitelist_regex =
     match Config.write_html_whitelist_regex with
     | [] ->
@@ -547,7 +545,7 @@ let write_all_html_files cluster =
   Exe_env.iter_files
     (fun _ cfg ->
       let source_files_in_cfg, pdescs_in_cfg =
-        Cfg.fold_proc_desc cfg
+        Typ.Procname.Hash.fold
           (fun _ proc_desc (files, pdescs) ->
             let updated_files =
               if Procdesc.is_defined proc_desc then
@@ -556,7 +554,7 @@ let write_all_html_files cluster =
               else files
             in
             (updated_files, proc_desc :: pdescs) )
-          (SourceFile.Set.empty, [])
+          cfg (SourceFile.Set.empty, [])
       in
       SourceFile.Set.iter
         (fun file -> write_html_file linereader file pdescs_in_cfg)

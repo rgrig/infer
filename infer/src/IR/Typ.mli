@@ -37,10 +37,6 @@ val ikind_is_char : ikind -> bool
 val ikind_is_unsigned : ikind -> bool
 (** Check whether the integer kind is unsigned *)
 
-val int_of_int64_kind : int64 -> ikind -> IntLit.t
-(** Convert an int64 into an IntLit.t given the kind:
-    the int64 is interpreted as unsigned according to the kind *)
-
 (** Kinds of floating-point numbers *)
 type fkind =
   | FFloat  (** [float] *)
@@ -163,6 +159,14 @@ module Name : sig
     val is_class : t -> bool
     (** [is_class name] holds if [name] names a Java class *)
 
+    val split_classname : string -> string option * string
+    (** Given a package.class_name string, look for the latest dot and split the string
+        in two (package, class_name). *)
+
+    val get_outer_class : t -> t option
+    (** Given an inner classname like C$Inner1$Inner2, return Some C$Inner1. If the class is not an
+        inner class, return None *)
+
     val java_lang_object : t
 
     val java_io_serializable : t
@@ -185,9 +189,6 @@ module Name : sig
     val from_qual_name : QualifiedCppName.t -> t
 
     val protocol_from_qual_name : QualifiedCppName.t -> t
-
-    val is_class : t -> bool
-    (** [is_class name] holds if [name] names a Objc class *)
   end
 
   module Set : Caml.Set.S with type elt = t
@@ -244,18 +245,11 @@ val is_objc_class : t -> bool
 
 val is_cpp_class : t -> bool
 
-val is_java_class : t -> bool
-
-val is_array_of_cpp_class : t -> bool
-
 val is_pointer_to_cpp_class : t -> bool
 
 val is_pointer : t -> bool
 
 val has_block_prefix : string -> bool
-
-val is_block_type : t -> bool
-(** Check if type is a type for a block in objc *)
 
 val unsome : string -> t option -> t
 
@@ -265,28 +259,132 @@ module Procname : sig
   (** Module for Procedure Names. *)
 
   (** Type of java procedure names. *)
-  type java
+  module Java : sig
+    type kind =
+      | Non_Static
+          (** in Java, procedures called with invokevirtual, invokespecial, and invokeinterface *)
+      | Static  (** in Java, procedures called with invokestatic *)
+
+    type t [@@deriving compare]
+
+    (** e.g. ("", "int") for primitive types or ("java.io", "PrintWriter") for objects *)
+    type java_type = string option * string
+
+    val make : Name.t -> java_type option -> string -> java_type list -> kind -> t
+    (** Create a Java procedure name from its
+        class_name method_name args_type_name return_type_name method_kind. *)
+
+    val replace_parameters : t -> java_type list -> t
+    (** Replace the parameters of a java procname. *)
+
+    val replace_return_type : t -> java_type -> t
+    (** Replace the method of a java procname. *)
+
+    val get_class_name : t -> string
+    (** Return the class name of a java procedure name. *)
+
+    val get_class_type_name : t -> Name.t
+    (** Return the class name as a typename of a java procedure name. *)
+
+    val get_simple_class_name : t -> string
+    (** Return the simple class name of a java procedure name. *)
+
+    val get_package : t -> string option
+    (** Return the package name of a java procedure name. *)
+
+    val get_method : t -> string
+    (** Return the method name of a java procedure name. *)
+
+    val get_parameters : t -> java_type list
+    (** Return the parameters of a java procedure name. *)
+
+    val replace_method : t -> string -> t
+    (** Replace the method name of an existing java procname. *)
+
+    val get_return_typ : t -> typ
+    (** Return the return type of [pname_java]. return Tvoid if there's no return type *)
+
+    val is_access_method : t -> bool
+    (** Check if the procedure name is an acess method (e.g. access$100 used to
+          access private members from a nested class. *)
+
+    val is_autogen_method : t -> bool
+    (** Check if the procedure name is of an auto-generated method containing '$'. *)
+
+    val is_anonymous_inner_class_constructor : t -> bool
+    (** Check if the procedure name is an anonymous inner class constructor. *)
+
+    val is_close : t -> bool
+    (** Check if the method name is "close". *)
+
+    val is_static : t -> bool
+    (** Check if the java procedure is static. *)
+
+    val is_vararg : t -> bool
+    (** Check if the proc name has the type of a java vararg.
+          Note: currently only checks that the last argument has type Object[]. *)
+
+    val is_lambda : t -> bool
+    (** Check if the proc name comes from a lambda expression *)
+
+    val is_generated : t -> bool
+    (** Check if the proc name comes from generated code *)
+
+    val is_class_initializer : t -> bool
+    (** Check if this is a class initializer. *)
+  end
+
+  module ObjC_Cpp : sig
+    type kind =
+      | CPPMethod of string option  (** with mangling *)
+      | CPPConstructor of (string option * bool)  (** with mangling + is it constexpr? *)
+      | CPPDestructor of string option  (** with mangling *)
+      | ObjCClassMethod
+      | ObjCInstanceMethod
+      | ObjCInternalMethod
+      [@@deriving compare]
+
+    (** Type of Objective C and C++ procedure names: method signatures. *)
+    type t =
+      { method_name: string
+      ; class_name: Name.t
+      ; kind: kind
+      ; template_args: template_spec_info
+      ; is_generic_model: bool }
+      [@@deriving compare]
+
+    val make : Name.t -> string -> kind -> template_spec_info -> is_generic_model:bool -> t
+    (** Create an objc procedure name from a class_name and method_name. *)
+
+    val get_class_name : t -> string
+
+    val get_class_type_name : t -> Name.t
+
+    val get_class_qualifiers : t -> QualifiedCppName.t
+
+    val objc_method_kind_of_bool : bool -> kind
+    (** Create ObjC method type from a bool is_instance. *)
+
+    val is_objc_constructor : string -> bool
+    (** Check if this is a constructor method in Objective-C. *)
+
+    val is_objc_dealloc : string -> bool
+    (** Check if this is a dealloc method in Objective-C. *)
+
+    val is_destructor : t -> bool
+    (** Check if this is a dealloc method. *)
+
+    val is_constexpr : t -> bool
+    (** Check if this is a constexpr function. *)
+
+    val is_cpp_lambda : t -> bool
+    (** Return whether the procname is a cpp lambda. *)
+  end
 
   (** Type of c procedure names. *)
   type c = private
     { name: QualifiedCppName.t
     ; mangled: string option
-    ; template_args: template_spec_info
-    ; is_generic_model: bool }
-
-  type objc_cpp_method_kind =
-    | CPPMethod of string option  (** with mangling *)
-    | CPPConstructor of (string option * bool)  (** with mangling + is it constexpr? *)
-    | CPPDestructor of string option  (** with mangling *)
-    | ObjCClassMethod
-    | ObjCInstanceMethod
-    | ObjCInternalMethod
-
-  (** Type of Objective C and C++ procedure names. *)
-  type objc_cpp = private
-    { method_name: string
-    ; class_name: Name.t
-    ; kind: objc_cpp_method_kind
     ; template_args: template_spec_info
     ; is_generic_model: bool }
 
@@ -300,28 +398,17 @@ module Procname : sig
   bar() {foo(my_block)} is executed as  foo_my_block() {my_block(); }
   where foo_my_block is created with WithBlockParameters (foo, [my_block]) *)
   type t =
-    | Java of java
+    | Java of Java.t
     | C of c
     | Linters_dummy_method
     | Block of block_name
-    | ObjC_Cpp of objc_cpp
+    | ObjC_Cpp of ObjC_Cpp.t
     | WithBlockParameters of t * block_name list
     [@@deriving compare]
-
-  val block_from_string : string -> block_name
 
   val block_name_of_procname : t -> block_name
 
   val equal : t -> t -> bool
-
-  val hash : t -> int
-
-  type java_type = string option * string
-
-  type method_kind =
-    | Non_Static
-        (** in Java, procedures called with invokevirtual, invokespecial, and invokeinterface *)
-    | Static  (** in Java, procedures called with invokestatic *)
 
   (** Hash tables with proc names as keys. *)
   module Hashable : Caml.Hashtbl.HashedType with type t = t
@@ -336,7 +423,11 @@ module Procname : sig
 
   module SQLite : sig
     val serialize : t -> Sqlite3.Data.t
+
+    val clear_cache : unit -> unit
   end
+
+  module SQLiteList : SqliteUtils.Data with type t = t list
 
   val c : QualifiedCppName.t -> string -> template_spec_info -> is_generic_model:bool -> c
   (** Create a C procedure name from plain and mangled name. *)
@@ -347,7 +438,7 @@ module Procname : sig
   val from_string_c_fun : string -> t
   (** Convert a string to a proc name. *)
 
-  val get_language : t -> Config.language
+  val get_language : t -> Language.t
   (** Return the language of the procedure. *)
 
   val get_method : t -> string
@@ -356,146 +447,29 @@ module Procname : sig
   val is_objc_block : t -> bool
   (** Return whether the procname is a block procname. *)
 
-  val is_with_block_parameters : t -> bool
-  (** Return whether the procname is a procname instantiated with block parameters. *)
-
-  val is_cpp_lambda : t -> bool
-  (** Return whether the procname is a cpp lambda. *)
-
   val hash_pname : t -> int
   (** Hash function for procname. *)
 
-  val is_anonymous_inner_class_name : Name.t -> bool
-  (** Check if a class string is an anoynmous inner class name. *)
-
   val is_c_method : t -> bool
-  (** Check if this is an Objective-C/C++ method name. *)
+  (** Return true this is an Objective-C/C++ method name. *)
 
-  val is_c_function : t -> bool
-  (** Check if this is a C function name. *)
-
-  val is_obj_c_pp : t -> bool
-  (** Check if this is an Objective-C/C++ method name or C-style function. *)
-
-  val is_objc_constructor : string -> bool
-  (** Check if this is a constructor method in Objective-C. *)
-
-  val is_objc_method : t -> bool
-  (** Check if this is an Objective-C method. *)
+  val is_clang : t -> bool
+  (** Return true if this is a C, C++, or Objective-C procedure name *)
 
   val is_constructor : t -> bool
   (** Check if this is a constructor. *)
 
-  val is_constexpr : t -> bool
-  (** Check if this is a constexpr function. *)
-
   val is_java : t -> bool
   (** Check if this is a Java procedure name. *)
 
-  val is_objc_dealloc : string -> bool
-  (** Check if this is a dealloc method in Objective-C. *)
-
-  val is_destructor : t -> bool
-  (** Check if this is a dealloc method. *)
-
-  val java : Name.t -> java_type option -> string -> java_type list -> method_kind -> java
-  (** Create a Java procedure name from its
-      class_name method_name args_type_name return_type_name method_kind. *)
-
-  val java_replace_parameters : java -> java_type list -> java
-  (** Replace the parameters of a java procname. *)
-
-  val java_replace_return_type : java -> java_type -> java
-  (** Replace the method of a java procname. *)
-
   val mangled_objc_block : string -> t
   (** Create an objc block name. *)
-
-  val objc_cpp :
-    Name.t -> string -> objc_cpp_method_kind -> template_spec_info -> is_generic_model:bool
-    -> objc_cpp
-  (** Create an objc procedure name from a class_name and method_name. *)
 
   val with_block_parameters : t -> block_name list -> t
   (** Create a procedure name instantiated with block parameters from a base procedure name
     and a list of block procedure names (the arguments). *)
 
-  val objc_cpp_get_class_name : objc_cpp -> string
-  (** Get the class name of a Objective-C/C++ procedure name. *)
-
-  val objc_cpp_get_class_type_name : objc_cpp -> Name.t
-
   val objc_cpp_replace_method_name : t -> string -> t
-
-  val objc_method_kind_of_bool : bool -> objc_cpp_method_kind
-  (** Create ObjC method type from a bool is_instance. *)
-
-  val java_get_class_name : java -> string
-  (** Return the class name of a java procedure name. *)
-
-  val java_get_class_type_name : java -> Name.t
-  (** Return the class name as a typename of a java procedure name. *)
-
-  val java_get_simple_class_name : java -> string
-  (** Return the simple class name of a java procedure name. *)
-
-  val java_get_package : java -> string option
-  (** Return the package name of a java procedure name. *)
-
-  val java_get_method : java -> string
-  (** Return the method name of a java procedure name. *)
-
-  val java_get_return_type : java -> string
-  (** Return the return type of a java procedure name. *)
-
-  val java_get_parameters : java -> java_type list
-  (** Return the parameters of a java procedure name. *)
-
-  val java_get_parameters_as_strings : java -> string list
-  (** Return the parameters of a java procname as strings. *)
-
-  val java_is_access_method : t -> bool
-  (** Check if the procedure name is an acess method (e.g. access$100 used to
-      access private members from a nested class. *)
-
-  val java_is_autogen_method : t -> bool
-  (** Check if the procedure name is of an auto-generated method containing '$'. *)
-
-  val java_is_anonymous_inner_class : t -> bool
-  (** Check if the procedure belongs to an anonymous inner class. *)
-
-  val java_is_anonymous_inner_class_constructor : t -> bool
-  (** Check if the procedure name is an anonymous inner class constructor. *)
-
-  val java_is_close : t -> bool
-  (** Check if the method name is "close". *)
-
-  val java_is_static : t -> bool
-  (** Check if the java procedure is static. *)
-
-  val java_is_vararg : t -> bool
-  (** Check if the proc name has the type of a java vararg.
-      Note: currently only checks that the last argument has type Object[]. *)
-
-  val java_is_lambda : t -> bool
-  (** Check if the proc name comes from a lambda expression *)
-
-  val java_is_generated : t -> bool
-  (** Check if the proc name comes from generated code *)
-
-  val java_remove_hidden_inner_class_parameter : t -> t option
-  (** Check if the last parameter is a hidden inner class, and remove it if present.
-      This is used in private constructors, where a proxy constructor is generated
-      with an extra parameter and calls the normal constructor. *)
-
-  val java_replace_method : java -> string -> java
-  (** Replace the method name of an existing java procname. *)
-
-  val java_type_to_string : java_type -> string
-  (** Convert a java type to a string. *)
-
-  val is_class_initializer : t -> bool
-  (** Check if this is a class initializer. *)
 
   val is_infer_undefined : t -> bool
   (** Check if this is a special Infer undefined procedure. *)
@@ -507,16 +481,9 @@ module Procname : sig
   val pp : Format.formatter -> t -> unit
   (** Pretty print a proc name. *)
 
-  val pp_set : Format.formatter -> Set.t -> unit
-  (** Pretty print a set of proc names. *)
-
   val replace_class : t -> Name.t -> t
   (** Replace the class name component of a procedure name.
       In case of Java, replace package and class name. *)
-
-  val split_classname : string -> string option * string
-  (** Given a package.class_name string, look for the latest dot and split the string
-      in two (package, class_name). *)
 
   val to_string : t -> string
   (** Convert a proc name to a string for the user to see. *)
@@ -535,21 +502,7 @@ module Procname : sig
 
   val get_qualifiers : t -> QualifiedCppName.t
   (** get qualifiers of C/objc/C++ method/function *)
-
-  val objc_cpp_get_class_qualifiers : objc_cpp -> QualifiedCppName.t
-  (** get qualifiers of a class owning objc/C++ method *)
-
-  val get_template_args_mapping : t -> t -> type_subst_t option
-  (** Return type substitution that would produce concrete procname from generic procname. Returns None if
-      such substitution doesn't exist
-      NOTE: this function doesn't check if such substitution is correct in terms of return
-            type/function parameters.
-      NOTE: this function doesn't deal with nested template classes, it only extracts mapping for function
-            and/or direct parent (class that defines the method) if it exists. *)
 end
-
-val java_proc_return_typ : Procname.java -> t
-(** Return the return type of [pname_java]. *)
 
 module Fieldname : sig
   (** Names for fields of class/struct/union *)
@@ -576,6 +529,16 @@ module Fieldname : sig
 
     val is_captured_parameter : t -> bool
     (** Check if field is a captured parameter *)
+
+    val get_class : t -> string
+    (** The class part of the fieldname *)
+
+    val get_field : t -> string
+    (** The last component of the fieldname *)
+
+    val is_outer_instance : t -> bool
+    (** Check if the field is the synthetic this$n of a nested class, used to access the n-th outer
+        instance. *)
   end
 
   val to_string : t -> string
@@ -593,15 +556,6 @@ module Fieldname : sig
 
   val pp : Format.formatter -> t -> unit
   (** Pretty print a field name. *)
-
-  val java_get_class : t -> string
-  (** The class part of the fieldname *)
-
-  val java_get_field : t -> string
-  (** The last component of the fieldname *)
-
-  val java_is_outer_instance : t -> bool
-  (** Check if the field is the synthetic this$n of a nested class, used to access the n-th outher instance. *)
 
   val clang_get_qual_class : t -> QualifiedCppName.t option
   (** get qualified classname of a field if it's coming from clang frontend. returns None otherwise *)

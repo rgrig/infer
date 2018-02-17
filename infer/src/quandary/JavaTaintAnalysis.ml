@@ -26,8 +26,8 @@ include TaintAnalysis.Make (struct
 
   let handle_unknown_call pname ret_typ_opt actuals tenv =
     let get_receiver_typ tenv = function
-      | HilExp.AccessPath access_path ->
-          AccessPath.get_typ access_path tenv
+      | HilExp.AccessExpression access_expr ->
+          AccessPath.get_typ (AccessExpression.to_access_path access_expr) tenv
       | _ ->
           None
     in
@@ -41,12 +41,12 @@ include TaintAnalysis.Make (struct
           false
     in
     match pname with
-    | Typ.Procname.Java java_pname as pname
+    | Typ.Procname.Java java_pname
       -> (
-        let is_static = Typ.Procname.java_is_static pname in
+        let is_static = Typ.Procname.Java.is_static java_pname in
         match
-          ( Typ.Procname.java_get_class_name java_pname
-          , Typ.Procname.java_get_method java_pname
+          ( Typ.Procname.Java.get_class_name java_pname
+          , Typ.Procname.Java.get_method java_pname
           , ret_typ_opt )
         with
         | "android.content.Intent", ("putExtra" | "putExtras"), _ ->
@@ -55,8 +55,9 @@ include TaintAnalysis.Make (struct
             []
         | _ when Typ.Procname.is_constructor pname ->
             [TaintSpec.Propagate_to_receiver]
-        | _, _, (Some {Typ.desc= Tvoid} | None) when not is_static ->
-            (* for instance methods with no return value, propagate the taint to the receiver *)
+        | _, _, (Some {Typ.desc= Tvoid | Tint _ | Tfloat _} | None) when not is_static ->
+            (* for instance methods with a non-Object return value, propagate the taint to the
+               receiver *)
             [TaintSpec.Propagate_to_receiver]
         | classname, _, Some {Typ.desc= Tptr _ | Tstruct _} -> (
           match actuals with

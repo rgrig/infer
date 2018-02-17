@@ -15,23 +15,18 @@ ETC_DIR = $(INFER_DIR)/etc
 # can be overriden to specify another build mode (eg opt)
 INFER_BUILD_DIR = _build/default
 
-ATDGEN_SUFFIXES = _t.ml _t.mli _j.ml _j.mli
-
 #### Backend declarations ####
 
 INFER_MAIN = infer
 
 #### Checkers declarations ####
 
-STACKTREE_ATDGEN_STUB_BASE = atd/stacktree
-STACKTREE_ATDGEN_STUB_ATD = $(STACKTREE_ATDGEN_STUB_BASE).atd
-STACKTREE_ATDGEN_STUBS = $(addprefix $(STACKTREE_ATDGEN_STUB_BASE), $(ATDGEN_SUFFIXES))
-
-#### InferPrint declarations ####
-
-INFERPRINT_ATDGEN_STUB_BASE = atd/jsonbug
-INFERPRINT_ATDGEN_STUB_ATD = $(INFERPRINT_ATDGEN_STUB_BASE).atd
-INFERPRINT_ATDGEN_STUBS = $(addprefix $(INFERPRINT_ATDGEN_STUB_BASE), $(ATDGEN_SUFFIXES))
+INFER_ATDGEN_STUB_BASES = atd/jsonbug atd/runstate atd/stacktree
+INFER_ATDGEN_TYPES = j t
+INFER_ATDGEN_STUB_ATDS = $(INFER_ATDGEN_STUB_BASES:.atd)
+INFER_ATDGEN_SUFFIXES = $(foreach atd_t,$(INFER_ATDGEN_TYPES),_$(atd_t).ml _$(atd_t).mli)
+INFER_ATDGEN_STUBS = $(foreach base,$(INFER_ATDGEN_STUB_BASES),\
+	$(addprefix $(base),$(INFER_ATDGEN_SUFFIXES)))
 
 #### InferCreateTraceViewLinks declarations ####
 
@@ -55,7 +50,8 @@ CLANG_PLUGIN_BINARIES = $(addprefix $(FCP_CLANG_OCAML_BUILD_DIR), \
 CLANG_AST_BASE_NAME = clang_ast
 CLANG_ATDGEN_STUB_BASE = $(CLANG_PLUGIN_MIRROR)/$(CLANG_AST_BASE_NAME)
 CLANG_ATDGEN_STUB_ATD = $(FCP_CLANG_OCAML_BUILD_DIR)/$(CLANG_AST_BASE_NAME).atd
-CLANG_ATDGEN_SUFFIXES = _t.ml _t.mli _b.ml _b.mli _j.ml _j.mli _v.ml _v.mli
+CLANG_ATDGEN_TYPES = b j t v
+CLANG_ATDGEN_SUFFIXES = $(foreach atd_t,$(CLANG_ATDGEN_TYPES),_$(atd_t).ml _$(atd_t).mli)
 CLANG_ATDGEN_STUBS = $(addprefix $(CLANG_ATDGEN_STUB_BASE), $(CLANG_ATDGEN_SUFFIXES))
 
 FCP_CLANG_AST_PROJ = $(addprefix $(FCP_CLANG_OCAML_BUILD_DIR)/, \
@@ -84,7 +80,7 @@ INFER_CONFIG_TARGETS += $(INFER_BUILD_DIR)/$(INFER_CREATE_TRACEVIEW_LINKS_MAIN).
 endif
 
 OCAML_GENERATED_SOURCES = \
-  base/Version.ml $(STACKTREE_ATDGEN_STUBS) $(INFERPRINT_ATDGEN_STUBS)
+  base/Version.ml $(INFER_ATDGEN_STUBS)
 
 ifeq ($(BUILD_C_ANALYZERS),yes)
 OCAML_GENERATED_SOURCES += $(CLANG_ATDGEN_STUBS) $(CLANG_PLUGIN_MIRRORED_FILES)
@@ -99,7 +95,7 @@ all: infer
 
 GENERATED_FROM_AUTOCONF = jbuild.common jbuild-workspace base/Version.ml
 
-GENERATED_JBUILDS = jbuild atd/jbuild istd/jbuild scripts/jbuild
+GENERATED_JBUILDS += jbuild atd/jbuild istd/jbuild scripts/jbuild
 
 SRC_BUILD_COMMON = $(GENERATED_FROM_AUTOCONF) $(GENERATED_JBUILDS) $(OCAML_SOURCES)
 ifeq ($(BUILD_C_ANALYZERS),yes)
@@ -163,7 +159,7 @@ roots += $(INFER_CREATE_TRACEVIEW_LINKS_MODULE)
 endif
 clusters:=base clang java IR
 
-ml_src_files:=$(shell find . -regex '\./[a-zA-Z].*\.ml\(i\)*')
+ml_src_files:=$(shell find . -not -path "./*stubs*" -regex '\./[a-zA-Z].*\.ml\(i\)*')
 inc_flags:=$(foreach dir,$(shell find . -type d),-I $(dir))
 root_flags:=$(foreach root,$(roots),-r $(root))
 cluster_flags:=$(foreach cluster,$(clusters),-c $(cluster))
@@ -211,16 +207,13 @@ $(2)_$(3).mli: $(1)
 $(2)_$(3).ml: $(2)_$(3).mli
 endef
 
-$(foreach atd_type,j t,\
+$(foreach atd_type,$(INFER_ATDGEN_TYPES),\
+  $(foreach base,$(INFER_ATDGEN_STUB_BASES),\
     $(eval \
-        $(call gen_atdgen_rules,$(INFERPRINT_ATDGEN_STUB_ATD),$(INFERPRINT_ATDGEN_STUB_BASE),$(atd_type))))
-
-$(foreach atd_type,j t,\
-    $(eval \
-        $(call gen_atdgen_rules,$(STACKTREE_ATDGEN_STUB_ATD),$(STACKTREE_ATDGEN_STUB_BASE),$(atd_type))))
+        $(call gen_atdgen_rules,$(base).atd,$(base),$(atd_type)))))
 
 # rebuild the artifacts of the AST files whenever they're upated in FCP
-$(foreach atd_type,b j t v,\
+$(foreach atd_type,$(CLANG_ATDGEN_TYPES),\
     $(eval \
         $(call gen_atdgen_rules,$(CLANG_ATDGEN_STUB_ATD),$(CLANG_ATDGEN_STUB_BASE),$(atd_type))))
 
@@ -272,11 +265,13 @@ $(GENERATED_JBUILDS): jbuild.common
 
 jbuild: jbuild.in
 atd/jbuild: atd/jbuild.in
+deadcode/jbuild: deadcode/jbuild.in
 istd/jbuild: istd/jbuild.in
 scripts/jbuild: scripts/jbuild.in
 
 .PHONY: clean
 clean:
+	$(MAKE) -C deadcode clean
 	$(REMOVE) $(INFER_TARGET)
 	$(REMOVE) toplevel.mlpack
 	$(REMOVE_DIR) $(BUILD_DIR)

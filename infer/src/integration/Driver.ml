@@ -75,11 +75,14 @@ let clean_results_dir () =
   let should_delete_dir =
     let dirs_to_delete =
       let open Config in
-      [ backend_stats_dir_name
-      ; classnames_dir_name
-      ; frontend_stats_dir_name
-      ; multicore_dir_name
-      ; reporting_stats_dir_name ]
+      let common_list =
+        [ backend_stats_dir_name
+        ; classnames_dir_name
+        ; frontend_stats_dir_name
+        ; multicore_dir_name
+        ; reporting_stats_dir_name ]
+      in
+      if flavors then common_list else captured_dir_name :: common_list
     in
     List.mem ~equal:String.equal dirs_to_delete
   in
@@ -90,9 +93,7 @@ let clean_results_dir () =
         ResultsDatabase.database_filename ^ "-shm"
       ; ResultsDatabase.database_filename ^ "-wal" ]
     in
-    let suffixes_to_delete =
-      ".txt" :: ".csv" :: ".json" :: (if Config.flavors then [] else [".cg"])
-    in
+    let suffixes_to_delete = [".txt"; ".csv"; ".json"] in
     fun name ->
       (* Keep the JSON report *)
       not (String.equal (Filename.basename name) Config.report_json)
@@ -125,18 +126,6 @@ let clean_results_dir () =
   delete_temp_results Config.results_dir
 
 
-let check_captured_empty mode =
-  let clean_command_opt = clean_compilation_command mode in
-  if Config.capture && Utils.directory_is_empty Config.captured_dir then (
-    ( match clean_command_opt with
-    | Some clean_command ->
-        L.user_warning "@\nNothing to compile. Try running `%s` first.@." clean_command
-    | None ->
-        L.user_warning "@\nNothing to compile. Try cleaning the build first.@." ) ;
-    true )
-  else false
-
-
 let register_perf_stats_report () =
   let stats_dir = Filename.concat Config.results_dir Config.backend_stats_dir_name in
   let stats_base = Config.perf_stats_prefix ^ ".json" in
@@ -154,31 +143,21 @@ let reset_duplicates_file () =
   create ()
 
 
-(* Create the .start file, and update the timestamp unless in continue mode *)
-let touch_start_file_unless_continue () =
-  let start = Config.results_dir ^/ Config.start_filename in
-  let delete () = Unix.unlink start in
-  let create () =
-    Unix.close (Unix.openfile ~perm:0o0666 ~mode:[Unix.O_CREAT; Unix.O_WRONLY] start)
-  in
-  if not (Sys.file_exists start = `Yes) then create ()
-  else if not Config.continue_capture then ( delete () ; create () )
-
-
-exception Infer_error of string
-
-let default_error_handling : Unix.Exit_or_signal.t -> unit = function
+let command_error_handling ~always_die ~prog ~args = function
   | Ok _ ->
       ()
-  | Error _ as status when Config.keep_going ->
-      (* Log error and proceed past the failure when keep going mode is on *)
-      L.external_error "%s" (Unix.Exit_or_signal.to_string_hum status) ;
-      ()
   | Error _ as status ->
-      raise (Infer_error (Unix.Exit_or_signal.to_string_hum status))
+      let log =
+        if not always_die && Config.keep_going then
+          (* Log error and proceed past the failure when keep going mode is on *)
+          L.external_error
+        else L.die InternalError
+      in
+      log "Error running '%s' %a:@\n  %s" prog Pp.cli_args args
+        (Unix.Exit_or_signal.to_string_hum status)
 
 
-let run_command ?(cleanup= default_error_handling) ~prog ~args () =
+let run_command ~prog ~args ?(cleanup= command_error_handling ~always_die:false ~prog ~args) () =
   Unix.waitpid (Unix.fork_exec ~prog ~argv:(prog :: args) ())
   |> fun status ->
   cleanup status ;
@@ -305,10 +284,8 @@ let capture ~changed_files mode =
               when Int.equal exit_code Config.infer_py_argparse_error_exit_code ->
                 (* swallow infer.py argument parsing error *)
                 Config.print_usage_exit ()
-            | Error _ as status ->
-                raise (Infer_error (Unix.Exit_or_signal.to_string_hum status))
-            | Ok _ ->
-                ())
+            | status ->
+                command_error_handling ~always_die:true ~prog:infer_py ~args status)
         ()
   | XcodeXcpretty (prog, args) ->
       L.progress "Capturing using xcodebuild and xcpretty...@." ;
@@ -376,6 +353,22 @@ let report ?(suppress_console= false) () =
           (String.concat ~sep:" " args)
 
 
+let error_nothing_to_analyze mode =
+  let clean_command_opt = clean_compilation_command mode in
+  let nothing_to_compile_msg = "Nothing to compile." in
+  let please_run_capture_msg =
+    match mode with Analyze -> " Have you run `infer capture`?" | _ -> ""
+  in
+  ( match clean_command_opt with
+  | Some clean_command ->
+      L.user_warning "%s%s Try running `%s` first.@." nothing_to_compile_msg please_run_capture_msg
+        clean_command
+  | None ->
+      L.user_warning "%s%s Try cleaning the build first.@." nothing_to_compile_msg
+        please_run_capture_msg ) ;
+  L.user_error "There was nothing to analyze.@\n@."
+
+
 let analyze_and_report ?suppress_console_report ~changed_files mode =
   let should_analyze, should_report =
     match (Config.command, mode, Config.analyzer) with
@@ -394,18 +387,17 @@ let analyze_and_report ?suppress_console_report ~changed_files mode =
   in
   let should_merge =
     match mode with
-    | PythonCapture (BBuck, _) when Config.flavors && CLOpt.(equal_command Run) Config.command ->
+    | PythonCapture (BBuck, _) when Config.flavors && InferCommand.equal Run Config.command ->
         (* if doing capture + analysis of buck with flavors, we always need to merge targets before the analysis phase *)
         true
     | _ ->
         (* else rely on the command line value *) Config.merge
   in
   if should_merge then MergeCapture.merge_captured_targets () ;
-  if (should_analyze || should_report)
-     && (Sys.file_exists Config.captured_dir <> `Yes || check_captured_empty mode)
-  then L.user_error "There was nothing to analyze.@\n@."
-  else if should_analyze then execute_analyze ~changed_files ;
-  if should_report && Config.report then report ?suppress_console:suppress_console_report ()
+  if should_analyze || should_report then (
+    if SourceFiles.is_empty () then error_nothing_to_analyze mode
+    else if should_analyze then execute_analyze ~changed_files ;
+    if should_report && Config.report then report ?suppress_console:suppress_console_report () )
 
 
 (** as the Config.fail_on_bug flag mandates, exit with error when an issue is reported *)
@@ -547,8 +539,6 @@ let run_prologue mode =
      mono-threaded execution. *)
   Unix.unsetenv "MAKEFLAGS" ;
   if Config.developer_mode then register_perf_stats_report () ;
-  if not Config.buck_cache_mode && not Config.infer_is_clang && not Config.infer_is_javac then
-    touch_start_file_unless_continue () ;
   ()
 
 

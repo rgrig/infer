@@ -74,10 +74,6 @@ module Hash = Hashtbl.Make (struct
   let hash = hash
 end)
 
-let rec is_array_index_of exp1 exp2 =
-  match exp1 with Lindex (exp, _) -> is_array_index_of exp exp2 | _ -> equal exp1 exp2
-
-
 let is_null_literal = function Const Cint n -> IntLit.isnull n | _ -> false
 
 let is_this = function Lvar pvar -> Pvar.is_this pvar | _ -> false
@@ -129,17 +125,6 @@ let rec pointer_arith = function
 
 let get_undefined footprint =
   Var (Ident.create_fresh (if footprint then Ident.kfootprint else Ident.kprimed))
-
-
-(** returns true if the expression represents a stack-directed address *)
-let rec is_stack_addr e =
-  match (e : t) with
-  | Lvar pv ->
-      not (Pvar.is_global pv)
-  | UnOp (_, e', _) | Cast (_, e') | Lfield (e', _, _) | Lindex (e', _) ->
-      is_stack_addr e'
-  | _ ->
-      false
 
 
 (** returns true if the express operates on address of local variable *)
@@ -246,8 +231,11 @@ let rec pp_ pe pp_t f e =
   | Exn e ->
       F.fprintf f "EXN %a" pp_exp e
   | Closure {name; captured_vars} ->
-      let id_exps = List.map ~f:(fun (id_exp, _, _) -> id_exp) captured_vars in
-      F.fprintf f "(%a)" (Pp.comma_seq pp_exp) (Const (Cfun name) :: id_exps)
+      if List.is_empty captured_vars then F.fprintf f "(%a)" pp_exp (Const (Cfun name))
+      else
+        F.fprintf f "(%a,%a)" pp_exp (Const (Cfun name))
+          (Pp.comma_seq (pp_captured_var pe pp_t))
+          captured_vars
   | Lvar pv ->
       Pvar.pp pe f pv
   | Lfield (e, fld, _) ->
@@ -264,6 +252,14 @@ let rec pp_ pe pp_t f e =
         (pp_if_some pp_len "len") dynamic_length
         (pp_if (not (String.equal "" subt_s)) Subtype.pp "sub_t")
         subtype
+
+
+and pp_captured_var pe pp_t f (exp, var, typ) =
+  match exp with
+  | Lvar evar when Pvar.equal var evar ->
+      F.fprintf f "%a" (Pvar.pp pe) var
+  | _ ->
+      F.fprintf f "(%a %a:%a)" (pp_ pe pp_t) exp (Pvar.pp pe) var (Typ.pp pe) typ
 
 
 let pp_printenv pe pp_typ f e = pp_ pe (pp_typ pe) f e

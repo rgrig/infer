@@ -151,14 +151,37 @@ module TraceElem = struct
     make (Access.InterfaceCall pname) site
 end
 
-(* In this domain true<=false. The intended denotations [[.]] are
-    [[true]] = the set of all states where we know according, to annotations
-               or assertions or lock instructions, that some lock is held.
-    [[false]] = the empty set
-   The use of && for join in this domain enforces that, to know a lock is held, one must hold in
-   all branches.
-*)
-module LocksDomain = AbstractDomain.BooleanAnd
+module LockCount = AbstractDomain.CountDomain (struct
+  let max = 5
+
+  (* arbitrary threshold for max locks we expect to be held simultaneously *)
+end)
+
+module LocksDomain = struct
+  include AbstractDomain.Map (AccessPath) (LockCount)
+
+  (* TODO: eventually, we'll ask add_lock/remove_lock to pass the lock name. for now, this is a hack
+     to model having a single lock used everywhere *)
+  let the_only_lock = ((Var.of_id (Ident.create Ident.knormal 0), Typ.void_star), [])
+
+  let is_locked astate =
+    (* we only add locks with positive count, so safe to just check emptiness *)
+    not (is_empty astate)
+
+
+  let add_lock astate =
+    let count = try find the_only_lock astate with Not_found -> LockCount.empty in
+    add the_only_lock (LockCount.increment count) astate
+
+
+  let remove_lock astate =
+    try
+      let count = find the_only_lock astate in
+      let count' = LockCount.decrement count in
+      if LockCount.is_empty count' then remove the_only_lock astate
+      else add the_only_lock count' astate
+    with Not_found -> astate
+end
 
 module ThreadsDomain = struct
   type astate = NoThread | AnyThreadButSelf | AnyThread [@@deriving compare]
@@ -322,7 +345,7 @@ module OwnershipDomain = struct
 
 
   (*
-returns Owned if any prefix is owned on any prefix, else OwnedIf if it is 
+returns Owned if any prefix is owned on any prefix, else OwnedIf if it is
 OwnedIf in the astate, else UnOwned
 *)
   let get_owned access_path astate =
@@ -361,55 +384,43 @@ module AttributeMapDomain = struct
     add access_path attribute_set t
 end
 
-module Excluder = struct
-  type t = Thread | Lock | Both [@@deriving compare]
+module AccessData = struct
+  module Precondition = struct
+    type t = Conjunction of IntSet.t | False [@@deriving compare]
 
-  let pp fmt = function
-    | Thread ->
-        F.fprintf fmt "Thread"
-    | Lock ->
-        F.fprintf fmt "Lock"
-    | Both ->
-        F.fprintf fmt "both Thread and Lock"
-end
+    (* precondition is true if the conjunction of owned indexes is empty *)
+    let is_true = function False -> false | Conjunction set -> IntSet.is_empty set
 
-module AccessPrecondition = struct
-  type t =
-    | Protected of Excluder.t
-    | Unprotected of IntSet.t
-    | TotallyUnprotected
-    [@@deriving compare]
+    let pp fmt = function
+      | Conjunction indexes ->
+          F.fprintf fmt "Owned(%a)"
+            (PrettyPrintable.pp_collection ~pp_item:Int.pp)
+            (IntSet.elements indexes)
+      | False ->
+          F.fprintf fmt "False"
+  end
 
-  let pp fmt = function
-    | Protected excl ->
-        F.fprintf fmt "ProtectedBy(%a)" Excluder.pp excl
-    | TotallyUnprotected ->
-        F.fprintf fmt "TotallyUnprotected"
-    | Unprotected indexes ->
-        F.fprintf fmt "Unprotected(%a)"
-          (PrettyPrintable.pp_collection ~pp_item:Int.pp)
-          (IntSet.elements indexes)
+  type t = {thread: bool; lock: bool; ownership_precondition: Precondition.t} [@@deriving compare]
+
+  let make lock threads ownership_precondition pdesc =
+    (* shouldn't be creating metadata for accesses that are known to be owned; we should discard
+       such accesses *)
+    assert (not (Precondition.is_true ownership_precondition)) ;
+    let thread = ThreadsDomain.is_any_but_self threads in
+    let lock = LocksDomain.is_locked lock || Procdesc.is_java_synchronized pdesc in
+    {thread; lock; ownership_precondition}
 
 
-  let make_protected locks thread pdesc =
-    let is_main_thread = ThreadsDomain.is_any_but_self thread in
-    let locked = locks || Procdesc.is_java_synchronized pdesc in
-    if not locked && not is_main_thread then TotallyUnprotected
-    else if locked && is_main_thread then Protected Excluder.Both
-    else if locked then Protected Excluder.Lock
-    else Protected Excluder.Thread
+  let is_unprotected {thread; lock; ownership_precondition} =
+    not thread && not lock && not (Precondition.is_true ownership_precondition)
 
 
-  let make_unprotected indexes =
-    assert (not (IntSet.is_empty indexes)) ;
-    Unprotected indexes
-
-
-  let totally_unprotected = TotallyUnprotected
+  let pp fmt {thread; lock; ownership_precondition} =
+    F.fprintf fmt "Thread: %b Lock: %b Pre: %a" thread lock Precondition.pp ownership_precondition
 end
 
 module AccessDomain = struct
-  include AbstractDomain.Map (AccessPrecondition) (PathDomain)
+  include AbstractDomain.Map (AccessData) (PathDomain)
 
   let add_access precondition access_path t =
     let precondition_accesses = try find precondition t with Not_found -> PathDomain.empty in
@@ -429,7 +440,7 @@ type astate =
 
 let empty =
   let threads = ThreadsDomain.empty in
-  let locks = false in
+  let locks = LocksDomain.empty in
   let accesses = AccessDomain.empty in
   let ownership = OwnershipDomain.empty in
   let attribute_map = AttributeMapDomain.empty in
@@ -437,7 +448,7 @@ let empty =
 
 
 let is_empty {threads; locks; accesses; ownership; attribute_map} =
-  ThreadsDomain.is_empty threads && not locks && AccessDomain.is_empty accesses
+  ThreadsDomain.is_empty threads && LocksDomain.is_empty locks && AccessDomain.is_empty accesses
   && OwnershipDomain.is_empty ownership && AttributeMapDomain.is_empty attribute_map
 
 
@@ -492,3 +503,50 @@ let pp fmt {threads; locks; accesses; ownership; attribute_map} =
   F.fprintf fmt "Threads: %a, Locks: %a @\nAccesses %a @\n Ownership: %a @\nAttributes: %a @\n"
     ThreadsDomain.pp threads LocksDomain.pp locks AccessDomain.pp accesses OwnershipDomain.pp
     ownership AttributeMapDomain.pp attribute_map
+
+
+let rec attributes_of_expr attribute_map e =
+  let open HilExp in
+  match e with
+  | HilExp.AccessExpression access_expr -> (
+    try AttributeMapDomain.find (AccessExpression.to_access_path access_expr) attribute_map
+    with Not_found -> AttributeSetDomain.empty )
+  | Constant _ ->
+      AttributeSetDomain.of_list [Attribute.Functional]
+  | Exception expr (* treat exceptions as transparent wrt attributes *) | Cast (_, expr) ->
+      attributes_of_expr attribute_map expr
+  | UnaryOperator (_, expr, _) ->
+      attributes_of_expr attribute_map expr
+  | BinaryOperator (_, expr1, expr2) ->
+      let attributes1 = attributes_of_expr attribute_map expr1 in
+      let attributes2 = attributes_of_expr attribute_map expr2 in
+      AttributeSetDomain.join attributes1 attributes2
+  | Closure _ | Sizeof _ ->
+      AttributeSetDomain.empty
+
+
+let rec ownership_of_expr expr ownership =
+  let open HilExp in
+  match expr with
+  | AccessExpression access_expr ->
+      OwnershipDomain.get_owned (AccessExpression.to_access_path access_expr) ownership
+  | Constant _ ->
+      OwnershipAbstractValue.owned
+  | Exception e (* treat exceptions as transparent wrt ownership *) | Cast (_, e) ->
+      ownership_of_expr e ownership
+  | _ ->
+      OwnershipAbstractValue.unowned
+
+
+let filter_by_access access_filter trace =
+  PathDomain.Sinks.filter access_filter (PathDomain.sinks trace) |> PathDomain.update_sinks trace
+
+
+let get_all_accesses_with_pre pre_filter access_filter accesses =
+  AccessDomain.fold
+    (fun pre trace acc ->
+      if pre_filter pre then PathDomain.join (filter_by_access access_filter trace) acc else acc )
+    accesses PathDomain.empty
+
+
+let get_all_accesses = get_all_accesses_with_pre (fun _ -> true)

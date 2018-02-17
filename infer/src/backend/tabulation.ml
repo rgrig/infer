@@ -985,8 +985,7 @@ let mk_posts tenv ret_id_opt prop callee_pname posts =
         List.filter ~f:(fun (prop, _) -> not (returns_null prop)) posts
       else posts
     in
-    if Config.idempotent_getters && Config.curr_language_is Config.Java then
-      mk_getter_idempotent posts
+    if Config.idempotent_getters && Language.curr_language_is Java then mk_getter_idempotent posts
     else posts
 
 
@@ -1323,12 +1322,11 @@ let exe_call_postprocess tenv ret_id trace_call callee_pname callee_attrs loc re
   let should_add_ret_attr _ =
     let is_likely_getter = function
       | Typ.Procname.Java pn_java ->
-          Int.equal (List.length (Typ.Procname.java_get_parameters pn_java)) 0
+          Int.equal (List.length (Typ.Procname.Java.get_parameters pn_java)) 0
       | _ ->
           false
     in
-    Config.idempotent_getters && Config.curr_language_is Config.Java
-    && is_likely_getter callee_pname
+    Config.idempotent_getters && Language.curr_language_is Java && is_likely_getter callee_pname
     || returns_nullable ret_annot
   in
   match ret_id with

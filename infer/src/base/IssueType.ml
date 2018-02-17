@@ -106,8 +106,6 @@ let buffer_overrun_s2 = from_string "BUFFER_OVERRUN_S2"
 
 let cannot_star = from_string "Cannot_star"
 
-let checkers_access_global = from_string "CHECKERS_ACCESS_GLOBAL"
-
 let checkers_allocates_memory = from_string "CHECKERS_ALLOCATES_MEMORY"
 
 let checkers_annotation_reachability_error = from_string "CHECKERS_ANNOTATION_REACHABILITY_ERROR"
@@ -122,15 +120,9 @@ let checkers_fragment_retain_view = from_string "CHECKERS_FRAGMENT_RETAINS_VIEW"
 
 let checkers_immutable_cast = from_string "CHECKERS_IMMUTABLE_CAST"
 
-let checkers_print_c_call = from_string "CHECKERS_PRINT_C_CALL"
-
-let checkers_print_objc_method_calls = from_string "CHECKERS_PRINT_OBJC_METHOD_CALLS"
-
 let checkers_printf_args = from_string "CHECKERS_PRINTF_ARGS"
 
 let class_cast_exception = from_string ~enabled:false "CLASS_CAST_EXCEPTION"
-
-let cluster_callback = from_string "CLUSTER_CALLBACK"
 
 let codequery = from_string "Codequery"
 
@@ -139,8 +131,6 @@ let comparing_floats_for_equality = from_string "COMPARING_FLOAT_FOR_EQUALITY"
 let condition_always_false = from_string ~enabled:false "CONDITION_ALWAYS_FALSE"
 
 let condition_always_true = from_string ~enabled:false "CONDITION_ALWAYS_TRUE"
-
-let context_leak = from_string "CONTEXT_LEAK"
 
 let create_intent_from_uri = from_string "CREATE_INTENT_FROM_URI"
 
@@ -275,6 +265,8 @@ let memory_leak = from_string "MEMORY_LEAK"
 
 let missing_fld = from_string "Missing_fld" ~hum:"Missing Field"
 
+let missing_required_prop = from_string "MISSING_REQUIRED_PROP"
+
 let null_dereference = from_string "NULL_DEREFERENCE"
 
 let null_test_after_dereference = from_string ~enabled:false "NULL_TEST_AFTER_DEREFERENCE"
@@ -290,8 +282,6 @@ let precondition_not_found = from_string "PRECONDITION_NOT_FOUND"
 let precondition_not_met = from_string "PRECONDITION_NOT_MET"
 
 let premature_nil_termination = from_string "PREMATURE_NIL_TERMINATION_ARGUMENT"
-
-let proc_callback = from_string "PROC_CALLBACK" ~hum:"Procedure Callback"
 
 let quandary_taint_error = from_string "QUANDARY_TAINT_ERROR"
 
@@ -344,6 +334,8 @@ let unreachable_code_after = from_string "UNREACHABLE_CODE"
 let unsafe_guarded_by_access = from_string "UNSAFE_GUARDED_BY_ACCESS"
 
 let use_after_free = from_string "USE_AFTER_FREE"
+
+let use_after_lifetime = from_string "USE_AFTER_LIFETIME"
 
 let user_controlled_sql_risk = from_string "USER_CONTROLLED_SQL_RISK"
 

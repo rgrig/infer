@@ -471,12 +471,12 @@ let mk_ptsto_exp_footprint pname tenv orig_prop (lexp, typ) max_stamp inst
       raise (Exceptions.Dangling_pointer_dereference (None, err_desc, __POS__)) ) ;
   let off_foot, eqs = laundry_offset_for_footprint max_stamp off in
   let subtype =
-    match !Config.curr_language with
-    | Config.Clang ->
+    match !Language.curr_language with
+    | Clang ->
         Subtype.exact
-    | Config.Java ->
+    | Java ->
         Subtype.subtypes
-    | Config.Python ->
+    | Python ->
         L.die InternalError "Subtypes for Python not implemented"
   in
   let create_ptsto footprint_part off0 =
@@ -753,7 +753,7 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
   let guarded_by_str_is_current_class guarded_by_str = function
     | Typ.Procname.Java java_pname ->
         (* programmers write @GuardedBy("MyClass.class") when the field is guarded by the class *)
-        guarded_by_str_is_class guarded_by_str (Typ.Procname.java_get_class_name java_pname)
+        guarded_by_str_is_class guarded_by_str (Typ.Procname.Java.get_class_name java_pname)
     | _ ->
         false
   in
@@ -765,7 +765,7 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
   let guarded_by_str_is_super_class_this guarded_by_str pname =
     match pname with
     | Typ.Procname.Java java_pname ->
-        let current_class_type_name = Typ.Procname.java_get_class_type_name java_pname in
+        let current_class_type_name = Typ.Procname.Java.get_class_type_name java_pname in
         let comparison class_type_name _ =
           guarded_by_str_is_class_this (Typ.Name.to_string class_type_name) guarded_by_str
         in
@@ -776,7 +776,7 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
   (* return true if [guarded_by_str] is as suffix of "<name_of_current_class>.this" *)
   let guarded_by_str_is_current_class_this guarded_by_str = function
     | Typ.Procname.Java java_pname ->
-        guarded_by_str_is_class_this (Typ.Procname.java_get_class_name java_pname) guarded_by_str
+        guarded_by_str_is_class_this (Typ.Procname.Java.get_class_name java_pname) guarded_by_str
     | _ ->
         false
   in
@@ -807,7 +807,7 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
       match extract_guarded_by_str item_annot with
       | Some "this" ->
           (* expand "this" into <classname>.this *)
-          Some (Printf.sprintf "%s.this" (Typ.Fieldname.java_get_class fld))
+          Some (Printf.sprintf "%s.this" (Typ.Fieldname.Java.get_class fld))
       | guarded_by_str_opt ->
           guarded_by_str_opt )
     | _ ->
@@ -876,7 +876,7 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
               (* if the guarded-by string is "OuterClass.this", look for "this$n" for some n.
                      note that this is a bit sketchy when there are mutliple this$n's, but there's
                      nothing we can do to disambiguate them. *)
-              get_fld_strexp_and_typ typ (fun f _ -> Typ.Fieldname.java_is_outer_instance f) flds
+              get_fld_strexp_and_typ typ (fun f _ -> Typ.Fieldname.Java.is_outer_instance f) flds
           | None ->
               (* can't find an exact match. try a different convention. *)
               match_on_field_type typ flds
@@ -904,7 +904,12 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
     in
     let is_synchronized_on_class guarded_by_str =
       guarded_by_str_is_current_class guarded_by_str pname && Procdesc.is_java_synchronized pdesc
-      && Typ.Procname.java_is_static pname
+      &&
+      match pname with
+      | Typ.Procname.Java java_pname ->
+          Typ.Procname.Java.is_static java_pname
+      | _ ->
+          false
     in
     let warn accessed_fld guarded_by_str =
       let loc = State.get_loc () in
@@ -929,8 +934,14 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
       ( guarded_by_str_is_current_class_this guarded_by_str pname
       || guarded_by_str_is_super_class_this guarded_by_str pname )
       && Procdesc.is_java_synchronized pdesc
-      || guarded_by_str_is_current_class guarded_by_str pname
-         && Procdesc.is_java_synchronized pdesc && Typ.Procname.java_is_static pname
+      || ( guarded_by_str_is_current_class guarded_by_str pname
+         && Procdesc.is_java_synchronized pdesc
+         &&
+         match pname with
+         | Typ.Procname.Java java_pname ->
+             Typ.Procname.Java.is_static java_pname
+         | _ ->
+             false )
       || (* or the prop says we already have the lock *)
          List.exists
            ~f:(function Sil.Apred (Alocked, _) -> true | _ -> false)
@@ -972,7 +983,12 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
       in
       Procdesc.get_access pdesc <> PredSymb.Private
       && not (Annotations.pdesc_return_annot_ends_with pdesc Annotations.visibleForTesting)
-      && not (Typ.Procname.java_is_access_method (Procdesc.get_proc_name pdesc))
+      && not
+           ( match Procdesc.get_proc_name pdesc with
+           | Typ.Procname.Java java_pname ->
+               Typ.Procname.Java.is_access_method java_pname
+           | _ ->
+               false )
       && not (is_accessible_through_local_ref lexp) && not guardedby_is_self_referential
       && not (proc_has_suppress_guarded_by_annot pdesc)
     in
@@ -1649,11 +1665,16 @@ let check_dereference_error tenv pdesc (prop: Prop.normal Prop.t) lexp loc =
 let check_call_to_objc_block_error tenv pdesc prop fun_exp loc =
   let pname = Procdesc.get_proc_name pdesc in
   let is_this = function
-    | Exp.Lvar pvar ->
-        let {ProcAttributes.is_objc_instance_method; is_cpp_instance_method} =
-          Procdesc.get_attributes pdesc
-        in
-        is_objc_instance_method && Pvar.is_self pvar || is_cpp_instance_method && Pvar.is_this pvar
+    | Exp.Lvar pvar
+      -> (
+        let {ProcAttributes.clang_method_kind} = Procdesc.get_attributes pdesc in
+        match clang_method_kind with
+        | ProcAttributes.OBJC_INSTANCE ->
+            Pvar.is_self pvar
+        | ProcAttributes.CPP_INSTANCE ->
+            Pvar.is_this pvar
+        | _ ->
+            false )
     | _ ->
         false
   in
@@ -1703,8 +1724,7 @@ let check_call_to_objc_block_error tenv pdesc prop fun_exp loc =
     | _ ->
         (None, false)
   in
-  if Config.curr_language_is Config.Clang && fun_exp_may_be_null ()
-     && not (is_fun_exp_captured_var ())
+  if Language.curr_language_is Clang && fun_exp_may_be_null () && not (is_fun_exp_captured_var ())
   then
     let deref_str = Localise.deref_str_null None in
     let err_desc_nobuckets =
@@ -1761,10 +1781,15 @@ let rearrange ?(report_deref_errors= true) pdesc tenv lexp typ prop loc
   if report_deref_errors then check_dereference_error tenv pdesc prop nlexp (State.get_loc ()) ;
   let pname = Procdesc.get_proc_name pdesc in
   let prop' =
-    if Config.csl_analysis && !Config.footprint && Typ.Procname.is_java pname
-       && not (Typ.Procname.is_constructor pname || Typ.Procname.is_class_initializer pname)
-    then add_guarded_by_constraints tenv prop lexp pdesc
-    else prop
+    match pname with
+    | Typ.Procname.Java java_pname
+      when Config.csl_analysis && !Config.footprint
+           && not
+                ( Typ.Procname.is_constructor pname
+                || Typ.Procname.Java.is_class_initializer java_pname ) ->
+        add_guarded_by_constraints tenv prop lexp pdesc
+    | _ ->
+        prop
   in
   match Prop.prop_iter_create prop' with
   | None ->

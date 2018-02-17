@@ -55,34 +55,6 @@ let read_file fname =
       cleanup () ; Error error
 
 
-(** copy a source file, return the number of lines, or None in case of error *)
-let copy_file fname_from fname_to =
-  let res = ref 0 in
-  let cin_ref = ref None in
-  let cout_ref = ref None in
-  let cleanup () =
-    (match !cin_ref with None -> () | Some cin -> In_channel.close cin) ;
-    match !cout_ref with None -> () | Some cout -> Out_channel.close cout
-  in
-  try
-    let cin = In_channel.create fname_from in
-    cin_ref := Some cin ;
-    let cout = Out_channel.create fname_to in
-    cout_ref := Some cout ;
-    while true do
-      let line = In_channel.input_line_exn cin in
-      Out_channel.output_string cout line ;
-      Out_channel.output_char cout '\n' ;
-      incr res
-    done ;
-    assert false
-  with
-  | End_of_file ->
-      cleanup () ; Some !res
-  | Sys_error _ ->
-      cleanup () ; None
-
-
 (** type for files used for printing *)
 type outfile =
   { fname: string  (** name of the file *)
@@ -99,9 +71,6 @@ let create_outfile fname =
     F.fprintf F.err_formatter "error: cannot create file %s@." fname ;
     None
 
-
-(** operate on an outfile reference if it is not None *)
-let do_outf outf_opt f = match outf_opt with None -> () | Some outf -> f outf
 
 (** close an outfile *)
 let close_outf outf = Out_channel.close outf.out_c
@@ -224,9 +193,13 @@ let write_json_to_file destfile json =
   with_file_out destfile ~f:(fun oc -> Yojson.Basic.pretty_to_channel oc json)
 
 
-let consume_in chan_in =
-  try while true do In_channel.input_line_exn chan_in |> ignore done with End_of_file -> ()
+let with_channel_in ~f chan_in =
+  try while true do f @@ In_channel.input_line_exn chan_in done with End_of_file -> ()
 
+
+let consume_in chan_in = with_channel_in ~f:ignore chan_in
+
+let echo_in chan_in = with_channel_in ~f:print_endline chan_in
 
 let with_process_in command read =
   let chan = Unix.open_process_in command in
@@ -377,17 +350,24 @@ let rec rmtree name =
       ()
 
 
-let without_gc ~f =
-  let stat = Gc.get () in
-  let space_oh = stat.space_overhead in
-  Gc.set {stat with space_overhead= 10000} ;
-  let res = f () in
-  Gc.set {stat with space_overhead= space_oh} ;
-  res
-
-
 let yield () =
   Unix.select ~read:[] ~write:[] ~except:[] ~timeout:(`After Time_ns.Span.min_value) |> ignore
 
 
 let better_hash x = Marshal.to_string x [Marshal.No_sharing] |> Caml.Digest.string
+
+let unlink_file_on_exit temp_file =
+  "Cleaning temporary file " ^ temp_file
+  |> Epilogues.register ~f:(fun () -> try Unix.unlink temp_file with _ -> ())
+
+
+(** drop at most one layer of well-balanced first and last characters satisfying [drop] from the
+   string; for instance, [strip_balanced ~drop:(function | 'a' | 'x' -> true | _ -> false) "xaabax"]
+   returns "aaba" *)
+let strip_balanced_once ~drop s =
+  let n = String.length s in
+  if n < 2 then s
+  else
+    let first = String.unsafe_get s 0 in
+    if Char.equal first (String.unsafe_get s (n - 1)) && drop first then String.slice s 1 (n - 1)
+    else s

@@ -514,93 +514,6 @@ let forward_tabulate tenv proc_cfg wl =
   L.d_ln ()
 
 
-(** if possible, produce a (fieldname, typ) path from one of the [src_exps] to [sink_exp] using
-    [reachable_hpreds]. *)
-let get_fld_typ_path_opt src_exps sink_exp_ reachable_hpreds_ =
-  let strexp_matches target_exp = function
-    | Sil.Eexp (e, _) ->
-        Exp.equal target_exp e
-    | _ ->
-        false
-  in
-  let extend_path hpred (sink_exp, path, reachable_hpreds) =
-    match hpred with
-    | Sil.Hpointsto (lhs, Sil.Estruct (flds, _), Exp.Sizeof {typ}) ->
-        List.find ~f:(function _, se -> strexp_matches sink_exp se) flds
-        |> Option.value_map
-             ~f:(function
-                 | fld, _ ->
-                     let reachable_hpreds' = Sil.HpredSet.remove hpred reachable_hpreds in
-                     (lhs, (Some fld, typ) :: path, reachable_hpreds'))
-             ~default:(sink_exp, path, reachable_hpreds)
-    | Sil.Hpointsto (lhs, Sil.Earray (_, elems, _), Exp.Sizeof {typ}) ->
-        if List.exists ~f:(function _, se -> strexp_matches sink_exp se) elems then
-          let reachable_hpreds' = Sil.HpredSet.remove hpred reachable_hpreds in
-          (* None means "no field name" ~=~ nameless array index *)
-          (lhs, (None, typ) :: path, reachable_hpreds')
-        else (sink_exp, path, reachable_hpreds)
-    | _ ->
-        (sink_exp, path, reachable_hpreds)
-  in
-  (* terminates because [reachable_hpreds] is shrinking on each recursive call *)
-  let rec get_fld_typ_path sink_exp path reachable_hpreds =
-    let sink_exp', path', reachable_hpreds' =
-      Sil.HpredSet.fold extend_path reachable_hpreds (sink_exp, path, reachable_hpreds)
-    in
-    if Exp.Set.mem sink_exp' src_exps then Some path'
-    else if Sil.HpredSet.cardinal reachable_hpreds' >= Sil.HpredSet.cardinal reachable_hpreds then
-      None (* can't find a path from [src_exps] to [sink_exp] *)
-    else get_fld_typ_path sink_exp' path' reachable_hpreds'
-  in
-  get_fld_typ_path sink_exp_ [] reachable_hpreds_
-
-
-(** report an error if any Context is reachable from a static field *)
-let report_context_leaks pname sigma tenv =
-  (* report an error if an expression in [context_exps] is reachable from [field_strexp] *)
-  let check_reachable_context_from_fld (fld_name, fld_strexp) context_exps =
-    let fld_exps = Prop.strexp_get_exps fld_strexp in
-    let reachable_hpreds, reachable_exps = Prop.compute_reachable_hpreds sigma fld_exps in
-    (* raise an error if any Context expression is in [reachable_exps] *)
-    List.iter
-      ~f:(fun (context_exp, name) ->
-        if Exp.Set.mem context_exp reachable_exps then
-          match get_fld_typ_path_opt fld_exps context_exp reachable_hpreds with
-          | None ->
-              () (* TODO (T21871205): the underlying issue still need to be fixed *)
-          | Some leak_path ->
-              let err_desc =
-                Errdesc.explain_context_leak pname (Typ.mk (Tstruct name)) fld_name leak_path
-              in
-              let exn = Exceptions.Context_leak (err_desc, __POS__) in
-              Reporting.log_error_deprecated pname exn )
-      context_exps
-  in
-  (* get the set of pointed-to expressions of type T <: Context *)
-  let context_exps =
-    List.fold
-      ~f:(fun exps hpred ->
-        match hpred with
-        | Sil.Hpointsto (_, Eexp (exp, _), Sizeof {typ= {desc= Tptr ({desc= Tstruct name}, _)}})
-          when not (Exp.is_null_literal exp) && AndroidFramework.is_context tenv name
-               && not (AndroidFramework.is_application tenv name) ->
-            (exp, name) :: exps
-        | _ ->
-            exps )
-      ~init:[] sigma
-  in
-  List.iter
-    ~f:(function
-        | Sil.Hpointsto (Exp.Lvar pv, Sil.Estruct (static_flds, _), _) when Pvar.is_global pv ->
-            List.iter
-              ~f:(fun (f_name, f_strexp) ->
-                check_reachable_context_from_fld (f_name, f_strexp) context_exps )
-              static_flds
-        | _ ->
-            ())
-    sigma
-
-
 (** Remove locals and formals,
     and check if the address of a stack variable is left in the result *)
 let remove_locals_formals_and_check tenv proc_cfg p =
@@ -674,8 +587,6 @@ let extract_specs tenv pdesc pathset : Prop.normal Specs.spec list =
       let prop'' = Abs.abstract pname tenv prop' in
       let pre, post = Prop.extract_spec prop'' in
       let pre' = Prop.normalize tenv (Prop.prop_sub (`Exp sub) pre) in
-      if Config.curr_language_is Config.Java && Procdesc.get_access pdesc <> PredSymb.Private then
-        report_context_leaks pname post.Prop.sigma tenv ;
       let post' =
         if Prover.check_inconsistency_base tenv prop then None
         else Some (Prop.normalize tenv (Prop.prop_sub (`Exp sub) post), path)
@@ -785,12 +696,12 @@ let prop_init_formals_seed tenv new_formals (prop: 'a Prop.t) : Prop.exposed Pro
   let sigma_new_formals =
     let do_formal (pv, typ) =
       let texp =
-        match !Config.curr_language with
-        | Config.Clang ->
+        match !Language.curr_language with
+        | Clang ->
             Exp.Sizeof {typ; nbytes= None; dynamic_length= None; subtype= Subtype.exact}
-        | Config.Java ->
+        | Java ->
             Exp.Sizeof {typ; nbytes= None; dynamic_length= None; subtype= Subtype.subtypes}
-        | Config.Python ->
+        | Python ->
             L.die InternalError "prop_init_formals_seed not implemented for Python"
       in
       Prop.mk_ptsto_lvar tenv Prop.Fld_init Sil.inst_formal (pv, texp, None)
@@ -994,7 +905,7 @@ let perform_analysis_phase tenv (summary: Specs.summary) (proc_cfg: ProcCfg.Exce
 
 let set_current_language proc_desc =
   let language = Typ.Procname.get_language (Procdesc.get_proc_name proc_desc) in
-  Config.curr_language := language
+  Language.curr_language := language
 
 
 (** reset global values before analysing a procedure *)
@@ -1041,7 +952,7 @@ let custom_error_preconditions summary =
 let remove_this_not_null tenv prop =
   let collect_hpred (var_option, hpreds) = function
     | Sil.Hpointsto (Exp.Lvar pvar, Sil.Eexp (Exp.Var var, _), _)
-      when Config.curr_language_is Config.Java && Pvar.is_this pvar ->
+      when Language.curr_language_is Java && Pvar.is_this pvar ->
         (Some var, hpreds)
     | hpred ->
         (var_option, hpred :: hpreds)
@@ -1086,8 +997,8 @@ let report_runtime_exceptions tenv pdesc summary =
     &&
     match pname with
     | Typ.Procname.Java pname_java ->
-        Typ.Procname.java_is_static pname
-        && String.equal (Typ.Procname.java_get_method pname_java) "main"
+        Typ.Procname.Java.is_static pname_java
+        && String.equal (Typ.Procname.Java.get_method pname_java) "main"
     | _ ->
         false
   in
@@ -1224,9 +1135,9 @@ let analyze_proc tenv proc_cfg : Specs.summary =
     else Timeout.exe_no_timeout go () in
   let specs, phase = get_results () in
   let updated_summary = update_summary tenv summary specs phase res in
-  if Config.curr_language_is Config.Clang && Config.report_custom_error then
+  if Language.curr_language_is Clang && Config.report_custom_error then
     report_custom_errors tenv updated_summary ;
-  if Config.curr_language_is Config.Java && Config.tracing then
+  if Language.curr_language_is Java && Config.tracing then
     report_runtime_exceptions tenv proc_desc updated_summary ;
   updated_summary
 

@@ -11,8 +11,6 @@ open! IStd
 
 val is_modelled_static_function : string -> bool
 
-val is_alloc_model : Typ.t -> Typ.Procname.t -> bool
-
 val is_builtin_expect : Typ.Procname.t -> bool
 
 val is_builtin_object_size : Typ.Procname.t -> bool
@@ -20,8 +18,6 @@ val is_builtin_object_size : Typ.Procname.t -> bool
 val is_std_addressof : Typ.Procname.t -> bool
 
 val is_replace_with_deref_first_arg : Typ.Procname.t -> bool
-
-val is_objc_memory_model_controlled : string -> bool
 
 val is_assert_log : Typ.Procname.t -> bool
 
@@ -32,6 +28,5 @@ val is_modeled_builtin : string -> bool
 val is_modeled_attribute : string -> bool
 
 val get_predefined_model_method_signature :
-  Typ.Name.t -> string
-  -> (Typ.Name.t -> string -> Typ.Procname.objc_cpp_method_kind -> Typ.Procname.t)
+  Typ.Name.t -> string -> (Typ.Name.t -> string -> Typ.Procname.ObjC_Cpp.kind -> Typ.Procname.t)
   -> CFrontend_config.clang_lang -> CMethod_signature.method_signature option

@@ -13,10 +13,7 @@
 open! IStd
 module F = Format
 
-type translation_unit =
-  | TUAnonymous
-  | TUFile of SourceFile.t
-  [@@deriving compare]
+type translation_unit = SourceFile.t option [@@deriving compare]
 
 (** Type for program variables. There are 4 kinds of variables:
         1) local variables, used for local variables and formal parameters
@@ -34,9 +31,6 @@ val equal : t -> t -> bool
 
 val d : t -> unit
 (** Dump a program variable. *)
-
-val d_list : t list -> unit
-(** Dump a list of program variables. *)
 
 val get_name : t -> Mangled.t
 (** Get the name component of a program variable. *)
@@ -96,7 +90,7 @@ val mk_callee : Mangled.t -> Typ.Procname.t -> t
 
 val mk_global :
   ?is_constexpr:bool -> ?is_pod:bool -> ?is_static_local:bool -> ?is_static_global:bool
-  -> ?translation_unit:translation_unit -> Mangled.t -> t
+  -> ?translation_unit:SourceFile.t -> Mangled.t -> t
 (** create a global variable with the given name *)
 
 val mk_tmp : string -> Typ.Procname.t -> t
@@ -104,9 +98,6 @@ val mk_tmp : string -> Typ.Procname.t -> t
 
 val pp : Pp.env -> F.formatter -> t -> unit
 (** Pretty print a program variable. *)
-
-val pp_list : Pp.env -> F.formatter -> t list -> unit
-(** Pretty print a list of program variables. *)
 
 val pp_value : F.formatter -> t -> unit
 (** Pretty print a pvar which denotes a value, not an address *)

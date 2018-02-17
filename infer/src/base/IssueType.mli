@@ -57,8 +57,6 @@ val buffer_overrun_s2 : t
 
 val cannot_star : t
 
-val checkers_access_global : t
-
 val checkers_allocates_memory : t
 (** Warning name when a performance critical method directly or indirectly
     calls a method allocating memory *)
@@ -77,15 +75,9 @@ val checkers_fragment_retain_view : t
 
 val checkers_immutable_cast : t
 
-val checkers_print_c_call : t
-
-val checkers_print_objc_method_calls : t
-
 val checkers_printf_args : t
 
 val class_cast_exception : t
-
-val cluster_callback : t
 
 val codequery : t
 
@@ -94,8 +86,6 @@ val comparing_floats_for_equality : t
 val condition_always_false : t
 
 val condition_always_true : t
-
-val context_leak : t
 
 val create_intent_from_uri : t
 
@@ -192,6 +182,8 @@ val memory_leak : t
 
 val missing_fld : t
 
+val missing_required_prop : t
+
 val null_dereference : t
 
 val null_test_after_dereference : t
@@ -207,8 +199,6 @@ val precondition_not_found : t
 val precondition_not_met : t
 
 val premature_nil_termination : t
-
-val proc_callback : t
 
 val quandary_taint_error : t
 
@@ -257,6 +247,8 @@ val unreachable_code_after : t
 val unsafe_guarded_by_access : t
 
 val use_after_free : t
+
+val use_after_lifetime : t
 
 val untrusted_deserialization : t
 

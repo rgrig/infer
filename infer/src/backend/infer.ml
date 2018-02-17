@@ -26,7 +26,7 @@ let run driver_mode =
 
 
 let setup () =
-  match Config.command with
+  ( match Config.command with
   | Analyze ->
       ResultsDir.assert_results_dir "have you run capture before?"
   | Report | ReportDiff ->
@@ -35,17 +35,25 @@ let setup () =
       ResultsDir.remove_results_dir () ; ResultsDir.create_results_dir ()
   | Capture | Compile | Run ->
       let driver_mode = Lazy.force Driver.mode_from_command_line in
-      if not
-           ( Driver.(equal_mode driver_mode Analyze)
-           ||
-           Config.(buck || continue_capture || infer_is_clang || infer_is_javac || reactive_mode)
-           )
+      if Config.(
+           (* In Buck mode, delete infer-out directories inside buck-out to start fresh and to
+              avoid getting errors because some of their contents is missing (removed by
+              [Driver.clean_results_dir ()]). *)
+           buck && flavors)
+         || not
+              ( Driver.(equal_mode driver_mode Analyze)
+              || Config.(continue_capture || infer_is_clang || infer_is_javac || reactive_mode) )
       then ResultsDir.remove_results_dir () ;
-      ResultsDir.create_results_dir ()
+      ResultsDir.create_results_dir () ;
+      if CLOpt.is_originator && not Config.continue_capture
+         && not Driver.(equal_mode driver_mode Analyze)
+      then SourceFiles.mark_all_stale ()
   | Explore ->
       ResultsDir.assert_results_dir "please run an infer analysis first"
   | Events ->
-      ResultsDir.assert_results_dir "have you run infer before?"
+      ResultsDir.assert_results_dir "have you run infer before?" ) ;
+  if CLOpt.is_originator then ( RunState.add_run_to_sequence () ; RunState.store () ) ;
+  ()
 
 
 let print_active_checkers () =
@@ -77,7 +85,7 @@ let log_environment_info () =
 
 let prepare_events_logging () =
   (* there's no point in logging data from the events command. To fetch them we'd need to run events again... *)
-  if CLOpt.equal_command Config.command CLOpt.Events then ()
+  if InferCommand.equal Config.command Events then ()
   else
     let log_identifier_msg =
       Printf.sprintf "Infer log identifier is %s\n" (EventLogger.get_log_identifier ())
@@ -97,6 +105,14 @@ let () =
           L.exit 0
       | Error e ->
           print_endline e ; L.exit 3 ) ;
+  ( match Config.check_version with
+  | Some check_version ->
+      if not (String.equal check_version Version.versionString) then
+        L.(die UserError)
+          "Provided version '%s' does not match actual version '%s'" check_version
+          Version.versionString
+  | None ->
+      () ) ;
   if Config.print_builtins then Builtin.print_and_exit () ;
   setup () ;
   log_environment_info () ;

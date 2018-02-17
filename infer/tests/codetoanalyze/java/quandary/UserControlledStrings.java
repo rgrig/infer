@@ -14,6 +14,11 @@ import android.content.ClipboardManager;
 import android.text.Html;
 import android.text.Spanned;
 import android.widget.EditText;
+import java.io.IOException;
+import java.lang.ProcessBuilder;
+import java.lang.Runtime;
+import java.util.ArrayList;
+import java.util.List;
 
 import com.facebook.infer.builtins.InferTaint;
 
@@ -36,6 +41,33 @@ public class UserControlledStrings {
   EditText mEditText;
   Spanned editTextToHtmlBad() {
     return Html.fromHtml(mEditText.getText().toString());
+  }
+
+  void clipboardToShellDirectBad() throws IOException {
+    Runtime.getRuntime().exec(clipboard.getText().toString());
+  }
+
+  void clipboardToShellArrayBad() throws IOException {
+    String[] cmds = new String[] { "ls", clipboard.getText().toString() };
+    Runtime.getRuntime().exec(cmds);
+  }
+
+  ProcessBuilder clipboardToProcessBuilder1Bad() {
+    return new ProcessBuilder(clipboard.getText().toString());
+  }
+
+  ProcessBuilder clipboardToProcessBuilder2Bad() {
+    return new ProcessBuilder("sh", clipboard.getText().toString());
+  }
+
+  ProcessBuilder clipboardToProcessBuilder3Bad(ProcessBuilder builder) {
+    return builder.command(clipboard.getText().toString());
+  }
+
+  ProcessBuilder clipboardToProcessBuilder4Bad(ProcessBuilder builder) {
+    List<String> cmds = new ArrayList();
+    cmds.add(clipboard.getText().toString());
+    return builder.command(cmds);
   }
 
 }

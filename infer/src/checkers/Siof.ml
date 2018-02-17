@@ -137,9 +137,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
               else None )
         in
         Domain.join astate (NonBottom SiofTrace.empty, Domain.VarNames.of_list init)
-    | Call (_, Const Cfun callee_pname, _ :: actuals_without_self, loc, _)
-      when Typ.Procname.is_c_method callee_pname && Typ.Procname.is_constructor callee_pname
-           && Typ.Procname.is_constexpr callee_pname ->
+    | Call (_, Const Cfun (ObjC_Cpp cpp_pname as callee_pname), _ :: actuals_without_self, loc, _)
+      when Typ.Procname.is_constructor callee_pname && Typ.Procname.ObjC_Cpp.is_constexpr cpp_pname ->
         add_actuals_globals astate pdesc loc actuals_without_self
     | Call (_, Const Cfun callee_pname, actuals, loc, _) ->
         let callee_astate =
@@ -179,12 +178,10 @@ module Analyzer = AbstractInterpreter.Make (ProcCfg.Normal) (TransferFunctions)
 
 let is_foreign tu_opt v =
   match (Pvar.get_translation_unit v, tu_opt) with
-  | TUFile v_tu, Some current_tu ->
+  | Some v_tu, Some current_tu ->
       not (SourceFile.equal current_tu v_tu)
-  | TUAnonymous, Some _ ->
+  | None, Some _ ->
       true
-  | TUAnonymous, _ ->
-      L.(die InternalError) "for C/++, translation units should be known"
   | _, None ->
       L.(die InternalError) "cannot be called with translation unit set to None"
 
@@ -247,8 +244,7 @@ let checker {Callbacks.proc_desc; tenv; summary; get_procs_in_file} : Specs.summ
       let magic_iostream_marker =
         (* always [Some _] because we create a global variable with [mk_global] *)
         Option.value_exn
-          ( Pvar.mk_global
-              ~translation_unit:(TUFile tu)
+          ( Pvar.mk_global ~translation_unit:tu
               (Mangled.from_string
                  (* infer's C++ headers define this global variable in <iostream> *)
                  "__infer_translation_unit_init_streams")
@@ -270,7 +266,12 @@ let checker {Callbacks.proc_desc; tenv; summary; get_procs_in_file} : Specs.summ
        to figure this out when analyzing the function, but we might as well use the user's
        specification if it's given to us. This also serves as an optimization as this skips the
        analysis of the function. *)
-    if Typ.Procname.is_constexpr pname then Summary.update_summary initial summary
+    if match pname with
+       | ObjC_Cpp cpp_pname ->
+           Typ.Procname.ObjC_Cpp.is_constexpr cpp_pname
+       | _ ->
+           false
+    then Summary.update_summary initial summary
     else
       match Analyzer.compute_post proc_data ~initial with
       | Some post ->

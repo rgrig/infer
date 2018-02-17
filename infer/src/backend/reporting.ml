@@ -38,13 +38,19 @@ let log_issue_from_errlog err_kind err_log ?loc ?node_id ?session ?ltr ?linters_
 
 let log_issue_from_summary err_kind summary ?loc ?node_id ?session ?ltr ?linters_def_file ?doc_url
     ?access exn =
-  let is_generated_method = Typ.Procname.java_is_generated (Specs.get_proc_name summary) in
+  let is_java_generated_method =
+    match Specs.get_proc_name summary with
+    | Typ.Procname.Java java_pname ->
+        Typ.Procname.Java.is_generated java_pname
+    | _ ->
+        false
+  in
   let should_suppress_lint =
-    Config.curr_language_is Config.Java
+    Language.curr_language_is Java
     && Annotations.ia_is_suppress_lint
          (fst (Specs.get_attributes summary).ProcAttributes.method_annotation)
   in
-  if should_suppress_lint || is_generated_method then () (* Skip the reporting *)
+  if should_suppress_lint || is_java_generated_method then () (* Skip the reporting *)
   else
     let err_log = Specs.get_err_log summary in
     log_issue_from_errlog err_kind err_log ?loc ?node_id ?session ?ltr ?linters_def_file ?doc_url
@@ -66,17 +72,9 @@ let log_issue_deprecated ?(store_summary= false) err_kind proc_name ?loc ?node_i
         Typ.Procname.pp proc_name Typ.Procname.pp proc_name
 
 
-let log_error_from_errlog = log_issue_from_errlog Exceptions.Kerror
-
-let log_warning_from_errlog = log_issue_from_errlog Exceptions.Kwarning
-
-let log_info_from_errlog = log_issue_from_errlog Exceptions.Kinfo
-
 let log_error = log_issue_from_summary Exceptions.Kerror
 
 let log_warning = log_issue_from_summary Exceptions.Kwarning
-
-let log_info = log_issue_from_summary Exceptions.Kwarning
 
 let log_error_deprecated ?(store_summary= false) =
   log_issue_deprecated ~store_summary Exceptions.Kerror

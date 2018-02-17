@@ -7,18 +7,16 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! IStd
 module F = Format
 module L = Logging
 
-(** Access path + its parent procedure *)
 module LocalAccessPath = struct
   type t = {access_path: AccessPath.t; parent: Typ.Procname.t} [@@deriving compare]
 
   let equal = [%compare.equal : t]
 
   let make access_path parent = {access_path; parent}
-
-  let is_rooted_in_footprint {access_path= (base_var, _), _} = Var.is_footprint base_var
 
   let to_formal_option {access_path= ((_, base_typ) as base), accesses; parent} formal_map =
     match FormalMap.get_formal_index base formal_map with
@@ -31,9 +29,10 @@ module LocalAccessPath = struct
   let pp fmt t = AccessPath.pp fmt t.access_path
 end
 
-(** Called procedure + it's receiver *)
 module MethodCall = struct
   type t = {receiver: LocalAccessPath.t; procname: Typ.Procname.t} [@@deriving compare]
+
+  let make receiver procname = {receiver; procname}
 
   let pp fmt {receiver; procname} =
     F.fprintf fmt "%a.%a" LocalAccessPath.pp receiver Typ.Procname.pp procname
@@ -63,3 +62,33 @@ let substitute ~(f_sub: LocalAccessPath.t -> LocalAccessPath.t option) astate =
       in
       add access_path' call_set' acc )
     astate empty
+
+
+(** Unroll the domain to enumerate all the call chains ending in [call] and apply [f] to each
+    maximal chain. For example, if the domain encodes the chains foo().bar().goo() and foo().baz(),
+    [f] will be called once on foo().bar().goo() and once on foo().baz() *)
+let iter_call_chains_with_suffix ~f call_suffix astate =
+  let rec unroll_call_ ({receiver; procname}: MethodCall.t) (acc, visited) =
+    let is_cycle (call: MethodCall.t) =
+      (* detect direct cycles and cycles due to mutual recursion *)
+      LocalAccessPath.equal call.receiver receiver || Typ.Procname.Set.mem call.procname visited
+    in
+    let acc' = procname :: acc in
+    let visited' = Typ.Procname.Set.add procname visited in
+    try
+      let calls' = find receiver astate in
+      CallSet.iter
+        (fun call ->
+          if not (is_cycle call) then unroll_call_ call (acc', visited')
+          else f receiver.access_path acc' )
+        calls'
+    with Not_found -> f receiver.access_path acc'
+  in
+  unroll_call_ call_suffix ([], Typ.Procname.Set.empty)
+
+
+let iter_call_chains ~f astate =
+  iter
+    (fun _ call_set ->
+      CallSet.iter (fun call -> iter_call_chains_with_suffix ~f call astate) call_set )
+    astate

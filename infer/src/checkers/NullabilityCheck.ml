@@ -7,6 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
 
+open! IStd
 module F = Format
 module L = Logging
 module MF = MarkupFormatter
@@ -34,16 +35,22 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
 
   let is_non_objc_instance_method callee_pname =
-    if Typ.Procname.is_java callee_pname then not (Typ.Procname.java_is_static callee_pname)
-    else
-      Option.exists
-        ~f:(fun attributes -> attributes.ProcAttributes.is_cpp_instance_method)
-        (Specs.proc_resolve_attributes callee_pname)
+    match callee_pname with
+    | Typ.Procname.Java java_pname ->
+        not (Typ.Procname.Java.is_static java_pname)
+    | _ ->
+        Option.exists
+          ~f:(fun attributes ->
+            ProcAttributes.clang_method_kind_equal attributes.ProcAttributes.clang_method_kind
+              ProcAttributes.CPP_INSTANCE )
+          (Specs.proc_resolve_attributes callee_pname)
 
 
   let is_objc_instance_method callee_pname =
     Option.exists
-      ~f:(fun attributes -> attributes.ProcAttributes.is_objc_instance_method)
+      ~f:(fun attributes ->
+        ProcAttributes.clang_method_kind_equal attributes.ProcAttributes.clang_method_kind
+          ProcAttributes.OBJC_INSTANCE )
       (Specs.proc_resolve_attributes callee_pname)
 
 
@@ -82,6 +89,19 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
              && Location.equal loc report_location
              && Localise.error_desc_is_reportable_bucket err_desc )
         (Specs.get_err_log summary) false
+
+
+  (* On Clang languages, the annotations like _Nullabe can be found on the declaration
+     or on the implementation without the two being necessarily consistent.
+     Here, we explicitely want to lookup the annotations locally: either form
+     the implementation when defined locally, or from the included headers *)
+  let lookup_local_attributes = function
+    | Typ.Procname.Java _ as pname ->
+        (* Looking up the attribute according to the classpath *)
+        Specs.proc_resolve_attributes pname
+    | pname ->
+        (* Looking up the attributes locally, i.e. either from the file of from the includes *)
+        Option.map ~f:Procdesc.get_attributes (Ondemand.get_proc_desc pname)
 
 
   let report_nullable_dereference ap call_sites {ProcData.pdesc; extras} loc =
@@ -127,7 +147,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       let trace =
         let with_origin_site =
           let callee_pname = CallSite.pname call_site in
-          match Specs.proc_resolve_attributes callee_pname with
+          match lookup_local_attributes callee_pname with
           | None ->
               []
           | Some attributes ->
@@ -168,6 +188,19 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   let find_nullable_ap ap (aps, _) = NullableAP.find ap aps
 
   let assume_pnames_notnull ap (aps, checked_pnames) : Domain.astate =
+    let remove_call_sites ap aps =
+      let add_diff (to_remove: CallSites.t) ap call_sites map =
+        let remaining_call_sites = CallSites.diff call_sites to_remove in
+        if CallSites.is_empty remaining_call_sites then map
+        else NullableAP.add ap remaining_call_sites map
+      in
+      match NullableAP.find_opt ap aps with
+      | None ->
+          aps
+      | Some call_sites ->
+          let updated_aps = NullableAP.fold (add_diff call_sites) aps NullableAP.empty in
+          updated_aps
+    in
     let updated_pnames =
       try
         let call_sites = NullableAP.find ap aps in
@@ -176,7 +209,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           call_sites checked_pnames
       with Not_found -> checked_pnames
     in
-    (NullableAP.remove ap aps, updated_pnames)
+    (remove_call_sites ap aps, updated_pnames)
 
 
   let rec longest_nullable_prefix ap ((nulable_aps, _) as astate) =
@@ -199,7 +232,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         astate
     | [arg] when HilExp.is_null_literal arg ->
         astate
-    | (HilExp.AccessPath ap) :: other_args ->
+    | (HilExp.AccessExpression access_expr) :: other_args ->
+        let ap = AccessExpression.to_access_path access_expr in
         check_nil_in_objc_container proc_data loc other_args (check_ap proc_data loc ap astate)
     | _ :: other_args ->
         check_nil_in_objc_container proc_data loc other_args astate
@@ -225,29 +259,29 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       when NullCheckedPname.mem callee_pname checked_pnames ->
         (* Do not report nullable when the method has already been checked for null *)
         remove_nullable_ap (ret_var, []) astate
-    | Call (_, Direct callee_pname, (HilExp.AccessPath receiver) :: _, _, _)
+    | Call (_, Direct callee_pname, (HilExp.AccessExpression receiver) :: _, _, _)
       when Models.is_check_not_null callee_pname ->
-        assume_pnames_notnull receiver astate
+        assume_pnames_notnull (AccessExpression.to_access_path receiver) astate
     | Call (_, Direct callee_pname, _, _, _) when is_blacklisted_method callee_pname ->
         astate
     | Call (Some ret_var, Direct callee_pname, _, _, loc)
-      when Annotations.pname_has_return_annot callee_pname
-             ~attrs_of_pname:Specs.proc_resolve_attributes Annotations.ia_is_nullable ->
+      when Annotations.pname_has_return_annot callee_pname ~attrs_of_pname:lookup_local_attributes
+             Annotations.ia_is_nullable ->
         let call_site = CallSite.make callee_pname loc in
         add_nullable_ap (ret_var, []) (CallSites.singleton call_site) astate
-    | Call (_, Direct callee_pname, (HilExp.AccessPath receiver) :: _, _, loc)
+    | Call (_, Direct callee_pname, (HilExp.AccessExpression receiver) :: _, _, loc)
       when is_non_objc_instance_method callee_pname ->
-        check_ap proc_data loc receiver astate
+        check_ap proc_data loc (AccessExpression.to_access_path receiver) astate
     | Call (_, Direct callee_pname, args, _, loc) when is_objc_container_add_method callee_pname ->
         check_nil_in_objc_container proc_data loc args astate
     | Call
         ( Some ((_, ret_typ) as ret_var)
         , Direct callee_pname
-        , (HilExp.AccessPath receiver) :: _
+        , (HilExp.AccessExpression receiver) :: _
         , _
         , _ )
       when Typ.is_pointer ret_typ && is_objc_instance_method callee_pname -> (
-      match longest_nullable_prefix receiver astate with
+      match longest_nullable_prefix (AccessExpression.to_access_path receiver) astate with
       | None ->
           astate
       | Some (_, call_sites) ->
@@ -255,8 +289,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           add_nullable_ap (ret_var, []) call_sites astate )
     | Call (Some ret_var, _, _, _, _) ->
         remove_nullable_ap (ret_var, []) astate
-    | Assign (lhs, rhs, loc)
+    | Assign (lhs_access_expr, rhs, loc)
       -> (
+        let lhs = AccessExpression.to_access_path lhs_access_expr in
         Option.iter
           ~f:(fun (nullable_ap, call_sites) ->
             if not (is_pointer_assignment proc_data.ProcData.tenv nullable_ap rhs) then
@@ -265,9 +300,10 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
               report_nullable_dereference nullable_ap call_sites proc_data loc )
           (longest_nullable_prefix lhs astate) ;
         match rhs with
-        | HilExp.AccessPath ap -> (
+        | HilExp.AccessExpression access_expr -> (
           try
             (* Add the lhs to the list of nullable values if the rhs is nullable *)
+            let ap = AccessExpression.to_access_path access_expr in
             add_nullable_ap lhs (find_nullable_ap ap astate) astate
           with Not_found ->
             (* Remove the lhs from the list of nullable values if the rhs is not nullable *)
@@ -275,24 +311,26 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         | _ ->
             (* Remove the lhs from the list of nullable values if the rhs is not an access path *)
             remove_nullable_ap lhs astate )
-    | Assume (HilExp.AccessPath ap, _, _, _) ->
-        assume_pnames_notnull ap astate
+    | Assume (HilExp.AccessExpression access_expr, _, _, _) ->
+        assume_pnames_notnull (AccessExpression.to_access_path access_expr) astate
     | Assume
-        ( ( HilExp.BinaryOperator (Binop.Ne, HilExp.AccessPath ap, exp)
-          | HilExp.BinaryOperator (Binop.Ne, exp, HilExp.AccessPath ap) )
+        ( ( HilExp.BinaryOperator (Binop.Ne, HilExp.AccessExpression access_expr, exp)
+          | HilExp.BinaryOperator (Binop.Ne, exp, HilExp.AccessExpression access_expr) )
         , _
         , _
         , _ )
     | Assume
         ( HilExp.UnaryOperator
             ( Unop.LNot
-            , ( HilExp.BinaryOperator (Binop.Eq, HilExp.AccessPath ap, exp)
-              | HilExp.BinaryOperator (Binop.Eq, exp, HilExp.AccessPath ap) )
+            , ( HilExp.BinaryOperator (Binop.Eq, HilExp.AccessExpression access_expr, exp)
+              | HilExp.BinaryOperator (Binop.Eq, exp, HilExp.AccessExpression access_expr) )
             , _ )
         , _
         , _
         , _ ) ->
-        if HilExp.is_null_literal exp then assume_pnames_notnull ap astate else astate
+        if HilExp.is_null_literal exp then
+          assume_pnames_notnull (AccessExpression.to_access_path access_expr) astate
+        else astate
     | _ ->
         astate
 end

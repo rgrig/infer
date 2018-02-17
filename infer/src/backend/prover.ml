@@ -910,12 +910,6 @@ let check_atom tenv prop a0 =
       List.exists ~f:(Sil.equal_atom a) prop.Prop.pi
 
 
-(** Check [prop |- e1<=e2]. Result [false] means "don't know". *)
-let check_le tenv prop e1 e2 =
-  let e1_le_e2 = Exp.BinOp (Binop.Le, e1, e2) in
-  check_atom tenv prop (Prop.mk_inequality tenv e1_le_e2)
-
-
 (** Check whether [prop |- allocated(e)]. *)
 let check_allocatedness tenv prop e =
   let n_e = Prop.exp_normalize_prop ~destructive:true tenv prop e in
@@ -934,12 +928,6 @@ let check_allocatedness tenv prop e =
         else false
   in
   List.exists ~f spatial_part
-
-
-(** Compute an upper bound of an expression *)
-let compute_upper_bound_of_exp tenv p e =
-  let ineq = Inequalities.from_prop tenv p in
-  Inequalities.compute_upper_bound ineq e
 
 
 (** Check if two hpreds have the same allocated lhs *)
@@ -1004,15 +992,17 @@ let check_inconsistency_base tenv prop =
     | Some (_, _, pdesc) ->
         let procedure_attr = Procdesc.get_attributes pdesc in
         let language = Typ.Procname.get_language (Procdesc.get_proc_name pdesc) in
-        let is_java_this pvar = Config.equal_language language Config.Java && Pvar.is_this pvar in
+        let is_java_this pvar = Language.equal language Java && Pvar.is_this pvar in
         let is_objc_instance_self pvar =
-          Config.equal_language language Config.Clang
+          Language.equal language Clang
           && Mangled.equal (Pvar.get_name pvar) (Mangled.from_string "self")
-          && procedure_attr.ProcAttributes.is_objc_instance_method
+          && ProcAttributes.clang_method_kind_equal procedure_attr.ProcAttributes.clang_method_kind
+               ProcAttributes.OBJC_INSTANCE
         in
         let is_cpp_this pvar =
-          Config.equal_language language Config.Clang && Pvar.is_this pvar
-          && procedure_attr.ProcAttributes.is_cpp_instance_method
+          Language.equal language Clang && Pvar.is_this pvar
+          && ProcAttributes.clang_method_kind_equal procedure_attr.ProcAttributes.clang_method_kind
+               ProcAttributes.CPP_INSTANCE
         in
         let do_hpred = function
           | Sil.Hpointsto (Exp.Lvar pv, Sil.Eexp (e, _), _) ->
@@ -1951,35 +1941,6 @@ let cast_exception tenv texp1 texp2 e1 subs =
   raise (IMPL_EXC ("class cast exception", subs, EXC_FALSE))
 
 
-(** get all methods that override [supertype].[pname] in [tenv].
-    Note: supertype should be a type T rather than a pointer to type T
-    Note: [pname] wil never be included in the returned result *)
-let get_overrides_of tenv supertype pname =
-  let typ_has_method pname (typ: Typ.t) =
-    match typ.desc with
-    | Tstruct name -> (
-      match Tenv.lookup tenv name with
-      | Some {methods} ->
-          List.exists ~f:(fun m -> Typ.Procname.equal pname m) methods
-      | None ->
-          false )
-    | _ ->
-        false
-  in
-  let gather_overrides tname _ overrides_acc =
-    let typ = Typ.mk (Tstruct tname) in
-    (* TODO shouldn't really create type here...*)
-    (* get all types in the type environment that are non-reflexive subtypes of [supertype] *)
-    if not (Typ.equal typ supertype) && Subtyping_check.check_subtype tenv typ supertype then
-      (* only select the ones that implement [pname] as overrides *)
-      let resolved_pname = Typ.Procname.replace_class pname tname in
-      if typ_has_method resolved_pname typ then (typ, resolved_pname) :: overrides_acc
-      else overrides_acc
-    else overrides_acc
-  in
-  Tenv.fold gather_overrides tenv []
-
-
 (** Check the equality of two types ignoring flags in the subtyping components *)
 let texp_equal_modulo_subtype_flag texp1 texp2 =
   match (texp1, texp2) with
@@ -2370,10 +2331,10 @@ and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : subst2 * 
     let root = Exp.Const (Const.Cstr s) in
     let sexp =
       let index = Exp.int (IntLit.of_int (String.length s)) in
-      match !Config.curr_language with
-      | Config.Clang ->
+      match !Language.curr_language with
+      | Clang ->
           Sil.Earray (Exp.int len, [(index, Sil.Eexp (Exp.zero, Sil.inst_none))], Sil.inst_none)
-      | Config.Java ->
+      | Java ->
           let mk_fld_sexp s =
             let fld = Typ.Fieldname.Java.from_string s in
             let se = Sil.Eexp (Exp.Var (Ident.create_fresh Ident.kprimed), Sil.Inone) in
@@ -2386,25 +2347,25 @@ and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : subst2 * 
             ; "java.lang.String.value" ]
           in
           Sil.Estruct (List.map ~f:mk_fld_sexp fields, Sil.inst_none)
-      | Config.Python ->
+      | Python ->
           L.die InternalError "mk_constant_string_hpred not implemented for Python"
     in
     let const_string_texp =
-      match !Config.curr_language with
-      | Config.Clang ->
+      match !Language.curr_language with
+      | Clang ->
           Exp.Sizeof
             { typ= Typ.mk (Tarray (Typ.mk (Tint Typ.IChar), Some len, Some (IntLit.of_int 1)))
             ; nbytes= None
             ; dynamic_length= None
             ; subtype= Subtype.exact }
-      | Config.Java ->
+      | Java ->
           let object_type = Typ.Name.Java.from_string "java.lang.String" in
           Exp.Sizeof
             { typ= Typ.mk (Tstruct object_type)
             ; nbytes= None
             ; dynamic_length= None
             ; subtype= Subtype.exact }
-      | Config.Python ->
+      | Python ->
           L.die InternalError "const_string_texp not implemented for Python"
     in
     Sil.Hpointsto (root, sexp, const_string_texp)

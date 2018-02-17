@@ -1,5 +1,5 @@
 /* @generated */
-digraph iCFG {
+digraph cfg {
 "callgetZ#destructor_scope#16418724657639342926.f4c0cbb2a5d892ea82496dd2540a9ead_1" [label="1: Start destructor_scope::callgetZ\nFormals: \nLocals:  0$?%__sil_tmp__temp_return_n$1:destructor_scope::Z \n   DECLARE_LOCALS(&return,&0$?%__sil_tmp__temp_return_n$1); [line 84, column 1]\n " color=yellow style=filled]
 	
 
@@ -33,7 +33,7 @@ digraph iCFG {
 "getZ#destructor_scope#13110319947448813202.fe2bc6519a3d7998283b70bbacc3915e_2" [label="2: Exit destructor_scope::getZ \n  " color=yellow style=filled]
 	
 
-"getZ#destructor_scope#13110319947448813202.fe2bc6519a3d7998283b70bbacc3915e_3" [label="3:  Return Stmt \n   n$0=*&__return_param:destructor_scope::Z* [line 77, column 3]\n  _fun_destructor_scope::Z_Z(n$0:destructor_scope::Z*,&z:destructor_scope::Z&) [line 77, column 10]\n " shape="box"]
+"getZ#destructor_scope#13110319947448813202.fe2bc6519a3d7998283b70bbacc3915e_3" [label="3:  Return Stmt \n   n$0=*&__return_param:destructor_scope::Z* [line 77, column 3]\n  _fun_destructor_scope::Z_Z(n$0:destructor_scope::Z*,&z:destructor_scope::Z&) [line 77, column 10]\n  _=*&z:destructor_scope::Z [line 77, column 10]\n  _fun_destructor_scope::Z_~Z(&z:destructor_scope::Z*) [line 77, column 10]\n " shape="box"]
 	
 
 	 "getZ#destructor_scope#13110319947448813202.fe2bc6519a3d7998283b70bbacc3915e_3" -> "getZ#destructor_scope#13110319947448813202.fe2bc6519a3d7998283b70bbacc3915e_2" ;

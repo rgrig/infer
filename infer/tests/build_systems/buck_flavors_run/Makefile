@@ -10,7 +10,7 @@ ROOT_DIR = $(TESTS_DIR)/../..
 
 ANALYZER = checkers
 BUCK_TARGET = //src:hello
-SOURCES = $(wildcard src/hello.c)
+SOURCES = src/hello.c src/hello2.c
 OBJECTS = buck-out/gen/src/hello\#compile-hello.c.o1f717d69,default/hello.c.o
 INFER_OPTIONS = --report-custom-error --developer-mode --project-root $(TESTS_DIR)
 INFERPRINT_OPTIONS = --project-root $(TESTS_DIR) --issues-tests
@@ -18,7 +18,7 @@ CLEAN_EXTRA = buck-out
 
 include $(TESTS_DIR)/infer.make
 
-$(OBJECTS): $(JAVA_SOURCE_FILES)
+$(OBJECTS): $(SOURCES)
 	$(QUIET)$(call silent_on_success,Compiling Buck flavors tests,\
 	NO_BUCKD=1 $(BUCK) build --no-cache $(BUCK_TARGET))
 
@@ -26,5 +26,5 @@ infer-out/report.json: $(CLANG_DEPS) $(SOURCES) $(MAKEFILE_LIST)
 	$(QUIET)$(REMOVE_DIR) buck-out && \
 	$(call silent_on_success,Testing infer-run Buck flavors integration,\
 	NO_BUCKD=1 \
-	$(INFER_BIN) $(INFER_OPTIONS) run --flavors --results-dir $(CURDIR)/infer-out -- \
+	$(INFER_BIN) $(INFER_OPTIONS) run --flavors --results-dir $(CURDIR)/infer-out --reactive -- \
 	  $(BUCK) build --no-cache $(BUCK_TARGET))

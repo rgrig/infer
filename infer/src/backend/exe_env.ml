@@ -18,90 +18,31 @@ module L = Logging
 module F = Format
 
 (** per-file data: type environment and cfg *)
-type file_data =
-  { source: SourceFile.t
-  ; tenv_file: DB.filename
-  ; mutable tenv: Tenv.t option
-  ; mutable cfg: Cfg.t option }
-
-(** get the path to the tenv file, which either one tenv file per source file or a global tenv file *)
-let tenv_filename file_base =
-  let per_source_tenv_filename = DB.filename_add_suffix file_base ".tenv" in
-  if Sys.file_exists (DB.filename_to_string per_source_tenv_filename) = `Yes then
-    per_source_tenv_filename
-  else DB.global_tenv_fname
-
-
-module FilenameHash = Hashtbl.Make (struct
-  type t = DB.filename
-
-  let equal file1 file2 = DB.equal_filename file1 file2
-
-  let hash = Hashtbl.hash
-end)
+type file_data = {source: SourceFile.t; mutable tenv: Tenv.t option; mutable cfg: Cfg.t option}
 
 (** create a new file_data *)
-let new_file_data source cg_fname =
-  let file_base = DB.chop_extension cg_fname in
-  let tenv_file = tenv_filename file_base in
+let new_file_data source =
+  (* Do not fill in tenv and cfg as they can be quite large. This makes calls to fork() cheaper
+     until we start filling out these fields. *)
   { source
-  ; tenv_file
   ; tenv= None (* Sil.load_tenv_from_file tenv_file *)
   ; cfg= None (* Cfg.load_cfg_from_file cfg_file *) }
 
 
-let create_file_data table source cg_fname =
-  match FilenameHash.find table cg_fname with
+let create_file_data table source =
+  match SourceFile.Hash.find table source with
   | file_data ->
       file_data
   | exception Not_found ->
-      let file_data = new_file_data source cg_fname in
-      FilenameHash.add table cg_fname file_data ;
+      let file_data = new_file_data source in
+      SourceFile.Hash.add table source file_data ;
       file_data
 
 
-(** execution environment *)
 type t =
-  { cg: Cg.t  (** global call graph *)
-  ; proc_map: file_data Typ.Procname.Hash.t  (** map from procedure name to file data *)
-  ; file_map: file_data FilenameHash.t  (** map from cg fname to file data *)
+  { proc_map: file_data Typ.Procname.Hash.t  (** map from procedure name to file data *)
+  ; file_map: file_data SourceFile.Hash.t  (** map from source files to file data *)
   ; source_file: SourceFile.t  (** source file being analyzed *) }
-
-(** initial state, used to add cg's *)
-type initial = t
-
-(** add call graph from fname in the spec db,
-    with relative tenv and cfg, to the execution environment *)
-let add_cg exe_env source =
-  let cg_fname = DB.source_dir_get_internal_file (DB.source_dir_from_source_file source) ".cg" in
-  match Cg.load_from_file cg_fname with
-  | None ->
-      L.internal_error "Error: cannot load %s@." (DB.filename_to_string cg_fname)
-  | Some cg ->
-      let defined_procs = Cg.get_defined_nodes cg in
-      let duplicate_procs_to_print =
-        List.filter_map defined_procs ~f:(fun pname ->
-            match Attributes.find_file_capturing_procedure pname with
-            | None ->
-                None
-            | Some (source_captured, origin) ->
-                let multiply_defined = SourceFile.compare source source_captured <> 0 in
-                if multiply_defined then Cg.remove_node_defined cg pname ;
-                if multiply_defined && origin <> `Include then Some (pname, source_captured)
-                else None )
-      in
-      if Config.dump_duplicate_symbols then
-        Out_channel.with_file (Config.results_dir ^/ Config.duplicates_filename)
-          ~append:true ~perm:0o666 ~f:(fun outc ->
-            let fmt = F.formatter_of_out_channel outc in
-            List.iter duplicate_procs_to_print ~f:(fun (pname, source_captured) ->
-                F.fprintf fmt "@.DUPLICATE_SYMBOLS source: %a source_captured:%a pname:%a@."
-                  SourceFile.pp source SourceFile.pp source_captured Typ.Procname.pp pname ) ) ;
-      Cg.extend exe_env.cg cg
-
-
-(** get the global call graph *)
-let get_cg exe_env = exe_env.cg
 
 let get_file_data exe_env pname =
   try Some (Typ.Procname.Hash.find exe_env.proc_map pname) with Not_found ->
@@ -117,22 +58,15 @@ let get_file_data exe_env pname =
           Some proc_attributes.ProcAttributes.source_file_captured
     in
     let get_file_data_for_source source_file =
-      let source_dir = DB.source_dir_from_source_file source_file in
-      let cg_fname = DB.source_dir_get_internal_file source_dir ".cg" in
-      let file_data = create_file_data exe_env.file_map source_file cg_fname in
+      let file_data = create_file_data exe_env.file_map source_file in
       Typ.Procname.Hash.replace exe_env.proc_map pname file_data ;
       file_data
     in
     Option.map ~f:get_file_data_for_source source_file_opt
 
 
-(** return the source file associated to the procedure *)
-let get_source exe_env pname =
-  Option.map ~f:(fun file_data -> file_data.source) (get_file_data exe_env pname)
-
-
 let file_data_to_tenv file_data =
-  if is_none file_data.tenv then file_data.tenv <- Tenv.load_from_file file_data.tenv_file ;
+  if is_none file_data.tenv then file_data.tenv <- Tenv.load file_data.source ;
   file_data.tenv
 
 
@@ -143,11 +77,9 @@ let file_data_to_cfg file_data =
 
 let java_global_tenv =
   lazy
-    ( match Tenv.load_from_file DB.global_tenv_fname with
+    ( match Tenv.load_global () with
     | None ->
-        L.(die InternalError)
-          "Could not load the global tenv at path '%s'"
-          (DB.filename_to_string DB.global_tenv_fname)
+        L.(die InternalError) "Could not load the global tenv"
     | Some tenv ->
         tenv )
 
@@ -165,8 +97,8 @@ let get_tenv exe_env proc_name =
           tenv
       | None ->
           L.(die InternalError)
-            "get_tenv: tenv not found for %a in file '%s'" Typ.Procname.pp proc_name
-            (DB.filename_to_string file_data.tenv_file) )
+            "get_tenv: tenv not found for %a in file '%a'" Typ.Procname.pp proc_name SourceFile.pp
+            exe_env.source_file )
     | None ->
         L.(die InternalError) "get_tenv: file_data not found for %a" Typ.Procname.pp proc_name
 
@@ -183,20 +115,18 @@ let get_cfg exe_env pname =
 (** return the proc desc associated to the procedure *)
 let get_proc_desc exe_env pname =
   match get_cfg exe_env pname with
-  | Some cfg ->
-      Cfg.find_proc_desc_from_name cfg pname
+  | Some cfg -> (
+    match Typ.Procname.Hash.find cfg pname with
+    | proc_desc ->
+        Some proc_desc
+    | exception Not_found ->
+        None )
   | None ->
       None
 
 
 let mk source_file =
-  let exe_env =
-    { cg= Cg.create (SourceFile.invalid __FILE__)
-    ; proc_map= Typ.Procname.Hash.create 17
-    ; file_map= FilenameHash.create 1
-    ; source_file }
-  in
-  add_cg exe_env source_file ; exe_env
+  {proc_map= Typ.Procname.Hash.create 17; file_map= SourceFile.Hash.create 1; source_file}
 
 
 (** [iter_files f exe_env] applies [f] to the filename and tenv and cfg for each file in [exe_env] *)

@@ -21,19 +21,17 @@ val nullable : string
 
 val nonnull : string
 
-val on_bind : string
-
 val performance_critical : string
 
 val present : string
+
+val prop : string
 
 val for_non_ui_thread : string
 
 val for_ui_thread : string
 
 val guarded_by : string
-
-val strict : string
 
 val suppress_lint : string
 
@@ -51,8 +49,6 @@ val annot_ends_with : Annot.t -> string -> bool
 
 val ia_ends_with : Annot.Item.t -> string -> bool
 (** Check if there is an annotation in [ia] which ends with the given name *)
-
-val ia_contains : Annot.Item.t -> string -> bool
 
 val ia_has_annotation_with : Annot.Item.t -> (Annot.t -> bool) -> bool
 
@@ -84,15 +80,9 @@ val ia_is_verify : Annot.Item.t -> bool
 
 val ia_is_expensive : Annot.Item.t -> bool
 
-val ia_is_final : Annot.Item.t -> bool
-
 val ia_is_functional : Annot.Item.t -> bool
 
-val ia_is_performance_critical : Annot.Item.t -> bool
-
 val ia_is_propagates_nullable : Annot.Item.t -> bool
-
-val ia_is_no_allocation : Annot.Item.t -> bool
 
 val ia_is_ignore_allocations : Annot.Item.t -> bool
 
@@ -110,16 +100,6 @@ val ia_is_on_unbind : Annot.Item.t -> bool
 
 val ia_is_on_unmount : Annot.Item.t -> bool
 
-val ia_is_privacy_source : Annot.Item.t -> bool
-
-val ia_is_privacy_sink : Annot.Item.t -> bool
-
-val ia_is_integrity_source : Annot.Item.t -> bool
-
-val ia_is_integrity_sink : Annot.Item.t -> bool
-
-val ia_is_guarded_by : Annot.Item.t -> bool
-
 val ia_is_not_thread_safe : Annot.Item.t -> bool
 
 val ia_is_returns_ownership : Annot.Item.t -> bool
@@ -130,13 +110,11 @@ val ia_is_thread_safe : Annot.Item.t -> bool
 
 val ia_is_thread_confined : Annot.Item.t -> bool
 
+val ia_is_thrift_service : Annot.Item.t -> bool
+
 val ia_is_ui_thread : Annot.Item.t -> bool
 
 val ia_is_volatile : Annot.Item.t -> bool
-
-val pdesc_has_parameter_annot : Procdesc.t -> (Annot.Item.t -> bool) -> bool
-(** return true if the given predicate evaluates to true on an annotation of one of [pdesc]'s
-    parameters *)
 
 val pdesc_get_return_annot : Procdesc.t -> Annot.Item.t
 (** get the list of annotations on the return value of [pdesc] *)

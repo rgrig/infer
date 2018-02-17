@@ -180,6 +180,12 @@ test_build: src_build_common
 	$(QUIET)$(call silent_on_success,Testing Infer builds without warnings,\
 	$(MAKE_SOURCE) test)
 
+# depend on test_build so that we do not run them in parallel
+.PHONY: deadcode
+deadcode: src_build_common test_build
+	$(QUIET)$(call silent_on_success,Testing there is no dead OCaml code,\
+	$(MAKE) -C $(SRC_DIR)/deadcode)
+
 .PHONY: toplevel
 toplevel: src_build_common
 	$(QUIET)$(call silent_on_success,Building Infer REPL,\
@@ -196,11 +202,11 @@ ifeq ($(BUILD_C_ANALYZERS),yes)
 byte src_build src_build_common test_build: clang_plugin
 endif
 
-$(INFER_COMMAND_MANUALS): src_build Makefile
+$(INFER_COMMAND_MANUALS): $(INFER_BIN) $(MAKEFILE_LIST)
 	$(QUIET)$(MKDIR_P) $(@D)
 	$(QUIET)$(INFER_BIN) $(patsubst infer-%.1,%,$(@F)) --help --help-format=groff > $@
 
-$(INFER_MANUAL): src_build Makefile
+$(INFER_MANUAL): $(INFER_BIN) $(MAKEFILE_LIST)
 	$(QUIET)$(MKDIR_P) $(@D)
 	$(QUIET)$(INFER_BIN) --help --help-format=groff > $@
 
@@ -208,16 +214,22 @@ $(INFER_MANUALS_GZIPPED): %.gz: %
 	$(QUIET)$(REMOVE) $@
 	gzip $<
 
-infer_models: src_build
+infer_models: $(INFER_BIN)
 ifeq ($(BUILD_JAVA_ANALYZERS),yes)
-	$(QUIET)$(call silent_on_success,Building Java annotations,\
-	$(MAKE) -C $(ANNOTATIONS_DIR))
+	$(MAKE) -C $(ANNOTATIONS_DIR)
 endif
-	$(QUIET)$(call silent_on_success,Building Infer models,\
-	$(MAKE) -C $(MODELS_DIR) all)
+	$(MAKE) -C $(MODELS_DIR) all
 
-.PHONY: infer
-infer: src_build $(INFER_MANUALS) infer_models
+.PHONY: infer byte_infer
+infer byte_infer:
+	$(QUIET)$(call silent_on_success,Building Infer models,\
+	$(MAKE) infer_models $(INFER_MANUALS))
+infer: src_build
+byte_infer: byte
+
+.PHONY: opt
+opt:
+	$(QUIET)$(MAKE) BUILD_MODE=opt infer
 
 .PHONY: clang_setup
 clang_setup:
@@ -384,6 +396,11 @@ endif
 test: crash_if_not_all_analyzers_enabled config_tests
 ifeq (,$(findstring s,$(MAKEFLAGS)))
 	$(QUIET)echo "$(TERM_INFO)ALL TESTS PASSED$(TERM_RESET)"
+endif
+ifeq ($(IS_FACEBOOK_TREE),yes)
+ifneq ($(GNU_SED),no)
+test: deadcode
+endif
 endif
 
 .PHONY: quick-test
@@ -605,6 +622,10 @@ devsetup: Makefile.autoconf
 	$(QUIET)OPAMSWITCH=$(OPAMSWITCH); $(OPAM) config --yes setup -a
 	$(QUIET)echo '$(TERM_INFO)*** Running `opam user-setup`$(TERM_RESET)' >&2
 	$(QUIET)OPAMSWITCH=$(OPAMSWITCH); OPAMYES=1; $(OPAM) user-setup install
+	$(QUIET)if [ "$(PLATFORM)" = "Darwin" ] && [ x"$(GNU_SED)" = x"no" ]; then \
+	  echo '$(TERM_INFO)*** Installing GNU sed$(TERM_RESET)' >&2; \
+	  brew install gnu-sed; \
+	fi
 	$(QUIET)if [ "$(PLATFORM)" = "Darwin" ] && ! $$(parallel -h | grep -q GNU); then \
 	  echo '$(TERM_INFO)*** Installing GNU parallel$(TERM_RESET)' >&2; \
 	  brew install parallel; \

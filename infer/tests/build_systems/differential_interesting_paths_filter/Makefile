@@ -31,13 +31,13 @@ $(MODIFIED_FILES_FILE):
 		sed 's#__ABSOLUTE_PATH__#$(CURDIR)#g' '$(MODIFIED_FILES_FILE).template' > $@)
 
 current.exp.test: $(CURRENT_REPORT)
-	$(QUIET)$(INFER_BIN) report \
+	$(QUIET)$(INFER_BIN) report -o $(<D) \
 		--issues-fields $(INFERPRINT_ISSUES_FIELDS) \
 		--from-json-report $(CURRENT_DIR)/report.json \
 		--issues-tests current.exp.test
 
 previous.exp.test: $(PREVIOUS_REPORT)
-	$(QUIET)$(INFER_BIN) report \
+	$(QUIET)$(INFER_BIN) report -o $(<D) \
 		--issues-fields $(INFERPRINT_ISSUES_FIELDS) \
 		--from-json-report $(PREVIOUS_DIR)/report.json \
 		--issues-tests previous.exp.test
@@ -45,7 +45,6 @@ previous.exp.test: $(PREVIOUS_REPORT)
 test: compare_reports
 print: current.exp.test previous.exp.test
 replace: replace_reports
-$(DIFFERENTIAL_REPORT): $(MODIFIED_FILES_FILE)
 
 $(CURRENT_REPORT):
 	$(QUIET)$(COPY) src/com/example/DiffClass1.java.current src/com/example/DiffClass1.java

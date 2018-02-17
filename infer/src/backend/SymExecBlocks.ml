@@ -6,6 +6,9 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  *)
+
+open! IStd
+
 (* Given two lists of tuples (exp1, var1, typ1) and (exp2, var2, typ2)
 append the lists avoiding duplicates, where if the variables exist we check their
 equality, otherwise we check the equality of the expressions. This is to avoid
@@ -41,9 +44,9 @@ let get_extended_args_for_method_with_block_analysis act_params =
   List.map ~f:(fun (exp, _, typ) -> (exp, typ)) args_and_captured
 
 
-let resolve_method_with_block_args_and_analyze caller_pdesc pname act_params =
+let resolve_method_with_block_args_and_analyze ~caller_pdesc pname act_params =
   let pdesc_opt =
-    match Specs.get_summary pname with
+    match Ondemand.analyze_proc_name ~caller_pdesc pname with
     | Some summary ->
         Some (Specs.get_proc_desc summary)
     | None ->
@@ -78,14 +81,14 @@ let resolve_method_with_block_args_and_analyze caller_pdesc pname act_params =
       (* new procdesc cloned from the original one, where the block parameters have been
        replaced by the block arguments. The formals have also been expanded with the captured variables  *)
       let specialized_pdesc =
-        Cfg.specialize_with_block_args pdesc pname_with_block_args block_args
+        Procdesc.specialize_with_block_args pdesc pname_with_block_args block_args
       in
       Logging.(debug Analysis Verbose) "Instructions of specialized method:@." ;
       Procdesc.iter_instrs
         (fun _ instr -> Logging.(debug Analysis Verbose) "%a@." (Sil.pp_instr Pp.text) instr)
         specialized_pdesc ;
       Logging.(debug Analysis Verbose) "End of instructions@." ;
-      match Ondemand.analyze_proc_desc caller_pdesc specialized_pdesc with
+      match Ondemand.analyze_proc_desc ~caller_pdesc specialized_pdesc with
       | Some summary ->
           (* Since the closures in the formals were replaced by the captured variables,
            we do the same with the actual arguments *)

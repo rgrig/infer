@@ -17,21 +17,19 @@ module F = Format
 let analyze_exe_env_tasks cluster exe_env : Tasks.t =
   L.progressbar_file () ;
   Specs.clear_spec_tbl () ;
+  Typ.Procname.SQLite.clear_cache () ;
   Random.self_init () ;
   Tasks.create
     [ (fun () ->
-        let call_graph = Exe_env.get_cg exe_env in
-        Callbacks.iterate_callbacks call_graph exe_env ;
+        Callbacks.iterate_callbacks exe_env ;
         if Config.write_html then Printer.write_all_html_files cluster ) ]
 
 
 (** Create tasks to analyze a cluster *)
 let analyze_cluster_tasks cluster_num (cluster: Cluster.t) : Tasks.t =
   let exe_env = Exe_env.mk cluster in
-  let defined_procs = Cg.get_defined_nodes (Exe_env.get_cg exe_env) in
-  let num_procs = List.length defined_procs in
   L.(debug Analysis Medium)
-    "@\nProcessing cluster #%d with %d procedures@." (cluster_num + 1) num_procs ;
+    "@\nProcessing cluster '%a' #%d@." SourceFile.pp cluster (cluster_num + 1) ;
   analyze_exe_env_tasks cluster exe_env
 
 
@@ -80,10 +78,7 @@ let cluster_should_be_analyzed ~changed_files cluster =
   (* whether [fname] is one of the [changed_files] *)
   let is_changed_file = Option.map changed_files ~f:(SourceFile.Set.mem cluster) in
   let check_modified () =
-    let modified =
-      DB.source_dir_from_source_file cluster |> DB.source_dir_to_string |> DB.filename_from_string
-      |> DB.file_was_updated_after_start
-    in
+    let modified = SourceFiles.is_freshly_captured cluster in
     if modified then L.debug Analysis Medium "Modified: %a@\n" SourceFile.pp cluster ;
     modified
   in
@@ -119,7 +114,7 @@ let main ~changed_files ~makefile =
       (* delete all specs when doing a full analysis so that we do not report on procedures that do
          not exist anymore *)
       if not Config.reactive_mode then DB.Results_dir.clean_specs_dir () ;
-      let all_clusters = Cfg.get_captured_source_files () in
+      let all_clusters = SourceFiles.get_all () in
       let clusters_to_analyze =
         List.filter ~f:(cluster_should_be_analyzed ~changed_files) all_clusters
       in

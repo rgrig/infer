@@ -189,20 +189,25 @@ let check_field_assignment tenv find_canonical_duplicate curr_pdesc node instr_r
     in
     not (TypeAnnotation.get_value AnnotatedSignature.Nullable ta_lhs)
     && TypeAnnotation.get_value AnnotatedSignature.Nullable ta_rhs
-    && PatternMatch.type_is_class t_lhs && not (Typ.Fieldname.java_is_outer_instance fname)
+    && PatternMatch.type_is_class t_lhs && not (Typ.Fieldname.Java.is_outer_instance fname)
     && not (field_is_field_injector_readwrite ())
   in
   let should_report_absent =
     Config.eradicate_optional_present && TypeAnnotation.get_value AnnotatedSignature.Present ta_lhs
     && not (TypeAnnotation.get_value AnnotatedSignature.Present ta_rhs)
-    && not (Typ.Fieldname.java_is_outer_instance fname)
+    && not (Typ.Fieldname.Java.is_outer_instance fname)
   in
   let should_report_mutable =
     let field_is_mutable () =
       match t_ia_opt with Some (_, ia) -> Annotations.ia_is_mutable ia | _ -> false
     in
     Config.eradicate_field_not_mutable && not (Typ.Procname.is_constructor curr_pname)
-    && not (Typ.Procname.is_class_initializer curr_pname) && not (field_is_mutable ())
+    && ( match curr_pname with
+       | Typ.Procname.Java java_pname ->
+           not (Typ.Procname.Java.is_class_initializer java_pname)
+       | _ ->
+           true )
+    && not (field_is_mutable ())
   in
   ( if should_report_nullable || should_report_absent then
       let ann =
@@ -267,11 +272,11 @@ let check_constructor_initialization tenv find_canonical_duplicate curr_pname cu
             in
             let should_check_field_initialization =
               let in_current_class =
-                let fld_cname = Typ.Fieldname.java_get_class fn in
+                let fld_cname = Typ.Fieldname.Java.get_class fn in
                 String.equal (Typ.Name.name name) fld_cname
               in
               not injector_readonly_annotated && PatternMatch.type_is_class ft && in_current_class
-              && not (Typ.Fieldname.java_is_outer_instance fn)
+              && not (Typ.Fieldname.Java.is_outer_instance fn)
             in
             if should_check_field_initialization then (
               if Models.Inference.enabled then Models.Inference.field_add_nullable_annotation fn ;
@@ -311,7 +316,11 @@ let check_return_annotation tenv find_canonical_duplicate curr_pdesc ret_range
   match ret_range with
   (* Disables the warnings since it is not clear how to annotate the return value of lambdas *)
   | Some _
-    when Typ.Procname.java_is_lambda curr_pname ->
+    when match curr_pname with
+         | Typ.Procname.Java java_pname ->
+             Typ.Procname.Java.is_lambda java_pname
+         | _ ->
+             false ->
       ()
   | Some (_, final_ta, _) ->
       let final_nullable = TypeAnnotation.get_value AnnotatedSignature.Nullable final_ta in

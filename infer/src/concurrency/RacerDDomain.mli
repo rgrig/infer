@@ -29,8 +29,6 @@ module Access : sig
   val equal : t -> t -> bool
 
   val pp : F.formatter -> t -> unit
-
-  val map : f:(AccessPath.t -> AccessPath.t) -> t -> t
 end
 
 module TraceElem : sig
@@ -53,12 +51,20 @@ module TraceElem : sig
   val make_unannotated_call_access : Typ.Procname.t -> Location.t -> t
 end
 
-(** A bool that is true if a lock is definitely held. Note that this is unsound because it assumes
-    the existence of one global lock. In the case that a lock is held on the access to a variable,
-    but the lock held is the wrong one, we will erroneously say that the access is thread-safe.
-    However, this coarse abstraction saves us from the complexity of tracking which locks are held
-    and which memory locations correspond to the same lock. *)
-module LocksDomain : AbstractDomain.S with type astate = bool
+(** Overapproximation of number of locks that are currently held *)
+module LocksDomain : sig
+  include AbstractDomain.WithBottom
+
+  val is_locked : astate -> bool
+    [@@warning "-32"]
+  (** returns true if the number of locks held is greater than zero or Top *)
+
+  val add_lock : astate -> astate
+  (** record acquisition of a lock *)
+
+  val remove_lock : astate -> astate
+  (** record release of a lock *)
+end
 
 (** Abstraction of threads that may run in parallel with the current thread.
     NoThread < AnyThreadExceptSelf < AnyThread *)
@@ -76,8 +82,6 @@ module ThreadsDomain : sig
         of all TIDs ) *)
 
   include AbstractDomain.WithBottom with type astate := astate
-
-  val is_any_but_self : astate -> bool
 
   val is_any : astate -> bool
 end
@@ -108,7 +112,7 @@ module OwnershipDomain : sig
 
   val is_owned : AccessPath.t -> astate -> bool
 
-  val find : [`Use_get_owned_instead]
+  val find : [`Use_get_owned_instead]  [@@warning "-32"]
 end
 
 (** attribute attached to a boolean variable specifying what it means when the boolean is true *)
@@ -117,8 +121,6 @@ module Choice : sig
     | OnMainThread  (** the current procedure is running on the main thread *)
     | LockHeld  (** a lock is currently held *)
     [@@deriving compare]
-
-  val pp : F.formatter -> t -> unit
 end
 
 module Attribute : sig
@@ -147,50 +149,44 @@ module AttributeMapDomain : sig
   val add_attribute : AccessPath.t -> Attribute.t -> astate -> astate
 end
 
-(** Excluders: Two things can provide for mutual exclusion: holding a lock,
-    and knowing that you are on a particular thread. Here, we
-    abstract it to "some" lock and "any particular" thread (typically, UI thread)
-    For a more precide semantics we would replace Thread by representatives of
-    thread id's and Lock by multiple differnet lock id's.
-    Both indicates that you both know the thread and hold a lock.
-    There is no need for a lattice relation between Thread, Lock and Both:
-    you don't ever join Thread and Lock, rather, they are treated pointwise.
- **)
-module Excluder : sig
-  type t = Thread | Lock | Both [@@deriving compare]
+(** Data shared among a set of accesses: current thread, lock(s) held, ownership precondition *)
+module AccessData : sig
+  (** Precondition for owned access; access is owned if it evaluates to ture *)
+  module Precondition : sig
+    type t =
+      | Conjunction of IntSet.t
+          (** Conjunction of "formal index must be owned" predicates.
+                                         true if empty *)
+      | False
+      [@@deriving compare]
 
-  val pp : F.formatter -> t -> unit
-end
+    val is_true : t -> bool
+    (** return [true] if the precondition evaluates to true *)
 
-module AccessPrecondition : sig
+    val pp : F.formatter -> t -> unit  [@@warning "-32"]
+  end
+
   type t = private
-    | Protected of Excluder.t
-        (** access potentially protected for mutual exclusion by
-        lock or thread or both *)
-    | Unprotected of IntSet.t
-        (** access rooted in formal(s) at indexes i. Safe if actuals passed at given indexes are
-            owned (i.e., !owned(i) implies an unsafe access). *)
-    | TotallyUnprotected  (** access is unsafe unless a lock is held in a caller *)
+    {thread: bool; lock: bool; ownership_precondition: Precondition.t}
     [@@deriving compare]
 
+  val make : LocksDomain.astate -> ThreadsDomain.astate -> Precondition.t -> Procdesc.t -> t
+
+  val is_unprotected : t -> bool
+  (** return true if not protected by lock, thread, or ownership *)
+
   val pp : F.formatter -> t -> unit
-
-  val make_protected : LocksDomain.astate -> ThreadsDomain.astate -> Procdesc.t -> t
-
-  val make_unprotected : IntSet.t -> t
-
-  val totally_unprotected : t
 end
 
-(** map of access precondition |-> set of accesses. the map should hold all accesses to a
+(** map of access metadata |-> set of accesses. the map should hold all accesses to a
     possibly-unowned access path *)
 module AccessDomain : sig
-  include module type of AbstractDomain.Map (AccessPrecondition) (PathDomain)
+  include module type of AbstractDomain.Map (AccessData) (PathDomain)
 
-  val add_access : AccessPrecondition.t -> TraceElem.t -> astate -> astate
+  val add_access : AccessData.t -> TraceElem.t -> astate -> astate
   (** add the given (access, precondition) pair to the map *)
 
-  val get_accesses : AccessPrecondition.t -> astate -> PathDomain.astate
+  val get_accesses : AccessData.t -> astate -> PathDomain.astate
   (** get all accesses with the given precondition *)
 end
 
@@ -216,3 +212,12 @@ type summary =
 include AbstractDomain.WithBottom with type astate := astate
 
 val pp_summary : F.formatter -> summary -> unit
+
+val attributes_of_expr :
+  AttributeSetDomain.t AttributeMapDomain.t -> HilExp.t -> AttributeSetDomain.t
+(** propagate attributes from the leaves to the root of an RHS Hil expression *)
+
+val ownership_of_expr :
+  HilExp.t -> OwnershipAbstractValue.astate AttributeMapDomain.t -> OwnershipAbstractValue.astate
+
+val get_all_accesses : (TraceElem.t -> bool) -> PathDomain.t AccessDomain.t -> PathDomain.t

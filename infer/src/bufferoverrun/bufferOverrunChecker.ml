@@ -204,19 +204,23 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             let locs = Sem.eval exp1 mem |> Dom.Val.get_all_locs in
             let v = Sem.eval exp2 mem |> Dom.Val.add_trace_elem (Trace.Assign location) in
             let mem = Dom.Mem.update_mem locs v mem in
-            if PowLoc.is_singleton locs then
-              let loc_v = PowLoc.min_elt locs in
-              match Typ.Procname.get_method pname with
-              | "__inferbo_empty" when Loc.is_return loc_v -> (
-                match Sem.get_formals pdesc with
-                | [(formal, _)] ->
-                    let formal_v = Dom.Mem.find_heap (Loc.of_pvar formal) mem in
-                    Dom.Mem.store_empty_alias formal_v loc_v exp2 mem
+            let mem =
+              if PowLoc.is_singleton locs then
+                let loc_v = PowLoc.min_elt locs in
+                match Typ.Procname.get_method pname with
+                | "__inferbo_empty" when Loc.is_return loc_v -> (
+                  match Sem.get_formals pdesc with
+                  | [(formal, _)] ->
+                      let formal_v = Dom.Mem.find_heap (Loc.of_pvar formal) mem in
+                      Dom.Mem.store_empty_alias formal_v loc_v exp2 mem
+                  | _ ->
+                      assert false )
                 | _ ->
-                    assert false )
-              | _ ->
-                  Dom.Mem.store_simple_alias loc_v exp2 mem
-            else mem
+                    Dom.Mem.store_simple_alias loc_v exp2 mem
+              else mem
+            in
+            let mem = Dom.Mem.update_latest_prune exp1 exp2 mem in
+            mem
         | Prune (exp, _, _, _) ->
             Sem.prune exp mem
         | Call (ret, Const Cfun callee_pname, params, location, _) -> (
@@ -340,50 +344,40 @@ module Report = struct
 
 
   module ExitStatement = struct
-    let successors node = Procdesc.Node.get_succs node
-
-    let predecessors node = Procdesc.Node.get_preds node
-
-    let preds_of_singleton_successor node =
-      match successors node with [succ] -> Some (predecessors succ) | _ -> None
-
-
-    (* last statement in if branch *)
-    (* do we transfer control to a node with multiple predecessors *)
-    let has_multiple_sibling_nodes_and_one_successor node =
-      match preds_of_singleton_successor node with
-      (* we need at least 2 predecessors *)
-      | Some (_ :: _ :: _) ->
+    let non_significant_instr = function
+      | Sil.(Abstract _ | Nullify _ | Remove_temps _) ->
           true
       | _ ->
           false
 
 
-    (* check that we are the last instruction in the current node
-     * and that the current node is followed by a unique successor
-     * with no instructions.
-     *
-     * this is our proxy for being the last statement in a procedure.
-     * The tests pass, but it's kind of a hack and depends on an internal
-     * detail of SIL that could change in the future. *)
-    let is_last_in_node_and_followed_by_empty_successor node rem_instrs =
-      List.is_empty rem_instrs
+    (* check that we are the last significant instruction
+     * of a procedure (no more significant instruction)
+     * or of a block (goes directly to a node with multiple predecessors)
+     *)
+    let rec is_end_of_block_or_procedure node rem_instrs =
+      List.for_all rem_instrs ~f:non_significant_instr
       &&
       match Procdesc.Node.get_succs node with
-      | [succ] -> (
-        match CFG.instrs succ with
-        | [] ->
-            List.is_empty (Procdesc.Node.get_succs succ)
-        | _ ->
-            false )
-      | _ ->
+      | [] ->
+          true
+      | [succ]
+        -> (
+          is_end_of_block_or_procedure succ (CFG.instrs succ)
+          ||
+          match Procdesc.Node.get_preds succ with
+          | _ :: _ :: _ ->
+              true (* [succ] is a join, i.e. [node] is the end of a block *)
+          | _ ->
+              false )
+      | _ :: _ :: _ ->
           false
   end
 
   let rec collect_instrs
-      : extras ProcData.t -> CFG.node -> Sil.instr list -> Dom.Mem.astate -> PO.ConditionSet.t
-        -> PO.ConditionSet.t =
-    fun ({pdesc; tenv; extras} as pdata) node instrs mem cond_set ->
+      : Specs.summary -> extras ProcData.t -> CFG.node -> Sil.instr list -> Dom.Mem.astate
+        -> PO.ConditionSet.t -> PO.ConditionSet.t =
+    fun summary ({pdesc; tenv; extras} as pdata) node instrs mem cond_set ->
       match instrs with
       | [] ->
           cond_set
@@ -399,9 +393,9 @@ module Report = struct
                   check pname node location mem cond_set
               | None ->
                 match Summary.read_summary pdesc callee_pname with
-                | Some summary ->
+                | Some callee_summary ->
                     let callee = extras callee_pname in
-                    instantiate_cond tenv pname callee params mem summary location
+                    instantiate_cond tenv pname callee params mem callee_summary location
                     |> PO.ConditionSet.join cond_set
                 | _ ->
                     cond_set )
@@ -423,44 +417,39 @@ module Report = struct
                   let exn =
                     Exceptions.Condition_always_true_false (desc, not true_branch, __POS__)
                   in
-                  Reporting.log_warning_deprecated pname ~loc:location exn
-              (* special case for when we're at the end of a procedure *)
+                  Reporting.log_warning summary ~loc:location exn
+              (* special case for `exit` when we're at the end of a block / procedure *)
               | Sil.Call (_, Const Cfun pname, _, _, _)
                 when String.equal (Typ.Procname.get_method pname) "exit"
-                     && ExitStatement.is_last_in_node_and_followed_by_empty_successor node
-                          rem_instrs ->
-                  ()
-              | Sil.Call (_, Const Cfun pname, _, _, _)
-                when String.equal (Typ.Procname.get_method pname) "exit"
-                     && ExitStatement.has_multiple_sibling_nodes_and_one_successor node ->
+                     && ExitStatement.is_end_of_block_or_procedure node rem_instrs ->
                   ()
               | _ ->
                   let location = Sil.instr_get_loc instr in
                   let desc = Errdesc.explain_unreachable_code_after location in
                   let exn = Exceptions.Unreachable_code_after (desc, __POS__) in
-                  Reporting.log_error_deprecated pname ~loc:location exn )
+                  Reporting.log_error summary ~loc:location exn )
             | _ ->
                 ()
           in
           print_debug_info instr mem' cond_set ;
-          collect_instrs pdata node rem_instrs mem' cond_set
+          collect_instrs summary pdata node rem_instrs mem' cond_set
 
 
   let collect_node
-      : extras ProcData.t -> Analyzer.invariant_map -> PO.ConditionSet.t -> CFG.node
-        -> PO.ConditionSet.t =
-    fun pdata inv_map cond_set node ->
+      : Specs.summary -> extras ProcData.t -> Analyzer.invariant_map -> PO.ConditionSet.t
+        -> CFG.node -> PO.ConditionSet.t =
+    fun summary pdata inv_map cond_set node ->
       match Analyzer.extract_pre (CFG.id node) inv_map with
       | Some mem ->
           let instrs = CFG.instrs node in
-          collect_instrs pdata node instrs mem cond_set
+          collect_instrs summary pdata node instrs mem cond_set
       | _ ->
           cond_set
 
 
-  let collect : extras ProcData.t -> Analyzer.invariant_map -> PO.ConditionSet.t =
-    fun ({pdesc} as pdata) inv_map ->
-      let add_node1 acc node = collect_node pdata inv_map acc node in
+  let collect : Specs.summary -> extras ProcData.t -> Analyzer.invariant_map -> PO.ConditionSet.t =
+    fun summary ({pdesc} as pdata) inv_map ->
+      let add_node1 acc node = collect_node summary pdata inv_map acc node in
       Procdesc.fold_nodes add_node1 PO.ConditionSet.empty pdesc
 
 
@@ -484,8 +473,8 @@ module Report = struct
       List.fold_right ~f ~init:([], 0) trace.trace |> fst |> List.rev
 
 
-  let report_error : Procdesc.t -> PO.ConditionSet.t -> unit =
-    fun pdesc cond_set ->
+  let report_errors : Specs.summary -> Procdesc.t -> PO.ConditionSet.t -> unit =
+    fun summary pdesc cond_set ->
       let pname = Procdesc.get_proc_name pdesc in
       let report cond trace issue_type =
         let caller_pname, location =
@@ -506,13 +495,14 @@ module Report = struct
             | exception _ ->
                 [Errlog.make_trace_element 0 location description []]
           in
-          Reporting.log_error_deprecated pname ~loc:location ~ltr:trace exn
+          Reporting.log_error summary ~loc:location ~ltr:trace exn
       in
       PO.ConditionSet.check_all ~report cond_set
 end
 
-let compute_post : Analyzer.TransferFunctions.extras ProcData.t -> Summary.payload option =
-  fun {pdesc; tenv; extras= get_pdesc} ->
+let compute_post
+    : Specs.summary -> Analyzer.TransferFunctions.extras ProcData.t -> Summary.payload option =
+  fun summary {pdesc; tenv; extras= get_pdesc} ->
     let cfg = CFG.from_pdesc pdesc in
     let pdata = ProcData.make pdesc tenv get_pdesc in
     let inv_map = Analyzer.exec_pdesc ~initial:Dom.Mem.init pdata in
@@ -524,8 +514,8 @@ let compute_post : Analyzer.TransferFunctions.extras ProcData.t -> Summary.paylo
       let exit_id = CFG.id (CFG.exit_node cfg) in
       Analyzer.extract_post exit_id inv_map
     in
-    let cond_set = Report.collect pdata inv_map in
-    Report.report_error pdesc cond_set ;
+    let cond_set = Report.collect summary pdata inv_map in
+    Report.report_errors summary pdesc cond_set ;
     match (entry_mem, exit_mem) with
     | Some entry_mem, Some exit_mem ->
         Some (entry_mem, exit_mem, cond_set)
@@ -541,12 +531,13 @@ let print_summary : Typ.Procname.t -> Dom.Summary.t -> unit =
 
 let checker : Callbacks.proc_callback_args -> Specs.summary =
   fun {proc_desc; tenv; summary; get_proc_desc} ->
-    let proc_name = Specs.get_proc_name summary in
     let proc_data = ProcData.make proc_desc tenv get_proc_desc in
     Preanal.do_preanalysis proc_desc tenv ;
-    match compute_post proc_data with
+    match compute_post summary proc_data with
     | Some post ->
-        if Config.bo_debug >= 1 then print_summary proc_name post ;
+        ( if Config.bo_debug >= 1 then
+            let proc_name = Specs.get_proc_name summary in
+            print_summary proc_name post ) ;
         Summary.update_summary post summary
     | None ->
         summary

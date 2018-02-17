@@ -57,8 +57,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     match exp with
     | HilExp.Constant Cint n when IntLit.isnull n ->
         Some (UseDefChain.NullDefAssign (loc, lhs))
-    | HilExp.AccessPath ap -> (
+    | HilExp.AccessExpression access_expr -> (
       try
+        let ap = AccessExpression.to_access_path access_expr in
         match Domain.find ap astate with
         | UseDefChain.NullDefCompare _ ->
             (* Stop NullDefCompare from propagating here because we want to prevent
@@ -73,9 +74,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
 
   let extract_null_compare_expr = function
-    | HilExp.BinaryOperator ((Eq | Ne), HilExp.AccessPath ap, exp)
-    | HilExp.BinaryOperator ((Eq | Ne), exp, HilExp.AccessPath ap) ->
-        Option.some_if (HilExp.is_null_literal exp) ap
+    | HilExp.BinaryOperator ((Eq | Ne), HilExp.AccessExpression access_expr, exp)
+    | HilExp.BinaryOperator ((Eq | Ne), exp, HilExp.AccessExpression access_expr) ->
+        Option.some_if (HilExp.is_null_literal exp) (AccessExpression.to_access_path access_expr)
     | _ ->
         None
 
@@ -92,7 +93,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     | Call _ ->
         (* For now we just assume the callee always return non-null *)
         astate
-    | Assign (lhs, rhs, loc) ->
+    | Assign (lhs_access_expr, rhs, loc) ->
+        let lhs = AccessExpression.to_access_path lhs_access_expr in
         if not (is_access_nullable lhs proc_data) then
           match nullable_usedef_chain_of rhs lhs astate loc with
           | Some udchain ->
@@ -140,8 +142,8 @@ let make_error_trace astate ap ud =
 let pretty_field_name proc_data field_name =
   match Procdesc.get_proc_name proc_data.ProcData.pdesc with
   | Typ.Procname.Java jproc_name ->
-      let proc_class_name = Typ.Procname.java_get_class_name jproc_name in
-      let field_class_name = Typ.Fieldname.java_get_class field_name in
+      let proc_class_name = Typ.Procname.Java.get_class_name jproc_name in
+      let field_class_name = Typ.Fieldname.Java.get_class field_name in
       if String.equal proc_class_name field_class_name then Typ.Fieldname.to_flat_string field_name
       else Typ.Fieldname.to_simplified_string field_name
   | _ ->
@@ -154,13 +156,15 @@ let pretty_field_name proc_data field_name =
 let is_outside_codebase proc_desc tenv field_name =
   match Procdesc.get_proc_name proc_desc with
   | Typ.Procname.Java _ ->
-      let class_name = Typ.Fieldname.java_get_class field_name in
+      let class_name = Typ.Fieldname.Java.get_class field_name in
       let class_type = Typ.Name.Java.from_string class_name in
       let class_struct = Tenv.lookup tenv class_type in
       let first_method =
         Option.bind ~f:(fun (cls: Typ.Struct.t) -> List.hd cls.methods) class_struct
       in
-      let summary = Option.bind ~f:(Ondemand.analyze_proc_name proc_desc) first_method in
+      let summary =
+        Option.bind ~f:(Ondemand.analyze_proc_name ~caller_pdesc:proc_desc) first_method
+      in
       Option.is_none summary
   | _ ->
       false

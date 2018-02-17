@@ -403,10 +403,12 @@ let get_method_name_from_context context =
 
 
 let is_objc_constructor context =
-  Typ.Procname.is_objc_constructor (get_method_name_from_context context)
+  Typ.Procname.ObjC_Cpp.is_objc_constructor (get_method_name_from_context context)
 
 
-let is_objc_dealloc context = Typ.Procname.is_objc_dealloc (get_method_name_from_context context)
+let is_objc_dealloc context =
+  Typ.Procname.ObjC_Cpp.is_objc_dealloc (get_method_name_from_context context)
+
 
 let is_in_method context name =
   let current_method_name = get_method_name_from_context context in
@@ -708,7 +710,11 @@ let has_type_const_ptr_to_objc_class node =
   let open Clang_ast_t in
   match get_ast_node_type_ptr node with
   | Some type_ptr -> (
-    match CAst_utils.get_desugared_type type_ptr with
+    match
+      CAst_utils.get_desugared_type
+        ~source_range:(Ctl_parser_types.ast_node_source_range node)
+        type_ptr
+    with
     | Some ObjCObjectPointerType (_, qt) ->
         qt.qt_is_const
     | _ ->

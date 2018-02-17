@@ -11,21 +11,35 @@ open! IStd
 
 (** Module that contains constants and global state used in the frontend *)
 
-exception IncorrectAssumption of string
+type clang_lang = C | CPP | ObjC | ObjCPP [@@deriving compare]
 
-val incorrect_assumption : ('a, Format.formatter, unit, _) format4 -> 'a
-(** Used to mark places in the frontend that incorrectly assume something to be
-    impossible. TODO(t21762295) get rid of all instances of this. *)
+val string_of_clang_lang : clang_lang -> string
 
-exception Unimplemented of string
+val equal_clang_lang : clang_lang -> clang_lang -> bool
 
-val unimplemented : ('a, Format.formatter, unit, _) format4 -> 'a
+type ocaml_pos = string * int * int * int
+
+type exception_details =
+  { msg: string
+  ; position: ocaml_pos
+  ; source_range: Clang_ast_t.source_range
+  ; ast_node: string option }
+
+exception Unimplemented of exception_details
+
+val unimplemented :
+  ocaml_pos -> Clang_ast_t.source_range -> ?ast_node:string
+  -> ('a, Format.formatter, unit, _) format4 -> 'a
 (** Raise Unimplemented. This is caught at the level of translating a method and makes the frontend
     give up on that method. *)
 
-type clang_lang = C | CPP | ObjC | ObjCPP [@@deriving compare]
+exception IncorrectAssumption of exception_details
 
-val equal_clang_lang : clang_lang -> clang_lang -> bool
+val incorrect_assumption :
+  ocaml_pos -> Clang_ast_t.source_range -> ?ast_node:string
+  -> ('a, Format.formatter, unit, _) format4 -> 'a
+(** Used to mark places in the frontend that incorrectly assume something to be
+    impossible. TODO(t21762295) get rid of all instances of this. *)
 
 type translation_unit_context = {lang: clang_lang; source_file: SourceFile.t}
 
@@ -39,29 +53,13 @@ val assert_fail : string
 
 val assert_rtn : string
 
-val atomic_att : string
-
-val autorelease : string
-
 val biniou_buffer_size : int
-
-val block : string
 
 val builtin_expect : string
 
 val builtin_memset_chk : string
 
 val builtin_object_size : string
-
-val cf_alloc : string
-
-val cf_autorelease : string
-
-val cf_bridging_release : string
-
-val cf_bridging_retain : string
-
-val cf_non_null_alloc : string
 
 val ckcomponent_cl : string
 
@@ -72,21 +70,7 @@ val clang_bin : string -> string
 
 val class_method : string
 
-val class_type : string
-
-val copy : string
-
-val count : string
-
-val drain : string
-
-val emtpy_name_category : string
-
-val enumerateObjectsUsingBlock : string
-
 val fbAssertWithSignalAndLogFunctionHelper : string
-
-val free : string
 
 val google_LogMessageFatal : string
 
@@ -106,23 +90,13 @@ val infer_skip_gcc_asm_stmt : string
 
 val init : string
 
-val invalid_pointer : int
-
 val is_kind_of_class : string
 
 val malloc : string
 
-val mutableCopy : string
-
 val new_str : string
 
 val next_object : string
-
-val ns_make_collectable : string
-
-val nsarray_cl : string
-
-val nsautorelease_pool_cl : string
 
 val nsproxy_cl : string
 
@@ -134,16 +108,6 @@ val objc_class : string
 
 val objc_object : string
 
-val object_at_indexed_subscript_m : string
-
-val objects : string
-
-val pseudo_object_type : string
-
-val release : string
-
-val retain : string
-
 val return_param : string
 
 val self : string
@@ -153,8 +117,6 @@ val std_addressof : QualifiedCppName.Match.quals_matcher
 val string_with_utf8_m : string
 
 val this : string
-
-val void : string
 
 val replace_with_deref_first_arg_attr : string
 
@@ -167,11 +129,13 @@ val enum_map : (Clang_ast_t.pointer option * Exp.t option) ClangPointers.Map.t r
 
 val global_translation_unit_decls : Clang_ast_t.decl list ref
 
-val log_out : Format.formatter ref
-
 val sil_types_map : Typ.desc Clang_ast_extend.TypePointerMap.t ref
 (** Map from type pointers (clang pointers and types created later by frontend) to sil types
     Populated during frontend execution when new type is found *)
+
+val procedures_attempted : int ref
+
+val procedures_failed : int ref
 
 val reset_global_state : unit -> unit
 

@@ -12,8 +12,6 @@ open! IStd
 (** Pool of processes to execute in parallel up to a number of jobs. *)
 type t
 
-exception Execution_error of string  (** Infer process execution failure *)
-
 val create : jobs:int -> t
 (** Create a new pool of processes *)
 
@@ -24,5 +22,3 @@ val start_child : f:('a -> unit) -> pool:t -> 'a -> unit
 val wait_all : t -> unit
 (** Wait until all the currently executing processes terminate *)
 
-val in_child : bool ref
-(** Keep track of whether the current execution is in a child process *)

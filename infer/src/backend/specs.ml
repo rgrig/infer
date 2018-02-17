@@ -40,8 +40,6 @@ module Jprop = struct
 
   let to_prop = function Prop (_, p) -> p | Joined (_, p, _, _) -> p
 
-  let to_number = function Prop (n, _) -> n | Joined (n, _, _, _) -> n
-
   let rec fav_add_dfs tenv fav = function
     | Prop (_, p) ->
         Prop.prop_fav_add_dfs tenv fav p
@@ -664,20 +662,11 @@ let proc_is_library proc_attributes =
     If no attributes can be found, return None.
 *)
 let proc_resolve_attributes proc_name =
-  let from_attributes_table () = Attributes.load proc_name in
-  let from_specs () = Option.map ~f:get_attributes (get_summary proc_name) in
-  match from_specs () with
-  | Some attributes
-    -> (
-      if attributes.ProcAttributes.is_defined then Some attributes
-      else
-        match from_attributes_table () with
-        | Some attributes' ->
-            Some attributes'
-        | None ->
-            Some attributes )
+  match get_summary proc_name with
+  | Some summary ->
+      Some (get_attributes summary)
   | None ->
-      from_attributes_table ()
+      Attributes.load proc_name
 
 
 (** Like proc_resolve_attributes but start from a proc_desc. *)
@@ -690,8 +679,6 @@ let pdesc_resolve_attributes proc_desc =
       (* this should not happen *)
       assert false
 
-
-let summary_exists proc_name = match get_summary proc_name with Some _ -> true | None -> false
 
 (** Save summary for the procedure into the spec database *)
 let store_summary (summ1: summary) =
@@ -746,7 +733,7 @@ let init_summary proc_desc =
 
 let dummy =
   let dummy_attributes = ProcAttributes.default Typ.Procname.empty_block in
-  let dummy_proc_desc = Procdesc.from_proc_attributes ~called_from_cfg:true dummy_attributes in
+  let dummy_proc_desc = Procdesc.from_proc_attributes dummy_attributes in
   init_summary dummy_proc_desc
 
 

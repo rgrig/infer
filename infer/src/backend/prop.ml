@@ -95,9 +95,6 @@ include Core
 (** Comparison between propositions. Lexicographical order. *)
 let compare_prop p1 p2 = compare (fun _ _ -> 0) p1 p2
 
-(** Check the equality of two propositions *)
-let equal_prop p1 p2 = Int.equal (compare_prop p1 p2) 0
-
 (** {1 Functions for Pretty Printing} *)
 
 (** Pretty print a footprint. *)
@@ -343,9 +340,6 @@ let pp_prop_with_typ pe f p = pp_prop {pe with opt= SIM_WITH_TYP} f p
 (** Dump a proposition. *)
 let d_prop (prop: 'a t) = L.add_print_action (PTprop, Obj.repr prop)
 
-(** Dump a proposition. *)
-let d_prop_with_typ (prop: 'a t) = L.add_print_action (PTprop_with_typ, Obj.repr prop)
-
 (** Print a list of propositions, prepending each one with the given string *)
 let pp_proplist_with_typ pe f plist =
   let rec pp_seq_newline f = function
@@ -461,7 +455,7 @@ let rec create_strexp_of_type ~path tenv struct_init_mode (typ: Typ.t) len inst 
       in
       Exp.Var fresh_id
     in
-    if Config.curr_language_is Config.Java && Sil.equal_inst inst Sil.Ialloc then
+    if Language.curr_language_is Java && Sil.equal_inst inst Sil.Ialloc then
       match typ.desc with Tfloat _ -> Exp.Const (Cfloat 0.0) | _ -> Exp.zero
     else create_fresh_var ()
   in
@@ -594,54 +588,6 @@ let prop_sigma_star (p: 'a t) (sigma: sigma) : exposed t =
   set p ~sigma:sigma'
 
 
-(** return the set of subexpressions of [strexp] *)
-let strexp_get_exps strexp =
-  let rec strexp_get_exps_rec exps (se: Sil.strexp) =
-    match se with
-    | Eexp (Exn e, _) ->
-        Exp.Set.add e exps
-    | Eexp (e, _) ->
-        Exp.Set.add e exps
-    | Estruct (flds, _) ->
-        List.fold ~f:(fun exps (_, strexp) -> strexp_get_exps_rec exps strexp) ~init:exps flds
-    | Earray (_, elems, _) ->
-        List.fold ~f:(fun exps (_, strexp) -> strexp_get_exps_rec exps strexp) ~init:exps elems
-  in
-  strexp_get_exps_rec Exp.Set.empty strexp
-
-
-(** get the set of expressions on the righthand side of [hpred] *)
-let hpred_get_targets (hpred: Sil.hpred) =
-  match hpred with
-  | Hpointsto (_, rhs, _) ->
-      strexp_get_exps rhs
-  | Hlseg (_, _, _, e, el) ->
-      List.fold ~f:(fun exps e -> Exp.Set.add e exps) ~init:Exp.Set.empty (e :: el)
-  | Hdllseg (_, _, _, oB, oF, iB, el) ->
-      (* only one direction supported for now *)
-      List.fold ~f:(fun exps e -> Exp.Set.add e exps) ~init:Exp.Set.empty (oB :: oF :: iB :: el)
-
-
-(** return the set of hpred's and exp's in [sigma] that are reachable from an expression in
-    [exps] *)
-let compute_reachable_hpreds sigma exps =
-  let rec compute_reachable_hpreds_rec sigma (reach, exps) =
-    let add_hpred_if_reachable (reach, exps) (hpred: Sil.hpred) =
-      match hpred with
-      | Hpointsto (lhs, _, _) as hpred when Exp.Set.mem lhs exps ->
-          let reach' = Sil.HpredSet.add hpred reach in
-          let reach_exps = hpred_get_targets hpred in
-          (reach', Exp.Set.union exps reach_exps)
-      | _ ->
-          (reach, exps)
-    in
-    let reach', exps' = List.fold ~f:add_hpred_if_reachable ~init:(reach, exps) sigma in
-    if Int.equal (Sil.HpredSet.cardinal reach) (Sil.HpredSet.cardinal reach') then (reach, exps)
-    else compute_reachable_hpreds_rec sigma (reach', exps')
-  in
-  compute_reachable_hpreds_rec sigma (Sil.HpredSet.empty, exps)
-
-
 (* Module for normalization *)
 module Normalize = struct
   (** Eliminates all empty lsegs from sigma, and collect equalities
@@ -730,10 +676,10 @@ module Normalize = struct
       | Sizeof {nbytes= Some n} when destructive ->
           Exp.Const (Const.Cint (IntLit.of_int n))
       | Sizeof {typ= {desc= Tarray ({desc= Tint ik}, _, _)}; dynamic_length= Some l}
-        when Typ.ikind_is_char ik && Config.curr_language_is Config.Clang ->
+        when Typ.ikind_is_char ik && Language.curr_language_is Clang ->
           eval l
       | Sizeof {typ= {desc= Tarray ({desc= Tint ik}, Some l, _)}}
-        when Typ.ikind_is_char ik && Config.curr_language_is Config.Clang ->
+        when Typ.ikind_is_char ik && Language.curr_language_is Clang ->
           Const (Cint l)
       | Sizeof _ ->
           e
@@ -1421,6 +1367,65 @@ module Normalize = struct
     mk_ptsto tenv exp strexp te
 
 
+  (** Captured variables in the closures consist of expressions and variables, with the implicit
+      assumption that these two values are in the relation &var -> id. However, after bi-abduction, etc.
+      the constraint may not hold anymore, so this function ensures that it is always kept.
+      In particular, we have &var -> id iff we also have the pair (id, var) as part of captured variables. *)
+  let make_captured_in_closures_consistent sigma =
+    let open Sil in
+    let find_correct_captured captured =
+      let find_captured_variable_in_the_heap captured' hpred =
+        match hpred with
+        | Hpointsto (Exp.Lvar var, Eexp (Exp.Var id, _), _) ->
+            List.map
+              ~f:(fun ((e_captured, var_captured, t) as captured_item) ->
+                match e_captured with
+                | Exp.Var id_captured ->
+                    if Ident.equal id id_captured && Pvar.equal var var_captured then captured_item
+                    else if Ident.equal id id_captured then (e_captured, var, t)
+                    else if Pvar.equal var var_captured then (Exp.Var id, var_captured, t)
+                    else captured_item
+                | _ ->
+                    captured_item )
+              captured'
+        | _ ->
+            captured'
+      in
+      List.fold_left ~f:find_captured_variable_in_the_heap ~init:captured sigma
+    in
+    let process_closures exp =
+      match exp with
+      | Exp.Closure {name; captured_vars} ->
+          let correct_captured = find_correct_captured captured_vars in
+          if phys_equal captured_vars correct_captured then exp
+          else Exp.Closure {name; captured_vars= correct_captured}
+      | _ ->
+          exp
+    in
+    let rec process_closures_in_se se =
+      match se with
+      | Eexp (exp, inst) ->
+          let new_exp = process_closures exp in
+          if phys_equal exp new_exp then se else Eexp (new_exp, inst)
+      | Estruct (fields, inst) ->
+          let new_fields =
+            List.map ~f:(fun (field, se) -> (field, process_closures_in_se se)) fields
+          in
+          if phys_equal fields new_fields then se else Estruct (new_fields, inst)
+      | _ ->
+          se
+    in
+    let process_closures_in_the_heap hpred =
+      match hpred with
+      | Hpointsto (e, se, inst) ->
+          let new_se = process_closures_in_se se in
+          if phys_equal new_se se then hpred else Hpointsto (e, new_se, inst)
+      | _ ->
+          hpred
+    in
+    List.map ~f:process_closures_in_the_heap sigma
+
+
   let rec hpred_normalize tenv sub (hpred: Sil.hpred) : Sil.hpred =
     let replace_hpred hpred' =
       L.d_strln "found array with sizeof(..) size" ;
@@ -1506,7 +1511,8 @@ module Normalize = struct
 
   let sigma_normalize tenv sub sigma =
     let sigma' =
-      List.stable_sort ~cmp:Sil.compare_hpred (List.map ~f:(hpred_normalize tenv sub) sigma)
+      List.map ~f:(hpred_normalize tenv sub) sigma |> make_captured_in_closures_consistent
+      |> List.stable_sort ~cmp:Sil.compare_hpred
     in
     if equal_sigma sigma sigma' then sigma else sigma'
 
@@ -1738,20 +1744,8 @@ let atom_normalize_prop tenv prop atom =
   Config.run_with_abs_val_equal_zero (Normalize.atom_normalize tenv (`Exp prop.sub)) atom
 
 
-let strexp_normalize_prop tenv prop strexp =
-  Config.run_with_abs_val_equal_zero (Normalize.strexp_normalize tenv (`Exp prop.sub)) strexp
-
-
-let hpred_normalize_prop tenv prop hpred =
-  Config.run_with_abs_val_equal_zero (Normalize.hpred_normalize tenv (`Exp prop.sub)) hpred
-
-
 let sigma_normalize_prop tenv prop sigma =
   Config.run_with_abs_val_equal_zero (Normalize.sigma_normalize tenv (`Exp prop.sub)) sigma
-
-
-let pi_normalize_prop tenv prop pi =
-  Config.run_with_abs_val_equal_zero (Normalize.pi_normalize tenv (`Exp prop.sub) prop.sigma) pi
 
 
 let sigma_replace_exp tenv epairs sigma =
@@ -1788,20 +1782,6 @@ let mk_lseg tenv k para e_start e_end es_shared : Sil.hpred =
 let mk_dllseg tenv k para exp_iF exp_oB exp_oF exp_iB exps_shared : Sil.hpred =
   let npara = Normalize.hpara_dll_normalize tenv para in
   Hdllseg (k, npara, exp_iF, exp_oB, exp_oF, exp_iB, exps_shared)
-
-
-(** Exp.Construct a hpara *)
-let mk_hpara tenv root next svars evars body =
-  let para = {Sil.root; next; svars; evars; body} in
-  Normalize.hpara_normalize tenv para
-
-
-(** Exp.Construct a dll_hpara *)
-let mk_dll_hpara tenv iF oB oF svars evars body =
-  let para =
-    {Sil.cell= iF; blink= oB; flink= oF; svars_dll= svars; evars_dll= evars; body_dll= body}
-  in
-  Normalize.hpara_dll_normalize tenv para
 
 
 (** Construct a points-to predicate for a single program variable.
@@ -1841,14 +1821,6 @@ let extract_spec (p: normal t) : normal t * normal t =
   let pre = extract_footprint p in
   let post = set p ~pi_fp:[] ~sigma_fp:[] in
   (unsafe_cast_to_normal pre, unsafe_cast_to_normal post)
-
-
-(** [prop_set_fooprint p p_foot] sets proposition [p_foot] as footprint of [p]. *)
-let prop_set_footprint p p_foot =
-  let pi =
-    List.map ~f:(fun (i, e) -> Sil.Aeq (Var i, e)) (Sil.sub_to_list p_foot.sub) @ p_foot.pi
-  in
-  set p ~pi_fp:pi ~sigma_fp:p_foot.sigma
 
 
 (** {2 Functions for renaming primed variables by "canonical names"} *)
@@ -2434,14 +2406,6 @@ let prop_iter_next iter =
           pit_old= iter.pit_curr :: iter.pit_old; pit_curr= hpred'; pit_state= (); pit_new= new' }
 
 
-let prop_iter_remove_curr_then_next iter =
-  match iter.pit_new with
-  | [] ->
-      None
-  | hpred' :: new' ->
-      Some {iter with pit_old= iter.pit_old; pit_curr= hpred'; pit_state= (); pit_new= new'}
-
-
 (** Insert before the current element of the iterator. *)
 let prop_iter_prev_then_insert iter hpred =
   {iter with pit_new= iter.pit_curr :: iter.pit_new; pit_curr= hpred}
@@ -2621,14 +2585,10 @@ let prop_expand prop =
 (*** START of module Metrics ***)
 module Metrics : sig
   val prop_size : 'a t -> int
-
-  val prop_chain_size : 'a t -> int
 end = struct
   let ptsto_weight = 1
 
   and lseg_weight = 3
-
-  and pi_weight = 1
 
   let rec hpara_size hpara = sigma_size hpara.Sil.body
 
@@ -2650,22 +2610,12 @@ end = struct
     !size
 
 
-  let pi_size pi = pi_weight * List.length pi
-
   (** Compute a size value for the prop, which indicates its
       complexity *)
   let prop_size p =
     let size_current = sigma_size p.sigma in
     let size_footprint = sigma_size p.sigma_fp in
     max size_current size_footprint
-
-
-  (** Approximate the size of the longest chain by counting the max
-      number of |-> with the same type and whose lhs is primed or
-      footprint *)
-  let prop_chain_size p =
-    let fp_size = pi_size p.pi_fp + sigma_size p.sigma_fp in
-    pi_size p.pi + sigma_size p.sigma + fp_size
 end
 
 (*** END of module Metrics ***)

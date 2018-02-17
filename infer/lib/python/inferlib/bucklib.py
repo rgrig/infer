@@ -72,10 +72,6 @@ def prepare_build(args):
         logging.error('Could not find infer')
         raise e
 
-    # make sure INFER_ANALYSIS is set when buck is called
-    logging.info('Setup Infer analysis mode for Buck: export INFER_ANALYSIS=1')
-    os.environ['INFER_ANALYSIS'] = '1'
-
     # disable the Buck daemon as changes in the Buck config
     # may be missed otherwise
     os.environ['NO_BUCKD'] = '1'
@@ -106,7 +102,7 @@ def get_normalized_targets(targets):
     # this expands the targets passed on the command line, then filters away
     # targets that are not Java/Android. you need to change this if you
     # care about something other than Java/Android
-    TARGET_TYPES = "kind('android_library|java_library', deps('%s'))"
+    TARGET_TYPES = "kind('^(android|java)_library$', deps('%s'))"
     BUCK_GET_JAVA_TARGETS = ['buck', 'query', TARGET_TYPES]
     buck_cmd = BUCK_GET_JAVA_TARGETS + targets
 
@@ -277,11 +273,13 @@ class Wrapper:
                 logging.info('Nothing to analyze')
             else:
                 self.timer.start('Running Buck ...')
-                javac_config = [
+                buck_config = [
                     '--config', 'tools.javac=' + infer_script,
                     '--config', 'client.id=infer.java',
-                    '--config', 'java.abi_generation_mode=class']
-                buck_cmd = self.buck_cmd + javac_config
+                    '--config', 'java.abi_generation_mode=class',
+                    '--config', 'infer.no_custom_javac=true',
+                ]
+                buck_cmd = self.buck_cmd + buck_config
                 subprocess.check_call(buck_cmd)
                 self.timer.stop('Buck finished')
             self._collect_results(start_time)

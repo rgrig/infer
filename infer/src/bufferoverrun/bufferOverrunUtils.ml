@@ -23,8 +23,6 @@ module type S = sig
 
   type counter = unit -> int
 
-  val counter_gen : int -> counter
-
   module Exec : sig
     val load_val : Ident.t -> Dom.Val.astate -> Dom.Mem.astate -> Dom.Mem.astate
 
@@ -48,10 +46,6 @@ module type S = sig
   end
 
   module Check : sig
-    val array_access :
-      arr:ArrayBlk.astate -> arr_traces:TraceSet.t -> idx:Itv.astate -> idx_traces:TraceSet.t
-      -> is_plus:bool -> Typ.Procname.t -> Location.t -> PO.ConditionSet.t -> PO.ConditionSet.t
-
     val lindex :
       array_exp:Exp.t -> index_exp:Exp.t -> Dom.Mem.astate -> Typ.Procname.t -> Location.t
       -> PO.ConditionSet.t -> PO.ConditionSet.t

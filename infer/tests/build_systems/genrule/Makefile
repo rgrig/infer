@@ -8,15 +8,18 @@
 TESTS_DIR = ../..
 ROOT_DIR = $(TESTS_DIR)/../..
 
-ANALYZER = checkers
+ANALYZER = infer
 BUCK_TARGET = //infer/tests/build_systems/genrule/module2:module2
-INFER_TARGET = $(BUCK_TARGET)_checkers
+INFER_TARGET = $(BUCK_TARGET)_infer
 SOURCES = $(wildcard $(TESTS_DIR)/codetoanalyze/java/infer/*.java)
 OBJECTS = $(ROOT_DIR)/buck-out/genruletest/gen/infer/tests/build_systems/genrule/module2/lib__module2_compile__output/module2_compile.jar
-JSON_REPORT = $(ROOT_DIR)/buck-out/gen/infer/tests/build_systems/genrule/module2/module2_checkers/checkers_out/report.json
+JSON_REPORT = $(ROOT_DIR)/buck-out/gen/infer/tests/build_systems/genrule/module2/module2_infer/infer_out/report.json
 INFER_OPTIONS = --project-root $(ROOT_DIR)
 INFERPRINT_OPTIONS = --project-root $(ROOT_DIR) --issues-tests
-CLEAN_EXTRA = $(ROOT_DIR)/buck-out/genruletest
+CLEAN_EXTRA = $(ROOT_DIR)/buck-out/genruletest report.json
+
+# fake infer-out because we only copy the results.json from buck-out.
+INFER_OUT = .
 
 include $(TESTS_DIR)/java.make
 include $(TESTS_DIR)/infer.make
@@ -30,15 +33,17 @@ $(OBJECTS): $(JAVA_SOURCE_FILES)
 genrule: $(JSON_REPORT)
 
 
-$(JSON_REPORT): $(JAVA_DEPS) $(JAVA_SOURCE_FILES)
+$(JSON_REPORT): $(JAVA_DEPS) $(JAVA_SOURCE_FILES) $(MAKEFILE_LIST)
 	$(QUIET)cd $(ROOT_DIR) && \
 	$(REMOVE_DIR) buck-out && \
 	$(call silent_on_success,Testing Buck genrule for Java integration,\
-	INFER_BIN="$(INFER_BIN)" NO_BUCKD=1 GENERATE_INFER_GENRULES=1 \
-	$(BUCK) build --no-cache $(INFER_TARGET))
+	INFER_BIN="$(INFER_BIN)" NO_BUCKD=1 $(BUCK) build --no-cache $(INFER_TARGET))
 	$(QUIET)touch $@
 
-infer-out/report.json: $(JSON_REPORT)
-	$(QUIET)$(MKDIR_P) infer-out
+report.json: $(JSON_REPORT) $(MAKEFILE_LIST)
 #	the report contains absolute paths
 	$(QUIET)sed -e 's#$(abspath $(TESTS_DIR))/##g' $< > $@
+
+issues.exp.test$(TEST_SUFFIX): report.json $(INFER_BIN)
+	$(QUIET)$(INFER_BIN) report -q -a $(ANALYZER) \
+	   $(INFERPRINT_OPTIONS) $@ --from-json-report $<

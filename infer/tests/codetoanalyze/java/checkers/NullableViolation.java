@@ -43,6 +43,13 @@ public class NullableViolation {
     }
   }
 
+  void nullableMethodCheckedForNullAndReturnOkay() {
+    if (returnsNullable() == null) {
+      return;
+    }
+    returnsNullable().doSomething(); // does not report here
+  }
+
   void dereferenceNullableMethodIncorrectlyCheckedForNullBad() {
     if (returnsNullable() == null) {
       returnsNullable().doSomething(); // reports here
@@ -90,5 +97,20 @@ public class NullableViolation {
   void pointerAssignmentWithSubtype() {
     Object object = getNullableObject();
     object = "Hello";
+  }
+
+  void deferenceAliasOfNullableValueCheckedForNullOkay() {
+    T t = returnsNullable();
+    T s = t;
+    if (t != null) {
+      s.x = 42;
+    }
+  }
+
+  void dereferenceWithAssignmentExpressionsOkay() {
+    T t;
+    while ((t = returnsNullable()) != null) {
+      t.doSomething();
+    }
   }
 }

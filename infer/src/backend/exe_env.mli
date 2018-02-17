@@ -12,20 +12,15 @@ open! IStd
 
 (** Support for Execution environments *)
 
-(** initial state, used to add cg's *)
-type initial
+type file_data
 
-(** execution environment: a global call graph, and map from procedure names to cfg and tenv *)
-type t
+type t = private
+  { proc_map: file_data Typ.Procname.Hash.t  (** map from procedure name to file data *)
+  ; file_map: file_data SourceFile.Hash.t  (** map from source files to file data *)
+  ; source_file: SourceFile.t  (** source file being analyzed *) }
 
 val mk : SourceFile.t -> t
 (** Create an exe_env from a source file *)
-
-val get_cg : t -> Cg.t
-(** get the global call graph *)
-
-val get_source : t -> Typ.Procname.t -> SourceFile.t option
-(** return the source file associated to the procedure *)
 
 val get_tenv : t -> Typ.Procname.t -> Tenv.t
 (** return the type environment associated to the procedure *)

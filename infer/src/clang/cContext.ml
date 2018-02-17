@@ -23,14 +23,11 @@ type pointer = int [@@deriving compare]
 
 type curr_class = ContextClsDeclPtr of pointer | ContextNoCls [@@deriving compare]
 
-let equal_curr_class = [%compare.equal : curr_class]
-
 type str_node_map = (string, Procdesc.Node.t) Hashtbl.t
 
 type t =
   { translation_unit_context: CFrontend_config.translation_unit_context
   ; tenv: Tenv.t
-  ; cg: Cg.t
   ; cfg: Cfg.t
   ; procdesc: Procdesc.t
   ; is_objc_method: bool
@@ -43,11 +40,10 @@ type t =
   ; label_map: str_node_map
   ; vars_to_destroy: Clang_ast_t.decl list StmtMap.t }
 
-let create_context translation_unit_context tenv cg cfg procdesc curr_class return_param_typ
+let create_context translation_unit_context tenv cfg procdesc curr_class return_param_typ
     is_objc_method outer_context vars_to_destroy =
   { translation_unit_context
   ; tenv
-  ; cg
   ; cfg
   ; procdesc
   ; curr_class
@@ -58,12 +54,6 @@ let create_context translation_unit_context tenv cg cfg procdesc curr_class retu
   ; label_map= Hashtbl.create 17
   ; vars_to_destroy }
 
-
-let get_cfg context = context.cfg
-
-let get_cg context = context.cg
-
-let get_tenv context = context.tenv
 
 let get_procdesc context = context.procdesc
 
@@ -81,7 +71,8 @@ let rec is_objc_instance context =
       is_objc_instance outer_context
   | None ->
       let attrs = Procdesc.get_attributes context.procdesc in
-      attrs.ProcAttributes.is_objc_instance_method
+      ProcAttributes.clang_method_kind_equal attrs.ProcAttributes.clang_method_kind
+        ProcAttributes.OBJC_INSTANCE
 
 
 let rec get_curr_class context =
@@ -92,12 +83,17 @@ let rec get_curr_class context =
       context.curr_class
 
 
-let get_curr_class_decl_ptr curr_class =
-  match curr_class with ContextClsDeclPtr ptr -> ptr | _ -> assert false
+let get_curr_class_decl_ptr stmt_info curr_class =
+  match curr_class with
+  | ContextClsDeclPtr ptr ->
+      ptr
+  | _ ->
+      CFrontend_config.incorrect_assumption __POS__ stmt_info.Clang_ast_t.si_source_range
+        "current class is not ContextClsDeclPtr"
 
 
-let get_curr_class_ptr curr_class =
-  let decl_ptr = get_curr_class_decl_ptr curr_class in
+let get_curr_class_ptr stmt_info curr_class =
+  let decl_ptr = get_curr_class_decl_ptr stmt_info curr_class in
   let get_ptr_from_decl_ref = function
     | Some dr ->
         dr.Clang_ast_t.dr_decl_pointer
@@ -114,22 +110,14 @@ let get_curr_class_ptr curr_class =
       decl_ptr
 
 
-let get_curr_class_typename context =
+let get_curr_class_typename stmt_info context =
   let tenv = context.tenv in
   let curr_class = get_curr_class context in
-  match get_curr_class_ptr curr_class |> CAst_utils.get_decl with
+  match get_curr_class_ptr stmt_info curr_class |> CAst_utils.get_decl with
   | Some decl ->
       CType_decl.get_record_typename ~tenv decl
   | None ->
       assert false
-
-
-let curr_class_to_string curr_class =
-  match curr_class with
-  | ContextClsDeclPtr ptr ->
-      "decl_ptr: " ^ string_of_int ptr
-  | ContextNoCls ->
-      "no class"
 
 
 let add_block_static_var context block_name static_var_typ =
@@ -152,10 +140,6 @@ let add_block_static_var context block_name static_var_typ =
         outer_context.blocks_static_vars <- blocks_static_vars
   | _ ->
       ()
-
-
-let static_vars_for_block context block_name =
-  try Typ.Procname.Map.find block_name context.blocks_static_vars with Not_found -> []
 
 
 let rec get_outer_procname context =

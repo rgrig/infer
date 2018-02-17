@@ -20,8 +20,6 @@ open Dataflow
 (* check that nonnullable fields are initialized in constructors *)
 let check_field_initialization = true
 
-type parameters = TypeState.parameters
-
 (** Type for a module that provides a main callback function *)
 module type CallBackT = sig
   val callback : TypeCheck.checks -> Callbacks.proc_callback_t
@@ -182,7 +180,7 @@ module MkCallback (Extension : ExtensionT) : CallBackT = struct
                 let get_class_opt pn =
                   match pn with
                   | Typ.Procname.Java pn_java ->
-                      Some (Typ.Procname.java_get_class_name pn_java)
+                      Some (Typ.Procname.Java.get_class_name pn_java)
                   | _ ->
                       None
                 in
@@ -261,7 +259,7 @@ module MkCallback (Extension : ExtensionT) : CallBackT = struct
       let get_class pn =
         match pn with
         | Typ.Procname.Java pn_java ->
-            Some (Typ.Procname.java_get_class_name pn_java)
+            Some (Typ.Procname.Java.get_class_name pn_java)
         | _ ->
             None
 
@@ -328,7 +326,11 @@ module MkCallback (Extension : ExtensionT) : CallBackT = struct
     let proc_name = Procdesc.get_proc_name proc_desc in
     let calls_this = ref false in
     let filter_special_cases () =
-      if Typ.Procname.java_is_access_method proc_name
+      if ( match proc_name with
+         | Typ.Procname.Java java_pname ->
+             Typ.Procname.Java.is_access_method java_pname
+         | _ ->
+             false )
          || (Specs.pdesc_resolve_attributes proc_desc).ProcAttributes.is_bridge_method
       then None
       else

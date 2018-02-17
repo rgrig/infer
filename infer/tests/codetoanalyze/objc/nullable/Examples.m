@@ -7,6 +7,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 #import <Foundation/Foundation.h>
+#import "Library.h"
 
 int* __nullable returnsNull();
 
@@ -126,6 +127,16 @@ typedef struct s_ {
 - (NSArray*)nullableObjectInNSArrayBad {
   NSObject* nullableObject = [self nullableMethod];
   NSArray* array = @[ nullableObject ]; // reports here
+  return array;
+}
+
+- (NSArray*)nullableMethodCheckedForNullAndReturnOkay {
+  NSObject* nullableObject = [self nullableMethod];
+  NSArray* array;
+  if (nullableObject == nil) {
+    return array;
+  }
+  array = @[ nullableObject ]; // does not report here
   return array;
 }
 
@@ -249,6 +260,18 @@ typedef struct s_ {
   NSObject* nullableObject = [self nullableMethod];
   nullableObject = string;
   NSArray* array = @[ nullableObject ]; // does not report here
+  return array;
+}
+
+- (NSArray*)dereferenceLibraryMethodOk:(L*)object {
+  NSObject* nullableObject = [object libraryMethod];
+  NSArray* array = @[ nullableObject ]; // does not report here
+  return array;
+}
+
+- (NSArray*)dereferenceNullableLibraryMethodBad:(L*)object {
+  NSObject* nullableObject = [object nullableLibraryMethod];
+  NSArray* array = @[ nullableObject ]; // reports here
   return array;
 }
 

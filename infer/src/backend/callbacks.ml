@@ -9,6 +9,7 @@
 
 open! IStd
 open! PVariant
+module F = Format
 module L = Logging
 
 (** Module to register and invoke callbacks *)
@@ -45,17 +46,19 @@ let get_procedure_definition exe_env proc_name =
   Option.map ~f:(fun proc_desc -> (tenv, proc_desc)) (Exe_env.get_proc_desc exe_env proc_name)
 
 
-let get_language proc_name = if Typ.Procname.is_java proc_name then Config.Java else Config.Clang
+let get_language proc_name =
+  if Typ.Procname.is_java proc_name then Language.Java else Language.Clang
+
 
 (** Invoke all registered procedure callbacks on the given procedure. *)
 let iterate_procedure_callbacks get_proc_desc exe_env summary proc_desc =
   let proc_name = Procdesc.get_proc_name proc_desc in
   let procedure_language = get_language proc_name in
-  Config.curr_language := procedure_language ;
+  Language.curr_language := procedure_language ;
   let get_procs_in_file proc_name =
     match Exe_env.get_cfg exe_env proc_name with
     | Some cfg ->
-        Cfg.fold_proc_desc cfg (fun pname _ accu -> pname :: accu) []
+        Cfg.get_all_proc_names cfg
     | None ->
         []
   in
@@ -63,7 +66,7 @@ let iterate_procedure_callbacks get_proc_desc exe_env summary proc_desc =
   let is_specialized = Procdesc.is_specialized proc_desc in
   List.fold ~init:summary
     ~f:(fun summary (language, resolved, proc_callback) ->
-      if Config.equal_language language procedure_language && (resolved || not is_specialized) then
+      if Language.equal language procedure_language && (resolved || not is_specialized) then
         proc_callback {get_proc_desc; get_procs_in_file; tenv; summary; proc_desc}
       else summary )
     !procedure_callbacks
@@ -76,7 +79,7 @@ let iterate_cluster_callbacks all_procs exe_env get_proc_desc =
   let language_matches language =
     match procedures with
     | (_, pdesc) :: _ ->
-        Config.equal_language language (get_language (Procdesc.get_proc_name pdesc))
+        Language.equal language (get_language (Procdesc.get_proc_name pdesc))
     | _ ->
         true
   in
@@ -86,37 +89,63 @@ let iterate_cluster_callbacks all_procs exe_env get_proc_desc =
     !cluster_callbacks
 
 
-(** Invoke all procedure and cluster callbacks on a given environment. *)
-let iterate_callbacks call_graph exe_env =
-  let saved_language = !Config.curr_language in
-  let procs_to_analyze =
-    (* analyze all the currently defined procedures *)
-    Cg.get_defined_nodes call_graph
+let dump_duplicate_procs (exe_env: Exe_env.t) procs =
+  let duplicate_procs =
+    List.filter_map procs ~f:(fun pname ->
+        match Exe_env.get_proc_desc exe_env pname with
+        | Some pdesc when (* defined in the current file *) Procdesc.is_defined pdesc -> (
+          match Attributes.load pname with
+          | Some {source_file_captured; loc}
+            when (* defined in another file *)
+                 not (SourceFile.equal exe_env.source_file source_file_captured)
+                 && (* really defined in the current file and not in an include *)
+                    SourceFile.equal exe_env.source_file loc.file ->
+              Some (pname, source_file_captured)
+          | _ ->
+              None )
+        | _ ->
+            None )
   in
+  let output_to_file duplicate_procs =
+    Out_channel.with_file (Config.results_dir ^/ Config.duplicates_filename)
+      ~append:true ~perm:0o666 ~f:(fun outc ->
+        let fmt = F.formatter_of_out_channel outc in
+        List.iter duplicate_procs ~f:(fun (pname, source_captured) ->
+            F.fprintf fmt "@.DUPLICATE_SYMBOLS source:%a source_captured:%a pname:%a@."
+              SourceFile.pp exe_env.source_file SourceFile.pp source_captured Typ.Procname.pp pname
+        ) )
+  in
+  if not (List.is_empty duplicate_procs) then output_to_file duplicate_procs
+
+
+(** Invoke all procedure and cluster callbacks on a given environment. *)
+let iterate_callbacks (exe_env: Exe_env.t) =
+  let saved_language = !Language.curr_language in
   let get_proc_desc proc_name =
     match Exe_env.get_proc_desc exe_env proc_name with
-    | Some pdesc ->
-        Some pdesc
+    | Some _ as pdesc_opt ->
+        pdesc_opt
     | None ->
         Option.map ~f:Specs.get_proc_desc (Specs.get_summary proc_name)
   in
   let analyze_ondemand summary proc_desc =
     iterate_procedure_callbacks get_proc_desc exe_env summary proc_desc
   in
-  let callbacks = {Ondemand.analyze_ondemand; get_proc_desc} in
-  (* Create and register on-demand analysis callback *)
-  let analyze_proc_name pname =
-    match Ondemand.get_proc_desc pname with
-    | None ->
-        L.internal_error "Could not find proc desc for %a" Typ.Procname.pp pname
-    | Some pdesc ->
-        ignore (Ondemand.analyze_proc_desc pdesc pdesc)
+  Ondemand.set_callbacks {Ondemand.analyze_ondemand; get_proc_desc} ;
+  (* Invoke procedure callbacks using on-demand analysis schedulling *)
+  let procs_to_analyze =
+    (* analyze all the currently defined procedures *)
+    SourceFiles.proc_names_of_source exe_env.source_file
   in
-  Ondemand.set_callbacks callbacks ;
-  (* Invoke procedure callbacks using on-demand anlaysis schedulling *)
+  if Config.dump_duplicate_symbols then dump_duplicate_procs exe_env procs_to_analyze ;
+  let analyze_proc_name pname =
+    Option.iter
+      ~f:(fun pdesc -> ignore (Ondemand.analyze_proc_desc pdesc))
+      (Ondemand.get_proc_desc pname)
+  in
   List.iter ~f:analyze_proc_name procs_to_analyze ;
   (* Invoke cluster callbacks. *)
   iterate_cluster_callbacks procs_to_analyze exe_env get_proc_desc ;
   (* Unregister callbacks *)
   Ondemand.unset_callbacks () ;
-  Config.curr_language := saved_language
+  Language.curr_language := saved_language

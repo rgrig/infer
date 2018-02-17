@@ -49,7 +49,6 @@ type spec =
   | Unit of (unit -> unit)
   | String of (string -> unit)
   | Symbol of string list * (string -> unit)
-  | Rest of (string -> unit)
 
 let to_arg_spec = function
   | Unit f ->
@@ -58,8 +57,6 @@ let to_arg_spec = function
       Arg.String f
   | Symbol (symbols, f) ->
       Arg.Symbol (symbols, f)
-  | Rest f ->
-      Arg.Rest f
 
 
 let to_arg_spec_triple (x, spec, y) = (x, to_arg_spec spec, y)
@@ -87,48 +84,6 @@ let anon_arg_action_of_parse_mode parse_mode =
         (false, false, `Skip)
   in
   {parse_subcommands; parse_argfiles; on_unknown}
-
-
-(* NOTE: All variants must be also added to `all_commands` below *)
-type command =
-  | Analyze
-  | Capture
-  | Compile
-  | Diff
-  | Events
-  | Explore
-  | Report
-  | ReportDiff
-  | Run
-  [@@deriving compare]
-
-let equal_command = [%compare.equal : command]
-
-let infer_exe_name = "infer"
-
-let command_to_name =
-  [ (Analyze, "analyze")
-  ; (Capture, "capture")
-  ; (Compile, "compile")
-  ; (Diff, "diff")
-  ; (Events, "events")
-  ; (Explore, "explore")
-  ; (Report, "report")
-  ; (ReportDiff, "reportdiff")
-  ; (Run, "run") ]
-
-
-let all_commands = List.map ~f:fst command_to_name
-
-let name_of_command = List.Assoc.find_exn ~equal:equal_command command_to_name
-
-let exe_name_of_command_name name = Printf.sprintf "%s-%s" infer_exe_name name
-
-let exe_name_of_command cmd = name_of_command cmd |> exe_name_of_command_name
-
-let command_of_exe_name exe_name =
-  List.find_map command_to_name ~f:(fun (cmd, name) ->
-      if String.equal exe_name (exe_name_of_command_name name) then Some cmd else None )
 
 
 type command_doc =
@@ -221,7 +176,7 @@ module SectionMap = Caml.Map.Make (struct
 end)
 
 let help_sections_desc_lists =
-  List.map all_commands ~f:(fun command -> (command, ref SectionMap.empty))
+  List.map InferCommand.all_commands ~f:(fun command -> (command, ref SectionMap.empty))
 
 
 let visible_descs_list = ref []
@@ -234,7 +189,9 @@ let add parse_mode sections desc =
   let desc_list = List.Assoc.find_exn ~equal:equal_parse_mode parse_mode_desc_lists parse_mode in
   desc_list := desc :: !desc_list ;
   let add_to_section (command, section) =
-    let sections = List.Assoc.find_exn ~equal:equal_command help_sections_desc_lists command in
+    let sections =
+      List.Assoc.find_exn ~equal:InferCommand.equal help_sections_desc_lists command
+    in
     let prev_contents = try SectionMap.find section !sections with Not_found -> [] in
     sections := SectionMap.add section (desc :: prev_contents) !sections
   in
@@ -262,10 +219,10 @@ let add parse_mode sections desc =
         in
         (* in the help of `infer` itself, show in which specific commands the option is used *)
         let commands =
-          List.map ~f:fst sections |> List.sort ~cmp:compare_command
-          |> List.remove_consecutive_duplicates ~equal:equal_command
+          List.map ~f:fst sections |> List.sort ~cmp:InferCommand.compare
+          |> List.remove_consecutive_duplicates ~equal:InferCommand.equal
           |> List.map ~f:(fun cmd ->
-                 let exe = exe_name_of_command cmd in
+                 let exe = InferCommand.to_exe_name cmd in
                  Printf.sprintf "$(b,%s)(1)" (Cmdliner.Manpage.escape exe) )
           |> oxford_comma
         in
@@ -295,8 +252,6 @@ let deprecate_desc parse_mode ~long ~short ~deprecated doc desc =
         String (warn_then_f f)
     | Symbol (symbols, f) ->
         Symbol (symbols, warn_then_f f)
-    | Rest _ as spec ->
-        spec
   in
   let deprecated_decode_json ~inferconfig_dir j =
     warnf "WARNING: in .inferconfig: '%s' is deprecated. Use '%s' instead." deprecated long ;
@@ -363,7 +318,7 @@ let curr_command = ref None
 
 type 'a t =
   ?deprecated:string list -> long:Arg.key -> ?short:char -> ?parse_mode:parse_mode
-  -> ?in_help:(command * string) list -> ?meta:string -> Arg.doc -> 'a
+  -> ?in_help:(InferCommand.t * string) list -> ?meta:string -> Arg.doc -> 'a
 
 let string_json_decoder ~long ~inferconfig_dir:_ json = [dashdash long; YBU.to_string json]
 
@@ -483,14 +438,6 @@ let mk_int_opt ?default ?f:(f0 = Fn.id) ?(deprecated= []) ~long ?short ?parse_mo
   let default_to_string = function Some f -> string_of_int f | None -> "" in
   let f s = Some (f0 (int_of_string s)) in
   mk_option ~deprecated ~long ?short ~default ~default_to_string ~f ?parse_mode ?in_help ~meta doc
-
-
-let mk_float ~default ?(deprecated= []) ~long ?short ?parse_mode ?in_help ?(meta= "float") doc =
-  mk ~deprecated ~long ?short ~default ?parse_mode ?in_help ~meta doc
-    ~default_to_string:string_of_float
-    ~mk_setter:(fun var str -> var := float_of_string str)
-    ~decode_json:(string_json_decoder ~long)
-    ~mk_spec:(fun set -> String set)
 
 
 let mk_float_opt ?default ?(deprecated= []) ~long ?short ?parse_mode ?in_help ?(meta= "float") doc =
@@ -637,14 +584,6 @@ let mk_symbol_seq ?(default= []) ~symbols ~eq ?(deprecated= []) ~long ?short ?pa
     ~mk_spec:(fun set -> String set)
 
 
-let mk_set_from_json ~default ~default_to_string ~f ?(deprecated= []) ~long ?short ?parse_mode
-    ?in_help ?(meta= "json") doc =
-  mk ~deprecated ~long ?short ?parse_mode ?in_help ~meta doc ~default ~default_to_string
-    ~mk_setter:(fun var json -> var := f (Yojson.Basic.from_string json))
-    ~decode_json:(fun ~inferconfig_dir:_ json -> [dashdash long; Yojson.Basic.to_string json])
-    ~mk_spec:(fun set -> String set)
-
-
 let mk_json ?(deprecated= []) ~long ?short ?parse_mode ?in_help ?(meta= "json") doc =
   mk ~deprecated ~long ?short ?parse_mode ?in_help ~meta doc ~default:(`List [])
     ~default_to_string:Yojson.Basic.to_string
@@ -656,14 +595,6 @@ let mk_json ?(deprecated= []) ~long ?short ?parse_mode ?in_help ?(meta= "json") 
 (** [mk_anon] always return the same ref. Anonymous arguments are only accepted if
     [parse_action_accept_unknown_args] is true. *)
 let mk_anon () = rev_anon_args
-
-let mk_rest ?(parse_mode= InferCommand) ?(in_help= []) doc =
-  let rest = ref [] in
-  let spec = Rest (fun arg -> rest := arg :: !rest) in
-  add parse_mode in_help
-    {long= "--"; short= ""; meta= ""; doc; spec; decode_json= (fun ~inferconfig_dir:_ _ -> [])} ;
-  rest
-
 
 let normalize_desc_list speclist =
   let norm k =
@@ -760,7 +691,7 @@ let select_parse_mode ~usage parse_mode =
 
 
 let string_of_command command =
-  let _, s, _ = List.Assoc.find_exn !subcommands ~equal:equal_command command in
+  let _, s, _ = List.Assoc.find_exn !subcommands ~equal:InferCommand.equal command in
   s
 
 
@@ -800,18 +731,6 @@ let mk_subcommand command ?on_unknown_arg:(on_unknown = `Reject) ~name ?deprecat
   subcommand_actions := (name, switch) :: !subcommand_actions
 
 
-(* drop well-balanced first and last characters in [s] that satisfy the [drop] predicate; for
-   instance, [lrstrip ~drop:(function | 'a' | 'x' -> true | _ -> false) "xaabax"] returns "ab" *)
-let rec lrstrip ~drop s =
-  let n = String.length s in
-  if n < 2 then s
-  else
-    let first = String.unsafe_get s 0 in
-    if Char.equal first (String.unsafe_get s (n - 1)) && drop first then
-      lrstrip ~drop (String.slice s 1 (n - 1))
-    else s
-
-
 let args_from_argfile arg =
   let abs_fname =
     let fname = String.slice arg 1 (String.length arg) in
@@ -819,7 +738,7 @@ let args_from_argfile arg =
   in
   match In_channel.read_lines abs_fname with
   | lines ->
-      let strip = lrstrip ~drop:(function '"' | '\'' -> true | _ -> false) in
+      let strip = Utils.strip_balanced_once ~drop:(function '"' | '\'' -> true | _ -> false) in
       List.map ~f:strip lines
   | exception e ->
       raise (Arg.Bad ("Error reading argument file '" ^ abs_fname ^ "': " ^ Exn.to_string e))
@@ -965,6 +884,8 @@ let parse_args ~usage initial_action ?initial_command args =
   parse_loop () ; curr_usage
 
 
+let keep_args_file = ref false
+
 let parse ?config_file ~usage action initial_command =
   let env_args = decode_env_to_argv (Option.value (Sys.getenv args_env_var) ~default:"") in
   let inferconfig_args =
@@ -1008,6 +929,7 @@ let parse ?config_file ~usage action initial_command =
          to prevent this from happening *)
       let file = Filename.temp_file "args_" "" in
       Out_channel.with_file file ~f:(fun oc -> Out_channel.output_lines oc argv_to_export) ;
+      if not !keep_args_file then Utils.unlink_file_on_exit file ;
       "@" ^ file
     else ""
   in
@@ -1050,7 +972,7 @@ let show_manual ?internal_section format default_doc command_opt =
     | None ->
         default_doc
     | Some command ->
-      match List.Assoc.find_exn ~equal:equal_command !subcommands command with
+      match List.Assoc.find_exn ~equal:InferCommand.equal !subcommands command with
       | Some command_doc, _, _ ->
           command_doc
       | None, _, _ ->
@@ -1096,7 +1018,7 @@ let show_manual ?internal_section format default_doc command_opt =
         match command_opt with
         | Some command ->
             let sections =
-              List.Assoc.find_exn ~equal:equal_command help_sections_desc_lists command
+              List.Assoc.find_exn ~equal:InferCommand.equal help_sections_desc_lists command
             in
             SectionMap.fold
               (fun section descs result ->

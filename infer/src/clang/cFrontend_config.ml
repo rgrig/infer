@@ -12,17 +12,33 @@ module F = Format
 
 (** Module that contains constants and global state used in the frontend *)
 
-exception IncorrectAssumption of string
-
-let incorrect_assumption fmt = F.kasprintf (fun msg -> raise (IncorrectAssumption msg)) fmt
-
-exception Unimplemented of string
-
-let unimplemented fmt = F.kasprintf (fun msg -> raise (Unimplemented msg)) fmt
-
 type clang_lang = C | CPP | ObjC | ObjCPP [@@deriving compare]
 
+let string_of_clang_lang (lang: clang_lang) : string =
+  match lang with C -> "C" | CPP -> "CPP" | ObjC -> "ObjC" | ObjCPP -> "ObjCPP"
+
+
 let equal_clang_lang = [%compare.equal : clang_lang]
+
+type ocaml_pos = string * int * int * int
+
+type exception_details =
+  { msg: string
+  ; position: ocaml_pos
+  ; source_range: Clang_ast_t.source_range
+  ; ast_node: string option }
+
+exception Unimplemented of exception_details
+
+let unimplemented position source_range ?ast_node fmt =
+  F.kasprintf (fun msg -> raise (Unimplemented {msg; position; source_range; ast_node})) fmt
+
+
+exception IncorrectAssumption of exception_details
+
+let incorrect_assumption position source_range ?ast_node fmt =
+  F.kasprintf (fun msg -> raise (IncorrectAssumption {msg; position; source_range; ast_node})) fmt
+
 
 type translation_unit_context = {lang: clang_lang; source_file: SourceFile.t}
 
@@ -36,32 +52,16 @@ let assert_fail = "__assert_fail"
 
 let assert_rtn = "__assert_rtn"
 
-let atomic_att = "<\"Atomic\">"
-
-let autorelease = "autorelease"
-
 let biniou_buffer_size =
   (* the C++ standard suggests that implementation should support string literals up to this length *)
   65535
 
-
-let block = "block"
 
 let builtin_expect = "__builtin_expect"
 
 let builtin_memset_chk = "__builtin___memset_chk"
 
 let builtin_object_size = "__builtin_object_size"
-
-let cf_alloc = "__cf_alloc"
-
-let cf_autorelease = "CFAutorelease"
-
-let cf_bridging_release = "CFBridgingRelease"
-
-let cf_bridging_retain = "CFBridgingRetain"
-
-let cf_non_null_alloc = "__cf_non_null_alloc"
 
 let ckcomponent_cl = "CKComponent"
 
@@ -75,21 +75,7 @@ let clang_bin xx =
 
 let class_method = "class"
 
-let class_type = "Class"
-
-let copy = "copy"
-
-let count = "count"
-
-let drain = "drain"
-
-let emtpy_name_category = "EMPTY_NAME_CATEGORY_FOR_"
-
-let enumerateObjectsUsingBlock = "enumerateObjectsUsingBlock:"
-
 let fbAssertWithSignalAndLogFunctionHelper = "FBAssertWithSignalAndLogFunctionHelper"
-
-let free = "free"
 
 let google_LogMessageFatal = "google::LogMessageFatal_LogMessageFatal"
 
@@ -109,23 +95,13 @@ let infer_skip_gcc_asm_stmt = "__infer_skip_gcc_asm_stmt"
 
 let init = "init"
 
-let invalid_pointer = 0
-
 let is_kind_of_class = "isKindOfClass:"
 
 let malloc = "malloc"
 
-let mutableCopy = "mutableCopy"
-
 let new_str = "new"
 
 let next_object = "nextObject"
-
-let ns_make_collectable = "NSMakeCollectable"
-
-let nsarray_cl = "NSArray"
-
-let nsautorelease_pool_cl = "NSAutoreleasePool"
 
 let nsproxy_cl = "NSProxy"
 
@@ -137,16 +113,6 @@ let objc_class = "objc_class"
 
 let objc_object = "objc_object"
 
-let object_at_indexed_subscript_m = "objectAtIndexedSubscript:"
-
-let objects = "objects"
-
-let pseudo_object_type = "<pseudo-object type>"
-
-let release = "release"
-
-let retain = "retain"
-
 let return_param = "__return_param"
 
 let self = "self"
@@ -156,8 +122,6 @@ let std_addressof = QualifiedCppName.Match.of_fuzzy_qual_names ["std::addressof"
 let string_with_utf8_m = "stringWithUTF8String:"
 
 let this = "this"
-
-let void = "void"
 
 let replace_with_deref_first_arg_attr = "__infer_replace_with_deref_first_arg"
 
@@ -173,11 +137,17 @@ let log_out = ref Format.std_formatter
 
 let sil_types_map = ref Clang_ast_extend.TypePointerMap.empty
 
+let procedures_attempted = ref 0
+
+let procedures_failed = ref 0
+
 let reset_global_state () =
   enum_map := ClangPointers.Map.empty ;
   global_translation_unit_decls := [] ;
   log_out := Format.std_formatter ;
-  sil_types_map := Clang_ast_extend.TypePointerMap.empty
+  sil_types_map := Clang_ast_extend.TypePointerMap.empty ;
+  procedures_attempted := 0 ;
+  procedures_failed := 0
 
 
 let tableaux_evaluation = false

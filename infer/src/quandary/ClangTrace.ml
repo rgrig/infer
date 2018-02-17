@@ -68,7 +68,7 @@ module SourceKind = struct
         let qualified_pname = Typ.Procname.get_qualifiers pname in
         match
           ( QualifiedCppName.to_list
-              (Typ.Name.unqualified_name (Typ.Procname.objc_cpp_get_class_type_name cpp_name))
+              (Typ.Name.unqualified_name (Typ.Procname.ObjC_Cpp.get_class_type_name cpp_name))
           , Typ.Procname.get_method pname )
         with
         | ( ["std"; ("basic_istream" | "basic_iostream")]
@@ -76,8 +76,7 @@ module SourceKind = struct
             Some (ReadFile, Some 1)
         | _ ->
             get_external_source qualified_pname )
-    | Typ.Procname.C _
-      when Config.developer_mode && Typ.Procname.equal pname BuiltinDecl.__global_access
+    | Typ.Procname.C _ when Typ.Procname.equal pname BuiltinDecl.__global_access
       -> (
         (* is this var a command line flag created by the popular C++ gflags library for creating
            command-line flags (https://github.com/gflags/gflags)? *)
@@ -93,16 +92,19 @@ module SourceKind = struct
         in
         (* accessed global will be passed to us as the only parameter *)
         match actuals with
-        | [(HilExp.AccessPath access_path)] when is_gflag access_path ->
-            let (global_pvar, _), _ = access_path in
-            let typ_desc =
-              match AccessPath.get_typ access_path tenv with
-              | Some {Typ.desc} ->
-                  desc
-              | None ->
-                  Typ.void_star.desc
-            in
-            Some (CommandLineFlag (global_pvar, typ_desc), None)
+        | [(HilExp.AccessExpression access_expr)] ->
+            let access_path = AccessExpression.to_access_path access_expr in
+            if is_gflag access_path then
+              let (global_pvar, _), _ = access_path in
+              let typ_desc =
+                match AccessPath.get_typ access_path tenv with
+                | Some {Typ.desc} ->
+                    desc
+                | None ->
+                    Typ.void_star.desc
+              in
+              Some (CommandLineFlag (global_pvar, typ_desc), None)
+            else None
         | _ ->
             None )
     | Typ.Procname.C _ -> (
@@ -129,7 +131,7 @@ module SourceKind = struct
           | _ ->
               false
         in
-        let typename = Typ.Procname.objc_cpp_get_class_type_name cpp_pname in
+        let typename = Typ.Procname.ObjC_Cpp.get_class_type_name cpp_pname in
         PatternMatch.supertype_exists tenv is_thrift_service_ typename
       in
       (* taint all formals except for [this] *)
@@ -150,7 +152,7 @@ module SourceKind = struct
       | Typ.Procname.ObjC_Cpp cpp_pname as pname ->
           let qualified_pname =
             F.sprintf "%s::%s"
-              (Typ.Procname.objc_cpp_get_class_name cpp_pname)
+              (Typ.Procname.ObjC_Cpp.get_class_name cpp_pname)
               (Typ.Procname.get_method pname)
           in
           if String.Set.mem endpoints qualified_pname then
@@ -273,7 +275,7 @@ module SinkKind = struct
     | Typ.Procname.ObjC_Cpp cpp_name -> (
       match
         ( QualifiedCppName.to_list
-            (Typ.Name.unqualified_name (Typ.Procname.objc_cpp_get_class_type_name cpp_name))
+            (Typ.Name.unqualified_name (Typ.Procname.ObjC_Cpp.get_class_type_name cpp_name))
         , Typ.Procname.get_method pname )
       with
       | ( ["std"; ("basic_fstream" | "basic_ifstream" | "basic_ofstream")]
@@ -438,7 +440,7 @@ include Trace.Make (struct
         Option.some_if
           (is_injection_possible ~typ Sanitizer.EscapeShell sanitizers)
           IssueType.untrusted_file
-    | (Endpoint (_, typ) | CommandLineFlag (_, typ)), CreateFile ->
+    | Endpoint (_, typ), CreateFile ->
         Option.some_if
           (is_injection_possible ~typ Sanitizer.EscapeShell sanitizers)
           IssueType.untrusted_file_risk
@@ -446,11 +448,11 @@ include Trace.Make (struct
         Option.some_if
           (is_injection_possible ~typ Sanitizer.EscapeURL sanitizers)
           IssueType.untrusted_url
-    | (Endpoint (_, typ) | CommandLineFlag (_, typ)), URL ->
+    | Endpoint (_, typ), URL ->
         Option.some_if
           (is_injection_possible ~typ Sanitizer.EscapeURL sanitizers)
           IssueType.untrusted_url_risk
-    | (EnvironmentVariable | ReadFile), URL ->
+    | (CommandLineFlag _ | EnvironmentVariable | ReadFile), URL ->
         None
     | (UserControlledEndpoint (_, typ) | CommandLineFlag (_, typ)), SQL ->
         if is_injection_possible ~typ Sanitizer.EscapeSQL sanitizers then
@@ -508,7 +510,7 @@ include Trace.Make (struct
         (* untrusted data of any kind flowing to stack buffer allocation. trying to allocate a stack
            buffer that's too large will cause a stack overflow. *)
         Some IssueType.untrusted_variable_length_array
-    | (EnvironmentVariable | ReadFile), CreateFile ->
+    | (CommandLineFlag _ | EnvironmentVariable | ReadFile), CreateFile ->
         None
     | Other, _ ->
         (* Other matches everything *)

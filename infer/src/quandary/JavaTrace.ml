@@ -14,6 +14,7 @@ module L = Logging
 module SourceKind = struct
   type t =
     | DrawableResource of Pvar.t  (** Drawable resource ID read from a global *)
+    | Endpoint of (Mangled.t * Typ.desc)  (** source originating from formal of an endpoint *)
     | Intent  (** external Intent or a value read from one *)
     | IntentFromURI  (** Intent created from a URI *)
     | Other  (** for testing or uncategorized sources *)
@@ -25,6 +26,8 @@ module SourceKind = struct
   let matches ~caller ~callee = Int.equal 0 (compare caller callee)
 
   let of_string = function
+    | "Endpoint" ->
+        Endpoint (Mangled.from_string "NONE", Typ.Tvoid)
     | "Intent" ->
         Intent
     | "IntentFromURI" ->
@@ -62,7 +65,7 @@ module SourceKind = struct
     let return = None in
     match pname with
     | Typ.Procname.Java pname -> (
-      match (Typ.Procname.java_get_class_name pname, Typ.Procname.java_get_method pname) with
+      match (Typ.Procname.Java.get_class_name pname, Typ.Procname.Java.get_method pname) with
       | "android.content.Intent", "<init>" when actual_has_type 2 "android.net.Uri" actuals tenv ->
           (* taint the [this] parameter passed to the constructor *)
           Some (IntentFromURI, Some 0)
@@ -120,13 +123,17 @@ module SourceKind = struct
     | Typ.Procname.C _ when Typ.Procname.equal pname BuiltinDecl.__global_access -> (
       match (* accessed global will be passed to us as the only parameter *)
             actuals with
-      | [(HilExp.AccessPath ((Var.ProgramVar pvar, _), _))] ->
-          let pvar_string = Pvar.to_string pvar in
-          (* checking substring instead of prefix because we expect field names like
-             com.myapp.R$drawable.whatever *)
-          if String.is_substring ~substring:AndroidFramework.drawable_prefix pvar_string then
-            Some (DrawableResource pvar, None)
-          else None
+      | [(HilExp.AccessExpression access_expr)] -> (
+        match AccessExpression.to_access_path access_expr with
+        | (Var.ProgramVar pvar, _), _ ->
+            let pvar_string = Pvar.to_string pvar in
+            (* checking substring instead of prefix because we expect field names like
+               com.myapp.R$drawable.whatever *)
+            if String.is_substring ~substring:AndroidFramework.drawable_prefix pvar_string then
+              Some (DrawableResource pvar, None)
+            else None
+        | _ ->
+            None )
       | _ ->
           None )
     | pname when BuiltinDecl.is_declared pname ->
@@ -150,11 +157,25 @@ module SourceKind = struct
       in
       List.map ~f:taint_formal_with_types formals
     in
+    (* taint all formals except for [this] *)
+    let taint_all_but_this ~make_source =
+      List.map
+        ~f:(fun (name, typ) ->
+          let taint =
+            match Mangled.to_string name with
+            | "this" ->
+                None
+            | _ ->
+                Some (make_source name typ.Typ.desc)
+          in
+          (name, typ, taint) )
+        (Procdesc.get_formals pdesc)
+    in
     let formals = Procdesc.get_formals pdesc in
     match Procdesc.get_proc_name pdesc with
     | Typ.Procname.Java java_pname -> (
       match
-        (Typ.Procname.java_get_class_name java_pname, Typ.Procname.java_get_method java_pname)
+        (Typ.Procname.Java.get_class_name java_pname, Typ.Procname.Java.get_method java_pname)
       with
       | "codetoanalyze.java.quandary.TaintedFormals", "taintedContextBad" ->
           taint_formals_with_types ["java.lang.Integer"; "java.lang.String"] Other formals
@@ -199,7 +220,15 @@ module SourceKind = struct
               , ("onJsAlert" | "onJsBeforeUnload" | "onJsConfirm" | "onJsPrompt") ) ->
                 Some (taint_formals_with_types ["java.lang.String"] UserControlledURI formals)
             | _ ->
-                None
+              match Tenv.lookup tenv typename with
+              | Some typ ->
+                  if Annotations.struct_typ_has_annot typ Annotations.ia_is_thrift_service then
+                    (* assume every non-this formal of a Thrift service is tainted *)
+                    (* TODO: may not want to taint numbers or Enum's *)
+                    Some (taint_all_but_this ~make_source:(fun name desc -> Endpoint (name, desc)))
+                  else None
+              | _ ->
+                  None
           in
           match
             PatternMatch.supertype_find_map_opt tenv taint_matching_supertype
@@ -219,6 +248,8 @@ module SourceKind = struct
       ( match kind with
       | DrawableResource pvar ->
           Pvar.to_string pvar
+      | Endpoint (formal_name, _) ->
+          F.asprintf "Endpoint[%s]" (Mangled.to_string formal_name)
       | Intent ->
           "Intent"
       | IntentFromURI ->
@@ -244,6 +275,7 @@ module SinkKind = struct
     | HTML  (** sink that creates HTML *)
     | JavaScript  (** sink that passes its arguments to untrusted JS code *)
     | Logging  (** sink that logs one or more of its arguments *)
+    | ShellExec  (** sink that runs a shell command *)
     | StartComponent  (** sink that launches an Activity, Service, etc. *)
     | Other  (** for testing or uncategorized sinks *)
     [@@deriving compare]
@@ -265,6 +297,8 @@ module SinkKind = struct
         Logging
     | "OpenDrawableResource" ->
         OpenDrawableResource
+    | "ShellExec" ->
+        ShellExec
     | "StartComponent" ->
         StartComponent
     | _ ->
@@ -278,108 +312,116 @@ module SinkKind = struct
 
 
   let get pname actuals tenv =
-    (* taint all the inputs of [pname]. for non-static procedures, taints the "this" parameter only
-       if [taint_this] is true. *)
-    let taint_all ?(taint_this= false) kind =
-      let actuals_to_taint, offset =
-        if Typ.Procname.java_is_static pname || taint_this then (actuals, 0)
-        else (List.tl_exn actuals, 1)
-      in
-      let indexes =
-        IntSet.of_list (List.mapi ~f:(fun param_num _ -> param_num + offset) actuals_to_taint)
-      in
-      Some (kind, indexes)
-    in
-    (* taint the nth non-"this" parameter (0-indexed) *)
-    let taint_nth n kind =
-      let first_index = if Typ.Procname.java_is_static pname then n else n + 1 in
-      if first_index < List.length actuals then Some (kind, IntSet.singleton first_index) else None
-    in
     match pname with
-    | Typ.Procname.Java java_pname -> (
-      match
-        (Typ.Procname.java_get_class_name java_pname, Typ.Procname.java_get_method java_pname)
-      with
-      | "android.text.Html", "fromHtml" ->
-          taint_nth 0 HTML
-      | "android.util.Log", ("e" | "println" | "w" | "wtf") ->
-          taint_all Logging
-      | "java.io.File", "<init>"
-      | "java.nio.file.FileSystem", "getPath"
-      | "java.nio.file.Paths", "get" ->
-          taint_all CreateFile
-      | "java.io.ObjectInputStream", "<init>" ->
-          taint_all Deserialization
-      | "com.facebook.infer.builtins.InferTaint", "inferSensitiveSink" ->
-          taint_nth 0 Other
-      | class_name, method_name ->
-          let taint_matching_supertype typename =
-            match (Typ.Name.name typename, method_name) with
-            | "android.app.Activity", ("startActivityFromChild" | "startActivityFromFragment") ->
-                taint_nth 1 StartComponent
-            | "android.app.Activity", "startIntentSenderForResult" ->
-                taint_nth 2 StartComponent
-            | "android.app.Activity", "startIntentSenderFromChild" ->
-                taint_nth 3 StartComponent
-            | ( "android.content.Context"
-              , ( "bindService"
-                | "sendBroadcast"
-                | "sendBroadcastAsUser"
-                | "sendOrderedBroadcast"
-                | "sendOrderedBroadcastAsUser"
-                | "sendStickyBroadcast"
-                | "sendStickyBroadcastAsUser"
-                | "sendStickyOrderedBroadcast"
-                | "sendStickyOrderedBroadcastAsUser"
-                | "startActivities"
-                | "startActivity"
-                | "startActivityForResult"
-                | "startActivityIfNeeded"
-                | "startNextMatchingActivity"
-                | "startService"
-                | "stopService" ) ) ->
-                taint_nth 0 StartComponent
-            | "android.content.Context", "startIntentSender" ->
-                taint_nth 1 StartComponent
-            | ( "android.content.Intent"
-              , ( "parseUri"
-                | "getIntent"
-                | "getIntentOld"
-                | "setComponent"
-                | "setData"
-                | "setDataAndNormalize"
-                | "setDataAndType"
-                | "setDataAndTypeAndNormalize"
-                | "setPackage" ) ) ->
-                taint_nth 0 CreateIntent
-            | "android.content.Intent", "setClassName" ->
-                taint_all CreateIntent
-            | ( "android.webkit.WebView"
-              , ( "evaluateJavascript"
-                | "loadData"
-                | "loadDataWithBaseURL"
-                | "loadUrl"
-                | "postUrl"
-                | "postWebMessage" ) ) ->
-                taint_all JavaScript
-            | class_name, method_name ->
-                (* check the list of externally specified sinks *)
-                let procedure = class_name ^ "." ^ method_name in
-                List.find_map
-                  ~f:(fun (procedure_regex, kind, index) ->
-                    if Str.string_match procedure_regex procedure 0 then
-                      let kind = of_string kind in
-                      try
-                        let n = int_of_string index in
-                        taint_nth n kind
-                      with Failure _ ->
-                        (* couldn't parse the index, just taint everything *)
-                        taint_all kind
-                    else None )
-                  external_sinks
+    | Typ.Procname.Java java_pname
+      -> (
+        (* taint all the inputs of [pname]. for non-static procedures, taints the "this" parameter
+           only if [taint_this] is true. *)
+        let taint_all ?(taint_this= false) kind =
+          let actuals_to_taint, offset =
+            if Typ.Procname.Java.is_static java_pname || taint_this then (actuals, 0)
+            else (List.tl_exn actuals, 1)
           in
-          PatternMatch.supertype_find_map_opt tenv taint_matching_supertype
-            (Typ.Name.Java.from_string class_name) )
+          let indexes =
+            IntSet.of_list (List.mapi ~f:(fun param_num _ -> param_num + offset) actuals_to_taint)
+          in
+          Some (kind, indexes)
+        in
+        (* taint the nth non-"this" parameter (0-indexed) *)
+        let taint_nth n kind =
+          let first_index = if Typ.Procname.Java.is_static java_pname then n else n + 1 in
+          if first_index < List.length actuals then Some (kind, IntSet.singleton first_index)
+          else None
+        in
+        match
+          (Typ.Procname.Java.get_class_name java_pname, Typ.Procname.Java.get_method java_pname)
+        with
+        | "android.text.Html", "fromHtml" ->
+            taint_nth 0 HTML
+        | "android.util.Log", ("e" | "println" | "w" | "wtf") ->
+            taint_all Logging
+        | "java.io.File", "<init>"
+        | "java.nio.file.FileSystem", "getPath"
+        | "java.nio.file.Paths", "get" ->
+            taint_all CreateFile
+        | "java.io.ObjectInputStream", "<init>" ->
+            taint_all Deserialization
+        | "com.facebook.infer.builtins.InferTaint", "inferSensitiveSink" ->
+            taint_nth 0 Other
+        | "java.lang.ProcessBuilder", "<init>" ->
+            taint_all ShellExec
+        | "java.lang.ProcessBuilder", "command" ->
+            taint_all ShellExec
+        | class_name, method_name ->
+            let taint_matching_supertype typename =
+              match (Typ.Name.name typename, method_name) with
+              | "android.app.Activity", ("startActivityFromChild" | "startActivityFromFragment") ->
+                  taint_nth 1 StartComponent
+              | "android.app.Activity", "startIntentSenderForResult" ->
+                  taint_nth 2 StartComponent
+              | "android.app.Activity", "startIntentSenderFromChild" ->
+                  taint_nth 3 StartComponent
+              | ( "android.content.Context"
+                , ( "bindService"
+                  | "sendBroadcast"
+                  | "sendBroadcastAsUser"
+                  | "sendOrderedBroadcast"
+                  | "sendOrderedBroadcastAsUser"
+                  | "sendStickyBroadcast"
+                  | "sendStickyBroadcastAsUser"
+                  | "sendStickyOrderedBroadcast"
+                  | "sendStickyOrderedBroadcastAsUser"
+                  | "startActivities"
+                  | "startActivity"
+                  | "startActivityForResult"
+                  | "startActivityIfNeeded"
+                  | "startNextMatchingActivity"
+                  | "startService"
+                  | "stopService" ) ) ->
+                  taint_nth 0 StartComponent
+              | "android.content.Context", "startIntentSender" ->
+                  taint_nth 1 StartComponent
+              | ( "android.content.Intent"
+                , ( "parseUri"
+                  | "getIntent"
+                  | "getIntentOld"
+                  | "setComponent"
+                  | "setData"
+                  | "setDataAndNormalize"
+                  | "setDataAndType"
+                  | "setDataAndTypeAndNormalize"
+                  | "setPackage" ) ) ->
+                  taint_nth 0 CreateIntent
+              | "android.content.Intent", "setClassName" ->
+                  taint_all CreateIntent
+              | ( "android.webkit.WebView"
+                , ( "evaluateJavascript"
+                  | "loadData"
+                  | "loadDataWithBaseURL"
+                  | "loadUrl"
+                  | "postUrl"
+                  | "postWebMessage" ) ) ->
+                  taint_all JavaScript
+              | "java.lang.Runtime", "exec" ->
+                  taint_nth 0 ShellExec
+              | class_name, method_name ->
+                  (* check the list of externally specified sinks *)
+                  let procedure = class_name ^ "." ^ method_name in
+                  List.find_map
+                    ~f:(fun (procedure_regex, kind, index) ->
+                      if Str.string_match procedure_regex procedure 0 then
+                        let kind = of_string kind in
+                        try
+                          let n = int_of_string index in
+                          taint_nth n kind
+                        with Failure _ ->
+                          (* couldn't parse the index, just taint everything *)
+                          taint_all kind
+                      else None )
+                    external_sinks
+            in
+            PatternMatch.supertype_find_map_opt tenv taint_matching_supertype
+              (Typ.Name.Java.from_string class_name) )
     | pname when BuiltinDecl.is_declared pname ->
         None
     | pname ->
@@ -403,6 +445,8 @@ module SinkKind = struct
           "Logging"
       | OpenDrawableResource ->
           "OpenDrawableResource"
+      | ShellExec ->
+          "ShellExec"
       | StartComponent ->
           "StartComponent"
       | Other ->
@@ -424,8 +468,8 @@ module JavaSanitizer = struct
     | Typ.Procname.Java java_pname ->
         let procedure_string =
           Printf.sprintf "%s.%s"
-            (Typ.Procname.java_get_class_name java_pname)
-            (Typ.Procname.java_get_method java_pname)
+            (Typ.Procname.Java.get_class_name java_pname)
+            (Typ.Procname.Java.get_method java_pname)
         in
         List.find_map
           ~f:(fun procedure_regex ->
@@ -448,19 +492,20 @@ include Trace.Make (struct
     | _ when not (List.is_empty sanitizers) ->
         (* assume any sanitizer clears all forms of taint *)
         None
-    | (Intent | UserControlledString | UserControlledURI), CreateIntent ->
+    | (Endpoint _ | Intent | UserControlledString | UserControlledURI), CreateIntent ->
         (* creating Intent from user-congrolled data *)
         Some IssueType.untrusted_intent_creation
-    | (Intent | IntentFromURI | UserControlledString | UserControlledURI), CreateFile ->
+    | (Endpoint _ | Intent | IntentFromURI | UserControlledString | UserControlledURI), CreateFile ->
         (* user-controlled file creation; may be vulnerable to path traversal + more *)
         Some IssueType.untrusted_file
-    | (Intent | IntentFromURI | UserControlledString | UserControlledURI), Deserialization ->
+    | ( (Endpoint _ | Intent | IntentFromURI | UserControlledString | UserControlledURI)
+      , Deserialization ) ->
         (* shouldn't let anyone external control what we deserialize *)
         Some IssueType.untrusted_deserialization
-    | (Intent | IntentFromURI | UserControlledString | UserControlledURI), HTML ->
+    | (Endpoint _ | Intent | IntentFromURI | UserControlledString | UserControlledURI), HTML ->
         (* untrusted data flows into HTML; XSS risk *)
         Some IssueType.cross_site_scripting
-    | (Intent | IntentFromURI | UserControlledString | UserControlledURI), JavaScript ->
+    | (Endpoint _ | Intent | IntentFromURI | UserControlledString | UserControlledURI), JavaScript ->
         (* untrusted data flows into JS *)
         Some IssueType.javascript_injection
     | DrawableResource _, OpenDrawableResource ->
@@ -472,6 +517,8 @@ include Trace.Make (struct
         Some IssueType.create_intent_from_uri
     | PrivateData, Logging ->
         Some IssueType.logging_private_data
+    | (Endpoint _ | Intent | UserControlledString | UserControlledURI), ShellExec ->
+        Some IssueType.shell_injection
     | Other, _ | _, Other ->
         (* for testing purposes, Other matches everything *)
         Some IssueType.quandary_taint_error

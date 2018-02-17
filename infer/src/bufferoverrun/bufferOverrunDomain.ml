@@ -49,6 +49,8 @@ module Val = struct
       && ArrayBlk.( <= ) ~lhs:lhs.arrayblk ~rhs:rhs.arrayblk
 
 
+  let equal x y = phys_equal x y || ( <= ) ~lhs:x ~rhs:y && ( <= ) ~lhs:y ~rhs:x
+
   let widen ~prev ~next ~num_iters =
     if phys_equal prev next then prev
     else
@@ -234,12 +236,6 @@ module Val = struct
       {x with traces}
 
 
-  let add_trace_elem_last : Trace.elem -> t -> t =
-    fun elem x ->
-      let traces = TraceSet.add_elem_last elem x.traces in
-      {x with traces}
-
-
   let pp_summary : F.formatter -> t -> unit =
     fun fmt x -> F.fprintf fmt "(%a, %a)" Itv.pp x.itv ArrayBlk.pp x.arrayblk
 
@@ -252,8 +248,6 @@ module Val = struct
     let nat = of_itv Itv.nat
 
     let m1_255 = of_itv Itv.m1_255
-
-    let pos = of_itv Itv.pos
 
     let top = of_itv Itv.top
   end
@@ -272,22 +266,6 @@ module Stack = struct
       PowLoc.fold find_join locs Val.bot
 
 
-  let strong_update : PowLoc.t -> Val.astate -> astate -> astate =
-    fun locs v mem -> PowLoc.fold (fun x -> add x v) locs mem
-
-
-  let weak_update : PowLoc.t -> Val.astate -> astate -> astate =
-    fun locs v mem -> PowLoc.fold (fun x -> add x (Val.join v (find x mem))) locs mem
-
-
-  let pp_summary : F.formatter -> astate -> unit =
-    fun fmt mem ->
-      let pp_not_logical_var k v =
-        if Loc.is_logical_var k then () else F.fprintf fmt "%a -> %a@," Loc.pp k Val.pp_summary v
-      in
-      iter pp_not_logical_var mem
-
-
   let remove_temps : Ident.t list -> astate -> astate =
     fun temps mem ->
       let remove_temp mem temp =
@@ -300,19 +278,6 @@ end
 module Heap = struct
   module PPMap = struct
     include PrettyPrintable.MakePPMap (Loc)
-
-    let pp_collection : pp_item:(F.formatter -> 'a -> unit) -> F.formatter -> 'a list -> unit =
-      fun ~pp_item fmt c ->
-        let pp_sep fmt () = F.fprintf fmt ",@," in
-        F.pp_print_list ~pp_sep pp_item fmt c
-
-
-    let pp : pp_value:(F.formatter -> 'a -> unit) -> F.formatter -> 'a t -> unit =
-      fun ~pp_value fmt m ->
-        let pp_item fmt (k, v) = F.fprintf fmt "%a -> %a" Loc.pp k pp_value v in
-        F.fprintf fmt "@[<v 2>{ " ;
-        pp_collection ~pp_item fmt (bindings m) ;
-        F.fprintf fmt " }@]"
   end
 
   include AbstractDomain.Map (Loc) (Val)
@@ -347,10 +312,6 @@ module Heap = struct
       F.fprintf fmt " }@]"
 
 
-  let get_symbols : astate -> Itv.Symbol.t list =
-    fun mem -> List.concat_map ~f:(fun (_, v) -> Val.get_symbols v) (bindings mem)
-
-
   let get_return : astate -> Val.t =
     fun mem ->
       let mem = filter (fun l _ -> Loc.is_return l) mem in
@@ -363,8 +324,6 @@ module AliasTarget = struct
   let equal = [%compare.equal : t]
 
   let pp fmt = function Simple l -> Loc.pp fmt l | Empty l -> F.fprintf fmt "empty(%a)" Loc.pp l
-
-  let of_simple l = Simple l
 
   let of_empty l = Empty l
 
@@ -537,18 +496,102 @@ module Alias = struct
     fun temps a -> (AliasMap.remove_temps temps (fst a), snd a)
 end
 
+module PrunePairs = struct
+  module PrunePair = struct
+    (* PrunePair.t is a pair of an abstract location and an abstract
+       value where the abstract location was updated with the abstract
+       value in the latest pruning. *)
+    type t = Loc.t * Val.t
+
+    let equal ((l1, v1) as x) ((l2, v2) as y) =
+      phys_equal x y || Loc.equal l1 l2 && Val.equal v1 v2
+  end
+
+  type t = PrunePair.t list
+
+  let empty = []
+
+  let equal x y = List.equal x y ~equal:PrunePair.equal
+end
+
+module LatestPrune = struct
+  (* Latest p: The pruned pairs 'p' has pruning information (which
+     abstract locations are updated by which abstract values) in the
+     latest pruning.
+
+     TrueBranch (x, p): After a pruning, the variable 'x' is assigned
+     by 1.  There is no other memory updates after the latest pruning.
+
+     FalseBranch (x, p): After a pruning, the variable 'x' is assigned
+     by 0.  There is no other memory updates after the latest pruning.
+
+     V (x, ptrue, pfalse): After two non-sequential prunings ('ptrue'
+     and 'pfalse'), the variable 'x' is assigned by 1 and 0,
+     respectively.  There is no other memory updates after the latest
+     prunings.
+
+     Top: No information about the latest pruning. *)
+  type astate =
+    | Latest of PrunePairs.t
+    | TrueBranch of Pvar.t * PrunePairs.t
+    | FalseBranch of Pvar.t * PrunePairs.t
+    | V of Pvar.t * PrunePairs.t * PrunePairs.t
+    | Top
+
+  let ( <= ) ~lhs ~rhs =
+    if phys_equal lhs rhs then true
+    else
+      match (lhs, rhs) with
+      | _, Top ->
+          true
+      | Top, _ ->
+          false
+      | Latest p1, Latest p2 ->
+          PrunePairs.equal p1 p2
+      | TrueBranch (x1, p1), TrueBranch (x2, p2)
+      | FalseBranch (x1, p1), FalseBranch (x2, p2)
+      | TrueBranch (x1, p1), V (x2, p2, _)
+      | FalseBranch (x1, p1), V (x2, _, p2) ->
+          Pvar.equal x1 x2 && PrunePairs.equal p1 p2
+      | V (x1, ptrue1, pfalse1), V (x2, ptrue2, pfalse2) ->
+          Pvar.equal x1 x2 && PrunePairs.equal ptrue1 ptrue2 && PrunePairs.equal pfalse1 pfalse2
+      | _, _ ->
+          false
+
+
+  let join x y =
+    match (x, y) with
+    | _, _ when ( <= ) ~lhs:x ~rhs:y ->
+        y
+    | _, _ when ( <= ) ~lhs:y ~rhs:x ->
+        x
+    | FalseBranch (x', pfalse), TrueBranch (y', ptrue)
+    | TrueBranch (x', ptrue), FalseBranch (y', pfalse)
+      when Pvar.equal x' y' ->
+        V (x', ptrue, pfalse)
+    | _, _ ->
+        Top
+
+
+  let widen ~prev ~next ~num_iters:_ = join prev next
+
+  let top = Top
+end
+
 module MemReach = struct
-  type astate = {stack: Stack.astate; heap: Heap.astate; alias: Alias.astate}
+  type astate =
+    {stack: Stack.astate; heap: Heap.astate; alias: Alias.astate; latest_prune: LatestPrune.astate}
 
   type t = astate
 
-  let bot : t = {stack= Stack.bot; heap= Heap.bot; alias= Alias.bot}
+  let init : t = {stack= Stack.bot; heap= Heap.bot; alias= Alias.bot; latest_prune= LatestPrune.top}
 
   let ( <= ) ~lhs ~rhs =
     if phys_equal lhs rhs then true
     else
       Stack.( <= ) ~lhs:lhs.stack ~rhs:rhs.stack && Heap.( <= ) ~lhs:lhs.heap ~rhs:rhs.heap
       && Alias.( <= ) ~lhs:lhs.alias ~rhs:rhs.alias
+      && LatestPrune.( <= ) ~lhs:lhs.latest_prune ~rhs:rhs.latest_prune
 
 
   let widen ~prev ~next ~num_iters =
@@ -556,14 +599,17 @@ module MemReach = struct
     else
       { stack= Stack.widen ~prev:prev.stack ~next:next.stack ~num_iters
       ; heap= Heap.widen ~prev:prev.heap ~next:next.heap ~num_iters
-      ; alias= Alias.widen ~prev:prev.alias ~next:next.alias ~num_iters }
+      ; alias= Alias.widen ~prev:prev.alias ~next:next.alias ~num_iters
+      ; latest_prune= LatestPrune.widen ~prev:prev.latest_prune ~next:next.latest_prune ~num_iters
+      }
 
 
   let join : t -> t -> t =
     fun x y ->
       { stack= Stack.join x.stack y.stack
       ; heap= Heap.join x.heap y.heap
-      ; alias= Alias.join x.alias y.alias }
+      ; alias= Alias.join x.alias y.alias
+      ; latest_prune= LatestPrune.join x.latest_prune y.latest_prune }
 
 
   let pp : F.formatter -> t -> unit =
@@ -622,10 +668,6 @@ module MemReach = struct
 
   let add_heap : Loc.t -> Val.t -> t -> t = fun k v m -> {m with heap= Heap.add k v m.heap}
 
-  let strong_update_stack : PowLoc.t -> Val.t -> t -> t =
-    fun p v m -> {m with stack= Stack.strong_update p v m.stack}
-
-
   let strong_update_heap : PowLoc.t -> Val.t -> t -> t =
     fun p v m -> {m with heap= Heap.strong_update p v m.heap}
 
@@ -634,15 +676,9 @@ module MemReach = struct
     fun ~f p m -> {m with heap= Heap.transform ~f p m.heap}
 
 
-  let weak_update_stack : PowLoc.t -> Val.t -> t -> t =
-    fun p v m -> {m with stack= Stack.weak_update p v m.stack}
-
-
   let weak_update_heap : PowLoc.t -> Val.t -> t -> t =
     fun p v m -> {m with heap= Heap.weak_update p v m.heap}
 
-
-  let get_heap_symbols : t -> Itv.Symbol.t list = fun m -> Heap.get_symbols m.heap
 
   let get_return : t -> Val.t = fun m -> Heap.get_return m.heap
 
@@ -670,6 +706,36 @@ module MemReach = struct
   let remove_temps : Ident.t list -> t -> t =
     fun temps m ->
       {m with stack= Stack.remove_temps temps m.stack; alias= Alias.remove_temps temps m.alias}
+
+
+  let set_prune_pairs : PrunePairs.t -> t -> t =
+    fun prune_pairs m -> {m with latest_prune= LatestPrune.Latest prune_pairs}
+
+
+  let apply_latest_prune : Exp.t -> t -> t =
+    fun e m ->
+      match (m.latest_prune, e) with
+      | LatestPrune.V (x, prunes, _), Exp.Var r
+      | LatestPrune.V (x, _, prunes), Exp.UnOp (Unop.LNot, Exp.Var r, _) -> (
+        match find_simple_alias r m with
+        | Some Loc.Var Var.ProgramVar y when Pvar.equal x y ->
+            List.fold_left prunes ~init:m ~f:(fun acc (l, v) ->
+                update_mem (PowLoc.singleton l) v acc )
+        | _ ->
+            m )
+      | _ ->
+          m
+
+
+  let update_latest_prune : Exp.t -> Exp.t -> t -> t =
+    fun e1 e2 m ->
+      match (e1, e2, m.latest_prune) with
+      | Lvar x, Const Const.Cint i, LatestPrune.Latest p ->
+          if IntLit.isone i then {m with latest_prune= LatestPrune.TrueBranch (x, p)}
+          else if IntLit.iszero i then {m with latest_prune= LatestPrune.FalseBranch (x, p)}
+          else {m with latest_prune= LatestPrune.Top}
+      | _, _, _ ->
+          {m with latest_prune= LatestPrune.Top}
 end
 
 module Mem = struct
@@ -679,7 +745,7 @@ module Mem = struct
 
   let bot : t = Bottom
 
-  let init : t = NonBottom MemReach.bot
+  let init : t = NonBottom MemReach.init
 
   let f_lift_default : 'a -> (MemReach.t -> 'a) -> t -> 'a =
     fun default f m -> match m with Bottom -> default | NonBottom m' -> f m'
@@ -742,27 +808,15 @@ module Mem = struct
 
   let add_heap : Loc.t -> Val.t -> t -> t = fun k v -> f_lift (MemReach.add_heap k v)
 
-  let strong_update_stack : PowLoc.t -> Val.t -> t -> t =
-    fun p v -> f_lift (MemReach.strong_update_stack p v)
-
-
   let strong_update_heap : PowLoc.t -> Val.t -> t -> t =
     fun p v -> f_lift (MemReach.strong_update_heap p v)
-
-
-  let weak_update_stack : PowLoc.t -> Val.t -> t -> t =
-    fun p v -> f_lift (MemReach.weak_update_stack p v)
 
 
   let weak_update_heap : PowLoc.t -> Val.t -> t -> t =
     fun p v -> f_lift (MemReach.weak_update_heap p v)
 
 
-  let get_heap_symbols : t -> Itv.Symbol.t list = f_lift_default [] MemReach.get_heap_symbols
-
   let get_return : t -> Val.t = f_lift_default Val.bot MemReach.get_return
-
-  let can_strong_update : PowLoc.t -> bool = MemReach.can_strong_update
 
   let update_mem : PowLoc.t -> Val.t -> t -> t = fun ploc v -> f_lift (MemReach.update_mem ploc v)
 
@@ -771,6 +825,21 @@ module Mem = struct
 
 
   let remove_temps : Ident.t list -> t -> t = fun temps -> f_lift (MemReach.remove_temps temps)
+
+  let set_prune_pairs : PrunePairs.t -> t -> t =
+    fun prune_pairs -> f_lift (MemReach.set_prune_pairs prune_pairs)
+
+
+  let apply_latest_prune : Exp.t -> t -> t = fun e -> f_lift (MemReach.apply_latest_prune e)
+
+  let update_latest_prune : Exp.t -> Exp.t -> t -> t =
+    fun e1 e2 -> f_lift (MemReach.update_latest_prune e1 e2)
+
+
+  let update_mem_in_prune : PrunePairs.t ref -> Loc.t -> Val.t -> t -> t =
+    fun prune_pairs lv v m ->
+      prune_pairs := (lv, v) :: !prune_pairs ;
+      update_mem (PowLoc.singleton lv) v m
 end
 
 module Summary = struct
@@ -782,17 +851,7 @@ module Summary = struct
 
   let get_cond_set : t -> PO.ConditionSet.t = trd3
 
-  let get_symbols : t -> Itv.Symbol.t list = fun s -> Mem.get_heap_symbols (get_input s)
-
   let get_return : t -> Val.t = fun s -> Mem.get_return (get_output s)
-
-  let pp_symbols : F.formatter -> t -> unit =
-    fun fmt s ->
-      let pp_sep fmt () = F.fprintf fmt ", @," in
-      F.fprintf fmt "@[<hov 2>Symbols: {" ;
-      F.pp_print_list ~pp_sep Itv.Symbol.pp fmt (get_symbols s) ;
-      F.fprintf fmt "}@]"
-
 
   let pp_symbol_map : F.formatter -> t -> unit = fun fmt s -> Mem.pp_summary fmt (get_input s)
 

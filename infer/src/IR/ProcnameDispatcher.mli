@@ -11,10 +11,6 @@
 type accept_more
  and end_of_list
 
-(** To be used in 'emptyness *)
-type empty
- and non_empty
-
 (* Markers are a fool-proofing mechanism to avoid mistaking captured types.
   Template argument types can be captured with [capt_typ] to be referenced later
   by their position [typ1], [typ2], [typ3], ...
@@ -50,13 +46,13 @@ type ('f_in, 'f_proc_out, 'f_out, 'captured_types, 'markers) args_matcher
 
 type ('arg_in, 'arg_out, 'f_in, 'f_out, 'captured_types, 'markers) one_arg
 
-type 'f matcher = Typ.Procname.t -> FuncArg.t list -> 'f option
+type 'f matcher
 
-type 'f dispatcher = 'f matcher
+type 'f dispatcher = Typ.Procname.t -> FuncArg.t list -> 'f option
 
-type 'f typ_matcher = Typ.name -> 'f option
+type 'f typ_matcher
 
-type 'f typ_dispatcher = 'f typ_matcher
+type 'f typ_dispatcher = Typ.name -> 'f option
 
 (* A matcher is a rule associating a function [f] to a [C/C++ function/method]:
   - [C/C++ function/method] --> [f]
@@ -269,12 +265,18 @@ module Procname : sig
     ('f_in, 'f_out, 'captured_types, unit, 'markers) name_matcher -> 'f_in -> 'f_out matcher
   (** After a name, accepts NO template arguments, accepts ALL function arguments, binds the function *)
 
+  val ( &::.*--> ) :
+    ('f_in, 'f_out, 'captured_types, unit, 'markers) name_matcher -> 'f_in -> 'f_out matcher
+  (** After a name, accepts ALL template arguments, accepts ALL path tails (names, templates),
+      accepts ALL function arguments, binds the function *)
+
   val ( $!--> ) :
     ('f_in, 'f_proc_out, 'f_out, 'captured_types, 'markers) args_matcher -> 'f_in -> 'f_out matcher
   (** Ends function arguments, accepts NO more function arguments.
     If the args do not match, raise an internal error.
  *)
 end
+[@@warning "-32"]
 
 module TypName : sig
   include Common
@@ -290,4 +292,10 @@ module TypName : sig
 
   val ( &--> ) :
     ('f_in, 'f_out, 'captured_types, unit, 'markers) name_matcher -> 'f_in -> 'f_out typ_matcher
+
+  val ( &::.*--> ) :
+    ('f_in, 'f_out, 'captured_types, unit, 'markers) name_matcher -> 'f_in -> 'f_out typ_matcher
+  (** After a name, accepts ALL template arguments, accepts ALL path tails (names, templates),
+        accepts ALL function arguments, binds the function *)
 end
+[@@warning "-32"]

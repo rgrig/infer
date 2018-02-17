@@ -97,6 +97,13 @@ void methodCheckedForNullOkay(T* t) {
   }
 }
 
+void methodCheckedForNullAndReturnOkay(T* t) {
+  if (t->mayReturnNullObject() == nullptr) {
+    return;
+  }
+  t->mayReturnNullObject()->doSomething(); // does not report here
+}
+
 void reportsViolationOutsideOfNullCheckBad(T* t) {
   if (t->mayReturnNullObject() != nullptr) {
     t->mayReturnNullObject()->doSomething(); // does not report here
@@ -133,4 +140,12 @@ void onlyReportOnceBad(T* t) {
   t->mayReturnNullObject()->doSomething(); // reports here
   // ...
   t->mayReturnNullObject()->doSomething(); // does not report here
+}
+
+void dereferenceOfAliasesCheckedForNullOkay(T* t) {
+  T* s = t->mayReturnNullObject();
+  T* r = s;
+  if (r != nullptr) {
+    s->doSomething();
+  }
 }

@@ -14,23 +14,31 @@ module F = Format
 
 module L = Logging
 
-let protect ~f ~recover ~pp_context =
+let protect ~f ~recover ~pp_context (trans_unit_ctx: CFrontend_config.translation_unit_context) =
   let log_and_recover ~print fmt =
     recover () ;
+    incr CFrontend_config.procedures_failed ;
     (if print then L.internal_error else L.(debug Capture Quiet)) ("%a@\n" ^^ fmt) pp_context ()
   in
   try f () with
   (* Always keep going in case of known limitations of the frontend, crash otherwise (by not
        catching the exception) unless `--keep-going` was passed. Print errors we should fix
        (t21762295) to the console. *)
-  | CFrontend_config.Unimplemented msg ->
-      log_and_recover ~print:false "Unimplemented feature:@\n  %s@\n" msg
-  | CFrontend_config.IncorrectAssumption msg ->
+  | CFrontend_config.Unimplemented e ->
+      ClangLogging.log_caught_exception trans_unit_ctx "Unimplemented" e.position e.source_range
+        e.ast_node ;
+      log_and_recover ~print:false "Unimplemented feature:@\n  %s@\n" e.msg
+  | CFrontend_config.IncorrectAssumption e ->
       (* FIXME(t21762295): we do not expect this to happen but it does *)
-      log_and_recover ~print:true "Known incorrect assumption in the frontend: %s@\n" msg
-  | CTrans_utils.Self.SelfClassException class_name ->
+      ClangLogging.log_caught_exception trans_unit_ctx "IncorrectAssumption" e.position
+        e.source_range e.ast_node ;
+      log_and_recover ~print:true "Known incorrect assumption in the frontend: %s@\n" e.msg
+  | CTrans_utils.Self.SelfClassException e ->
       (* FIXME(t21762295): we do not expect this to happen but it does *)
-      log_and_recover ~print:true "Unexpected SelfClassException %a@\n" Typ.Name.pp class_name
+      Some (Typ.Name.to_string e.class_name)
+      |> ClangLogging.log_caught_exception trans_unit_ctx "SelfClassException" e.position
+           e.source_range ;
+      log_and_recover ~print:true "Unexpected SelfClassException %a@\n" Typ.Name.pp e.class_name
   | exn ->
       let trace = Backtrace.get () in
       reraise_if exn ~f:(fun () ->
@@ -43,24 +51,26 @@ let protect ~f ~recover ~pp_context =
 module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFrontend = struct
   let model_exists procname = Specs.summary_exists_in_models procname && not Config.models_mode
 
-  (* Translates the method/function's body into nodes of the cfg. *)
-  let add_method ?(is_destructor_wrapper= false) trans_unit_ctx tenv cg cfg class_decl_opt procname
-      body has_return_param is_objc_method outer_context_opt extra_instrs =
+  (** Translates the method/function's body into nodes of the cfg. *)
+  let add_method ?(is_destructor_wrapper= false) trans_unit_ctx tenv cfg class_decl_opt procname
+      body ms has_return_param is_objc_method outer_context_opt extra_instrs =
     L.(debug Capture Verbose)
       "@\n@\n>>---------- ADDING METHOD: '%a' ---------<<@\n@\n" Typ.Procname.pp procname ;
+    incr CFrontend_config.procedures_attempted ;
     let recover () =
-      Cfg.remove_proc_desc cfg procname ;
-      CMethod_trans.create_external_procdesc cfg procname is_objc_method None
+      Typ.Procname.Hash.remove cfg procname ;
+      let method_kind = CMethod_signature.ms_get_method_kind ms in
+      CMethod_trans.create_external_procdesc cfg procname method_kind None
     in
     let pp_context fmt () =
       F.fprintf fmt "Aborting translation of method '%a'" Typ.Procname.pp procname
     in
     let f () =
-      match Cfg.find_proc_desc_from_name cfg procname with
-      | Some procdesc when Procdesc.is_defined procdesc && not (model_exists procname) ->
+      match Typ.Procname.Hash.find cfg procname with
+      | procdesc when Procdesc.is_defined procdesc && not (model_exists procname) ->
           let vars_to_destroy = CTrans_utils.Scope.compute_vars_to_destroy body in
           let context =
-            CContext.create_context trans_unit_ctx tenv cg cfg procdesc class_decl_opt
+            CContext.create_context trans_unit_ctx tenv cfg procdesc class_decl_opt
               has_return_param is_objc_method outer_context_opt vars_to_destroy
           in
           let start_node = Procdesc.get_start_node procdesc in
@@ -74,84 +84,90 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
           let proc_attributes = Procdesc.get_attributes procdesc in
           Procdesc.Node.add_locals_ret_declaration start_node proc_attributes
             (Procdesc.get_locals procdesc) ;
-          Procdesc.node_set_succs_exn procdesc start_node meth_body_nodes [] ;
-          Cg.add_defined_node (CContext.get_cg context) (Procdesc.get_proc_name procdesc)
+          Procdesc.node_set_succs_exn procdesc start_node meth_body_nodes []
       | _ ->
           ()
+      | exception Not_found ->
+          ()
     in
-    protect ~f ~recover ~pp_context
+    protect ~f ~recover ~pp_context trans_unit_ctx
 
 
-  let function_decl trans_unit_ctx tenv cfg cg func_decl block_data_opt =
-    let captured_vars, outer_context_opt =
-      match block_data_opt with
-      | Some (outer_context, _, _, captured_vars) ->
-          (captured_vars, Some outer_context)
+  let function_decl trans_unit_ctx tenv cfg func_decl block_data_opt =
+    try
+      let captured_vars, outer_context_opt =
+        match block_data_opt with
+        | Some (outer_context, _, _, captured_vars) ->
+            (captured_vars, Some outer_context)
+        | None ->
+            ([], None)
+      in
+      let ms, body_opt, extra_instrs =
+        CMethod_trans.method_signature_of_decl trans_unit_ctx tenv func_decl block_data_opt
+      in
+      match body_opt with
+      | Some body ->
+          (* Only in the case the function declaration has a defined body we create a procdesc *)
+          let procname = CMethod_signature.ms_get_name ms in
+          let return_param_typ_opt = CMethod_signature.ms_get_return_param_typ ms in
+          if CMethod_trans.create_local_procdesc trans_unit_ctx cfg tenv ms [body] captured_vars
+          then
+            add_method trans_unit_ctx tenv cfg CContext.ContextNoCls procname body ms
+              return_param_typ_opt false outer_context_opt extra_instrs
       | None ->
-          ([], None)
-    in
-    let ms, body_opt, extra_instrs =
-      CMethod_trans.method_signature_of_decl trans_unit_ctx tenv func_decl block_data_opt
-    in
-    match body_opt with
-    | Some body ->
-        (* Only in the case the function declaration has a defined body we create a procdesc *)
-        let procname = CMethod_signature.ms_get_name ms in
-        let return_param_typ_opt = CMethod_signature.ms_get_return_param_typ ms in
-        if CMethod_trans.create_local_procdesc trans_unit_ctx cfg tenv ms [body] captured_vars
-             false
-        then
-          add_method trans_unit_ctx tenv cg cfg CContext.ContextNoCls procname body
-            return_param_typ_opt false outer_context_opt extra_instrs
-    | None ->
-        ()
+          ()
+    with CFrontend_config.IncorrectAssumption e ->
+      ClangLogging.log_caught_exception trans_unit_ctx "IncorrectAssumption" e.position
+        e.source_range e.ast_node
 
 
   let process_method_decl ?(set_objc_accessor_attr= false) ?(is_destructor= false) trans_unit_ctx
-      tenv cg cfg curr_class meth_decl ~is_objc =
-    let ms, body_opt, extra_instrs =
-      CMethod_trans.method_signature_of_decl trans_unit_ctx tenv meth_decl None
-    in
-    let is_instance = CMethod_signature.ms_is_instance ms in
-    let is_objc_inst_method = is_instance && is_objc in
-    match body_opt with
-    | Some body ->
-        let procname = CMethod_signature.ms_get_name ms in
-        let return_param_typ_opt = CMethod_signature.ms_get_return_param_typ ms in
-        let ms', procname' =
-          if is_destructor then (
-            (* For a destructor we create two procedures: a destructor wrapper and an inner destructor *)
-            (* A destructor wrapper is called from the outside, i.e. for destructing local variables and fields *)
-            (* The destructor wrapper calls the inner destructor which has the actual body *)
-            if CMethod_trans.create_local_procdesc ~set_objc_accessor_attr trans_unit_ctx cfg tenv
-                 ms [body] [] is_objc_inst_method
-            then
-              add_method trans_unit_ctx tenv cg cfg curr_class procname body return_param_typ_opt
-                is_objc None extra_instrs ~is_destructor_wrapper:true ;
-            let new_method_name =
-              Config.clang_inner_destructor_prefix ^ Typ.Procname.get_method procname
-            in
-            let ms' =
-              CMethod_signature.replace_name_ms ms
-                (Typ.Procname.objc_cpp_replace_method_name procname new_method_name)
-            in
-            let procname' = CMethod_signature.ms_get_name ms' in
-            (ms', procname') )
-          else (ms, procname)
-        in
-        if CMethod_trans.create_local_procdesc ~set_objc_accessor_attr trans_unit_ctx cfg tenv ms'
-             [body] [] is_objc_inst_method
-        then
-          add_method trans_unit_ctx tenv cg cfg curr_class procname' body return_param_typ_opt
-            is_objc None extra_instrs ~is_destructor_wrapper:false
-    | None ->
-        if set_objc_accessor_attr then
-          ignore
-            (CMethod_trans.create_local_procdesc ~set_objc_accessor_attr trans_unit_ctx cfg tenv ms
-               [] [] is_objc_inst_method)
+      tenv cfg curr_class meth_decl ~is_objc =
+    try
+      let ms, body_opt, extra_instrs =
+        CMethod_trans.method_signature_of_decl trans_unit_ctx tenv meth_decl None
+      in
+      match body_opt with
+      | Some body ->
+          let procname = CMethod_signature.ms_get_name ms in
+          let return_param_typ_opt = CMethod_signature.ms_get_return_param_typ ms in
+          let ms', procname' =
+            if is_destructor then (
+              (* For a destructor we create two procedures: a destructor wrapper and an inner destructor *)
+              (* A destructor wrapper is called from the outside, i.e. for destructing local variables and fields *)
+              (* The destructor wrapper calls the inner destructor which has the actual body *)
+              if CMethod_trans.create_local_procdesc ~set_objc_accessor_attr trans_unit_ctx cfg
+                   tenv ms [body] []
+              then
+                add_method trans_unit_ctx tenv cfg curr_class procname body ms return_param_typ_opt
+                  is_objc None extra_instrs ~is_destructor_wrapper:true ;
+              let new_method_name =
+                Config.clang_inner_destructor_prefix ^ Typ.Procname.get_method procname
+              in
+              let ms' =
+                CMethod_signature.replace_name_ms ms
+                  (Typ.Procname.objc_cpp_replace_method_name procname new_method_name)
+              in
+              let procname' = CMethod_signature.ms_get_name ms' in
+              (ms', procname') )
+            else (ms, procname)
+          in
+          if CMethod_trans.create_local_procdesc ~set_objc_accessor_attr trans_unit_ctx cfg tenv
+               ms' [body] []
+          then
+            add_method trans_unit_ctx tenv cfg curr_class procname' body ms' return_param_typ_opt
+              is_objc None extra_instrs ~is_destructor_wrapper:false
+      | None ->
+          if set_objc_accessor_attr then
+            ignore
+              (CMethod_trans.create_local_procdesc ~set_objc_accessor_attr trans_unit_ctx cfg tenv
+                 ms [] [])
+    with CFrontend_config.IncorrectAssumption e ->
+      ClangLogging.log_caught_exception trans_unit_ctx "IncorrectAssumption" e.position
+        e.source_range e.ast_node
 
 
-  let process_property_implementation trans_unit_ctx tenv cg cfg curr_class
+  let process_property_implementation trans_unit_ctx tenv cfg curr_class
       obj_c_property_impl_decl_info =
     let property_decl_opt = obj_c_property_impl_decl_info.Clang_ast_t.opidi_property_decl in
     match CAst_utils.get_decl_opt_with_decl_ref property_decl_opt with
@@ -159,8 +175,8 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
         let process_accessor pointer =
           match CAst_utils.get_decl_opt_with_decl_ref pointer with
           | Some (ObjCMethodDecl _ as dec) ->
-              process_method_decl ~set_objc_accessor_attr:true trans_unit_ctx tenv cg cfg
-                curr_class dec ~is_objc:true
+              process_method_decl ~set_objc_accessor_attr:true trans_unit_ctx tenv cfg curr_class
+                dec ~is_objc:true
           | _ ->
               ()
         in
@@ -170,18 +186,18 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
         ()
 
 
-  let process_one_method_decl trans_unit_ctx tenv cg cfg curr_class dec =
+  let process_one_method_decl trans_unit_ctx tenv cfg curr_class dec =
     let open Clang_ast_t in
     match dec with
     | CXXMethodDecl _ | CXXConstructorDecl _ | CXXConversionDecl _ ->
-        process_method_decl trans_unit_ctx tenv cg cfg curr_class dec ~is_objc:false
+        process_method_decl trans_unit_ctx tenv cfg curr_class dec ~is_objc:false
     | CXXDestructorDecl _ ->
-        process_method_decl trans_unit_ctx tenv cg cfg curr_class dec ~is_objc:false
+        process_method_decl trans_unit_ctx tenv cfg curr_class dec ~is_objc:false
           ~is_destructor:true
     | ObjCMethodDecl _ ->
-        process_method_decl trans_unit_ctx tenv cg cfg curr_class dec ~is_objc:true
+        process_method_decl trans_unit_ctx tenv cfg curr_class dec ~is_objc:true
     | ObjCPropertyImplDecl (_, obj_c_property_impl_decl_info) ->
-        process_property_implementation trans_unit_ctx tenv cg cfg curr_class
+        process_property_implementation trans_unit_ctx tenv cfg curr_class
           obj_c_property_impl_decl_info
     | EmptyDecl _ | ObjCIvarDecl _ | ObjCPropertyDecl _ ->
         ()
@@ -192,8 +208,8 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
         ()
 
 
-  let process_methods trans_unit_ctx tenv cg cfg curr_class decl_list =
-    List.iter ~f:(process_one_method_decl trans_unit_ctx tenv cg cfg curr_class) decl_list
+  let process_methods trans_unit_ctx tenv cfg curr_class decl_list =
+    List.iter ~f:(process_one_method_decl trans_unit_ctx tenv cfg curr_class) decl_list
 
 
   (** Given REVERSED list of method qualifiers (method_name::class_name::rest_quals), return
@@ -259,40 +275,38 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
 
 
   (* Translate one global declaration *)
-  let rec translate_one_declaration trans_unit_ctx tenv cg cfg decl_trans_context dec =
+  let rec translate_one_declaration trans_unit_ctx tenv cfg decl_trans_context dec =
     let open Clang_ast_t in
     (* each procedure has different scope: start names from id 0 *)
     Ident.NameGenerator.reset () ;
-    let translate dec =
-      translate_one_declaration trans_unit_ctx tenv cg cfg decl_trans_context dec
-    in
+    let translate dec = translate_one_declaration trans_unit_ctx tenv cfg decl_trans_context dec in
     ( if should_translate_decl trans_unit_ctx dec decl_trans_context then
         let dec_ptr = (Clang_ast_proj.get_decl_tuple dec).di_pointer in
         match dec with
         | FunctionDecl (_, _, _, _) ->
-            function_decl trans_unit_ctx tenv cfg cg dec None
+            function_decl trans_unit_ctx tenv cfg dec None
         | ObjCInterfaceDecl (_, _, decl_list, _, _) ->
             let curr_class = CContext.ContextClsDeclPtr dec_ptr in
             ignore
               (ObjcInterface_decl.interface_declaration CType_decl.qual_type_to_sil_type tenv dec) ;
-            process_methods trans_unit_ctx tenv cg cfg curr_class decl_list
+            process_methods trans_unit_ctx tenv cfg curr_class decl_list
         | ObjCProtocolDecl (_, _, decl_list, _, _) ->
             let curr_class = CContext.ContextClsDeclPtr dec_ptr in
             ignore (ObjcProtocol_decl.protocol_decl CType_decl.qual_type_to_sil_type tenv dec) ;
-            process_methods trans_unit_ctx tenv cg cfg curr_class decl_list
+            process_methods trans_unit_ctx tenv cfg curr_class decl_list
         | ObjCCategoryDecl (_, _, decl_list, _, _) ->
             let curr_class = CContext.ContextClsDeclPtr dec_ptr in
             ignore (ObjcCategory_decl.category_decl CType_decl.qual_type_to_sil_type tenv dec) ;
-            process_methods trans_unit_ctx tenv cg cfg curr_class decl_list
+            process_methods trans_unit_ctx tenv cfg curr_class decl_list
         | ObjCCategoryImplDecl (_, _, decl_list, _, _) ->
             let curr_class = CContext.ContextClsDeclPtr dec_ptr in
             ignore (ObjcCategory_decl.category_impl_decl CType_decl.qual_type_to_sil_type tenv dec) ;
-            process_methods trans_unit_ctx tenv cg cfg curr_class decl_list
+            process_methods trans_unit_ctx tenv cfg curr_class decl_list
         | ObjCImplementationDecl (_, _, decl_list, _, _) ->
             let curr_class = CContext.ContextClsDeclPtr dec_ptr in
             let qual_type_to_sil_type = CType_decl.qual_type_to_sil_type in
             ignore (ObjcInterface_decl.interface_impl_declaration qual_type_to_sil_type tenv dec) ;
-            process_methods trans_unit_ctx tenv cg cfg curr_class decl_list
+            process_methods trans_unit_ctx tenv cfg curr_class decl_list
         | CXXMethodDecl (decl_info, _, _, _, _)
         | CXXConstructorDecl (decl_info, _, _, _, _)
         | CXXConversionDecl (decl_info, _, _, _, _)
@@ -304,7 +318,7 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
             match class_decl with
             | (Some CXXRecordDecl _ | Some ClassTemplateSpecializationDecl _) when Config.cxx ->
                 let curr_class = CContext.ContextClsDeclPtr parent_ptr in
-                process_methods trans_unit_ctx tenv cg cfg curr_class [dec]
+                process_methods trans_unit_ctx tenv cfg curr_class [dec]
             | Some dec ->
                 L.(debug Capture Verbose)
                   "Methods of %s skipped@\n"
@@ -320,23 +334,23 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
               (* create the corresponding global variable to get the right pname for its
                 initializer *)
               let global =
-                CGeneral_utils.mk_sil_global_var trans_unit_ctx named_decl_info vdi qt
+                CGeneral_utils.mk_sil_global_var trans_unit_ctx decl_info named_decl_info vdi qt
               in
               (* safe to Option.get because it's a global *)
               Option.value_exn (Pvar.get_initializer_pname global)
             in
             let ms =
               CMethod_signature.make_ms procname [] Ast_expressions.create_void_type []
-                decl_info.Clang_ast_t.di_source_range false trans_unit_ctx.CFrontend_config.lang
-                None None None `None
+                decl_info.Clang_ast_t.di_source_range ProcAttributes.C_FUNCTION
+                trans_unit_ctx.CFrontend_config.lang None None None `None
             in
             let stmt_info =
               { si_pointer= CAst_utils.get_fresh_pointer ()
               ; si_source_range= decl_info.di_source_range }
             in
             let body = Clang_ast_t.DeclStmt (stmt_info, [], [dec]) in
-            ignore (CMethod_trans.create_local_procdesc trans_unit_ctx cfg tenv ms [body] [] false) ;
-            add_method trans_unit_ctx tenv cg cfg CContext.ContextNoCls procname body None false
+            ignore (CMethod_trans.create_local_procdesc trans_unit_ctx cfg tenv ms [body] []) ;
+            add_method trans_unit_ctx tenv cfg CContext.ContextNoCls procname body ms None false
               None []
         (* Note that C and C++ records are treated the same way
           Skip translating implicit struct declarations, unless they have
@@ -364,7 +378,8 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
               ~pp_context:(fun fmt () ->
                 F.fprintf fmt "Error adding types from decl '%a'"
                   (Pp.to_string ~f:Clang_ast_j.string_of_decl)
-                  dec ) ;
+                  dec )
+              trans_unit_ctx ;
             List.iter ~f:translate method_decls
         | _ ->
             () ) ;
