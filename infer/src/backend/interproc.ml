@@ -1117,7 +1117,7 @@ let update_summary tenv prev_summary specs phase res =
 
 let should_run_with_timeout proc_name = match proc_name with
   | Typ.Procname.Java java_name ->
-      (match Typ.Procname.java_get_package java_name with
+      (match Typ.Procname.Java.get_package java_name with
       | Some package when String.equal package "topl" -> false
       | _ -> true)
   | _ -> true
