@@ -1,9 +1,7 @@
-# Copyright (c) 2017 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2017-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 
 # you need to define the following when including this file:
@@ -19,13 +17,13 @@ default: analyze
 analyze: $(INFER_OUT)/differential/introduced.json
 
 introduced.exp.test: $(INFER_OUT)/differential/introduced.json $(INFER_BIN)
-	$(QUIET)$(INFER_BIN) report \
+	$(QUIET)$(INFER_BIN) report -o $(INFER_OUT) \
 		--from-json-report $(INFER_OUT)/differential/introduced.json \
 		--issues-tests introduced.exp.test
-	$(QUIET)$(INFER_BIN) report \
+	$(QUIET)$(INFER_BIN) report -o $(INFER_OUT) \
 		--from-json-report $(INFER_OUT)/differential/fixed.json \
 		--issues-tests fixed.exp.test
-	$(QUIET)$(INFER_BIN) report \
+	$(QUIET)$(INFER_BIN) report -o $(INFER_OUT) \
 		--from-json-report $(INFER_OUT)/differential/preexisting.json \
 		--issues-tests preexisting.exp.test
 

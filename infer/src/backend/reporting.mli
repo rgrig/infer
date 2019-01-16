@@ -1,54 +1,59 @@
 (*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 
 (** Type of functions to report issues to the error_log in a spec. *)
 
-type log_t =
-  ?loc:Location.t -> ?node_id:int * Caml.Digest.t -> ?session:int -> ?ltr:Errlog.loc_trace
-  -> ?linters_def_file:string -> ?doc_url:string -> ?access:string -> exn -> unit
+type log_t = ?ltr:Errlog.loc_trace -> ?extras:Jsonbug_t.extra -> IssueType.t -> string -> unit
 
-type log_issue_from_errlog = Errlog.t -> log_t
-
-val log_error_deprecated : ?store_summary:bool -> Typ.Procname.t -> log_t
-(** Report an error in the given procedure.
+val log_issue_deprecated_using_state :
+     Exceptions.severity
+  -> Typ.Procname.t
+  -> ?node:Procdesc.Node.t
+  -> ?loc:Location.t
+  -> ?ltr:Errlog.loc_trace
+  -> exn
+  -> unit
+(** Report an issue in the given procedure using biabduction state (DO NOT USE ELSEWHERE).
     DEPRECATED as it can create race conditions between checkers.
-    Use log_error instead *)
+    Use log_error/warning instead *)
 
-val log_warning_deprecated : ?store_summary:bool -> Typ.Procname.t -> log_t
-(** Report a warning in the given procedure.
-    DEPRECATED as it can create race conditions between checkers.
-    Use log_warning instead *)
+val log_frontend_issue :
+     Typ.Procname.t
+  -> Exceptions.severity
+  -> Errlog.t
+  -> loc:Location.t
+  -> node_key:Procdesc.NodeKey.t
+  -> ltr:Errlog.loc_trace
+  -> exn
+  -> unit
+(** Report a frontend issue of a given kind in the given error log. *)
 
-val log_info_deprecated : ?store_summary:bool -> Typ.Procname.t -> log_t
-(** Report an info in the given procedure.
-    DEPRECATED as it can create race conditions between checkers.
-    Use log_info instead *)
-
-val log_issue_from_errlog : Exceptions.err_kind -> log_issue_from_errlog
-(** Report an issue of a given kind  in the given error log. *)
-
-val log_error_from_errlog : log_issue_from_errlog
-(** Report an error in the given error log. *)
-
-val log_warning_from_errlog : log_issue_from_errlog
-(** Report a warning in the given error log. *)
-
-val log_info_from_errlog : log_issue_from_errlog
-(** Report an info in the given error log. *)
-
-val log_error : Specs.summary -> log_t
+val log_error : Summary.t -> loc:Location.t -> log_t
 (** Add an error to the given summary. *)
 
-val log_warning : Specs.summary -> log_t
+val log_warning : Summary.t -> loc:Location.t -> log_t
 (** Add an warning to the given summary. *)
 
-val log_info : Specs.summary -> log_t
-(** Add an info to the given summary. *)
+val log_error_using_state : Summary.t -> exn -> unit
+(** Add an error to the given summary using biabduction state (DO NOT USE ELSEWHERE). *)
+
+val log_issue_external :
+     Typ.Procname.t
+  -> Exceptions.severity
+  -> loc:Location.t
+  -> ltr:Errlog.loc_trace
+  -> ?access:string
+  -> IssueType.t
+  -> string
+  -> unit
+(** Log an issue to the error log in [IssueLog] associated with the given procname. *)
+
+val is_suppressed :
+  ?field_name:Typ.Fieldname.t option -> Tenv.t -> Procdesc.t -> IssueType.t -> bool
+(** should an issue report be suppressed due to a [@SuppressLint("issue")] annotation? *)

@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 #import <Foundation/Foundation.h>
@@ -42,14 +40,14 @@
 
 // OK - unavailable initializers shouldn't count
 @interface UnavailableInitializer1 : CKCompositeComponent
-+ (instancetype) new // shouldn't count since it's unavailable
++ (instancetype)new // shouldn't count since it's unavailable
     __attribute__((unavailable("Must use designated initializer")));
 + (instancetype)newWithObject:(NSObject*)obj;
 @end
 
 // Not OK - there are 2 static initialzers, even w/out the unavailable one
 @interface UnavailableInitializer2 : CKCompositeComponent
-+ (instancetype) new // shouldn't count since it's unavailable
++ (instancetype)new // shouldn't count since it's unavailable
     __attribute__((unavailable("Must use designated initializer")));
 + (instancetype)newWithObject1:(NSObject*)obj;
 + (instancetype)newWithObject2:(NSObject*)obj;

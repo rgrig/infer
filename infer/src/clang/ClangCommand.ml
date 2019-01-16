@@ -1,16 +1,24 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 module L = Logging
 
-type t = {exec: string; argv: string list; orig_argv: string list; quoting_style: ClangQuotes.style}
+type t =
+  { exec: string
+  ; argv: string list
+  ; orig_argv: string list
+  ; quoting_style: ClangQuotes.style
+  ; is_driver: bool }
+
+(** bad for every clang invocation *)
+let clang_blacklisted_flags =
+  ["--expt-relaxed-constexpr"; "-fembed-bitcode-marker"; "-fno-canonical-system-headers"]
+
 
 let fcp_dir =
   Config.bin_dir ^/ Filename.parent_dir_name ^/ Filename.parent_dir_name
@@ -44,7 +52,11 @@ let can_attach_ast_exporter cmd =
   let is_supported_language cmd =
     match value_of_option cmd "-x" with
     | None ->
-        L.external_warning "malformed -cc1 command has no \"-x\" flag!" ;
+        if cmd.is_driver then (* let's continue and ask clang -### *) true
+        else (
+          L.external_warning "malformed -cc1 command has no \"-x\" flag!" ;
+          false )
+    | Some "cuda" ->
         false
     | Some lang when String.is_prefix ~prefix:"assembler" lang ->
         false
@@ -53,8 +65,12 @@ let can_attach_ast_exporter cmd =
   in
   (* -Eonly is -cc1 flag that gets produced by 'clang -M -### ...' *)
   let is_preprocessor_only cmd = has_flag cmd "-E" || has_flag cmd "-Eonly" in
-  has_flag cmd "-cc1" && is_supported_language cmd && not (is_preprocessor_only cmd)
+  (cmd.is_driver || has_flag cmd "-cc1")
+  && is_supported_language cmd
+  && not (is_preprocessor_only cmd)
 
+
+let may_capture cmd = can_attach_ast_exporter cmd
 
 let argv_cons a b = a :: b
 
@@ -67,22 +83,58 @@ let file_arg_cmd_sanitizer cmd =
 
 let include_override_regex = Option.map ~f:Str.regexp Config.clang_include_to_override_regex
 
-let filter_and_replace_unsupported_args ?(replace_option_arg= fun _ s -> s)
-    ?(blacklisted_flags= []) ?(blacklisted_flags_with_arg= []) ?(post_args= []) args =
-  let rec aux (prev, res_rev) args =
+(** Filter arguments from [args], looking into argfiles too. [replace_options_arg prev arg] returns
+   [arg'], where [arg'] is the new version of [arg] given the preceding arguments (in reverse order) [prev]. *)
+let filter_and_replace_unsupported_args ?(replace_options_arg = fun _ s -> s)
+    ?(blacklisted_flags = []) ?(blacklisted_flags_with_arg = []) ?(post_args = []) args =
+  (* [prev] is the previously seen argument, [res_rev] is the reversed result, [changed] is true if
+     some change has been performed *)
+  let rec aux in_argfiles (prev_is_blacklisted_with_arg, res_rev, changed) args =
     match args with
     | [] ->
-        (* return non-reversed list *)
-        List.rev_append res_rev post_args
+        (prev_is_blacklisted_with_arg, res_rev, changed)
+    | _ :: tl when prev_is_blacklisted_with_arg ->
+        (* in the unlikely event that a blacklisted flag with arg sits as the last option in some
+           arg file, we need to remove its argument now *)
+        aux in_argfiles (false, res_rev, true) tl
+    | at_argfile :: tl
+      when String.is_prefix at_argfile ~prefix:"@" && not (String.Set.mem in_argfiles at_argfile)
+          -> (
+        let in_argfiles' = String.Set.add in_argfiles at_argfile in
+        let argfile = String.slice at_argfile 1 (String.length at_argfile) in
+        match In_channel.read_lines argfile with
+        | lines ->
+            (* poor parsing of arguments with some stripping supported; hope that tools generating
+               argfiles more or less put one argument per line *)
+            let strip s =
+              String.strip s
+              |> Utils.strip_balanced_once ~drop:(function '"' | '\'' -> true | _ -> false)
+            in
+            let last_in_file_is_blacklisted, rev_res_with_file_args, changed_file =
+              List.map ~f:strip lines
+              |> aux in_argfiles' (prev_is_blacklisted_with_arg, res_rev, false)
+            in
+            if changed_file then
+              aux in_argfiles' (last_in_file_is_blacklisted, rev_res_with_file_args, true) tl
+            else
+              (* keep the same argfile if we haven't needed to change anything in it *)
+              aux in_argfiles' (last_in_file_is_blacklisted, at_argfile :: res_rev, changed) tl
+        | exception e ->
+            L.external_warning "Error reading argument file '%s': %s@\n" at_argfile
+              (Exn.to_string e) ;
+            aux in_argfiles' (false, at_argfile :: res_rev, changed) tl )
     | flag :: tl when List.mem ~equal:String.equal blacklisted_flags flag ->
-        aux (flag, res_rev) tl
-    | flag1 :: flag2 :: tl when List.mem ~equal:String.equal blacklisted_flags_with_arg flag1 ->
-        aux (flag2, res_rev) tl
+        aux in_argfiles (false, res_rev, true) tl
+    | flag :: tl when List.mem ~equal:String.equal blacklisted_flags_with_arg flag ->
+        (* remove the flag and its arg separately in case we are at the end of an argfile *)
+        aux in_argfiles (true, res_rev, true) tl
     | arg :: tl ->
-        let res_rev' = replace_option_arg prev arg :: res_rev in
-        aux (arg, res_rev') tl
+        let arg' = replace_options_arg res_rev arg in
+        aux in_argfiles (false, arg' :: res_rev, changed || not (phys_equal arg arg')) tl
   in
-  aux ("", []) args
+  match aux String.Set.empty (false, [], false) args with _, res_rev, _ ->
+    (* return non-reversed list *)
+    List.rev_append res_rev post_args
 
 
 (* Work around various path or library issues occurring when one tries to substitute Apple's version
@@ -90,32 +142,36 @@ let filter_and_replace_unsupported_args ?(replace_option_arg= fun _ s -> s)
    fatal warnings. *)
 let clang_cc1_cmd_sanitizer cmd =
   (* command line options not supported by the opensource compiler or the plugins *)
-  let blacklisted_flags = ["-fembed-bitcode-marker"; "-fno-canonical-system-headers"] in
   let blacklisted_flags_with_arg = ["-mllvm"] in
-  let replace_option_arg option arg =
-    if String.equal option "-arch" && String.equal arg "armv7k" then "armv7"
-      (* replace armv7k arch with armv7 *)
-    else if String.is_suffix arg ~suffix:"dep.tmp" then (
-      (* compilation-database Buck integration produces path to `dep.tmp` file that doesn't exist. Create it *)
-      Unix.mkdir_p (Filename.dirname arg) ;
-      arg )
-    else if String.equal option "-dependency-file"
-            && Option.is_some Config.buck_compilation_database
-            (* In compilation database mode, dependency files are not assumed to exist *)
-    then "/dev/null"
-    else if String.equal option "-isystem" then
-      match include_override_regex with
-      | Some regexp when Str.string_match regexp arg 0 ->
-          fcp_dir ^/ "clang" ^/ "install" ^/ "lib" ^/ "clang" ^/ "5.0.0" ^/ "include"
-      | _ ->
-          arg
-    else arg
+  let replace_options_arg options arg =
+    match options with
+    | option :: _ ->
+        if String.equal option "-arch" && String.equal arg "armv7k" then "armv7"
+          (* replace armv7k arch with armv7 *)
+        else if String.is_suffix arg ~suffix:"dep.tmp" then (
+          (* compilation-database Buck integration produces path to `dep.tmp` file that doesn't exist. Create it *)
+          Unix.mkdir_p (Filename.dirname arg) ;
+          arg )
+        else if
+          String.equal option "-dependency-file" && Option.is_some Config.buck_compilation_database
+          (* In compilation database mode, dependency files are not assumed to exist *)
+        then "/dev/null"
+        else if String.equal option "-isystem" then
+          match include_override_regex with
+          | Some regexp when Str.string_match regexp arg 0 ->
+              fcp_dir ^/ "clang" ^/ "install" ^/ "lib" ^/ "clang" ^/ "7.0.0" ^/ "include"
+          | _ ->
+              arg
+        else arg
+    | [] ->
+        arg
   in
   let args_defines =
     if Config.bufferoverrun && not Config.biabduction then ["-D__INFER_BUFFEROVERRUN"] else []
   in
   let post_args_rev =
-    [] |> List.rev_append ["-include"; Config.lib_dir ^/ "clang_wrappers" ^/ "global_defines.h"]
+    []
+    |> List.rev_append ["-include"; Config.lib_dir ^/ "clang_wrappers" ^/ "global_defines.h"]
     |> List.rev_append args_defines
     |> (* Never error on warnings. Clang is often more strict than Apple's version.  These arguments
        are appended at the end to override previous opposite settings.  How it's done: suppress
@@ -124,35 +180,46 @@ let clang_cc1_cmd_sanitizer cmd =
        argv_cons "-Wno-everything"
   in
   let clang_arguments =
-    filter_and_replace_unsupported_args ~blacklisted_flags ~blacklisted_flags_with_arg
-      ~replace_option_arg ~post_args:(List.rev post_args_rev) cmd.argv
+    filter_and_replace_unsupported_args ~blacklisted_flags:clang_blacklisted_flags
+      ~blacklisted_flags_with_arg ~replace_options_arg ~post_args:(List.rev post_args_rev) cmd.argv
   in
   file_arg_cmd_sanitizer {cmd with argv= clang_arguments}
 
 
-let mk quoting_style ~prog ~args =
+let mk ~is_driver quoting_style ~prog ~args =
   (* Some arguments break the compiler so they need to be removed even before the normalization step *)
   let blacklisted_flags_with_arg = ["-index-store-path"] in
-  let sanitized_args = filter_and_replace_unsupported_args ~blacklisted_flags_with_arg args in
-  {exec= prog; orig_argv= sanitized_args; argv= sanitized_args; quoting_style}
-
-
-let command_to_run cmd =
-  let mk_cmd normalizer =
-    let {exec; argv; quoting_style} = normalizer cmd in
-    Printf.sprintf "'%s' %s" exec
-      (List.map ~f:(ClangQuotes.quote quoting_style) argv |> String.concat ~sep:" ")
+  let sanitized_args =
+    filter_and_replace_unsupported_args ~blacklisted_flags:clang_blacklisted_flags
+      ~blacklisted_flags_with_arg args
   in
-  if can_attach_ast_exporter cmd then mk_cmd clang_cc1_cmd_sanitizer
+  let sanitized_args =
+    if is_driver then sanitized_args @ List.rev Config.clang_extra_flags else sanitized_args
+  in
+  {exec= prog; orig_argv= sanitized_args; argv= sanitized_args; quoting_style; is_driver}
+
+
+let to_unescaped_args cmd =
+  let mk_exec_argv normalizer =
+    let {exec; argv} = normalizer cmd in
+    exec :: argv
+  in
+  if can_attach_ast_exporter cmd then mk_exec_argv clang_cc1_cmd_sanitizer
   else if String.is_prefix ~prefix:"clang" (Filename.basename cmd.exec) then
     (* `clang` supports argument files and the commands can be longer than the maximum length of the
        command line, so put arguments in a file *)
-    mk_cmd file_arg_cmd_sanitizer
+    mk_exec_argv file_arg_cmd_sanitizer
   else (* other commands such as `ld` do not support argument files *)
-    mk_cmd (fun x -> x)
+    mk_exec_argv (fun x -> x)
 
 
-let with_exec exec args = {args with exec}
+let pp f cmd = to_unescaped_args cmd |> Pp.cli_args f
+
+let command_to_run cmd =
+  to_unescaped_args cmd
+  |> List.map ~f:(ClangQuotes.quote cmd.quoting_style)
+  |> String.concat ~sep:" "
+
 
 let with_plugin_args args =
   let plugin_arg_flag = "-plugin-arg-" ^ plugin_name in
@@ -188,8 +255,6 @@ let with_plugin_args args =
 
 
 let prepend_arg arg clang_args = {clang_args with argv= arg :: clang_args.argv}
-
-let prepend_args args clang_args = {clang_args with argv= args @ clang_args.argv}
 
 let append_args args clang_args = {clang_args with argv= clang_args.argv @ args}
 

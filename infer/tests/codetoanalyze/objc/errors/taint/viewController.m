@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 #import <Foundation/Foundation.h>
@@ -28,10 +26,9 @@ BOOL ExampleSanitizer(NSURL* u, int f) {
   return self;
 }
 
-- (void)loadURL:(NSURL*)URL
-  trackingCodes:(NSArray*)trackingCodes{
-                    // Require untainted URL
-                };
+- (void)loadURL:(NSURL*)URL trackingCodes:(NSArray*)trackingCodes {
+  // Require untainted URL
+};
 @end
 
 @interface VCB : NSObject
@@ -68,9 +65,9 @@ BOOL ExampleSanitizer(NSURL* u, int f) {
 
 @interface ExampleDelegate : NSObject
 - (BOOL)application:(UIApplication*)application
-            openURL:(NSURL*)URL
-  sourceApplication:(NSString*)sourceApplication
-         annotation:(id)annotation;
+              openURL:(NSURL*)URL
+    sourceApplication:(NSString*)sourceApplication
+           annotation:(id)annotation;
 @end
 
 @implementation ExampleDelegate
@@ -80,9 +77,9 @@ BOOL ExampleSanitizer(NSURL* u, int f) {
 }
 
 - (BOOL)application:(UIApplication*)application
-            openURL:(NSURL*)URL
-  sourceApplication:(NSString*)sourceApplication
-         annotation:(id)annotation {
+              openURL:(NSURL*)URL
+    sourceApplication:(NSString*)sourceApplication
+           annotation:(id)annotation {
   // Assume tainted URL;
   VCA* a = [[VCA alloc] init];
   if (!ExampleSanitizer(URL, 0)) {

@@ -1,17 +1,15 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.infer;
 
 import java.io.BufferedReader;
-import java.io.FileInputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -24,7 +22,7 @@ public class ReaderLeaks {
 
   private void ignore(Object o) {}
 
-  //Reader  tests
+  // Reader  tests
 
   public void readerNotClosedAfterRead() {
     Reader r;
@@ -48,7 +46,7 @@ public class ReaderLeaks {
     }
   }
 
-  //BufferedReader  tests
+  // BufferedReader  tests
 
   public void bufferedReaderNotClosedAfterRead() {
     BufferedReader reader;
@@ -78,8 +76,7 @@ public class ReaderLeaks {
     }
   }
 
-
-  //InputStreamReader  tests
+  // InputStreamReader  tests
 
   public void inputStreamReaderNotClosedAfterRead() {
     InputStreamReader reader;
@@ -102,7 +99,7 @@ public class ReaderLeaks {
     }
   }
 
-  //FileReader  tests
+  // FileReader  tests
 
   public void fileReaderNotClosedAfterRead() {
     FileReader reader;
@@ -125,7 +122,7 @@ public class ReaderLeaks {
     }
   }
 
-  //PushbackReader  tests
+  // PushbackReader  tests
 
   public void pushbackReaderNotClosedAfterRead() {
     PushbackReader reader;
@@ -148,7 +145,7 @@ public class ReaderLeaks {
     }
   }
 
-  //PipedReader tests
+  // PipedReader tests
 
   public void pipedReaderNotClosedAfterConstructedWithWriter() {
     PipedReader reader;
@@ -190,8 +187,7 @@ public class ReaderLeaks {
       reader.read();
     } catch (IOException e) {
     } finally {
-      if (reader != null)
-        reader.close();
+      if (reader != null) reader.close();
     }
   }
 
@@ -203,9 +199,7 @@ public class ReaderLeaks {
       reader.read();
     } catch (IOException e) {
     } finally {
-      if (writer != null)
-        writer.close();
+      if (writer != null) writer.close();
     }
   }
-
 }

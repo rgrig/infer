@@ -1,15 +1,11 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-module L = Logging
-module F = Format
 
 (** Simplified html node printer for checkers *)
 
@@ -17,19 +13,19 @@ module F = Format
 let new_session node =
   let pname = Procdesc.Node.get_proc_name node in
   let node_id = (Procdesc.Node.get_id node :> int) in
-  match Specs.get_summary pname with
+  match Summary.get pname with
   | None ->
       0
   | Some summary ->
-      (summary.stats).nodes_visited_fp <- IntSet.add node_id summary.stats.nodes_visited_fp ;
-      incr summary.Specs.sessions ;
-      !(summary.Specs.sessions)
+      Summary.Stats.add_visited summary.stats node_id ;
+      incr summary.Summary.sessions ;
+      !(summary.Summary.sessions)
 
 
-let start_session node =
+let start_session ~pp_name node =
   if Config.write_html then
     let session = new_session node in
-    Printer.node_start_session node session
+    Printer.node_start_session ~pp_name node session
 
 
 let finish_session node = if Config.write_html then Printer.node_finish_session node

@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -30,11 +28,12 @@ type transitions =
   | Cond
   | PointerToDecl  (** stmt to decl *)
   | Protocol  (** decl to decl *)
-  [@@deriving compare]
+[@@deriving compare]
 
 let is_transition_to_successor trans =
   match trans with
-  | Body | InitExpr | FieldName _ | Fields | ParameterName _ | ParameterPos _ | Parameters | Cond ->
+  | Body | InitExpr | FieldName _ | Fields | ParameterName _ | ParameterPos _ | Parameters | Cond
+    ->
       true
   | Super | PointerToDecl | Protocol | AccessorForProperty _ ->
       false
@@ -65,21 +64,14 @@ type t =
   | EU of transitions option * t * t
   | EH of ALVar.alexp list * t
   | ET of ALVar.alexp list * transitions option * t
-  [@@deriving compare]
+  | InObjCClass of t * t
+[@@deriving compare]
 
-let equal = [%compare.equal : t]
+let equal = [%compare.equal: t]
 
 let has_transition phi =
   match phi with
-  | True
-  | False
-  | Atomic _
-  | Not _
-  | And (_, _)
-  | Or (_, _)
-  | Implies (_, _)
-  | InNode (_, _)
-  | EH (_, _) ->
+  | True | False | Atomic _ | Not _ | And _ | Or _ | Implies _ | InNode _ | EH _ | InObjCClass _ ->
       false
   | AX (trans_opt, _)
   | AF (trans_opt, _)
@@ -120,8 +112,7 @@ type clause =
   | CPath of [`WhitelistPath | `BlacklistPath] * ALVar.t list
 
 type ctl_checker =
-  {id: string; (* Checker's id *)
-  definitions: clause list (* A list of let/set definitions *)}
+  {id: string; (* Checker's id *) definitions: clause list (* A list of let/set definitions *)}
 
 type al_file =
   { import_files: string list
@@ -160,7 +151,7 @@ module Debug = struct
       | PointerToDecl ->
           Format.pp_print_string fmt "PointerToDecl"
     in
-    match trans_opt with Some trans -> pp_aux fmt trans | None -> Format.pp_print_string fmt "_"
+    match trans_opt with Some trans -> pp_aux fmt trans | None -> Format.pp_print_char fmt '_'
 
 
   (* a flag to print more or less in the dotty graph *)
@@ -170,20 +161,20 @@ module Debug = struct
     let nodes_to_string nl = List.map ~f:ALVar.alexp_to_string nl in
     match phi with
     | True ->
-        Format.fprintf fmt "True"
+        Format.pp_print_string fmt "True"
     | False ->
-        Format.fprintf fmt "False"
+        Format.pp_print_string fmt "False"
     | Atomic p ->
         CPredicates.pp_predicate fmt p
     | Not phi ->
         if full_print then Format.fprintf fmt "NOT(%a)" pp_formula phi
-        else Format.fprintf fmt "NOT(...)"
+        else Format.pp_print_string fmt "NOT(...)"
     | And (phi1, phi2) ->
         if full_print then Format.fprintf fmt "(%a AND %a)" pp_formula phi1 pp_formula phi2
-        else Format.fprintf fmt "(... AND ...)"
+        else Format.pp_print_string fmt "(... AND ...)"
     | Or (phi1, phi2) ->
         if full_print then Format.fprintf fmt "(%a OR %a)" pp_formula phi1 pp_formula phi2
-        else Format.fprintf fmt "(... OR ...)"
+        else Format.pp_print_string fmt "(... OR ...)"
     | Implies (phi1, phi2) ->
         Format.fprintf fmt "(%a ==> %a)" pp_formula phi1 pp_formula phi2
     | InNode (nl, phi) ->
@@ -214,9 +205,11 @@ module Debug = struct
         Format.fprintf fmt "ET[%a][%a](%a)"
           (Pp.comma_seq Format.pp_print_string)
           (nodes_to_string arglist) pp_transition trans pp_formula phi
+    | InObjCClass (phi1, phi2) ->
+        if full_print then Format.fprintf fmt "InObjCClass(%a, %a)" pp_formula phi1 pp_formula phi2
 
 
-  let pp_ast ~ast_node_to_highlight ?(prettifier= Fn.id) fmt root =
+  let pp_ast ~ast_node_to_highlight ?(prettifier = Fn.id) fmt root =
     let pp_node_info fmt an =
       let name = Ctl_parser_types.ast_node_name an in
       let typ = Ctl_parser_types.ast_node_type an in
@@ -232,7 +225,7 @@ module Debug = struct
           pp_children pp_node wrapper fmt level nodes
     in
     let rec pp_ast_aux fmt root level prefix =
-      let get_node_name (an: ast_node) =
+      let get_node_name (an : ast_node) =
         match an with
         | Stmt stmt ->
             Clang_ast_proj.get_stmt_kind_string stmt
@@ -256,7 +249,7 @@ module Debug = struct
       let next_level = level + 1 in
       Format.fprintf fmt "%s%s%s %a@\n" spaces prefix node_name pp_node_info root ;
       match root with
-      | Stmt DeclStmt (_, stmts, ([(VarDecl _)] as var_decl)) ->
+      | Stmt (DeclStmt (_, stmts, ([VarDecl _] as var_decl))) ->
           (* handling special case of DeclStmt with VarDecl: emit the VarDecl node
               then emit the statements in DeclStmt as children of VarDecl. This is
               because despite being equal, the statements inside VarDecl and those
@@ -269,7 +262,8 @@ module Debug = struct
           pp_stmts fmt next_level stmts
       | Decl decl ->
           let decls =
-            Clang_ast_proj.get_decl_context_tuple decl |> Option.map ~f:(fun (decls, _) -> decls)
+            Clang_ast_proj.get_decl_context_tuple decl
+            |> Option.map ~f:(fun (decls, _) -> decls)
             |> Option.value ~default:[]
           in
           pp_decls fmt next_level decls
@@ -323,7 +317,7 @@ module Debug = struct
 
     let explain t ~eval_node ~ast_node_to_display =
       let line_number an =
-        let line_of_source_range (sr: Clang_ast_t.source_range) =
+        let line_of_source_range (sr : Clang_ast_t.source_range) =
           let loc_info, _ = sr in
           loc_info.sl_line
         in
@@ -339,11 +333,11 @@ module Debug = struct
         let highlight_style =
           match eval_node.content.eval_result with
           | Eval_undefined ->
-              ANSITerminal.([Bold])
+              ANSITerminal.[Bold]
           | Eval_true ->
-              ANSITerminal.([Bold; green])
+              ANSITerminal.[Bold; green]
           | Eval_false ->
-              ANSITerminal.([Bold; red])
+              ANSITerminal.[Bold; red]
         in
         let ast_node_to_highlight = eval_node.content.ast_node in
         let ast_root, is_last_occurrence =
@@ -356,7 +350,9 @@ module Debug = struct
         let witness_str =
           match eval_node.content.witness with
           | Some witness ->
-              "\n- witness: " ^ Ctl_parser_types.ast_node_kind witness ^ " "
+              "\n- witness: "
+              ^ Ctl_parser_types.ast_node_kind witness
+              ^ " "
               ^ Ctl_parser_types.ast_node_name witness
           | None ->
               ""
@@ -656,25 +652,25 @@ let transition_decl_to_decl_via_accessor_for_property d desired_kind =
       match decl with ObjCPropertyDecl (_, _, opdi) -> predicate opdi | _ -> false
     in
     match decl_opt with
-    | Some ObjCCategoryImplDecl (_, _, _, _, ocidi) ->
+    | Some (ObjCCategoryImplDecl (_, _, _, _, ocidi)) ->
         let category_decls =
           match CAst_utils.get_decl_opt_with_decl_ref ocidi.ocidi_category_decl with
-          | Some ObjCCategoryDecl (_, _, decls, _, _) ->
+          | Some (ObjCCategoryDecl (_, _, decls, _, _)) ->
               List.filter ~f:decl_matches decls
           | _ ->
               []
         in
         let class_decls =
           match CAst_utils.get_decl_opt_with_decl_ref ocidi.ocidi_class_interface with
-          | Some ObjCInterfaceDecl (_, _, decls, _, _) ->
+          | Some (ObjCInterfaceDecl (_, _, decls, _, _)) ->
               List.filter ~f:decl_matches decls
           | _ ->
               []
         in
         category_decls @ class_decls
-    | Some ObjCImplementationDecl (_, _, _, _, oidi) -> (
+    | Some (ObjCImplementationDecl (_, _, _, _, oidi)) -> (
       match CAst_utils.get_decl_opt_with_decl_ref oidi.oidi_class_interface with
-      | Some ObjCInterfaceDecl (_, _, decls, _, _) ->
+      | Some (ObjCInterfaceDecl (_, _, decls, _, _)) ->
           List.filter ~f:decl_matches decls
       | _ ->
           [] )
@@ -682,8 +678,7 @@ let transition_decl_to_decl_via_accessor_for_property d desired_kind =
         []
   in
   match d with
-  | ObjCMethodDecl (di, method_decl_name, mdi)
-    -> (
+  | ObjCMethodDecl (di, method_decl_name, mdi) -> (
       (* infer whether this method may be a getter or setter (or
          neither) from its argument list *)
       let num_params = List.length mdi.omdi_parameters in
@@ -710,12 +705,12 @@ let transition_decl_to_decl_via_accessor_for_property d desired_kind =
               match accessor_decl_ref_of_property_decl_info opdi with
               | None ->
                   false
-              | Some dr ->
+              | Some dr -> (
                 match dr.dr_name with
                 | Some ni ->
                     String.equal method_decl_name.ni_name ni.ni_name
                 | _ ->
-                    false
+                    false )
             in
             let impl_decl_opt = CAst_utils.get_decl_opt di.di_parent_pointer in
             List.map ~f:(fun x -> Decl x) (find_property_for_accessor impl_decl_opt name_check) )
@@ -787,9 +782,9 @@ let transition_stmt_to_decl_via_pointer stmt =
 let transition_via_parameters an =
   let open Clang_ast_t in
   match an with
-  | Decl ObjCMethodDecl (_, _, omdi) ->
+  | Decl (ObjCMethodDecl (_, _, omdi)) ->
       List.map ~f:(fun d -> Decl d) omdi.omdi_parameters
-  | Stmt ObjCMessageExpr (_, stmt_list, _, _) ->
+  | Stmt (ObjCMessageExpr (_, stmt_list, _, _)) ->
       List.map ~f:(fun stmt -> Stmt stmt) stmt_list
   | _ ->
       []
@@ -800,8 +795,7 @@ let parameter_of_corresp_name method_name args name =
     List.filter (String.split ~on:':' method_name) ~f:(fun label -> not (String.is_empty label))
   in
   match List.zip names args with
-  | Some names_args
-    -> (
+  | Some names_args -> (
       let names_arg_opt =
         List.find names_args ~f:(fun (arg_label, _) -> ALVar.compare_str_with_alexp arg_label name)
       in
@@ -827,29 +821,29 @@ let transition_via_specified_parameter ~pos an key =
   let apply_decl arg = Decl arg in
   let apply_stmt arg = Stmt arg in
   match an with
-  | Stmt ObjCMessageExpr (_, stmt_list, _, omei) ->
+  | Stmt (ObjCMessageExpr (_, stmt_list, _, omei)) ->
       let method_name = omei.omei_selector in
       let parameter_of_corresp_key =
         if pos then parameter_of_corresp_pos else parameter_of_corresp_name method_name
       in
       let arg_stmt_opt = parameter_of_corresp_key stmt_list key in
       node_opt_to_ast_node_list apply_stmt arg_stmt_opt
-  | Stmt CallExpr (_, _ :: args, _) ->
+  | Stmt (CallExpr (_, _ :: args, _)) ->
       let parameter_of_corresp_key =
         if pos then parameter_of_corresp_pos else invalid_param_name_use ()
       in
       let arg_stmt_opt = parameter_of_corresp_key args key in
       node_opt_to_ast_node_list apply_stmt arg_stmt_opt
-  | Decl ObjCMethodDecl (_, named_decl_info, omdi) ->
+  | Decl (ObjCMethodDecl (_, named_decl_info, omdi)) ->
       let method_name = named_decl_info.ni_name in
       let parameter_of_corresp_key =
         if pos then parameter_of_corresp_pos else parameter_of_corresp_name method_name
       in
       let arg_decl_opt = parameter_of_corresp_key omdi.omdi_parameters key in
       node_opt_to_ast_node_list apply_decl arg_decl_opt
-  | Decl FunctionDecl (_, _, _, fdi)
-  | Decl CXXMethodDecl (_, _, _, fdi, _)
-  | Decl CXXConstructorDecl (_, _, _, fdi, _) ->
+  | Decl (FunctionDecl (_, _, _, fdi))
+  | Decl (CXXMethodDecl (_, _, _, fdi, _))
+  | Decl (CXXConstructorDecl (_, _, _, fdi, _)) ->
       let parameter_of_corresp_key =
         if pos then parameter_of_corresp_pos else invalid_param_name_use ()
       in
@@ -866,9 +860,10 @@ let transition_via_parameter_pos an pos = transition_via_specified_parameter an 
 let transition_via_fields an =
   let open Clang_ast_t in
   match an with
-  | Decl RecordDecl (_, _, _, decls, _, _, _) | Decl CXXRecordDecl (_, _, _, decls, _, _, _, _) ->
+  | Decl (RecordDecl (_, _, _, decls, _, _, _)) | Decl (CXXRecordDecl (_, _, _, decls, _, _, _, _))
+    ->
       List.filter_map ~f:(fun d -> match d with FieldDecl _ -> Some (Decl d) | _ -> None) decls
-  | Stmt InitListExpr (_, stmts, _) ->
+  | Stmt (InitListExpr (_, stmts, _)) ->
       List.map ~f:(fun stmt -> Stmt stmt) stmts
   | _ ->
       []
@@ -876,7 +871,7 @@ let transition_via_fields an =
 
 let field_has_name name node =
   match node with
-  | Decl FieldDecl (_, name_info, _, _) ->
+  | Decl (FieldDecl (_, name_info, _, _)) ->
       ALVar.compare_str_with_alexp name_info.Clang_ast_t.ni_name name
   | _ ->
       false
@@ -884,10 +879,9 @@ let field_has_name name node =
 
 let field_of_name name nodes = List.filter ~f:(field_has_name name) nodes
 
-let field_of_corresp_name_from_init_list_expr name init_nodes (expr_info: Clang_ast_t.expr_info) =
+let field_of_corresp_name_from_init_list_expr name init_nodes (expr_info : Clang_ast_t.expr_info) =
   match CAst_utils.get_decl_from_typ_ptr expr_info.ei_qual_type.qt_type_ptr with
-  | Some decl
-    -> (
+  | Some decl -> (
       let fields = transition_via_fields (Decl decl) in
       match List.zip init_nodes fields with
       | Some init_nodes_fields ->
@@ -902,10 +896,10 @@ let field_of_corresp_name_from_init_list_expr name init_nodes (expr_info: Clang_
 let transition_via_field_name node name =
   let open Clang_ast_t in
   match node with
-  | Decl RecordDecl _ | Decl CXXRecordDecl _ ->
+  | Decl (RecordDecl _) | Decl (CXXRecordDecl _) ->
       let fields = transition_via_fields node in
       field_of_name name fields
-  | Stmt InitListExpr (_, stmts, expr_info) ->
+  | Stmt (InitListExpr (_, stmts, expr_info)) ->
       let nodes = List.map ~f:(fun stmt -> Stmt stmt) stmts in
       field_of_corresp_name_from_init_list_expr name nodes expr_info
   | _ ->
@@ -963,20 +957,24 @@ let choose_witness_opt witness_opt1 witness_opt2 =
 let rec eval_Atomic pred_name_ args an lcxt =
   let pred_name = ALVar.formula_id_to_string pred_name_ in
   match (pred_name, args, an) with
-  | "call_class_method", [c; m], an ->
-      CPredicates.call_class_method an c m
+  | "call_class_method", [m], an ->
+      CPredicates.call_class_method an m
   | "call_function", [m], an ->
       CPredicates.call_function an m
-  | "call_instance_method", [c; m], an ->
-      CPredicates.call_instance_method an c m
+  | "call_instance_method", [m], an ->
+      CPredicates.call_instance_method an m
   | "call_method", [m], an ->
       CPredicates.call_method an m
   | "captures_cxx_references", [], _ ->
       CPredicates.captures_cxx_references an
+  | "objc_block_is_capturing_values", [], _ ->
+      CPredicates.objc_block_is_capturing_values an
   | "context_in_synchronized_block", [], _ ->
       CPredicates.context_in_synchronized_block lcxt
   | "declaration_has_name", [decl_name], an ->
       CPredicates.declaration_has_name an decl_name
+  | "has_cxx_full_name", [qual_name_re], an ->
+      CPredicates.has_cxx_full_name an qual_name_re
   | "declaration_ref_name", [decl_name], an ->
       CPredicates.declaration_ref_name an decl_name
   | "decl_unavailable_in_supported_ios_sdk", [], an ->
@@ -999,6 +997,10 @@ let rec eval_Atomic pred_name_ args an lcxt =
       CPredicates.is_class an cname
   | "is_const_var", [], an ->
       CPredicates.is_const_expr_var an
+  | "is_qual_type_const", [], an ->
+      CPredicates.is_qual_type_const an
+  | "has_init_list_const_expr", [], an ->
+      CPredicates.has_init_list_const_expr an
   | "is_decl", [], an ->
       CPredicates.is_decl an
   | "is_enum_constant", [cname], an ->
@@ -1006,7 +1008,11 @@ let rec eval_Atomic pred_name_ args an lcxt =
   | "is_enum_constant_of_enum", [name], an ->
       CPredicates.is_enum_constant_of_enum an name
   | "is_global_var", [], an ->
-      CPredicates.is_syntactically_global_var an
+      CPredicates.is_global_var an
+  | "is_static_local_var", [], an ->
+      CPredicates.is_static_local_var an
+  | "adhere_to_protocol", [], an ->
+      CPredicates.adhere_to_protocol an
   | "is_in_block", [], _ ->
       CPredicates.is_in_block lcxt
   | "is_in_cxx_constructor", [name], _ ->
@@ -1017,12 +1023,40 @@ let rec eval_Atomic pred_name_ args an lcxt =
       CPredicates.is_in_cxx_method lcxt name
   | "is_in_function", [name], _ ->
       CPredicates.is_in_function lcxt name
+  | "is_in_objc_class_method", [name], _ ->
+      CPredicates.is_in_objc_class_method lcxt name
+  | "is_in_objc_instance_method", [name], _ ->
+      CPredicates.is_in_objc_instance_method lcxt name
   | "is_in_objc_method", [name], _ ->
       CPredicates.is_in_objc_method lcxt name
+  | "is_in_objc_interface_named", [name], _ ->
+      CPredicates.is_in_objc_interface_named lcxt name
+  | "is_in_objc_implementation_named", [name], _ ->
+      CPredicates.is_in_objc_implementation_named lcxt name
   | "is_in_objc_class_named", [name], _ ->
       CPredicates.is_in_objc_class_named lcxt name
   | "is_in_objc_subclass_of", [name], _ ->
       CPredicates.is_in_objc_subclass_of lcxt name
+  | "is_in_objc_category_interface_on_class_named", [name], _ ->
+      CPredicates.is_in_objc_category_interface_on_class_named lcxt name
+  | "is_in_objc_category_implementation_on_class_named", [name], _ ->
+      CPredicates.is_in_objc_category_implementation_on_class_named lcxt name
+  | "is_in_objc_category_on_class_named", [name], _ ->
+      CPredicates.is_in_objc_category_on_class_named lcxt name
+  | "is_in_objc_category_interface_on_subclass_of", [name], _ ->
+      CPredicates.is_in_objc_category_interface_on_subclass_of lcxt name
+  | "is_in_objc_category_implementation_on_subclass_of", [name], _ ->
+      CPredicates.is_in_objc_category_implementation_on_subclass_of lcxt name
+  | "is_in_objc_category_on_subclass_of", [name], _ ->
+      CPredicates.is_in_objc_category_on_subclass_of lcxt name
+  | "is_in_objc_category_interface_named", [name], _ ->
+      CPredicates.is_in_objc_category_interface_named lcxt name
+  | "is_in_objc_category_implementation_named", [name], _ ->
+      CPredicates.is_in_objc_category_implementation_named lcxt name
+  | "is_in_objc_category_named", [name], _ ->
+      CPredicates.is_in_objc_category_named lcxt name
+  | "is_in_objc_protocol_named", [name], _ ->
+      CPredicates.is_in_objc_protocol_named lcxt name
   | "is_ivar_atomic", [], an ->
       CPredicates.is_ivar_atomic an
   | "is_method_property_accessor_of_ivar", [], an ->
@@ -1031,20 +1065,70 @@ let rec eval_Atomic pred_name_ args an lcxt =
       CPredicates.is_node an nodename
   | "is_objc_constructor", [], _ ->
       CPredicates.is_objc_constructor lcxt
+  | "objc_class_has_only_one_constructor_method_named", [name], an ->
+      CPredicates.objc_class_has_only_one_constructor_method_named an name
   | "is_objc_dealloc", [], _ ->
       CPredicates.is_objc_dealloc lcxt
   | "is_objc_extension", [], _ ->
       CPredicates.is_objc_extension lcxt
   | "is_objc_interface_named", [name], an ->
       CPredicates.is_objc_interface_named an name
+  | "is_objc_implementation_named", [name], an ->
+      CPredicates.is_objc_implementation_named an name
+  | "is_objc_class_named", [name], an ->
+      CPredicates.is_objc_class_named an name
+  | "is_objc_category_interface_on_class_named", [name], an ->
+      CPredicates.is_objc_category_interface_on_class_named an name
+  | "is_objc_category_implementation_on_class_named", [name], an ->
+      CPredicates.is_objc_category_implementation_on_class_named an name
+  | "is_objc_category_on_class_named", [cname], an ->
+      CPredicates.is_objc_category_on_class_named an cname
+  | "is_objc_category_interface_named", [name], an ->
+      CPredicates.is_objc_category_interface_named an name
+  | "is_objc_category_implementation_named", [name], an ->
+      CPredicates.is_objc_category_implementation_named an name
+  | "is_objc_category_named", [cname], an ->
+      CPredicates.is_objc_category_named an cname
+  | "is_objc_category_interface_on_subclass_of", [name], an ->
+      CPredicates.is_objc_category_interface_on_subclass_of an name
+  | "is_objc_category_implementation_on_subclass_of", [name], an ->
+      CPredicates.is_objc_category_implementation_on_subclass_of an name
+  | "is_objc_category_on_subclass_of", [name], an ->
+      CPredicates.is_objc_category_on_subclass_of an name
+  | "is_objc_protocol_named", [name], an ->
+      CPredicates.is_objc_protocol_named an name
+  | "is_objc_class_method_named", [name], an ->
+      CPredicates.is_objc_class_method_named an name
+  | "is_objc_instance_method_named", [name], an ->
+      CPredicates.is_objc_instance_method_named an name
+  | "is_objc_method_named", [name], an ->
+      CPredicates.is_objc_method_named an name
+  | "is_objc_method_overriding", [], an ->
+      CPredicates.is_objc_method_overriding an
+  | "is_objc_method_exposed", [], an ->
+      CPredicates.is_objc_method_exposed lcxt an
   | "is_property_pointer_type", [], an ->
       CPredicates.is_property_pointer_type an
   | "is_strong_property", [], an ->
       CPredicates.is_strong_property an
+  | "is_strong_ivar", [], an ->
+      CPredicates.is_strong_ivar an
   | "is_unop_with_kind", [kind], an ->
       CPredicates.is_unop_with_kind an kind
   | "is_weak_property", [], an ->
       CPredicates.is_weak_property an
+  | "is_receiver_objc_class_type", [], an ->
+      CPredicates.is_receiver_objc_class_type an
+  | "is_receiver_objc_id_type", [], an ->
+      CPredicates.is_receiver_objc_id_type an
+  | "is_receiver_subclass_of", [name], an ->
+      CPredicates.is_receiver_subclass_of lcxt an name
+  | "is_receiver_class_named", [name], an ->
+      CPredicates.is_receiver_class_named lcxt an name
+  | "is_receiver_super", [], an ->
+      CPredicates.is_receiver_super an
+  | "is_receiver_self", [], an ->
+      CPredicates.is_receiver_self an
   | "iphoneos_target_sdk_version_greater_or_equal", [version], _ ->
       CPredicates.iphoneos_target_sdk_version_greater_or_equal lcxt (ALVar.alexp_to_string version)
   | "method_return_type", [typ], an ->
@@ -1055,6 +1139,8 @@ let rec eval_Atomic pred_name_ args an lcxt =
       CPredicates.using_namespace an namespace
   | "is_at_selector_with_name", [name], an ->
       CPredicates.is_at_selector_with_name an name
+  | "cxx_construct_expr_has_name", [name], an ->
+      CPredicates.cxx_construct_expr_has_name an name
   | "has_type_const_ptr_to_objc_class", [], an ->
       CPredicates.has_type_const_ptr_to_objc_class an
   | "has_type_subprotocol_of", [protname], an ->
@@ -1067,8 +1153,19 @@ let rec eval_Atomic pred_name_ args an lcxt =
       CPredicates.within_available_class_block lcxt an
   | "is_method_called_by_superclass", [], an ->
       CPredicates.is_method_called_by_superclass an
+  | "is_cxx_copy_constructor", [], an ->
+      CPredicates.is_cxx_copy_constructor an
+  | "is_cxx_method_overriding", [], an ->
+      CPredicates.is_cxx_method_overriding an None
+  | "is_cxx_method_overriding", [qual_name_re], an ->
+      CPredicates.is_cxx_method_overriding an (Some qual_name_re)
+  | "is_init_expr_cxx11_constant", [], an ->
+      CPredicates.is_init_expr_cxx11_constant an
+  | "cxx_construct_expr_has_no_parameters", [], an ->
+      CPredicates.cxx_construct_expr_has_no_parameters an
   | _ ->
       L.(die ExternalError) "Undefined Predicate or wrong set of arguments: '%s'" pred_name
+
 
 and eval_AND an lcxt f1 f2 =
   match eval_formula f1 an lcxt with
@@ -1081,12 +1178,14 @@ and eval_AND an lcxt f1 f2 =
   | None (* we short-circuit the AND evaluation *) ->
       None
 
+
 and eval_OR an lcxt f1 f2 = choose_witness_opt (eval_formula f1 an lcxt) (eval_formula f2 an lcxt)
 
 and eval_Implies an lcxt f1 f2 =
   let witness1 = if Option.is_some (eval_formula f1 an lcxt) then None else Some an in
   let witness2 = eval_formula f2 an lcxt in
   choose_witness_opt witness1 witness2
+
 
 (* an, lcxt |= EF phi  <=>
    an, lcxt |= phi or exists an' in Successors(st): an', lcxt |= EF phi
@@ -1105,8 +1204,9 @@ and eval_EF phi an lcxt trans =
       let witness_opt = eval_formula phi an lcxt in
       if Option.is_some witness_opt then witness_opt
       else
-        List.fold_left (Ctl_parser_types.get_direct_successor_nodes an) ~init:witness_opt ~f:
-          (fun acc node -> choose_witness_opt (eval_EF phi node lcxt trans) acc )
+        List.fold_left (Ctl_parser_types.get_direct_successor_nodes an) ~init:witness_opt
+          ~f:(fun acc node -> choose_witness_opt (eval_EF phi node lcxt trans) acc )
+
 
 (* an, lcxt |= EX phi  <=> exists an' in Successors(st): an', lcxt |= phi
 
@@ -1132,6 +1232,7 @@ and eval_EX phi an lcxt trans =
   | _ ->
       witness_opt
 
+
 (* an, lcxt |= E(phi1 U phi2) evaluated using the equivalence
    an, lcxt |= E(phi1 U phi2) <=> an, lcxt |= phi2 or (phi1 and EX(E(phi1 U phi2)))
 
@@ -1142,6 +1243,7 @@ and eval_EU phi1 phi2 an lcxt trans =
   let f = Or (phi2, And (phi1, EX (trans, EU (trans, phi1, phi2)))) in
   eval_formula f an lcxt
 
+
 (* an |= A(phi1 U phi2) evaluated using the equivalence
    an |= A(phi1 U phi2) <=> an |= phi2 or (phi1 and AX(A(phi1 U phi2)))
 
@@ -1150,6 +1252,7 @@ and eval_EU phi1 phi2 an lcxt trans =
 and eval_AU phi1 phi2 an lcxt trans =
   let f = Or (phi2, And (phi1, AX (trans, AU (trans, phi1, phi2)))) in
   eval_formula f an lcxt
+
 
 (* an, lcxt |= InNode[node_type_list] phi <=>
    an is a node of type in node_type_list and an satifies phi
@@ -1168,6 +1271,7 @@ and in_node node_type_list phi an lctx =
   List.fold_left node_type_list ~init:None ~f:(fun acc node ->
       choose_witness_opt (holds_for_one_node node) acc )
 
+
 (* Intuitive meaning: (an,lcxt) satifies EH[Classes] phi
    if the node an is among the declaration specified by the list Classes and
    there exists a super class in its hierarchy whose declaration satisfy phi.
@@ -1179,6 +1283,7 @@ and eval_EH classes phi an lcxt =
   (* Define EH[Classes] phi = ET[Classes](EF[->Super] phi) *)
   let f = ET (classes, None, EX (Some Super, EF (Some Super, phi))) in
   eval_formula f an lcxt
+
 
 (* an, lcxt |= ET[T][->l]phi <=>
    eventually we reach a node an' such that an' is among the types defined in T
@@ -1200,6 +1305,21 @@ and eval_ET tl trs phi an lcxt =
   in
   eval_formula f an lcxt
 
+
+and eval_InObjCClass an lcxt f1 f2 =
+  match an with
+  | Ctl_parser_types.Decl (Clang_ast_t.ObjCInterfaceDecl (_, _, _, _, otdi)) ->
+      let open Option.Monad_infix in
+      eval_formula f1 an lcxt
+      >>= fun _ ->
+      otdi.otdi_implementation
+      >>= fun dr ->
+      CAst_utils.get_decl dr.Clang_ast_t.dr_decl_pointer
+      >>= fun n -> eval_formula f2 (Ctl_parser_types.Decl n) lcxt
+  | _ ->
+      None
+
+
 (* Formulas are evaluated on a AST node an and a linter context lcxt *)
 and eval_formula f an lcxt : Ctl_parser_types.ast_node option =
   debug_eval_begin (debug_create_payload an f lcxt) ;
@@ -1209,8 +1329,13 @@ and eval_formula f an lcxt : Ctl_parser_types.ast_node option =
         Some an
     | False ->
         None
-    | Atomic (name, params) ->
-        if eval_Atomic name params an lcxt then Some an else None
+    | Atomic (name, params) -> (
+      try if eval_Atomic name params an lcxt then Some an else None
+      with CFrontend_config.IncorrectAssumption e ->
+        let trans_unit_ctx = lcxt.CLintersContext.translation_unit_context in
+        ClangLogging.log_caught_exception trans_unit_ctx "IncorrectAssumption" e.position
+          e.source_range e.ast_node ;
+        None )
     | InNode (node_type_list, f1) ->
         in_node node_type_list f1 an lcxt
     | Not f1 -> (
@@ -1242,5 +1367,7 @@ and eval_formula f an lcxt : Ctl_parser_types.ast_node option =
         eval_formula (And (f1, EX (trans, EG (trans, f1)))) an lcxt
     | ET (tl, sw, phi) ->
         eval_ET tl sw phi an lcxt
+    | InObjCClass (f1, f2) ->
+        eval_InObjCClass an lcxt f1 f2
   in
   debug_eval_end res ; res

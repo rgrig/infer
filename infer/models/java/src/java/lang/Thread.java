@@ -1,16 +1,14 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package java.lang;
 
-import com.facebook.infer.builtins.InferUndefined;
 import com.facebook.infer.builtins.InferBuiltins;
+import com.facebook.infer.builtins.InferUndefined;
 
 class Thread implements Runnable {
 
@@ -27,12 +25,10 @@ class Thread implements Runnable {
 
   public static boolean holdsLock(Object obj) {
     if (InferUndefined.boolean_undefined()) {
-          InferBuiltins.__set_locked_attribute(obj);
-          return true;
+      InferBuiltins.__set_locked_attribute(obj);
+      return true;
     } else {
-          return false;
-   }
-
+      return false;
+    }
   }
-
 }

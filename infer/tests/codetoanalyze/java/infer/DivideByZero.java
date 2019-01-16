@@ -1,14 +1,11 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.infer;
-
 
 public class DivideByZero {
 
@@ -23,12 +20,12 @@ public class DivideByZero {
     return 10 / denominator;
   }
 
-  //DO NOT MOVE, test relies on line number
+  // DO NOT MOVE, test relies on line number
   public int callDivideByZeroInterProc() {
     return divideByZeroInterProc(0);
   }
 
-  //divide by zero with static fields
+  // divide by zero with static fields
   private static int x;
 
   public void setXToZero() {
@@ -39,5 +36,4 @@ public class DivideByZero {
     setXToZero();
     return divideByZeroInterProc(x);
   }
-
 }

@@ -1,17 +1,14 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package java.util.zip;
 
 import com.facebook.infer.builtins.InferBuiltins;
 import com.facebook.infer.builtins.InferUndefined;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.Enumeration;
@@ -55,12 +52,9 @@ public class ZipFile {
       }
 
       public ZipEntry nextElement() throws NoSuchElementException {
-        if (hasEls)
-          return new ZipEntry("");
-        else
-          throw new NoSuchElementException();
+        if (hasEls) return new ZipEntry("");
+        else throw new NoSuchElementException();
       }
     };
   }
-
 }

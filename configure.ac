@@ -1,28 +1,25 @@
+dnl Copyright (c) 2015-present, Facebook, Inc.
+dnl
+dnl This source code is licensed under the MIT license found in the
+dnl LICENSE file in the root directory of this source tree.
+
 dnl autoconf script for Infer
 dnl run ./autogen.sh to generate a configure script
-dnl
-dnl Copyright (c) 2015 - present Facebook, Inc.
-dnl All rights reserved.
-dnl
-dnl This source code is licensed under the BSD style license found in the
-dnl LICENSE file in the root directory of this source tree. An additional grant
-dnl of patent rights can be found in the PATENTS file in the same directory.
 
 AC_PREREQ([2.63])
 
 # WARNING: the version number has to be kept in sync with:
 # - the values below
 # - opam
-# - docker/Dockerfile
 AC_INIT([Infer],
-        [0.13.0],
+        [0.15.0],
         [https://github.com/facebook/infer/issues/])
 
 AC_CONFIG_SRCDIR([infer/src/istd/IStd.ml])
 
 # WARNING: keep in sync with above
 INFER_MAJOR=0
-INFER_MINOR=13
+INFER_MINOR=15
 INFER_PATCH=0
 
 AC_SUBST([INFER_MAJOR])
@@ -70,20 +67,11 @@ AC_ARG_ENABLE(java-analyzers,
 BUILD_JAVA_ANALYZERS=$enable_java_analyzers
 AC_SUBST([BUILD_JAVA_ANALYZERS])
 
-AC_ARG_ENABLE(python-analyzers,
-  AS_HELP_STRING([--disable-python-analyzers],
-    [do not build the Python analyzers (default is to build them)]),
-  ,
-  enable_python_analyzers=yes)
-
-BUILD_PYTHON_ANALYZERS=$enable_python_analyzers
-AC_SUBST([BUILD_PYTHON_ANALYZERS])
-
 AC_ARG_WITH(fcp-clang,
-  AS_HELP_STRING([--without-fcp-clang],
-    [do not use $CLANG_PREFIX/bin/clang to override the default compiler (default is to override if in an infer release)]),
+  AS_HELP_STRING([--with-fcp-clang],
+    [use $CLANG_PREFIX/bin/clang to override the default compiler (default is not to override)]),
   ,
-  with_fcp_clang=$is_release_tree)
+  with_fcp_clang=no)
 
 AS_IF([test "x$enable_c_analyzers" = "xyes"], [
   AC_MSG_CHECKING([whether to use the compilers in $CLANG_PREFIX/bin])
@@ -106,9 +94,7 @@ AS_IF([test "x$enable_c_analyzers" = "xyes"], [
   AC_ASSERT_PROG([shasum], [$SHASUM])
   # cmake is required to build llvm+clang
   AC_CHECK_TOOL([CMAKE], [cmake], [no])
-  AS_IF([test "x$is_release_tree" = "xno"], [
-    AC_ASSERT_PROG([cmake], [$CMAKE])
-  ])
+  AC_ASSERT_PROG([cmake], [$CMAKE])
   AC_ARG_ENABLE(ocamlopt-custom-cc,
     AS_HELP_STRING([--enable-ocamlopt-custom-cc], [use CC in ocamlopt invocations]),
     ,
@@ -123,7 +109,17 @@ AC_CHECK_TOOL([PYTHON27], [python2.7], [no])
 AC_ASSERT_PROG([python2.7], [$PYTHON27])
 
 AC_CHECK_TOOL([XCODE_SELECT], [xcode-select], [no])
+AS_IF([test "x$XCODE_SELECT" != "xno"], [XCODE_SELECT_OUT=`xcode-select -p`])
 
+AS_IF(
+  [test "x$XCODE_BASE" != "x"],
+        [AC_CHECK_FILE($XCODE_BASE,[HAS_OBJC=yes],[HAS_OBJC=no])],
+  [test "x$XCODE_SELECT" != "xno"],
+        [XCODE_BASE=$XCODE_SELECT_OUT HAS_OBJC=yes],
+  [HAS_OBJC=no])
+
+AC_SUBST([XCODE_BASE])
+AC_SUBST([HAS_OBJC])
 
 # prefer clang over gcc because the plugins makes use of
 # clang-specific #pragma's
@@ -139,7 +135,7 @@ if test "x$enable_c_analyzers" = "xyes"; then
   AC_PROG_CXX(clang++ g++)
   # AC_PROG_CXX doesn't set CXX to "no" in case of failure (I have no words...); from the manual:
   # "If none of those checks succeed, then as a last resort set CXX to g++. "
-  AS_IF([command -v "$CXX" > /dev/null], [], [AC_MSG_ERROR([no C++ compiler found])])
+  AS_IF([$CXX --version > /dev/null], [], [AC_MSG_ERROR([no C++ compiler found])])
 
   dnl clang wants either clang version >= 3.1 or gcc version >= 4.7.2 to
   dnl compile itself
@@ -166,8 +162,7 @@ gcc version >= 4.7.2 or clang version >= 3.1.
 See the output of `./configure --help` to force the use of a different
 C compiler.
 
-Alternatively, you can checkout a release of infer with clang
-pre-compiled here:
+Alternatively, you can checkout a binary release of infer:
 
   https://github.com/facebook/infer/releases/])
    ]
@@ -177,12 +172,11 @@ pre-compiled here:
 fi
 # end if($enable_c_analyzers)
 
-
 # OCaml dependencies
 AC_PROG_OCAML
 AC_ASSERT_PROG([ocamlc], [$OCAMLC])
 # check the version of OCaml
-AC_ASSERT_OCAML_MIN_VERSION([4.05.0])
+AC_ASSERT_OCAML_MIN_VERSION([4.06.1])
 AC_ASSERT_PROG([ocamlopt], [$OCAMLOPT])
 AC_CHECK_TOOL([OCAMLBUILD], [ocamlbuild], [no])
 AC_ASSERT_PROG([ocamlbuild], [$OCAMLBUILD])
@@ -191,14 +185,16 @@ AC_PROG_OCAMLLEX
 AC_ASSERT_PROG([ocamllex], [$OCAMLLEX])
 AC_CHECK_TOOL([MENHIR], [menhir], [no])
 AC_ASSERT_PROG([menhir], [$MENHIR])
-AC_ASSERT_OCAML_PKG([atdgen], [], [])
+AC_ASSERT_OCAML_PKG([atdgen])
 AC_ASSERT_OCAML_PKG([biniou])
 AC_ASSERT_OCAML_PKG([camlzip], [zip])
 AC_ASSERT_OCAML_PKG([easy-format])
-AC_ASSERT_OCAML_PKG([oUnit], [], [2.0.0])
+AC_ASSERT_OCAML_PKG([oUnit])
 AC_CHECK_TOOL([UTOP], [utop], [no])
 AC_ASSERT_OCAML_PKG([yojson])
 
+AC_ARG_VAR([CPATH], [Additional directories to search for C headers.])
+AC_ARG_VAR([LIBRARY_PATH], [Additional directories to search for C shared objects.])
 AC_ARG_VAR([CAML_LD_LIBRARY_PATH],
   [Additional directories to search for dynamically-loaded libraries.])
 AC_ARG_VAR([OPAMROOT], [Root of the local opam installation.])
@@ -206,6 +202,12 @@ AC_ARG_VAR([OPAMSWITCH], [Opam switch used for building infer.])
 
 AC_CHECK_TOOL([OPAM], [opam], [no])
 AS_IF([test "$OPAM" != "no"], [
+  AC_MSG_CHECKING([opam version])
+  opam_version=$(opam --version)
+  case $opam_version in
+    2.*) AC_MSG_RESULT([$opam_version]); break;;
+    *) AC_MSG_ERROR([opam version $opam_version is not supported, please install opam version 2 instead]); break;;
+  esac
   AC_MSG_CHECKING([current opam root])
   OPAMROOT=$("$OPAM" config var root)
   AC_MSG_RESULT([$OPAMROOT])
@@ -224,9 +226,8 @@ if test "x$enable_java_analyzers" = "xyes"; then
   AC_CHECK_TOOL([JAVAC], [javac], [no])
   AC_ASSERT_PROG([javac], [$JAVAC])
   AC_ASSERT_PROG([java], [$JAVA])
-  AC_ASSERT_OCAML_PKG([javalib], [], [2.3.3])
-  AC_ASSERT_OCAML_PKG([sawja], [], [1.5.2])
-  AC_ASSERT_OCAML_PKG([ptrees])
+  AC_ASSERT_OCAML_PKG([javalib])
+  AC_ASSERT_OCAML_PKG([sawja])
 
   AC_MSG_CHECKING([for JAVA_HOME])
   cat - <<_ACEOF >conftest.java
@@ -316,7 +317,22 @@ AC_CHECK_PYTHON_MODULE([$PYTHON27], [lxml])
 
 AC_CHECK_TOOL([XCPRETTY], [xcpretty], [no])
 
+AC_CHECK_TOOL([SED], [sed], [no])
+AS_IF([test "$SED" != "xno"], [
+  AC_MSG_CHECKING([if sed is GNU sed])
+  AS_IF(["$SED" --version 2> /dev/null | grep -q -e "GNU sed"], [
+    GNU_SED="$SED"
+    AC_MSG_RESULT([yes])
+  ], [
+    AC_MSG_RESULT([no])
+    AC_CHECK_TOOL([GNU_SED], [gsed], [no])
+  ])
+])
+AC_SUBST([GNU_SED])
+
 AC_CHECK_TOOL([BREW], [brew], [no])
+
+AC_CHECK_TOOL([PATCHELF], [patchelf], [no])
 
 # warn about broken pkg-config version for brew users
 if test "$BREW" != "no"; then

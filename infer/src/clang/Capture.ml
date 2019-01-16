@@ -1,13 +1,10 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 open! IStd
-module CLOpt = CommandLineOption
 module L = Logging
 
 (** enable debug mode (to get more data saved to disk for future inspections) *)
@@ -16,25 +13,34 @@ let debug_mode = Config.debug_mode || Config.frontend_stats
 (** This function reads the json file in fname, validates it, and encodes in the AST data structure
     defined in Clang_ast_t.  *)
 let validate_decl_from_file fname =
-  Ag_util.Biniou.from_file ~len:CFrontend_config.biniou_buffer_size Clang_ast_b.read_decl fname
+  Atdgen_runtime.Util.Biniou.from_file ~len:CFrontend_config.biniou_buffer_size
+    Clang_ast_b.read_decl fname
 
 
 let validate_decl_from_channel chan =
-  Ag_util.Biniou.from_channel ~len:CFrontend_config.biniou_buffer_size Clang_ast_b.read_decl chan
+  Atdgen_runtime.Util.Biniou.from_channel ~len:CFrontend_config.biniou_buffer_size
+    Clang_ast_b.read_decl chan
 
 
 let register_perf_stats_report source_file =
-  let stats_dir = Filename.concat Config.results_dir Config.frontend_stats_dir_name in
-  let abbrev_source_file = DB.source_file_encoding source_file in
-  let stats_file = Config.perf_stats_prefix ^ "_" ^ abbrev_source_file ^ ".json" in
-  Unix.mkdir_p stats_dir ;
-  PerfStats.register_report_at_exit (Filename.concat stats_dir stats_file)
+  let stats_type =
+    match (Config.capture, Config.linters) with
+    | true, true ->
+        PerfStats.ClangFrontendLinters source_file
+    | true, false ->
+        PerfStats.ClangFrontend source_file
+    | false, true ->
+        PerfStats.ClangLinters source_file
+    | false, false ->
+        Logging.(die UserError) "Clang frontend should be run in capture and/or linters mode."
+  in
+  PerfStats.register_report_at_exit stats_type
 
 
 let init_global_state_for_capture_and_linters source_file =
   L.(debug Capture Medium) "Processing %s" (Filename.basename (SourceFile.to_abs_path source_file)) ;
-  if Config.developer_mode then register_perf_stats_report source_file ;
-  Config.curr_language := Config.Clang ;
+  Language.curr_language := Language.Clang ;
+  register_perf_stats_report source_file ;
   if Config.capture then DB.Results_dir.init source_file ;
   CFrontend_config.reset_global_state ()
 
@@ -54,7 +60,6 @@ let run_clang_frontend ast_source =
   let trans_unit_ctx =
     match ast_decl with
     | Clang_ast_t.TranslationUnitDecl (_, _, _, info) ->
-        Config.arc_mode := info.Clang_ast_t.tudi_arc_enabled ;
         let source_file = SourceFile.from_abs_path info.Clang_ast_t.tudi_input_path in
         init_global_state_for_capture_and_linters source_file ;
         let lang =
@@ -70,14 +75,22 @@ let run_clang_frontend ast_source =
           | _ ->
               assert false
         in
-        {CFrontend_config.source_file; lang}
+        let integer_type_widths =
+          let widths = info.Clang_ast_t.tudi_integer_type_widths in
+          { Typ.IntegerWidths.char_width= widths.itw_char_type
+          ; short_width= widths.itw_short_type
+          ; int_width= widths.itw_int_type
+          ; long_width= widths.itw_long_type
+          ; longlong_width= widths.itw_longlong_type }
+        in
+        {CFrontend_config.source_file; lang; integer_type_widths}
     | _ ->
         assert false
   in
   let pp_ast_filename fmt ast_source =
     match ast_source with
     | `File path ->
-        Format.fprintf fmt "%s" path
+        Format.pp_print_string fmt path
     | `Pipe _ ->
         Format.fprintf fmt "stdin of %a" SourceFile.pp trans_unit_ctx.CFrontend_config.source_file
   in
@@ -93,45 +106,63 @@ let run_clang_frontend ast_source =
   print_elapsed ()
 
 
+let run_clang_frontend ast_source =
+  PerfEvent.(
+    log (fun logger ->
+        PerfEvent.log_begin_event logger ~categories:["frontend"] ~name:"clang frontend" () )) ;
+  run_clang_frontend ast_source ;
+  PerfEvent.(log (fun logger -> PerfEvent.log_end_event logger ()))
+
+
 let run_and_validate_clang_frontend ast_source =
   try run_clang_frontend ast_source with exc ->
-    reraise_if exc ~f:(fun () -> not Config.keep_going) ;
+    IExn.reraise_if exc ~f:(fun () -> not Config.keep_going) ;
     L.internal_error "ERROR RUNNING CAPTURE: %a@\n%s@\n" Exn.pp exc (Printexc.get_backtrace ())
 
 
 let run_clang clang_command read =
   let exit_with_error exit_code =
-    L.external_error "Error: the following clang command did not run successfully:@\n  %s@\n%!"
-      clang_command ;
+    L.external_error "Error: the following clang command did not run successfully:@\n  %a@."
+      ClangCommand.pp clang_command ;
     L.exit exit_code
   in
   (* NOTE: exceptions will propagate through without exiting here *)
-  match Utils.with_process_in clang_command read with
+  match Utils.with_process_in (ClangCommand.command_to_run clang_command) read with
   | res, Ok () ->
       res
-  | _, Error `Exit_non_zero n ->
+  | _, Error (`Exit_non_zero n) ->
       (* exit with the same error code as clang in case of compilation failure *)
       exit_with_error n
   | _ ->
       exit_with_error 1
 
 
-let run_plugin_and_frontend source_path frontend clang_args =
-  let clang_command = ClangCommand.command_to_run (ClangCommand.with_plugin_args clang_args) in
-  ( if debug_mode then
-      (* -cc1 clang commands always set -o explicitly *)
-      let basename = source_path ^ ".ast" in
-      (* Emit the clang command with the extra args piped to infer-as-clang *)
-      let frontend_script_fname = Printf.sprintf "%s.sh" basename in
-      let debug_script_out = Out_channel.create frontend_script_fname in
-      let debug_script_fmt = Format.formatter_of_out_channel debug_script_out in
-      let biniou_fname = Printf.sprintf "%s.biniou" basename in
-      Format.fprintf debug_script_fmt "%s \\@\n  > %s@\n" clang_command biniou_fname ;
-      Format.fprintf debug_script_fmt
-        "bdump -x -d \"%s/clang_ast.dict\" -w '!!DUMMY!!' %s \\@\n  > %s.bdump" Config.etc_dir
-        biniou_fname basename ;
-      Out_channel.close debug_script_out ) ;
-  run_clang clang_command frontend
+let run_clang clang_command read =
+  PerfEvent.(
+    log (fun logger -> PerfEvent.log_begin_event logger ~categories:["frontend"] ~name:"clang" ())) ;
+  let result = run_clang clang_command read in
+  PerfEvent.(log (fun logger -> PerfEvent.log_end_event logger ())) ;
+  result
+
+
+let run_plugin_and_frontend source_path frontend clang_cmd =
+  let clang_plugin_cmd = ClangCommand.with_plugin_args clang_cmd in
+  if debug_mode then (
+    (* -cc1 clang commands always set -o explicitly *)
+    let basename = source_path ^ ".ast" in
+    (* Emit the clang command with the extra args piped to infer-as-clang *)
+    let frontend_script_fname = Printf.sprintf "%s.sh" basename in
+    let debug_script_out = Out_channel.create frontend_script_fname in
+    let debug_script_fmt = Format.formatter_of_out_channel debug_script_out in
+    let biniou_fname = Printf.sprintf "%s.biniou" basename in
+    Format.fprintf debug_script_fmt "%s \\@\n  > %s@\n"
+      (ClangCommand.command_to_run clang_plugin_cmd)
+      biniou_fname ;
+    Format.fprintf debug_script_fmt
+      "bdump -x -d \"%s/clang_ast.dict\" -w '!!DUMMY!!' %s \\@\n  > %s.bdump" Config.etc_dir
+      biniou_fname basename ;
+    Out_channel.close debug_script_out ) ;
+  run_clang clang_plugin_cmd frontend
 
 
 let cc1_capture clang_cmd =
@@ -142,17 +173,19 @@ let cc1_capture clang_cmd =
     Utils.filename_to_absolute ~root (List.last_exn orig_argv)
   in
   L.(debug Capture Quiet) "@\n*** Beginning capture of file %s ***@\n" source_path ;
-  if Config.equal_analyzer Config.analyzer Config.CompileOnly
-     || not Config.skip_analysis_in_path_skips_compilation
-        && CLocation.is_file_blacklisted source_path
+  if
+    InferCommand.equal Config.command Compile
+    || (not Config.skip_analysis_in_path_skips_compilation)
+       && CLocation.is_file_blacklisted source_path
   then (
     L.(debug Capture Quiet) "@\n Skip the analysis of source file %s@\n@\n" source_path ;
     (* We still need to run clang, but we don't have to attach the plugin. *)
-    run_clang (ClangCommand.command_to_run clang_cmd) Utils.consume_in )
-  else if Config.skip_analysis_in_path_skips_compilation
-          && CLocation.is_file_blacklisted source_path
+    run_clang clang_cmd Utils.consume_in )
+  else if
+    Config.skip_analysis_in_path_skips_compilation && CLocation.is_file_blacklisted source_path
   then (
-    L.(debug Capture Quiet) "@\n Skip compilation and analysis of source file %s@\n@\n" source_path ;
+    L.(debug Capture Quiet)
+      "@\n Skip compilation and analysis of source file %s@\n@\n" source_path ;
     () )
   else
     match Config.clang_biniou_file with
@@ -173,10 +206,10 @@ let capture clang_cmd =
     (* when running with buck's compilation-database, skip commands where frontend cannot be
        attached, as they may cause unnecessary compilation errors *)
     ()
-  else
+  else (
     (* Non-compilation (eg, linking) command. Run the command as-is. It will not get captured
        further since `clang -### ...` will only output commands that invoke binaries using their
        absolute paths. *)
-    let command_to_run = ClangCommand.command_to_run clang_cmd in
-    L.(debug Capture Quiet) "Running non-cc command without capture: %s@\n" command_to_run ;
-    run_clang command_to_run Utils.consume_in
+    L.(debug Capture Medium)
+      "Running non-cc command without capture: %a@\n" ClangCommand.pp clang_cmd ;
+    run_clang clang_cmd Utils.echo_in )

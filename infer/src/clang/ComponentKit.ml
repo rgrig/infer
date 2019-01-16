@@ -1,14 +1,12 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-open! PVariant
+open PolyVariantEqual
 module MF = MarkupFormatter
 
 let get_source_range an =
@@ -32,8 +30,9 @@ let is_in_main_file translation_unit_context an =
         translation_unit_context.CFrontend_config.source_file
 
 
-let is_ck_context (context: CLintersContext.context) an =
-  context.is_ck_translation_unit && is_in_main_file context.translation_unit_context an
+let is_ck_context (context : CLintersContext.context) an =
+  context.is_ck_translation_unit
+  && is_in_main_file context.translation_unit_context an
   && CGeneral_utils.is_objc_extension context.translation_unit_context
 
 
@@ -90,67 +89,84 @@ and contains_ck_impl decl_list =
     const NSString *y;
     ``` *)
 let mutable_local_vars_advice context an =
-  let rec get_referenced_type (qual_type: Clang_ast_t.qual_type) : Clang_ast_t.decl option =
-    let typ_opt = CAst_utils.get_desugared_type qual_type.qt_type_ptr in
-    match (typ_opt : Clang_ast_t.c_type option) with
-    | Some ObjCInterfaceType (_, decl_ptr) | Some RecordType (_, decl_ptr) ->
-        CAst_utils.get_decl decl_ptr
-    | Some PointerType (_, inner_qual_type)
-    | Some ObjCObjectPointerType (_, inner_qual_type)
-    | Some LValueReferenceType (_, inner_qual_type) ->
-        get_referenced_type inner_qual_type
-    | _ ->
-        None
-  in
-  let is_of_whitelisted_type qual_type =
-    let cpp_whitelist =
-      [ "CKComponentScope"
-      ; "FBTrackingNodeScope"
-      ; "FBTrackingCodeScope"
-      ; "CKComponentContext"
-      ; "CKComponentKey" ]
+  try
+    let rec get_referenced_type (qual_type : Clang_ast_t.qual_type) : Clang_ast_t.decl option =
+      let typ_opt = CAst_utils.get_desugared_type qual_type.qt_type_ptr in
+      match (typ_opt : Clang_ast_t.c_type option) with
+      | Some (ObjCInterfaceType (_, decl_ptr)) | Some (RecordType (_, decl_ptr)) ->
+          CAst_utils.get_decl decl_ptr
+      | Some (PointerType (_, inner_qual_type))
+      | Some (ObjCObjectPointerType (_, inner_qual_type))
+      | Some (LValueReferenceType (_, inner_qual_type)) ->
+          get_referenced_type inner_qual_type
+      | _ ->
+          None
     in
-    let objc_whitelist = ["NSError"] in
-    match get_referenced_type qual_type with
-    | Some CXXRecordDecl (_, ndi, _, _, _, _, _, _) ->
-        List.mem ~equal:String.equal cpp_whitelist ndi.ni_name
-    | Some ObjCInterfaceDecl (_, ndi, _, _, _) ->
-        List.mem ~equal:String.equal objc_whitelist ndi.ni_name
-    | _ ->
-        false
-  in
-  match an with
-  | Ctl_parser_types.Decl (Clang_ast_t.VarDecl (decl_info, named_decl_info, qual_type, _) as decl) ->
-      let is_const_ref =
-        match CAst_utils.get_type qual_type.qt_type_ptr with
-        | Some LValueReferenceType (_, {Clang_ast_t.qt_is_const}) ->
-            qt_is_const
-        | _ ->
-            false
+    let is_of_whitelisted_type qual_type =
+      let cpp_whitelist =
+        [ "CKComponentScope"
+        ; "FBTrackingNodeScope"
+        ; "FBTrackingCodeScope"
+        ; "CKComponentContext"
+        ; "CKComponentKey" ]
       in
-      let is_const = qual_type.qt_is_const || is_const_ref in
-      let condition =
-        is_ck_context context an && not (CAst_utils.is_syntactically_global_var decl)
-        && not (CAst_utils.is_static_local_var decl) && not is_const
-        && not (is_of_whitelisted_type qual_type) && not decl_info.di_is_implicit
-        && not context.CLintersContext.in_for_loop_declaration
-        && not (CAst_utils.is_std_vector qual_type) && not (CAst_utils.has_block_attribute decl)
-      in
-      if condition then
-        Some
-          { CIssue.id= "MUTABLE_LOCAL_VARIABLE_IN_COMPONENT_FILE"
-          ; name= None
-          ; severity= Exceptions.Kadvice
-          ; mode= CIssue.On
-          ; description=
-              "Local variable " ^ MF.monospaced_to_string named_decl_info.ni_name
-              ^ " should be const to avoid reassignment"
-          ; suggestion= Some "Add a const (after the asterisk for pointer types)."
-          ; doc_url= None
-          ; loc= CFrontend_checkers.location_from_dinfo context decl_info }
-      else None
-  | _ ->
-      None
+      let objc_whitelist = ["NSError"] in
+      match get_referenced_type qual_type with
+      | Some (CXXRecordDecl (_, ndi, _, _, _, _, _, _)) ->
+          List.mem ~equal:String.equal cpp_whitelist ndi.ni_name
+      | Some (ObjCInterfaceDecl (_, ndi, _, _, _)) ->
+          List.mem ~equal:String.equal objc_whitelist ndi.ni_name
+      | _ ->
+          false
+    in
+    if is_ck_context context an then
+      match an with
+      | Ctl_parser_types.Decl
+          (Clang_ast_t.VarDecl (decl_info, named_decl_info, qual_type, _) as decl) ->
+          let is_const_ref =
+            match CAst_utils.get_type qual_type.qt_type_ptr with
+            | Some (LValueReferenceType (_, {Clang_ast_t.qt_is_const})) ->
+                qt_is_const
+            | _ ->
+                false
+          in
+          let is_const = qual_type.qt_is_const || is_const_ref in
+          let name_is decl name =
+            match decl with
+            | Clang_ast_t.VarDecl (_, named_decl_info, _, _) ->
+                String.equal name named_decl_info.Clang_ast_t.ni_name
+            | _ ->
+                false
+          in
+          let should_not_report_mutable_local =
+            CAst_utils.is_syntactically_global_var decl
+            || CAst_utils.is_static_local_var decl
+            || is_const || is_of_whitelisted_type qual_type || decl_info.di_is_implicit
+            || context.CLintersContext.in_for_loop_declaration
+            || CAst_utils.is_std_vector qual_type
+            || CAst_utils.has_block_attribute decl
+            || name_is decl "weakSelf" || name_is decl "strongSelf"
+          in
+          if should_not_report_mutable_local then None
+          else
+            Some
+              { CIssue.issue_type= IssueType.mutable_local_variable_in_component_file
+              ; severity= Exceptions.Advice
+              ; mode= CIssue.On
+              ; description=
+                  "Local variable "
+                  ^ MF.monospaced_to_string named_decl_info.ni_name
+                  ^ " should be const to avoid reassignment"
+              ; suggestion= Some "Add a const (after the asterisk for pointer types)."
+              ; loc= CFrontend_checkers.location_from_dinfo context decl_info }
+      | _ ->
+          None
+    else None
+  with CFrontend_config.IncorrectAssumption e ->
+    let trans_unit_ctx = context.CLintersContext.translation_unit_context in
+    ClangLogging.log_caught_exception trans_unit_ctx "IncorrectAssumption" e.position
+      e.source_range e.ast_node ;
+    None
 
 
 (* Should only be called with a VarDecl *)
@@ -163,26 +179,26 @@ let component_factory_function_advice context an =
   let is_component_if decl =
     CAst_utils.is_objc_if_descendant decl [CFrontend_config.ckcomponent_cl]
   in
-  match an with
-  | Ctl_parser_types.Decl
-      Clang_ast_t.FunctionDecl (decl_info, _, (qual_type: Clang_ast_t.qual_type), _) ->
-      let objc_interface = CAst_utils.qual_type_to_objc_interface qual_type in
-      let condition = is_ck_context context an && is_component_if objc_interface in
-      if condition then
-        Some
-          { CIssue.id= "COMPONENT_FACTORY_FUNCTION"
-          ; name= None
-          ; severity= Exceptions.Kadvice
-          ; mode= CIssue.Off
-          ; description= "Break out composite components"
-          ; suggestion=
-              Some
-                "Prefer subclassing CKCompositeComponent to static helper functions that return a CKComponent subclass."
-          ; doc_url= None
-          ; loc= CFrontend_checkers.location_from_dinfo context decl_info }
-      else None
-  | _ ->
-      None
+  if is_ck_context context an then
+    match an with
+    | Ctl_parser_types.Decl
+        (Clang_ast_t.FunctionDecl (decl_info, _, (qual_type : Clang_ast_t.qual_type), _)) ->
+        let objc_interface = CAst_utils.qual_type_to_objc_interface qual_type in
+        if is_component_if objc_interface then
+          Some
+            { CIssue.issue_type= IssueType.component_factory_function
+            ; severity= Exceptions.Advice
+            ; mode= CIssue.Off
+            ; description= "Break out composite components"
+            ; suggestion=
+                Some
+                  "Prefer subclassing CKCompositeComponent to static helper functions that return \
+                   a CKComponent subclass."
+            ; loc= CFrontend_checkers.location_from_dinfo context decl_info }
+        else None
+    | _ ->
+        None
+  else None
 
 
 (* Should only be called with FunctionDecl *)
@@ -197,7 +213,7 @@ let component_with_unconventional_superclass_advice context an =
         if is_component_or_controller_if (Some if_decl) then
           let superclass_name =
             match CAst_utils.get_super_if (Some if_decl) with
-            | Some Clang_ast_t.ObjCInterfaceDecl (_, named_decl_info, _, _, _) ->
+            | Some (Clang_ast_t.ObjCInterfaceDecl (_, named_decl_info, _, _, _)) ->
                 Some named_decl_info.ni_name
             | _ ->
                 None
@@ -210,9 +226,12 @@ let component_with_unconventional_superclass_advice context an =
                      [ ckcomponent_cl
                      ; ckcomponentcontroller_cl
                      ; "CKCompositeComponent"
+                     ; "CKRenderComponent"
+                     ; "CKRenderWithChildrenComponent"
                      ; "CKStatefulViewComponent"
                      ; "CKStatefulViewComponentController"
-                     ; "NTNativeTemplateComponent" ] name ->
+                     ; "NTNativeTemplateComponent" ]
+                     name ->
                 true
             | _ ->
                 false
@@ -222,13 +241,11 @@ let component_with_unconventional_superclass_advice context an =
           in
           if condition then
             Some
-              { CIssue.id= "COMPONENT_WITH_UNCONVENTIONAL_SUPERCLASS"
-              ; name= None
-              ; severity= Exceptions.Kadvice
+              { CIssue.issue_type= IssueType.component_with_unconventional_superclass
+              ; severity= Exceptions.Advice
               ; mode= CIssue.On
               ; description= "Never Subclass Components"
               ; suggestion= Some "Instead, create a new subclass of CKCompositeComponent."
-              ; doc_url= None
               ; loc= CFrontend_checkers.location_from_decl context if_decl }
           else None
         else None
@@ -236,7 +253,7 @@ let component_with_unconventional_superclass_advice context an =
         assert false
   in
   match an with
-  | Ctl_parser_types.Decl Clang_ast_t.ObjCImplementationDecl (_, _, _, _, impl_decl_info) ->
+  | Ctl_parser_types.Decl (Clang_ast_t.ObjCImplementationDecl (_, _, _, _, impl_decl_info)) ->
       let if_decl_opt =
         CAst_utils.get_decl_opt_with_decl_ref impl_decl_info.oidi_class_interface
       in
@@ -264,7 +281,7 @@ let component_with_multiple_factory_methods_advice context an =
   let is_unavailable_attr attr =
     match attr with Clang_ast_t.UnavailableAttr _ -> true | _ -> false
   in
-  let is_available_factory_method if_decl (decl: Clang_ast_t.decl) =
+  let is_available_factory_method if_decl (decl : Clang_ast_t.decl) =
     match decl with
     | ObjCMethodDecl (decl_info, _, _) ->
         let unavailable_attrs =
@@ -282,23 +299,21 @@ let component_with_multiple_factory_methods_advice context an =
         let factory_methods = List.filter ~f:(is_available_factory_method (Some if_decl)) decls in
         List.map
           ~f:(fun meth_decl ->
-            { CIssue.id= "COMPONENT_WITH_MULTIPLE_FACTORY_METHODS"
-            ; name= None
-            ; severity= Exceptions.Kadvice
+            { CIssue.issue_type= IssueType.component_with_multiple_factory_methods
+            ; severity= Exceptions.Advice
             ; mode= CIssue.On
             ; description= "Avoid Overrides"
             ; suggestion=
                 Some
-                  "Instead, always expose all parameters in a single designated initializer and document which are optional."
-            ; doc_url= None
+                  "Instead, always expose all parameters in a single designated initializer and \
+                   document which are optional."
             ; loc= CFrontend_checkers.location_from_decl context meth_decl } )
-          (List.drop factory_methods 1)
+          (IList.drop factory_methods 1)
     | _ ->
         assert false
   in
   match an with
-  | Ctl_parser_types.Decl Clang_ast_t.ObjCImplementationDecl (_, _, _, _, impl_decl_info)
-    -> (
+  | Ctl_parser_types.Decl (Clang_ast_t.ObjCImplementationDecl (_, _, _, _, impl_decl_info)) -> (
       let if_decl_opt =
         CAst_utils.get_decl_opt_with_decl_ref impl_decl_info.oidi_class_interface
       in
@@ -307,16 +322,16 @@ let component_with_multiple_factory_methods_advice context an =
       []
 
 
-let in_ck_class (context: CLintersContext.context) =
+let in_ck_class (context : CLintersContext.context) =
   Option.value_map ~f:is_component_or_controller_descendant_impl ~default:false
     context.current_objc_class
   && CGeneral_utils.is_objc_extension context.translation_unit_context
 
 
-let is_in_factory_method (context: CLintersContext.context) =
+let is_in_factory_method (context : CLintersContext.context) =
   let interface_decl_opt =
     match context.current_objc_class with
-    | Some ObjCImplementationDecl (_, _, _, _, impl_decl_info) ->
+    | Some (ObjCImplementationDecl (_, _, _, _, impl_decl_info)) ->
         CAst_utils.get_decl_opt_with_decl_ref impl_decl_info.oidi_class_interface
     | _ ->
         None
@@ -342,7 +357,7 @@ let is_in_factory_method (context: CLintersContext.context) =
     relies on other threads (dispatch_sync). Other side-effects, like reading
     of global variables, is not checked by this analyzer, although still an
     infraction of the rule. *)
-let rec component_initializer_with_side_effects_advice_ (context: CLintersContext.context)
+let rec component_initializer_with_side_effects_advice_ (context : CLintersContext.context)
     call_stmt =
   let condition =
     in_ck_class context && is_in_factory_method context
@@ -357,20 +372,17 @@ let rec component_initializer_with_side_effects_advice_ (context: CLintersContex
     match call_stmt with
     | Clang_ast_t.ImplicitCastExpr (_, stmt :: _, _, _) ->
         component_initializer_with_side_effects_advice_ context stmt
-    | Clang_ast_t.DeclRefExpr (_, _, _, decl_ref_expr_info)
-      -> (
+    | Clang_ast_t.DeclRefExpr (_, _, _, decl_ref_expr_info) -> (
         let refs = [decl_ref_expr_info.drti_decl_ref; decl_ref_expr_info.drti_found_decl_ref] in
         match List.find_map ~f:CAst_utils.name_of_decl_ref_opt refs with
         | Some "dispatch_after" | Some "dispatch_async" | Some "dispatch_sync" ->
             Some
-              { CIssue.id= "COMPONENT_INITIALIZER_WITH_SIDE_EFFECTS"
-              ; name= None
-              ; severity= Exceptions.Kadvice
+              { CIssue.issue_type= IssueType.component_initializer_with_side_effects
+              ; severity= Exceptions.Advice
               ; mode= CIssue.On
               ; description= "No Side-effects"
               ; suggestion=
                   Some "Your +new method should not modify any global variables or global state."
-              ; doc_url= None
               ; loc= CFrontend_checkers.location_from_stmt context call_stmt }
         | _ ->
             None )
@@ -379,9 +391,9 @@ let rec component_initializer_with_side_effects_advice_ (context: CLintersContex
   else None
 
 
-let component_initializer_with_side_effects_advice (context: CLintersContext.context) an =
+let component_initializer_with_side_effects_advice (context : CLintersContext.context) an =
   match an with
-  | Ctl_parser_types.Stmt CallExpr (_, called_func_stmt :: _, _) ->
+  | Ctl_parser_types.Stmt (CallExpr (_, called_func_stmt :: _, _)) ->
       component_initializer_with_side_effects_advice_ context called_func_stmt
   | _ ->
       None
@@ -393,21 +405,19 @@ let component_initializer_with_side_effects_advice (context: CLintersContext.con
 
     This still needs to be in infer b/c only files that have a valid component
     kit class impl should be analyzed. *)
-let component_file_line_count_info (context: CLintersContext.context) dec =
+let component_file_line_count_info (context : CLintersContext.context) dec =
   let condition = Config.compute_analytics && context.is_ck_translation_unit in
   match dec with
-  | Ctl_parser_types.Decl Clang_ast_t.TranslationUnitDecl _ when condition ->
+  | Ctl_parser_types.Decl (Clang_ast_t.TranslationUnitDecl _) when condition ->
       let source_file = context.translation_unit_context.CFrontend_config.source_file in
       let line_count = SourceFile.line_count source_file in
       List.map
         ~f:(fun i ->
-          { CIssue.id= "COMPONENT_FILE_LINE_COUNT"
-          ; name= None
-          ; severity= Exceptions.Kinfo
+          { CIssue.issue_type= IssueType.component_file_line_count
+          ; severity= Exceptions.Info
           ; mode= CIssue.Off
           ; description= "Line count analytics"
           ; suggestion= None
-          ; doc_url= None
           ; loc= {Location.line= i; Location.col= 0; Location.file= source_file} } )
         (List.range 1 line_count ~start:`inclusive ~stop:`inclusive)
   | _ ->
@@ -419,7 +429,7 @@ let component_file_line_count_info (context: CLintersContext.context) dec =
     Somewhat borrowed from
     https://github.com/oclint/oclint/blob/5889b5ec168185513ba69ce83821ea1cc8e63fbe
     /oclint-metrics/lib/CyclomaticComplexityMetric.cpp *)
-let component_file_cyclomatic_complexity_info (context: CLintersContext.context) an =
+let component_file_cyclomatic_complexity_info (context : CLintersContext.context) an =
   let is_cyclo_stmt stmt =
     match stmt with
     | Clang_ast_t.IfStmt _
@@ -452,13 +462,11 @@ let component_file_cyclomatic_complexity_info (context: CLintersContext.context)
   match cyclo_loc_opt an with
   | Some loc ->
       Some
-        { CIssue.id= "COMPONENT_FILE_CYCLOMATIC_COMPLEXITY"
-        ; name= None
-        ; severity= Exceptions.Kinfo
+        { CIssue.issue_type= IssueType.component_file_cyclomatic_complexity
+        ; severity= Exceptions.Info
         ; mode= CIssue.Off
         ; description= "Cyclomatic Complexity Incremental Marker"
         ; suggestion= None
-        ; doc_url= None
         ; loc }
   | _ ->
       None

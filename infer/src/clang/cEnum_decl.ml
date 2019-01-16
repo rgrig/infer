@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -20,7 +18,7 @@ let add_enum_constant_to_map_if_needed decl_pointer pred_decl_opt =
   try
     ignore (CAst_utils.get_enum_constant_exp decl_pointer) ;
     true
-  with Not_found ->
+  with Caml.Not_found ->
     CAst_utils.add_enum_constant decl_pointer pred_decl_opt ;
     false
 

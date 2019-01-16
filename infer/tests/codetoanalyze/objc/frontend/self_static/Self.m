@@ -1,13 +1,12 @@
 /*
- * Copyright (c) 2014 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2014-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 #import <Foundation/NSObject.h>
+#import <Foundation/NSBundle.h>
 
 @interface B : NSObject
 
@@ -97,4 +96,28 @@
   } else
     return 0;
 }
+
+Class foo();
+
+BOOL class_method_in_conditional() {
+  Class c = foo();
+  if ([c class]) {
+    return YES;
+  }
+  return NO;
+}
+
+- (NSBundle*)class_method_fst_arg_of_class_method {
+  return [NSBundle bundleForClass:[A class]];
+}
+
++ (NSBundle*)class_method_fst_arg_of_class_method_inside_instance_method {
+  static NSBundle* bundle;
+  NSString* stringsBundlePath =
+      [[NSBundle bundleForClass:[B class]] pathForResource:@"Strings"
+                                                    ofType:@"bundle"];
+  bundle = [NSBundle bundleWithPath:stringsBundlePath] ?: [NSBundle mainBundle];
+  return bundle;
+}
+
 @end

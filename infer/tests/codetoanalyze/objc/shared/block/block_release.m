@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2014 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2014-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 #import <Foundation/Foundation.h>
@@ -17,7 +15,7 @@
 
 @implementation My_manager
 
-- (int)blockReleaseTODO {
+- (int)blockReleaseNoLeak {
   void (^b)(int a);
   int z = 3;
   CGContextRef context = CGBitmapContextCreate(NULL, 0, 0, 8, 0, 0, 0);
@@ -26,7 +24,7 @@
     if (newImage)
       CGImageRelease(newImage);
   };
-  b(z); // currently doesn't work due to PRECONDITION_NOT_MET here
+  b(z);
   if (context)
     CGContextRelease(context);
   return z;

@@ -1,23 +1,20 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.eradicate;
 
-import com.google.common.base.Preconditions;
-
-import java.lang.System;
-import javax.annotation.Nullable;
+import android.app.AlarmManager;
+import android.app.PendingIntent;
 import com.facebook.infer.annotation.Assertions;
-
-import java.util.Map;
+import com.google.common.base.Preconditions;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import javax.annotation.Nullable;
 
 public class NullMethodCall {
 
@@ -58,16 +55,11 @@ public class NullMethodCall {
   }
 
   private static class S {
-    private static
-    @Nullable
-    String sfld;
+    private static @Nullable String sfld;
   }
 
-  @Nullable
-  String fld;
-  private
-  @Nullable
-  String pfld;
+  @Nullable String fld;
+  private @Nullable String pfld;
 
   public class Inner {
     int outerField() {
@@ -221,8 +213,7 @@ public class NullMethodCall {
   }
 
   class CheckNotNullVararg {
-    void checkNotNull(String msg, Object ... objects) {
-    }
+    void checkNotNull(String msg, Object... objects) {}
 
     void testCheckNotNullVaratg(@Nullable String s1, @Nullable String s2) {
       checkNotNull("hello", s1, s2);
@@ -254,30 +245,25 @@ public class NullMethodCall {
       String s = null;
       if (whoknows()) {
         s = "a";
-      }
-      else {
+      } else {
         System.exit(1);
       }
       int n = s.length();
     }
   }
 
-  public void testMapGetBad
-      (Map<String, String> m,
-       HashMap<String, String> hm,
-       ConcurrentHashMap<String, String> chm) {
-      m.get("foo").toString();
-      hm.get("foo").toString();
-      chm.get("foo").toString();
+  public void testMapGetBad(
+      Map<String, String> m, HashMap<String, String> hm, ConcurrentHashMap<String, String> chm) {
+    m.get("foo").toString();
+    hm.get("foo").toString();
+    chm.get("foo").toString();
   }
 
-  public void testMapRemoveBad
-      (Map<String, String> m,
-       HashMap<String, String> hm,
-       ConcurrentHashMap<String, String> chm) {
-      m.remove("foo").toString();
-      hm.remove("foo").toString();
-      chm.remove("foo").toString();
+  public void testMapRemoveBad(
+      Map<String, String> m, HashMap<String, String> hm, ConcurrentHashMap<String, String> chm) {
+    m.remove("foo").toString();
+    hm.remove("foo").toString();
+    chm.remove("foo").toString();
   }
 
   @Nullable Object nullableField;
@@ -293,5 +279,33 @@ public class NullMethodCall {
     if (nullableParameter == nonNullParameter) {
       nullableParameter.toString();
     }
+  }
+
+  String customPreconditionsCheckNotNullOkay() {
+    MyPreconditions.checkNotNull(nullableField);
+    return nullableField.toString();
+  }
+
+  void nullMethodCallWithAlarmManager(AlarmManager manager, @Nullable PendingIntent intent) {
+    manager.cancel(intent);
+  }
+
+  String callingSeverSideNullableGetter(ServerSideDeserializer deserializer) {
+    return deserializer.nullableGetter().toString();
+  }
+
+  interface AnotherI {
+    void withBooleanParameter(boolean test);
+
+    void withObjectParameter(Object object);
+  }
+
+  void withConjuction(@Nullable AnotherI i, boolean test1, boolean test2) {
+    i.withBooleanParameter(test1 && test2);
+  }
+
+  void withConditionalAssignemnt(
+      @Nullable AnotherI i, boolean test, Object object1, Object object2) {
+    i.withObjectParameter(test ? object1 : object2);
   }
 }

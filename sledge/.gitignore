@@ -1,0 +1,13 @@
+.merlin
+/llvm/
+/model/cxxabi.bc
+/src/dune
+/src/import/dune
+/src/llair/dune
+/src/symbheap/dune
+/src/trace/dune
+/src/version.ml
+/test/*/*.bc
+/test/*/*.bc.err
+/test/*/*.bc.out
+_build

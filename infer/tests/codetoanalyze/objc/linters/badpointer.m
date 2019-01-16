@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 #import <Foundation/NSArray.h>
@@ -110,15 +108,8 @@ int bad6(NSNumber* number, Simple* simple) {
 }
 
 int good5(NSNumber* number, Simple* simple) {
-  if ([simple fooWithCondition:(number == nil ? 1 : 2) andNumber:number] !=
-      nil) {
-    return 0;
-  }
-  return 1;
-}
-
-int bad7(NSNumber* number) {
-  if (number < 0) {
+  if ([simple fooWithCondition:(number == nil ? 1 : 2)
+                     andNumber:number] != nil) {
     return 0;
   }
   return 1;

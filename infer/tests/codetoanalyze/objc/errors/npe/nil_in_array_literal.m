@@ -1,15 +1,28 @@
 /*
- * Copyright (c) 2014 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2014-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 #import <Foundation/Foundation.h>
 
 @interface Arr : NSObject {
+}
+@end
+
+@interface A : NSObject {
+}
+@end
+
+bool myrand(void);
+
+@implementation A
++ (instancetype)initA {
+  if (myrand())
+    return nil;
+  else
+    return [A new];
 }
 @end
 
@@ -60,6 +73,13 @@
   NSArray* foo = [NSArray arrayWithObject:str];
 
   return foo;
+}
+
+- (NSMutableArray*)insertNilBad {
+  NSMutableArray* ar = [NSMutableArray new];
+  A* a = [A initA];
+  [ar addObject:@[ a ]];
+  return ar;
 }
 
 @end

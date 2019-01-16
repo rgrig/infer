@@ -1,24 +1,20 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.checkers;
-
-import javax.annotation.concurrent.ThreadSafe;
 
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import javax.annotation.concurrent.ThreadSafe;
 
 @ThreadSafe
 public class Locks {
-
   Integer f;
 
   Lock mLock;
@@ -26,7 +22,8 @@ public class Locks {
   ReentrantLock mReentrantLock;
   ReentrantReadWriteLock mReentrantReadWriteLock;
 
-  public void lockInOneBranchBad(boolean b) {
+  // we allow this for now
+  public void FN_lockInOneBranchBad(boolean b) {
     if (b) {
       mLock.lock();
     }
@@ -165,8 +162,110 @@ public class Locks {
     mLock.unlock();
   }
 
-  // our "squish all locks into one" abstraction is not ideal here...
-  public void FP_unlockOneLock() {
+  void nested1Ok() {
+    synchronized (this) {
+      synchronized (this) {
+      }
+      // a bad abstraction of locks will treat this as unlocked...
+      f = 32;
+    }
+  }
+
+  void nested2Ok() {
+    synchronized (this) {
+      synchronized (this) {
+        f = 32;
+      }
+    }
+  }
+
+  void nested3Ok() {
+    synchronized (this) {
+      f = 32;
+      synchronized (this) {
+      }
+    }
+  }
+
+  void nested1Bad() {
+    synchronized (this) {
+      synchronized (this) {
+      }
+    }
+    f = 32;
+  }
+
+  void nested2Bad() {
+    synchronized (this) {
+    }
+    f = 32;
+    synchronized (this) {
+    }
+  }
+
+  void nested3Bad() {
+    synchronized (this) {
+    }
+    synchronized (this) {
+    }
+    f = 32;
+  }
+
+  void useLock() {
+    synchronized (this) {
+    }
+  }
+
+  void useLockInCalleeBad() {
+    useLock();
+    f = 32;
+  }
+
+  void lockInLoopOk(int i) {
+    while (i > 0) {
+      i++;
+      mLock.lock();
+    }
+    f = 32;
+  }
+
+  void unlockInLoopOk(int i) {
+    mLock.lock();
+    while (i > 0) {
+      i++;
+      mLock.unlock();
+    }
+    f = 32;
+  }
+
+  void lockInLoopLexicalBad(int i) {
+    while (i > 0) {
+      i++;
+      synchronized (this) {
+      }
+    }
+    f = 32;
+  }
+
+  void lockInLoopLexicalOk(int i) {
+    while (i > 0) {
+      i++;
+      synchronized (this) {
+        f = 32;
+      }
+    }
+  }
+
+  void loopInLockLexicalBad(int i) {
+    synchronized (this) {
+      while (i > 0) {
+        i++;
+      }
+      f = 32;
+    }
+  }
+
+  public void unlockOneLockOk() {
     mLock.lock();
     mReentrantLock.lock();
     mReentrantLock.unlock();
@@ -233,4 +332,33 @@ public class Locks {
     }
   }
 
+  Object mField2;
+
+  private synchronized void lockedWriteInCallee() {
+    this.mField2 = null;
+  }
+
+  public static void ownedLockedReadOk() {
+    Locks owned = new Locks();
+    owned.lockedWriteInCallee();
+  }
+
+  public Object unownedReadOk() {
+    // safe because the only other access to mField is owned
+    return this.mField2;
+  }
+
+  Object mField3;
+
+  private synchronized void lockedWriteInCallee2() {
+    this.mField3 = null;
+  }
+
+  public void unownedLockedWriteOk() {
+    lockedWriteInCallee2();
+  }
+
+  public Object unownedReadBad() {
+    return this.mField3;
+  }
 }

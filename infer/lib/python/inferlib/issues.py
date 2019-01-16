@@ -1,9 +1,7 @@
-# Copyright (c) 2015 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2015-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 from __future__ import absolute_import
 from __future__ import division
@@ -26,11 +24,11 @@ except ImportError:
 from . import colorize, config, source, utils
 
 
-ISSUE_KIND_ERROR = 'ERROR'
-ISSUE_KIND_WARNING = 'WARNING'
-ISSUE_KIND_INFO = 'INFO'
-ISSUE_KIND_ADVICE = 'ADVICE'
-ISSUE_KIND_LIKE = 'LIKE'
+ISSUE_SEVERITY_ERROR = 'ERROR'
+ISSUE_SEVERITY_WARNING = 'WARNING'
+ISSUE_SEVERITY_INFO = 'INFO'
+ISSUE_SEVERITY_ADVICE = 'ADVICE'
+ISSUE_SEVERITY_LIKE = 'LIKE'
 
 # field names in rows of json reports
 JSON_INDEX_DOTTY = 'dotty'
@@ -41,10 +39,9 @@ JSON_INDEX_ISL_FILE = 'file'
 JSON_INDEX_ISL_LNUM = 'lnum'
 JSON_INDEX_ISL_CNUM = 'cnum'
 JSON_INDEX_ISL_ENUM = 'enum'
-JSON_INDEX_KIND = 'kind'
+JSON_INDEX_SEVERITY = 'severity'
 JSON_INDEX_LINE = 'line'
 JSON_INDEX_PROCEDURE = 'procedure'
-JSON_INDEX_PROCEDURE_ID = 'procedure_id'
 JSON_INDEX_QUALIFIER = 'qualifier'
 JSON_INDEX_QUALIFIER_TAGS = 'qualifier_tags'
 JSON_INDEX_TYPE = 'bug_type'
@@ -55,7 +52,6 @@ JSON_INDEX_TRACE_LINE = 'line_number'
 JSON_INDEX_TRACE_COLUMN = 'column_number'
 JSON_INDEX_TRACE_DESCRIPTION = 'description'
 JSON_INDEX_TRACEVIEW_ID = 'traceview_id'
-JSON_INDEX_VISIBILITY = 'visibility'
 
 
 ISSUE_TYPES_URL = 'http://fbinfer.com/docs/infer-issue-types.html#'
@@ -72,7 +68,7 @@ def text_of_infer_loc(loc):
 
 def text_of_report(report):
     filename = report[JSON_INDEX_FILENAME]
-    kind = report[JSON_INDEX_KIND]
+    severity = report[JSON_INDEX_SEVERITY]
     line = report[JSON_INDEX_LINE]
     error_type = report[JSON_INDEX_TYPE]
     msg = report[JSON_INDEX_QUALIFIER]
@@ -82,7 +78,7 @@ def text_of_report(report):
     return '%s:%d: %s: %s%s\n  %s' % (
         filename,
         line,
-        kind.lower(),
+        severity.lower(),
         error_type,
         infer_loc,
         msg,
@@ -121,13 +117,13 @@ def _text_of_report_list(project_root, reports, bugs_txt_path, limit=None,
         source_context = '\n' + unicode(indenter)
 
         msg = text_of_report(report)
-        if report[JSON_INDEX_KIND] == ISSUE_KIND_ERROR:
+        if report[JSON_INDEX_SEVERITY] == ISSUE_SEVERITY_ERROR:
             msg = colorize.color(msg, colorize.ERROR, formatter)
-        elif report[JSON_INDEX_KIND] == ISSUE_KIND_WARNING:
+        elif report[JSON_INDEX_SEVERITY] == ISSUE_SEVERITY_WARNING:
             msg = colorize.color(msg, colorize.WARNING, formatter)
-        elif report[JSON_INDEX_KIND] == ISSUE_KIND_ADVICE:
+        elif report[JSON_INDEX_SEVERITY] == ISSUE_SEVERITY_ADVICE:
             msg = colorize.color(msg, colorize.ADVICE, formatter)
-        elif report[JSON_INDEX_KIND] == ISSUE_KIND_LIKE:
+        elif report[JSON_INDEX_SEVERITY] == ISSUE_SEVERITY_LIKE:
             msg = colorize.color(msg, colorize.LIKE, formatter)
         text = '%s%s' % (msg, source_context)
         text_errors_list.append(text)
@@ -182,12 +178,11 @@ def _text_of_report_list(project_root, reports, bugs_txt_path, limit=None,
 
 
 def _is_user_visible(report):
-    kind = report[JSON_INDEX_KIND]
-    return kind in [
-        ISSUE_KIND_ERROR,
-        ISSUE_KIND_WARNING,
-        ISSUE_KIND_ADVICE,
-        ISSUE_KIND_LIKE]
+    return report[JSON_INDEX_SEVERITY] in [
+        ISSUE_SEVERITY_ERROR,
+        ISSUE_SEVERITY_WARNING,
+        ISSUE_SEVERITY_ADVICE,
+        ISSUE_SEVERITY_LIKE]
 
 
 def print_and_save_errors(infer_out, project_root, json_report, bugs_out,
@@ -231,7 +226,7 @@ def _pmd_xml_of_issues(issues):
         successful_java = False
         if issue[JSON_INDEX_FILENAME].endswith('.java'):
             fully_qualified_method_name = re.search(
-                '(.*)\(.*', issue[JSON_INDEX_PROCEDURE_ID])
+                '(.*)\(.*', issue[JSON_INDEX_PROCEDURE])
             if fully_qualified_method_name is not None:
                 # probably Java, let's try
                 try:

@@ -1,55 +1,40 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** The Smallfoot Intermediate Language: Subtypes *)
 
 open! IStd
-module L = Logging
 module F = Format
 
 let list_to_string list =
-  if Int.equal (List.length list) 0 then "( sub )"
+  if List.is_empty list then "( sub )"
   else "- {" ^ String.concat ~sep:", " (List.map ~f:Typ.Name.name list) ^ "}"
 
 
-type t' =
-  | Exact  (** denotes the current type only *)
-  | Subtypes of Typ.Name.t list
-  [@@deriving compare]
+type t' = Exact  (** denotes the current type only *) | Subtypes of Typ.Name.t list
+[@@deriving compare]
 
-let equal_modulo_flag (st1, _) (st2, _) = [%compare.equal : t'] st1 st2
+let equal_modulo_flag (st1, _) (st2, _) = [%compare.equal: t'] st1 st2
 
 (** denotes the current type and a list of types that are not their subtypes  *)
 type kind = CAST | INSTOF | NORMAL [@@deriving compare]
 
-let equal_kind = [%compare.equal : kind]
+let equal_kind = [%compare.equal: kind]
 
 type t = t' * kind [@@deriving compare]
 
 type result = No | Unknown | Yes [@@deriving compare]
 
-let equal_result = [%compare.equal : result]
-
-let sub_type tname_subst st_pair =
-  let st, kind = st_pair in
-  match st with
-  | Subtypes tnames ->
-      let tnames' = IList.map_changed tname_subst tnames in
-      if phys_equal tnames tnames' then st_pair else (Subtypes tnames', kind)
-  | Exact ->
-      st_pair
-
+let equal_result = [%compare.equal: result]
 
 let max_result res1 res2 = if compare_result res1 res2 <= 0 then res2 else res1
 
-let is_interface tenv (class_name: Typ.Name.t) =
+let is_interface tenv (class_name : Typ.Name.t) =
   match (class_name, Tenv.lookup tenv class_name) with
   | JavaClass _, Some {fields= []; methods= []} ->
       true
@@ -99,16 +84,14 @@ end)
 let check_subtype =
   let subtMap = ref SubtypesMap.empty in
   fun tenv c1 c2 ->
-    ( try SubtypesMap.find (c1, c2) !subtMap with Not_found ->
+    ( try SubtypesMap.find (c1, c2) !subtMap with Caml.Not_found ->
         let is_subt = check_subclass_tenv tenv c1 c2 in
         subtMap := SubtypesMap.add (c1, c2) is_subt !subtMap ;
         is_subt
-    : result )
+      : result )
 
 
 let is_known_subtype tenv c1 c2 : bool = equal_result (check_subtype tenv c1 c2) Yes
-
-let is_known_not_subtype tenv c1 c2 : bool = equal_result (check_subtype tenv c1 c2) No
 
 let flag_to_string flag = match flag with CAST -> "(cast)" | INSTOF -> "(instof)" | NORMAL -> ""
 
@@ -116,9 +99,9 @@ let pp f (t, flag) =
   if Config.print_types then
     match t with
     | Exact ->
-        F.fprintf f "%s" (flag_to_string flag)
+        F.pp_print_string f (flag_to_string flag)
     | Subtypes list ->
-        F.fprintf f "%s" (list_to_string list ^ flag_to_string flag)
+        F.fprintf f "%s%s" (list_to_string list) (flag_to_string flag)
 
 
 let exact = (Exact, NORMAL)
@@ -184,17 +167,9 @@ let normalize_subtypes t_opt c1 c2 flag1 flag2 =
     | Exact ->
         Some (t, new_flag)
     | Subtypes l ->
-        Some (Subtypes (List.sort ~cmp:Typ.Name.compare l), new_flag) )
+        Some (Subtypes (List.sort ~compare:Typ.Name.compare l), new_flag) )
   | None ->
       None
-
-
-let subtypes_to_string t =
-  match fst t with
-  | Exact ->
-      "ex" ^ flag_to_string (snd t)
-  | Subtypes l ->
-      list_to_string l ^ flag_to_string (snd t)
 
 
 (* c is a subtype when it does not appear in the list l of no-subtypes *)
@@ -242,7 +217,7 @@ let rec add_not_subtype tenv c1 l1 l2 =
         if should_add then c :: rest' else rest'
 
 
-let get_subtypes tenv (c1, ((st1, flag1): t)) (c2, ((st2, flag2): t)) =
+let get_subtypes tenv (c1, ((st1, flag1) : t)) (c2, ((st2, flag2) : t)) =
   let is_sub = is_known_subtype tenv c1 c2 in
   let pos_st, neg_st =
     match (st1, st2) with
@@ -263,8 +238,8 @@ let get_subtypes tenv (c1, ((st1, flag1): t)) (c2, ((st2, flag2): t)) =
             let l2' = updates_head tenv c1 l2 in
             (Some (Subtypes (add_not_subtype tenv c1 l1 l2')), None)
           else (None, Some st1)
-        else if (is_interface tenv c1 || is_known_subtype tenv c2 c1)
-                && no_subtype_in_list tenv c2 l1
+        else if
+          (is_interface tenv c1 || is_known_subtype tenv c2 c1) && no_subtype_in_list tenv c2 l1
         then
           let l1' = updates_head tenv c2 l1 in
           ( Some (Subtypes (add_not_subtype tenv c2 l1' l2))

@@ -1,61 +1,49 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 module F = Format
-module CLOpt = CommandLineOption
 module L = Logging
 
-type cmd = {cwd: string; prog: string; args: string}
-
-let create_cmd (compilation_data: CompilationDatabase.compilation_data) =
-  let swap_command cmd =
+let create_cmd (source_file, (compilation_data : CompilationDatabase.compilation_data)) =
+  let swap_executable cmd =
     if String.is_suffix ~suffix:"++" cmd then Config.wrappers_dir ^/ "clang++"
     else Config.wrappers_dir ^/ "clang"
   in
   let arg_file =
-    ClangQuotes.mk_arg_file "cdb_clang_args_" ClangQuotes.EscapedNoQuotes [compilation_data.args]
+    ClangQuotes.mk_arg_file "cdb_clang_args" ClangQuotes.EscapedNoQuotes
+      compilation_data.escaped_arguments
   in
-  {cwd= compilation_data.dir; prog= swap_command compilation_data.command; args= arg_file}
+  ( source_file
+  , { CompilationDatabase.directory= compilation_data.directory
+    ; executable= swap_executable compilation_data.executable
+    ; escaped_arguments= ["@" ^ arg_file; "-fsyntax-only"] @ List.rev Config.clang_extra_flags } )
 
 
-(* A sentinel is a file which indicates that a failure occurred in another infer process.
-   Because infer processes run in parallel but do not share any memory, we use the
-   filesystem to signal failures across processes. *)
-let sentinel_exists sentinel_opt =
-  let file_exists sentinel = PVariant.( = ) (Sys.file_exists sentinel) `Yes in
-  Option.value_map ~default:false sentinel_opt ~f:file_exists
-
-
-let invoke_cmd ~fail_sentinel cmd =
-  let create_sentinel_if_needed () =
-    let create_empty_file fname = Utils.with_file_out ~f:(fun _ -> ()) fname in
-    Option.iter fail_sentinel ~f:create_empty_file
-  in
-  if sentinel_exists fail_sentinel then L.progress "E%!"
-  else
-    try
-      let pid =
-        let prog = cmd.prog in
-        let argv = [prog; "@" ^ cmd.args; "-fsyntax-only"] in
-        Spawn.(spawn ~cwd:(Path cmd.cwd) ~prog ~argv ())
+let invoke_cmd (source_file, (cmd : CompilationDatabase.compilation_data)) =
+  let argv = cmd.executable :: cmd.escaped_arguments in
+  ( match Spawn.spawn ~cwd:(Path cmd.directory) ~prog:cmd.executable ~argv () with
+  | pid ->
+      !ProcessPoolState.update_status (Mtime_clock.now ()) (SourceFile.to_string source_file) ;
+      Unix.waitpid (Pid.of_int pid)
+      |> Result.map_error ~f:(fun unix_error ->
+             Unix.Exit_or_signal.to_string_hum (Error unix_error) )
+  | exception Unix.Unix_error (err, f, arg) ->
+      Error (F.asprintf "%s(%s): %s@." f arg (Unix.Error.message err)) )
+  |> function
+  | Ok () ->
+      ()
+  | Error error ->
+      let log_or_die fmt =
+        if Config.linters_ignore_clang_failures || Config.keep_going then L.debug Capture Quiet fmt
+        else L.die ExternalError fmt
       in
-      match Unix.waitpid (Pid.of_int pid) with
-      | Ok () ->
-          L.progress ".%!"
-      | Error _ ->
-          L.progress "!%!" ; create_sentinel_if_needed ()
-    with exn ->
-      let trace = Printexc.get_backtrace () in
-      L.external_error "@\nException caught:@\n%a.@\n%s@\n" Exn.pp exn trace ;
-      L.progress "X%!" ;
-      create_sentinel_if_needed ()
+      log_or_die "Error running compilation for '%a': %a:@\n%s@." SourceFile.pp source_file
+        Pp.cli_args argv error
 
 
 let run_compilation_database compilation_database should_capture_file =
@@ -66,32 +54,17 @@ let run_compilation_database compilation_database should_capture_file =
   L.(debug Capture Quiet)
     "Starting %s %d files@\n%!" Config.clang_frontend_action_string number_of_jobs ;
   L.progress "Starting %s %d files@\n%!" Config.clang_frontend_action_string number_of_jobs ;
-  let sequence = Parmap.L (List.map ~f:create_cmd compilation_data) in
-  let fail_sentinel_fname = Config.results_dir ^/ Config.linters_failed_sentinel_filename in
-  let fail_sentinel =
-    if Config.linters_ignore_clang_failures then None
-    else
-      match Config.buck_compilation_database with
-      | Some NoDeps when Config.linters ->
-          Some fail_sentinel_fname
-      | Some NoDeps | Some Deps _ | None ->
-          None
-  in
-  Utils.rmtree fail_sentinel_fname ;
-  let chunksize = min (List.length compilation_data / Config.jobs + 1) 10 in
-  Parmap.pariter ~ncores:Config.jobs ~chunksize (invoke_cmd ~fail_sentinel) sequence ;
+  let compilation_commands = List.map ~f:create_cmd compilation_data in
+  let runner = Tasks.Runner.create ~jobs:Config.jobs ~f:invoke_cmd in
+  Tasks.Runner.run runner ~tasks:compilation_commands ;
   L.progress "@." ;
-  L.(debug Analysis Medium) "Ran %d jobs" number_of_jobs ;
-  if sentinel_exists fail_sentinel then (
-    L.progress
-      "Failure detected, capture did not finish successfully. Use `--linters-ignore-clang-failures` to ignore compilation errors. Terminating@." ;
-    L.exit 1 )
+  L.(debug Analysis Medium) "Ran %d jobs" number_of_jobs
 
 
 (** Computes the compilation database files. *)
 let get_compilation_database_files_buck ~prog ~args =
   let dep_depth =
-    match Config.buck_compilation_database with Some Deps depth -> Some depth | _ -> None
+    match Config.buck_compilation_database with Some (Deps depth) -> Some depth | _ -> None
   in
   match
     Buck.add_flavors_to_buck_arguments ~filter_kind:`Yes ~dep_depth
@@ -100,26 +73,29 @@ let get_compilation_database_files_buck ~prog ~args =
   | {command= "build" as command; rev_not_targets; targets} ->
       let targets_args = Buck.store_args_in_file targets in
       let build_args =
-        command
-        :: List.rev_append rev_not_targets
-             ("--config" :: "*//cxx.pch_enabled=false" :: targets_args)
+        (command :: List.rev_append rev_not_targets (List.rev Config.buck_build_args_no_inline))
+        @ (* Infer doesn't support C++ modules nor precompiled headers yet (T35656509) *)
+          "--config" :: "*//cxx.pch_enabled=false" :: "--config" :: "*//cxx.modules_default=false"
+          :: "--config" :: "*//cxx.modules=False" :: targets_args
       in
       Logging.(debug Linters Quiet)
-        "Processed buck command is: 'buck %a'@\n" (Pp.seq Pp.string) build_args ;
+        "Processed buck command is: 'buck %a'@\n" (Pp.seq F.pp_print_string) build_args ;
       Process.create_process_and_wait ~prog ~args:build_args ;
       let buck_targets_shell =
-        prog
-        :: "targets"
+        prog :: "targets"
         :: List.rev_append
              (Buck.filter_compatible `Targets rev_not_targets)
-             ("--show-output" :: targets_args)
+             (List.rev Config.buck_build_args_no_inline)
+        @ ("--show-output" :: targets_args)
       in
       let on_target_lines = function
         | [] ->
             L.(die ExternalError) "There are no files to process, exiting"
         | lines ->
             L.(debug Capture Quiet)
-              "Reading compilation database from:@\n%a@\n" (Pp.seq ~sep:"\n" Pp.string) lines ;
+              "Reading compilation database from:@\n%a@\n"
+              (Pp.seq ~sep:"\n" F.pp_print_string)
+              lines ;
             (* this assumes that flavors do not contain spaces *)
             let split_regex = Str.regexp "#[^ ]* " in
             let scan_output compilation_database_files line =
@@ -137,7 +113,7 @@ let get_compilation_database_files_buck ~prog ~args =
         ~cmd:buck_targets_shell ~tmp_prefix:"buck_targets_" ~f:on_target_lines
   | _ ->
       Process.print_error_and_exit "Incorrect buck command: %s %a. Please use buck build <targets>"
-        prog (Pp.seq Pp.string) args
+        prog (Pp.seq F.pp_print_string) args
 
 
 (** Compute the compilation database files. *)

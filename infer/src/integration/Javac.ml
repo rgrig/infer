@@ -1,16 +1,13 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 module L = Logging
 module F = Format
-module CLOpt = CommandLineOption
 
 type compiler = Java | Javac [@@deriving compare]
 
@@ -44,9 +41,9 @@ let compile compiler build_prog build_args =
   let cli_file_args = cli_args @ ["@" ^ args_file] in
   let args = prog_args @ cli_file_args in
   L.(debug Capture Quiet) "Current working directory: '%s'@." (Sys.getcwd ()) ;
-  let verbose_out_file = Filename.temp_file "javac_" ".out" in
+  let verbose_out_file = Filename.temp_file "javac" ".out" in
   let try_run cmd error_k =
-    let shell_cmd = Utils.shell_escape_command cmd in
+    let shell_cmd = List.map ~f:Escape.escape_shell cmd |> String.concat ~sep:" " in
     let shell_cmd_redirected = Printf.sprintf "%s 2>'%s'" shell_cmd verbose_out_file in
     L.(debug Capture Quiet) "Trying to execute: %s@." shell_cmd_redirected ;
     match Utils.with_process_in shell_cmd_redirected In_channel.input_all with
@@ -61,11 +58,16 @@ let compile compiler build_prog build_args =
       | None ->
           let verbose_errlog = Utils.with_file_in verbose_out_file ~f:In_channel.input_all in
           L.(die UserError)
-            "@\n*** Failed to execute compilation command: %s@\n*** Command: %s@\n*** Output:@\n%s%s@\n*** Infer needs a working compilation command to run.@."
+            "@\n\
+             *** Failed to execute compilation command: %s@\n\
+             *** Command: %s@\n\
+             *** Output:@\n\
+             %s%s@\n\
+             *** Infer needs a working compilation command to run.@."
             (Unix.Exit_or_signal.to_string_hum (Error err))
             shell_cmd log verbose_errlog )
     | exception exn ->
-        reraise_if exn ~f:(fun () ->
+        IExn.reraise_if exn ~f:(fun () ->
             match error_k with
             | Some k ->
                 L.(debug Capture Quiet) "*** Failed: %a!@\n" Exn.pp exn ;
@@ -81,7 +83,31 @@ let compile compiler build_prog build_args =
   verbose_out_file
 
 
+let no_source_file args =
+  let not_source_file arg =
+    let stripped_arg = String.strip ~drop:(fun char -> Char.equal char '\"') arg in
+    not (String.is_suffix ~suffix:".java" stripped_arg)
+  in
+  List.for_all args ~f:(fun arg ->
+      (* expand arg files *)
+      match String.chop_prefix ~prefix:"@" arg with
+      | None ->
+          not_source_file arg
+      | Some arg_file ->
+          List.for_all ~f:not_source_file (In_channel.read_lines arg_file) )
+
+
 let capture compiler ~prog ~args =
-  let verbose_out_file = compile compiler prog args in
-  if Config.analyzer <> Config.CompileOnly then JMain.from_verbose_out verbose_out_file ;
-  if not Config.debug_mode then Unix.unlink verbose_out_file
+  match (compiler, Config.capture_blacklist) with
+  (* Simulates Buck support for compilation commands with no source file *)
+  | _ when Config.buck_cache_mode && no_source_file args ->
+      ()
+  | Javac, Some blacklist
+    when let re = Str.regexp blacklist in
+         List.exists ~f:(fun arg -> Str.string_match re arg 0) args ->
+      ()
+  | _ ->
+      let verbose_out_file = compile compiler prog args in
+      if not (InferCommand.equal Config.command Compile) then
+        JMain.from_verbose_out verbose_out_file ;
+      if not Config.debug_mode then Unix.unlink verbose_out_file

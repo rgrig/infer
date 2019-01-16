@@ -1,13 +1,12 @@
 (*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
+
 (* This module adds more variants to some types in AST The implementation extends default one from
    the facebook-clang-plugins repository *)
 
@@ -90,7 +89,8 @@ module TypePointerOrd = struct
         L.(die InternalError)
           "unexpected type_ptr variants: %s, %s" (type_ptr_to_string t1) (type_ptr_to_string t2)
 
-  and compare_qual_type (qt1: Clang_ast_t.qual_type) (qt2: Clang_ast_t.qual_type) =
+
+  and compare_qual_type (qt1 : Clang_ast_t.qual_type) (qt2 : Clang_ast_t.qual_type) =
     if phys_equal qt1 qt2 then 0
     else
       (* enable warning here to warn and update comparison funtion when new field is added *)

@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.checkers;
@@ -23,7 +21,8 @@ interface AnnotatedInterface {
 
 interface AnnotatedInterfaceMethod {
 
-  @ThreadSafe public void foo();
+  @ThreadSafe
+  public void foo();
 }
 
 class NotThreadSafe {
@@ -36,7 +35,6 @@ class NotThreadSafe {
 interface ThreadConfinedInterface {
   void foo();
 }
-
 
 interface ThreadConfinedMethod {
 
@@ -75,4 +73,32 @@ public class Dispatch {
     t.foo();
   }
 
+  public void callUnderLock(AnnotatedInterface i) {
+    synchronized (this) {
+      i.foo();
+    }
+  }
+}
+
+class Some {
+
+  void callFromElsewhere(Dispatch d, AnnotatedInterface i) {
+    d.callUnderLock(i);
+  }
+}
+
+@ThreadSafe
+class ThreadConfinedField {
+  @ThreadConfined(ThreadConfined.ANY)
+  UnannotatedInterface mThreadConfined;
+
+  UnannotatedInterface mNormal;
+
+  void interfaceCallOnThreadConfinedFieldOk() {
+    mThreadConfined.foo();
+  }
+
+  void interfaceCallOnNormalFieldBad() {
+    mNormal.foo();
+  }
 }

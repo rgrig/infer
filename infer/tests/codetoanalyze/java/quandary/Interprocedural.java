@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.quandary;
@@ -26,7 +24,6 @@ class Interprocedural {
   }
 
   /** source tests */
-
   public static Object returnSourceDirect() {
     return InferTaint.inferSecretSource();
   }
@@ -99,7 +96,6 @@ class Interprocedural {
   }
 
   /** sink tests */
-
   public static void callSinkParam1(Object param1, Object param2) {
     InferTaint.inferSensitiveSink(param1);
   }
@@ -203,7 +199,6 @@ class Interprocedural {
   }
 
   /** passthrough tests */
-
   public static void singlePassthroughBad() {
     Object source = InferTaint.inferSecretSource();
     Object launderedSource = id(source);
@@ -218,7 +213,6 @@ class Interprocedural {
   }
 
   /** false positives: an ideal analysis would not report these, but we will */
-
   public static Object returnSourceConditional(boolean b) {
     if (b) return InferTaint.inferSecretSource();
     return null;
@@ -228,8 +222,8 @@ class Interprocedural {
     InferTaint.inferSensitiveSink(returnSourceConditional(false));
   }
 
-   public static void reassignInCallee(Obj o) {
-     o.f = null;
+  public static void reassignInCallee(Obj o) {
+    o.f = null;
   }
 
   public static void FP_reassignInCallee() {
@@ -305,7 +299,7 @@ class Interprocedural {
   }
 
   void diverge() {
-    for (;;);
+    for (; ; ) ;
   }
 
   // we don't propagate divergence in callees to callers
@@ -317,12 +311,10 @@ class Interprocedural {
 
   public static void callSinkThenDiverge(Object param) {
     InferTaint.inferSensitiveSink(param);
-    for (;;);
+    for (; ; ) ;
   }
 
-  // this fails because the exit block in callSinkThenDiverge is unreachable, so the summary is
-  // empty.
-  public void FN_callSinkThenDivergeBad() {
+  public void callSinkThenDivergeBad() {
     callSinkThenDiverge(InferTaint.inferSecretSource());
   }
 
@@ -427,5 +419,4 @@ class Interprocedural {
     assignSourceToParam(o);
     InferTaint.inferSensitiveSink(o);
   }
-
 }

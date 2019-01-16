@@ -1,17 +1,14 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.quandary;
 
 import android.app.Activity;
 import android.content.Intent;
-
 import com.facebook.infer.builtins.InferTaint;
 
 class Obj {
@@ -27,9 +24,8 @@ public class TaintedFormals {
   }
 
   // taintedFormal1 and taintedFormal2 were are modeled as tainted
-  public void taintedContextBad(String taintedFormal1,
-                                Intent untaintedFormal,
-                                Integer taintedFormal2) {
+  public void taintedContextBad(
+      String taintedFormal1, Intent untaintedFormal, Integer taintedFormal2) {
     InferTaint.inferSensitiveSink(taintedFormal1); // should report here
     InferTaint.inferSensitiveSink(taintedFormal2); // should report here
     callSink(taintedFormal1); // should report here
@@ -60,5 +56,4 @@ public class TaintedFormals {
   public void callTaintedContextOk2() {
     taintedContextBad(null, null, new Integer(1));
   }
-
 }

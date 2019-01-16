@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -25,7 +23,7 @@ module Target = struct
         L.(die ExternalError) "cannot parse target %s" target
 
 
-  let to_string {name; flavors} = F.asprintf "%s#%a" name (Pp.comma_seq Pp.string) flavors
+  let to_string {name; flavors} = F.asprintf "%s#%a" name (Pp.comma_seq F.pp_print_string) flavors
 
   let add_flavor_internal target flavor =
     if List.mem ~equal:String.equal target.flavors flavor then
@@ -36,17 +34,13 @@ module Target = struct
 
   let add_flavor ~extra_flavors target =
     let target = List.fold_left ~f:add_flavor_internal ~init:target extra_flavors in
-    match (Config.buck_compilation_database, Config.analyzer) with
+    match (Config.buck_compilation_database, Config.command) with
     | Some _, _ ->
         add_flavor_internal target "compilation-database"
-    | None, CompileOnly ->
+    | None, Compile ->
         target
-    | None, (CaptureOnly | Checkers | Linters) ->
+    | None, _ ->
         add_flavor_internal target "infer-capture-all"
-    | None, Crashcontext ->
-        L.(die UserError)
-          "Analyzer %s is Java-only; not supported with Buck flavors"
-          (Config.string_of_analyzer Config.analyzer)
 end
 
 let parse_target_string =
@@ -104,7 +98,7 @@ module Query = struct
 
   let rec pp fmt = function
     | Target s ->
-        Pp.string fmt s
+        F.pp_print_string fmt s
     | Kind {pattern; expr} ->
         F.fprintf fmt "kind(%s, %a)" pattern pp expr
     | Deps {depth= None; expr} ->
@@ -112,14 +106,14 @@ module Query = struct
     | Deps {depth= Some depth; expr} ->
         F.fprintf fmt "deps(%a, %d)" pp expr depth
     | Set sl ->
-        F.fprintf fmt "set(%a)" (Pp.seq Pp.string) sl
+        F.fprintf fmt "set(%a)" (Pp.seq F.pp_print_string) sl
     | Union exprs ->
         Pp.seq ~sep:" + " pp fmt exprs
 
 
   let exec expr =
     let query = F.asprintf "%a" pp expr in
-    let cmd = ["buck"; "query"; query] in
+    let cmd = ["buck"; "query"] @ List.rev_append Config.buck_build_args_no_inline [query] in
     let tmp_prefix = "buck_query_" in
     let debug = L.(debug Capture Medium) in
     Utils.with_process_lines ~debug ~cmd ~tmp_prefix ~f:Fn.id
@@ -128,12 +122,27 @@ end
 let accepted_buck_commands = ["build"]
 
 let parameters_with_argument =
-  ["--build-report"; "--config"; "-j"; "--num-threads"; "--out"; "-v"; "--verbose"]
+  [ "--buck-binary"
+  ; "--build-report"
+  ; "--build-state-file"
+  ; "-c"
+  ; "--config"
+  ; "--config-file"
+  ; "-j"
+  ; "--just-build"
+  ; "--num-threads"
+  ; "--out"
+  ; "--output-events-to-file"
+  ; "--output-test-events-to-file"
+  ; "--rulekeys-log-path"
+  ; "--target-platforms"
+  ; "-v"
+  ; "--verbose" ]
 
 
 let get_accepted_buck_kinds_pattern () =
-  if Option.is_some Config.buck_compilation_database then "(apple|cxx)_(binary|library|test)"
-  else "(apple|cxx)_(binary|library)"
+  if Option.is_some Config.buck_compilation_database then "^(apple|cxx)_(binary|library|test)$"
+  else "^(apple|cxx)_(binary|library)$"
 
 
 let max_command_line_length = 50
@@ -144,7 +153,8 @@ let resolve_pattern_targets ~filter_kind ~dep_depth targets =
   targets |> List.rev_map ~f:Query.target |> Query.set
   |> (match dep_depth with None -> Fn.id | Some depth -> Query.deps ?depth)
   |> (if filter_kind then Query.kind ~pattern:(get_accepted_buck_kinds_pattern ()) else Fn.id)
-  |> Query.exec |> die_if_empty (fun die -> die "*** buck query returned no targets.")
+  |> Query.exec
+  |> die_if_empty (fun die -> die "*** buck query returned no targets.")
 
 
 let resolve_alias_targets aliases =
@@ -154,7 +164,7 @@ let resolve_alias_targets aliases =
   let tmp_prefix = "buck_targets_" in
   let on_result_lines =
     die_if_empty (fun die ->
-        die "*** No alias found for: '%a'." (Pp.seq ~sep:"', '" Pp.string) aliases )
+        die "*** No alias found for: '%a'." (Pp.seq ~sep:"', '" F.pp_print_string) aliases )
   in
   Utils.with_process_lines ~debug ~cmd ~tmp_prefix ~f:on_result_lines
 
@@ -175,8 +185,9 @@ let split_buck_command buck_cmd =
       (command, args)
   | _ ->
       L.(die UserError)
-        "ERROR: cannot parse buck command `%a`. Expected %a." (Pp.seq Pp.string) buck_cmd
-        (Pp.seq ~sep:" or " Pp.string) accepted_buck_commands
+        "ERROR: cannot parse buck command `%a`. Expected %a." (Pp.seq F.pp_print_string) buck_cmd
+        (Pp.seq ~sep:" or " F.pp_print_string)
+        accepted_buck_commands
 
 
 (** Given a list of arguments return the extended list of arguments where
@@ -208,7 +219,8 @@ let add_flavors_to_buck_arguments ~filter_kind ~dep_depth ~extra_flavors origina
         parsed_args
     | param :: arg :: args when List.mem ~equal:String.equal parameters_with_argument param ->
         parse_cmd_args
-          {parsed_args with rev_not_targets'= arg :: param :: parsed_args.rev_not_targets'} args
+          {parsed_args with rev_not_targets'= arg :: param :: parsed_args.rev_not_targets'}
+          args
     | target :: args ->
         let parsed_args =
           match parse_target_string target with
@@ -238,7 +250,8 @@ let add_flavors_to_buck_arguments ~filter_kind ~dep_depth ~extra_flavors origina
   match targets with
   | [] ->
       L.(die UserError)
-        "ERROR: no targets found in Buck command `%a`." (Pp.seq Pp.string) original_buck_args
+        "ERROR: no targets found in Buck command `%a`." (Pp.seq F.pp_print_string)
+        original_buck_args
   | _ ->
       let rev_not_targets = parsed_args.rev_not_targets' in
       let targets =
@@ -258,12 +271,12 @@ let rec exceed_length ~max = function
 
 
 let store_args_in_file args =
-  if exceed_length ~max:max_command_line_length args then
-    let file = Filename.temp_file "buck_targets_" ".txt" in
+  if exceed_length ~max:max_command_line_length args then (
+    let file = Filename.temp_file "buck_targets" ".txt" in
     let write_args outc = Out_channel.output_string outc (String.concat ~sep:"\n" args) in
     let () = Utils.with_file_out file ~f:write_args in
     L.(debug Capture Quiet) "Buck targets options stored in file '%s'@\n" file ;
-    [Printf.sprintf "@%s" file]
+    [Printf.sprintf "@%s" file] )
   else args
 
 

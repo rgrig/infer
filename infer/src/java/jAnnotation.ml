@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -16,7 +14,7 @@ let translate a : Annot.t =
   let class_name = JBasics.cn_name a.JBasics.kind in
   let rec translate_value_pair acc (x, value) =
     match value with
-    | JBasics.EVArray ((JBasics.EVCstString s) :: l) ->
+    | JBasics.EVArray (JBasics.EVCstString s :: l) ->
         translate_value_pair (s :: acc) (x, JBasics.EVArray l)
     | JBasics.EVCstString s ->
         s :: acc
@@ -46,6 +44,6 @@ let translate_item avlist : Annot.Item.t =
 let translate_method ann : Annot.Method.t =
   let global_ann = ann.Javalib.ma_global in
   let param_ann = ann.Javalib.ma_parameters in
-  let ret_item = translate_item global_ann in
-  let param_items = List.map ~f:translate_item param_ann in
-  (ret_item, param_items)
+  let return = translate_item global_ann in
+  let params = List.map ~f:translate_item param_ann in
+  {return; params}

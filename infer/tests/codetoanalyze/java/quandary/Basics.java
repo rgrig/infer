@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.quandary;
@@ -12,14 +10,13 @@ package codetoanalyze.java.quandary;
 import com.facebook.infer.builtins.InferTaint;
 
 /** testing basic intraprocedural functionality: assignment, ifs, loops, casts */
-
 public class Basics {
 
   native Object notASource();
+
   native void notASink(Object o);
 
   /** should report on these tests */
-
   void directBad() {
     InferTaint.inferSensitiveSink(InferTaint.inferSecretSource());
   }
@@ -99,40 +96,40 @@ public class Basics {
   void switchBad1(int i) {
     Object src = InferTaint.inferSecretSource();
     switch (i) {
-    case 1:
-      InferTaint.inferSensitiveSink(src);
-      break;
-    case 2:
-      break;
-    default:
-      break;
+      case 1:
+        InferTaint.inferSensitiveSink(src);
+        break;
+      case 2:
+        break;
+      default:
+        break;
     }
   }
 
   void switchBad2(int i) {
     Object src = InferTaint.inferSecretSource();
     switch (i) {
-    case 1:
-      break;
-    case 2:
-      InferTaint.inferSensitiveSink(src);
-      break;
-    default:
-      break;
+      case 1:
+        break;
+      case 2:
+        InferTaint.inferSensitiveSink(src);
+        break;
+      default:
+        break;
     }
   }
 
   void switchBad3(int i) {
     Object src = null;
     switch (i) {
-    case 1:
-      src = InferTaint.inferSecretSource();
-      // fallthrough
-    case 2:
-      InferTaint.inferSensitiveSink(src);
-      break;
-    default:
-      break;
+      case 1:
+        src = InferTaint.inferSecretSource();
+        // fallthrough
+      case 2:
+        InferTaint.inferSensitiveSink(src);
+        break;
+      default:
+        break;
     }
   }
 
@@ -162,12 +159,20 @@ public class Basics {
 
   void arrayWithTaintedContentsBad() {
     Object src = InferTaint.inferSecretSource();
-    Object[] arr = new Object[] { src };
+    Object[] arr = new Object[] {src};
     InferTaint.inferSensitiveSink(arr);
   }
 
-  /** should not report on these tests */
+  void funCallBad1() {
+    Object src = InferTaint.inferSecretSource();
+    funCallBad2(2, src);
+  }
 
+  void funCallBad2(int x, Object src) {
+    InferTaint.inferSensitiveSink(src);
+  }
+
+  /** should not report on these tests */
   void directOk1() {
     notASink(notASource());
   }
@@ -200,7 +205,7 @@ public class Basics {
   }
 
   void synchronizedOk(Object o) {
-    synchronized(o) {
+    synchronized (o) {
     }
   }
 
@@ -209,9 +214,10 @@ public class Basics {
     synchronizedOk(o);
   }
 
-  /** "known false positive" tests demonstrating limitations. an ideal analysis would not report on
-      these tests, but we do. */
-
+  /**
+   * "known false positive" tests demonstrating limitations. an ideal analysis would not report on
+   * these tests, but we do.
+   */
   void FP_deadCodeOk() {
     Object src = InferTaint.inferSecretSource();
     boolean b = false;
@@ -227,5 +233,4 @@ public class Basics {
     }
     InferTaint.inferSensitiveSink(src);
   }
-
 }

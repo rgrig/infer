@@ -1,18 +1,14 @@
-# Copyright (c) 2016 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2016-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 TESTS_DIR = ../../..
-
-ANALYZER = checkers
 
 # use our own clang's standard library so that the tests are uniform across distributions
 CLANG_OPTIONS = -x c++ -std=c++1y -isystem$(ROOT_DIR) -c
 INFER_OPTIONS = --biabduction-only --ml-buckets cpp --debug-exceptions --project-root $(TESTS_DIR) \
-                --pmd-xml --report-custom-error
+                --pmd-xml --report-custom-error --cxx-infer-headers
 INFERPRINT_OPTIONS = --issues-tests
 
 SOURCES = \
@@ -67,6 +63,7 @@ SOURCES = \
   $(wildcard subtyping/*.cpp) \
   $(wildcard templates/*.cpp) \
   $(wildcard types/*.cpp) \
+	$(wildcard use_after_free/*.cpp) \
   $(wildcard vector/*.cpp) \
 
 include $(TESTS_DIR)/clang.make

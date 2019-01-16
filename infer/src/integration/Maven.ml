@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 open! IStd
 module CLOpt = CommandLineOption
@@ -24,6 +22,7 @@ let infer_profile =
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-compiler-plugin</artifactId>
+            <version>3.8.0</version>
             <configuration>
               <compilerId>javac</compilerId>
               <forceJavacCompilerUse>true</forceJavacCompilerUse>
@@ -35,7 +34,7 @@ let infer_profile =
       </build>
     </profile>|}
        infer_profile_name
-       (Config.bin_dir ^/ CLOpt.infer_exe_name))
+       (Config.bin_dir ^/ InferCommand.infer_exe_name))
 
 
 let pom_worklist = ref [CLOpt.init_work_dir]
@@ -61,8 +60,7 @@ let add_infer_profile_to_xml dir maven_xml infer_xml =
         let tag_name = snd (fst tag) in
         if String.equal tag_name "profiles" then found_profiles_tag := true ;
         process xml_in xml_out (tag_name :: tag_stack)
-    | `El_end
-      -> (
+    | `El_end -> (
         ( match tag_stack with
         | "profiles" :: _ when not !found_infer_profile ->
             (* found the </profiles> tag but no infer profile found, add one *)
@@ -149,12 +147,12 @@ let add_profile_to_pom_in_directory dir =
   Unix.rename ~src:maven_pom_path ~dst:saved_pom_path ;
   Epilogues.register
     ~f:(fun () -> Unix.rename ~src:saved_pom_path ~dst:maven_pom_path)
-    "restoring Maven's pom.xml to its original state" ;
+    ~description:"restoring Maven's pom.xml to its original state" ;
   Unix.rename ~src:infer_pom_path ~dst:maven_pom_path ;
   if Config.debug_mode then
     Epilogues.register
       ~f:(fun () -> Unix.rename ~src:maven_pom_path ~dst:infer_pom_path)
-      "saving infer's pom.xml"
+      ~description:"saving infer's pom.xml"
 
 
 let capture ~prog ~args =
@@ -169,12 +167,13 @@ let capture ~prog ~args =
     "Running maven capture:@\n%s %s@." prog
     (String.concat ~sep:" " (List.map ~f:(Printf.sprintf "'%s'") capture_args)) ;
   (* let children infer processes know that they are spawned by Maven *)
-  Unix.fork_exec ~prog ~argv:(prog :: capture_args) ~env:Config.env_inside_maven () |> Unix.waitpid
+  Unix.fork_exec ~prog ~argv:(prog :: capture_args) ~env:Config.env_inside_maven ()
+  |> Unix.waitpid
   |> function
-    | Ok () ->
-        ()
-    | Error _ as status ->
-        L.(die UserError)
-          "*** Maven command failed:@\n*** %s@\n*** %s@\n"
-          (String.concat ~sep:" " (prog :: capture_args))
-          (Unix.Exit_or_signal.to_string_hum status)
+  | Ok () ->
+      ()
+  | Error _ as status ->
+      L.(die UserError)
+        "*** Maven command failed:@\n*** %s@\n*** %s@\n"
+        (String.concat ~sep:" " (prog :: capture_args))
+        (Unix.Exit_or_signal.to_string_hum status)

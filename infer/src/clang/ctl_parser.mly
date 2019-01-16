@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 %{
@@ -48,12 +46,13 @@
 %token GLOBAL_MACROS
 %token GLOBAL_PATHS
 %token HASHIMPORT
-%token LESS_THAN
-%token GREATER_THAN
 %token ET
 %token WITH_TRANSITION
 %token WHEN
 %token HOLDS_IN_NODE
+%token HOLDS_IN_OBJCCLASS
+%token INTERFACE
+%token IMPLEMENTATION
 %token SET
 %token LET
 %token TRUE
@@ -65,13 +64,14 @@
 %token ASSIGNMENT
 %token SEMICOLON
 %token COMMA
+%token LEFT_SQBRACE
+%token RIGHT_SQBRACE
 %token AND
 %token OR
 %token NOT
 %token IMPLIES
 %token REGEXP
 %token <string> IDENTIFIER
-%token <string> FILE_IDENTIFIER
 %token <string> STRING
 %token WHITELIST_PATH
 %token BLACKLIST_PATH
@@ -120,8 +120,8 @@ al_file:
 
 import_files:
   | { [] }
-  | HASHIMPORT LESS_THAN file_identifier GREATER_THAN import_files
-    { L.(debug Linters Verbose) "Parsed import clauses...@\n@\n"; $3 :: $5 }
+  | HASHIMPORT STRING import_files
+    { L.(debug Linters Verbose) "Parsed import clauses...@\n@\n"; $2 :: $3 }
   ;
 
 global_macros:
@@ -260,6 +260,16 @@ formula_with_paren:
  | LEFT_PAREN formula RIGHT_PAREN { $2 }
 ;
 
+when_formula:
+| INTERFACE  LEFT_SQBRACE formula RIGHT_SQBRACE
+  IMPLEMENTATION LEFT_SQBRACE formula RIGHT_SQBRACE HOLDS_IN_OBJCCLASS
+   { L.(debug Linters Verbose) "\tParsed HOLDS-IN-OBJC-CLASS @\n";
+        CTL.InObjCClass ($3, $7) }
+| formula HOLDS_IN_NODE node_list
+     { L.(debug Linters Verbose) "\tParsed InNode@\n"; CTL.InNode ($3, $1)}
+;
+
+
 formula:
   | formula_with_paren { $1 }
   | formula_id { CTL.Atomic($1, []) }
@@ -282,8 +292,7 @@ formula:
   | formula EF WITH_TRANSITION transition_label
      { L.(debug Linters Verbose) "\tParsed EF WITH-TRANSITION '%a'@\n" CTL.Debug.pp_transition $4;
        CTL.EF($4, $1) }
-  | WHEN formula HOLDS_IN_NODE node_list
-     { L.(debug Linters Verbose) "\tParsed InNode@\n"; CTL.InNode ($4, $2)}
+  | WHEN when_formula { $2 }
   | ET node_list WITH_TRANSITION transition_label formula_EF
      { L.(debug Linters Verbose) "\tParsed ET with transition '%a'@\n" CTL.Debug.pp_transition $4;
        CTL.ET ($2, $4, $5)}
@@ -328,10 +337,5 @@ alexp:
  identifier:
   | IDENTIFIER { is_not_infer_reserved_id $1;
                  L.(debug Linters Verbose) "\tParsed identifier '%s'@\n" $1; $1 }
-  ;
-
-file_identifier:
-  | FILE_IDENTIFIER { is_not_infer_reserved_id $1;
-                      L.(debug Linters Verbose) "\tParsed file identifier '%s'@\n" $1; $1 }
   ;
 %%

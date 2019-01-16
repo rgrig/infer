@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** Symbolic Operations and Failures: the units in which analysis work is measured *)
@@ -19,8 +17,8 @@ type failure_kind =
   | FKrecursion_timeout of int  (** max recursion level exceeded *)
   | FKcrash of string  (** uncaught exception or failed assertion *)
 
+(** failure that prevented analysis from finishing *)
 exception Analysis_failure_exe of failure_kind
-    (** failure that prevented analysis from finishing *)
 
 let exn_not_failure = function Analysis_failure_exe _ -> false | _ -> true
 
@@ -29,10 +27,10 @@ let try_finally ~f ~finally =
   | r ->
       finally () ; r
   | exception (Analysis_failure_exe _ as f_exn) ->
-      reraise_after f_exn ~f:(fun () ->
+      IExn.reraise_after f_exn ~f:(fun () ->
           try finally () with _ -> (* swallow in favor of the original exception *) () )
   | exception f_exn ->
-      reraise_after f_exn ~f:(fun () ->
+      IExn.reraise_after f_exn ~f:(fun () ->
           try finally ()
           with
           | finally_exn
@@ -43,14 +41,16 @@ let try_finally ~f ~finally =
 
 let pp_failure_kind fmt = function
   | FKtimeout ->
-      F.fprintf fmt "TIMEOUT"
+      F.pp_print_string fmt "TIMEOUT"
   | FKsymops_timeout symops ->
       F.fprintf fmt "SYMOPS TIMEOUT (%d)" symops
   | FKrecursion_timeout level ->
-      F.fprintf fmt "RECURSION TIMEOUT(%d)" level
+      F.fprintf fmt "RECURSION TIMEOUT (%d)" level
   | FKcrash msg ->
       F.fprintf fmt "CRASH (%s)" msg
 
+
+let failure_kind_to_string failure_kind = Format.asprintf "%a" pp_failure_kind failure_kind
 
 (** Count the number of symbolic operations *)
 

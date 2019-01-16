@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -75,6 +73,12 @@ let type_desc_of_builtin_type_kind builtin_type_kind =
       Typ.Tvoid
 
 
+let type_of_builtin_type_kind ?(is_const = false) builtin_type_kind =
+  let desc = type_desc_of_builtin_type_kind builtin_type_kind in
+  let quals = Typ.mk_type_quals ~is_const () in
+  Typ.mk ~quals desc
+
+
 let pointer_attribute_of_objc_attribute attr_info =
   match attr_info.Clang_ast_t.ati_lifetime with
   | `OCL_None | `OCL_Strong ->
@@ -87,24 +91,26 @@ let pointer_attribute_of_objc_attribute attr_info =
       Typ.Pk_objc_autoreleasing
 
 
-let rec build_array_type translate_decl tenv (qual_type: Clang_ast_t.qual_type) length_opt
+let rec build_array_type translate_decl tenv (qual_type : Clang_ast_t.qual_type) length_opt
     stride_opt =
   let array_type = qual_type_to_sil_type translate_decl tenv qual_type in
   let length = Option.map ~f:IntLit.of_int length_opt in
   let stride = Option.map ~f:IntLit.of_int stride_opt in
-  Typ.Tarray (array_type, length, stride)
+  Typ.Tarray {elt= array_type; length; stride}
+
 
 and type_desc_of_attr_type translate_decl tenv type_info attr_info =
   match type_info.Clang_ast_t.ti_desugared_type with
   | Some type_ptr -> (
     match CAst_utils.get_type type_ptr with
-    | Some Clang_ast_t.ObjCObjectPointerType (_, qual_type) ->
+    | Some (Clang_ast_t.ObjCObjectPointerType (_, qual_type)) ->
         let typ = qual_type_to_sil_type translate_decl tenv qual_type in
         Typ.Tptr (typ, pointer_attribute_of_objc_attribute attr_info)
     | _ ->
         type_ptr_to_type_desc translate_decl tenv type_ptr )
   | None ->
       Typ.Tvoid
+
 
 and type_desc_of_c_type translate_decl tenv c_type : Typ.desc =
   let open Clang_ast_t in
@@ -131,7 +137,7 @@ and type_desc_of_c_type translate_decl tenv c_type : Typ.desc =
   | ConstantArrayType (_, {arti_element_type; arti_stride}, n) ->
       build_array_type translate_decl tenv arti_element_type (Some n) arti_stride
   | FunctionProtoType _ | FunctionNoProtoType _ ->
-      Typ.Tfun false
+      Typ.Tfun {no_return= false}
   | ParenType (_, qual_type) ->
       (qual_type_to_sil_type translate_decl tenv qual_type).Typ.desc
   | DecayedType (_, qual_type) ->
@@ -153,7 +159,7 @@ and type_desc_of_c_type translate_decl tenv c_type : Typ.desc =
   | AttributedType (type_info, attr_info) ->
       (* TODO desugar to qualtyp *)
       type_desc_of_attr_type translate_decl tenv type_info attr_info
-  | _ ->
+  | _ -> (
       (* TypedefType, etc *)
       let type_info = Clang_ast_proj.get_type_tuple c_type in
       match type_info.Clang_ast_t.ti_desugared_type with
@@ -161,12 +167,14 @@ and type_desc_of_c_type translate_decl tenv c_type : Typ.desc =
       | Some typ ->
           type_ptr_to_type_desc translate_decl tenv typ
       | None ->
-          Typ.Tvoid
+          Typ.Tvoid )
+
 
 and decl_ptr_to_type_desc translate_decl tenv decl_ptr : Typ.desc =
   let open Clang_ast_t in
   let typ = Clang_ast_extend.DeclPtr decl_ptr in
-  try Clang_ast_extend.TypePointerMap.find typ !CFrontend_config.sil_types_map with Not_found ->
+  try Clang_ast_extend.TypePointerMap.find typ !CFrontend_config.sil_types_map
+  with Caml.Not_found -> (
     match CAst_utils.get_decl decl_ptr with
     | Some (CXXRecordDecl _ as d)
     | Some (RecordDecl _ as d)
@@ -187,18 +195,20 @@ and decl_ptr_to_type_desc translate_decl tenv decl_ptr : Typ.desc =
         L.(debug Capture Verbose)
           "Warning: Decl pointer %s not found."
           (Clang_ast_j.string_of_pointer decl_ptr) ;
-        Typ.Tvoid
+        Typ.Tvoid )
+
 
 and clang_type_ptr_to_type_desc translate_decl tenv type_ptr =
   try Clang_ast_extend.TypePointerMap.find type_ptr !CFrontend_config.sil_types_map
-  with Not_found ->
+  with Caml.Not_found -> (
     match CAst_utils.get_type type_ptr with
     | Some c_type ->
         let type_desc = type_desc_of_c_type translate_decl tenv c_type in
         CAst_utils.update_sil_types_map type_ptr type_desc ;
         type_desc
     | _ ->
-        Typ.Tvoid
+        Typ.Tvoid )
+
 
 and type_ptr_to_type_desc translate_decl tenv type_ptr : Typ.desc =
   match type_ptr with
@@ -220,6 +230,7 @@ and type_ptr_to_type_desc translate_decl tenv type_ptr : Typ.desc =
       Typ.Tvoid
   | _ ->
       L.(die InternalError) "unknown variant for type_ptr"
+
 
 and qual_type_to_sil_type translate_decl tenv qual_type =
   let desc = type_ptr_to_type_desc translate_decl tenv qual_type.Clang_ast_t.qt_type_ptr in

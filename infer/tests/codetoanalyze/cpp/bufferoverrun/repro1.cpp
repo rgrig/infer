@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 #include <cassert>
 #include <cstdlib>
@@ -73,21 +71,21 @@ struct LMB {
 template <typename T>
 struct LM {
   typedef LMB<T> B;
-  void l(lt& t, const lo& o) { lI(t, o); }
-  void tL(lt& t, const lo& o) { lI(t, o); }
-  void u_FP(lt& t, const lo& o) {
-    ASSERT(fB(o) == t.bI);
+  void l(lt& t, const lo& o) { lI_FP(t, o); }
+  void tL(lt& t, const lo& o) { lI_FP(t, o); }
+  void u(lt& t, const lo& o) {
+    ASSERT(fB_FP(o) == t.bI);
     if (t.bI == kBN) {
       return;
     }
-    uI_FP(t.bI, o);
+    uI(t.bI, o);
     t.bI = kBN;
   }
 
  private:
-  BI fB(const lo& o) { return (BI)th((const void*)&o) % b.size() + 1; }
-  void lI(lt& t, const lo& o) {
-    auto bi = fB(o);
+  BI fB_FP(const lo& o) { return (BI)th((const void*)&o) % b.size() + 1; }
+  void lI_FP(lt& t, const lo& o) {
+    auto bi = fB_FP(o);
     auto r = b[bi - 1]->lO(o);
     if (r != TLOR::S) {
       t.bI = kBN;
@@ -95,7 +93,7 @@ struct LM {
     }
     t.bI = bi;
   }
-  void uI_FP(BI bi, const lo& o) { b[bi - 1]->u(o); }
+  void uI(BI bi, const lo& o) { b[bi - 1]->u(o); }
   std::vector<std::unique_ptr<B>> b;
 };
 
@@ -108,10 +106,10 @@ static LM<LMDM>* al;
 static inline void ral_FP(lt* t, ai a) {
   ASSERT(t);
   lo o = alo(a);
-  al->u_FP(*t, o);
+  al->u(*t, o);
 }
 
-static inline void gal(lt* t, ai a) {
+static inline void gal_FP(lt* t, ai a) {
   ASSERT(t);
   lo o = alo(a);
   if (__infer_nondet_int()) {
@@ -135,10 +133,10 @@ struct arh {
   ft i1;
 };
 
-static void am_Good(im* it) {
+static void am_Good_FP(im* it) {
   const arh* ch = (const arh*)it->gKPC();
   const ai a = aft(ch->i1);
   lt at;
-  gal(&at, a);
+  gal_FP(&at, a);
   ral_FP(&at, a);
 }

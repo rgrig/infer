@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -16,8 +14,6 @@ open Javalib_pack
 let builtins_package = "com.facebook.infer.builtins"
 
 let infer_builtins_cl = builtins_package ^ ".InferBuiltins"
-
-let infer_undefined_cl = builtins_package ^ ".InferUndefined"
 
 let obj_type = JBasics.TObject (JBasics.TClass JBasics.java_lang_object)
 
@@ -33,7 +29,7 @@ let out_of_bound_cl = "java.lang.ArrayIndexOutOfBoundsException"
 
 (** {2 Names of special variables, constants and method names} *)
 
-let this = Mangled.from_string "this"
+let this = Mangled.this
 
 let constructor_name = "<init>"
 

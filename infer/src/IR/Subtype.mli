@@ -1,24 +1,19 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** The Smallfoot Intermediate Language: Subtypes *)
 
 open! IStd
-module L = Logging
 module F = Format
 
 type t [@@deriving compare]
 
 val pp : F.formatter -> t -> unit
-
-val sub_type : (Typ.Name.t -> Typ.Name.t) -> t -> t
 
 val exact : t
 
@@ -45,17 +40,9 @@ val is_known_subtype : Tenv.t -> Typ.Name.t -> Typ.Name.t -> bool
     Note that [not (is_known_subtype tenv c1 c2) == true] does not imply
     that [is_known_not_subtype tenv c1 c2 == true] *)
 
-val is_known_not_subtype : Tenv.t -> Typ.Name.t -> Typ.Name.t -> bool
-(** [is_known_not_subtype tenv c1 c2] returns true if there is enough information in [tenv] to prove
-    that [c1] is not a subtype of [c2].
-    Note that [not (is_known_not_subtype tenv c1 c2) == true] does not imply
-    that [is_known_subtype tenv c1 c2 == true] *)
-
-val subtypes_to_string : t -> string
-
 val is_cast : t -> bool
 
-val is_instof : t -> bool
+val is_instof : t -> bool [@@warning "-32"]
 
 val equal_modulo_flag : t -> t -> bool
 (** equality ignoring flags in the subtype *)

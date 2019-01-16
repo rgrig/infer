@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.eradicate;
@@ -17,17 +15,12 @@ public class NullFieldAccess {
   }
 
   interface I {
-    @Nullable
-    C c = null;
+    @Nullable C c = null;
   }
 
-
-  @Nullable
-  C x;
+  @Nullable C x;
   C y;
-  static final
-  @Nullable
-  C z = null;
+  static final @Nullable C z = null;
 
   NullFieldAccess() {
     y = new C();

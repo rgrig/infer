@@ -1,40 +1,27 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 
-(** Support for Execution environments *)
+(** Execution environments: basically a cache of where procedures are and what is their type
+   environment *)
 
-(** initial state, used to add cg's *)
-type initial
+type file_data
 
-(** execution environment: a global call graph, and map from procedure names to cfg and tenv *)
-type t
+type t = private
+  { proc_map: file_data Typ.Procname.Hash.t  (** map from procedure name to file data *)
+  ; file_map: file_data SourceFile.Hash.t  (** map from source files to file data *) }
 
-val mk : SourceFile.t -> t
-(** Create an exe_env from a source file *)
-
-val get_cg : t -> Cg.t
-(** get the global call graph *)
-
-val get_source : t -> Typ.Procname.t -> SourceFile.t option
-(** return the source file associated to the procedure *)
+val mk : unit -> t
+(** Create a new cache *)
 
 val get_tenv : t -> Typ.Procname.t -> Tenv.t
-(** return the type environment associated to the procedure *)
+(** return the type environment associated with the procedure *)
 
-val get_cfg : t -> Typ.Procname.t -> Cfg.t option
-(** return the cfg associated to the procedure *)
-
-val get_proc_desc : t -> Typ.Procname.t -> Procdesc.t option
-(** return the proc desc associated to the procedure *)
-
-val iter_files : (SourceFile.t -> Cfg.t -> unit) -> t -> unit
-(** [iter_files f exe_env] applies [f] to the source file and tenv and cfg for each file in [exe_env] *)
+val get_integer_type_widths : t -> Typ.Procname.t -> Typ.IntegerWidths.t
+(** return the integer type widths associated with the procedure *)

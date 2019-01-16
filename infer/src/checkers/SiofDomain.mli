@@ -1,17 +1,16 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 
 module VarNames : module type of AbstractDomain.FiniteSet (String)
 
-module BottomSiofTrace : module type of AbstractDomain.BottomLifted (SiofTrace)
+module Summary :
+    module type of AbstractDomain.Pair (AbstractDomain.BottomLifted (SiofTrace)) (VarNames)
 
 (* The domain for the analysis is:
 
@@ -29,4 +28,4 @@ module BottomSiofTrace : module type of AbstractDomain.BottomLifted (SiofTrace)
    terminates (even before main() has started). For instance, this is the case for
    std::ios_base::Init::Init(). *)
 
-include module type of AbstractDomain.Pair (AbstractDomain.BottomLifted (SiofTrace)) (VarNames)
+include module type of Summary

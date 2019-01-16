@@ -1,30 +1,28 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 
 (** Functions for transformations of ast nodes *)
 
+val dummy_source_range : unit -> Clang_ast_t.source_range
+
+val dummy_stmt_info : unit -> Clang_ast_t.stmt_info
+
 val get_fresh_pointer : unit -> Clang_ast_t.pointer
-
-val get_invalid_pointer : unit -> Clang_ast_t.pointer
-
-val type_from_unary_expr_or_type_trait_expr_info :
-  Clang_ast_t.unary_expr_or_type_trait_expr_info -> Clang_ast_t.qual_type option
 
 val get_decl : Clang_ast_t.pointer -> Clang_ast_t.decl option
 
 val get_decl_opt : Clang_ast_t.pointer option -> Clang_ast_t.decl option
 
-val get_stmt : Clang_ast_t.pointer -> Clang_ast_t.stmt option
+val get_stmt : Clang_ast_t.pointer -> Clang_ast_t.source_range -> Clang_ast_t.stmt option
 
-val get_stmt_opt : Clang_ast_t.pointer option -> Clang_ast_t.stmt option
+val get_stmt_opt :
+  Clang_ast_t.pointer option -> Clang_ast_t.source_range -> Clang_ast_t.stmt option
 
 val get_decl_opt_with_decl_ref : Clang_ast_t.decl_ref option -> Clang_ast_t.decl option
 
@@ -60,13 +58,16 @@ val get_decl_from_typ_ptr : Clang_ast_t.type_ptr -> Clang_ast_t.decl option
 
 val name_of_typedef_type_info : Clang_ast_t.typedef_type_info -> QualifiedCppName.t
 
-val string_of_qual_type : Clang_ast_t.qual_type -> string
-
-val make_name_decl : string -> Clang_ast_t.named_decl_info
-
-val make_qual_name_decl : string list -> string -> Clang_ast_t.named_decl_info
+val name_opt_of_typedef_qual_type : Clang_ast_t.qual_type -> QualifiedCppName.t option
 
 type qual_type_to_sil_type = Tenv.t -> Clang_ast_t.qual_type -> Typ.t
+
+type procname_from_decl =
+     ?tenv:Tenv.t
+  -> ?block_return_type:Clang_ast_t.qual_type
+  -> ?outer_proc:Typ.Procname.t
+  -> Clang_ast_t.decl
+  -> Typ.Procname.t
 
 val qual_type_of_decl_ptr : Clang_ast_t.pointer -> Clang_ast_t.qual_type
 
@@ -92,8 +93,6 @@ val is_static_local_var : Clang_ast_t.decl -> bool
 val is_const_expr_var : Clang_ast_t.decl -> bool
 (** true if a declaration is a constexpr variable *)
 
-val full_name_of_decl_opt : Clang_ast_t.decl option -> QualifiedCppName.t
-
 val generate_key_stmt : Clang_ast_t.stmt -> string
 (** Generates a key for a statement based on its sub-statements and the statement tag. *)
 
@@ -105,12 +104,6 @@ val get_super_if : Clang_ast_t.decl option -> Clang_ast_t.decl option
     the superclass, if any. *)
 
 val get_impl_decl_info : Clang_ast_t.decl -> Clang_ast_t.obj_c_implementation_decl_info option
-
-val get_super_impl :
-  Clang_ast_t.obj_c_implementation_decl_info
-  -> (Clang_ast_t.decl list * Clang_ast_t.obj_c_implementation_decl_info) option
-(** Given an objc impl decl info, return the super class's list of decls and
-    its objc impl decl info. *)
 
 val get_super_ObjCImplementationDecl :
   Clang_ast_t.obj_c_implementation_decl_info -> Clang_ast_t.decl option
@@ -128,8 +121,6 @@ val is_objc_if_descendant :
     the named `blacklist` argument. *)
 
 val qual_type_to_objc_interface : Clang_ast_t.qual_type -> Clang_ast_t.decl option
-
-val qual_type_is_typedef_named : Clang_ast_t.qual_type -> string -> bool
 
 val is_objc_factory_method :
   class_decl:Clang_ast_t.decl option -> method_decl:Clang_ast_t.decl option -> bool

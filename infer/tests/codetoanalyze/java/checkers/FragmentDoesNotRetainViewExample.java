@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.checkers;
@@ -16,7 +14,6 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ListView;
-import javax.annotation.Nullable;
 
 public class FragmentDoesNotRetainViewExample extends Fragment {
 
@@ -25,13 +22,13 @@ public class FragmentDoesNotRetainViewExample extends Fragment {
     public CustomView(Context c) {
       super(c);
     }
-
   }
 
   View mView1;
   View mView2;
   ViewGroup mViewSubclass;
   CustomView mCustomView;
+  @AutoCleanup View mWillBeCleanedUp;
 
   boolean b;
 
@@ -41,6 +38,7 @@ public class FragmentDoesNotRetainViewExample extends Fragment {
     mView2 = inflater.inflate(-1, container, false);
     mViewSubclass = (ViewGroup) inflater.inflate(-1, container, false);
     mCustomView = (CustomView) inflater.inflate(-1, container, false);
+    mWillBeCleanedUp = inflater.inflate(-1, container, false);
     return container;
   }
 
@@ -53,5 +51,4 @@ public class FragmentDoesNotRetainViewExample extends Fragment {
     mCustomView = null;
     mViewSubclass = null;
   }
-
 }

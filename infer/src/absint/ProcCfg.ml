@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -13,8 +11,6 @@ module F = Format
 (** Control-flow graph for a single procedure (as opposed to cfg.ml, which represents a cfg for a
     file). Defines useful wrappers that allows us to do tricks like turn a forward cfg into a
     backward one, or view a cfg as having a single instruction per node. *)
-
-type index = Node_index | Instr_index of int [@@deriving compare]
 
 module type Node = sig
   type t
@@ -31,12 +27,18 @@ module type Node = sig
 
   val underlying_node : t -> Procdesc.Node.t
 
+  val of_underlying_node : Procdesc.Node.t -> t
+
   val compare_id : id -> id -> int
 
   val pp_id : F.formatter -> id -> unit
+
+  module IdMap : PrettyPrintable.PPMap with type key = id
+
+  module IdSet : PrettyPrintable.PPSet with type elt = id
 end
 
-module DefaultNode = struct
+module DefaultNode : Node with type t = Procdesc.Node.t and type id = Procdesc.Node.id = struct
   type t = Procdesc.Node.t
 
   type id = Procdesc.Node.id
@@ -51,111 +53,126 @@ module DefaultNode = struct
 
   let underlying_node t = t
 
+  let of_underlying_node t = t
+
   let compare_id = Procdesc.Node.compare_id
 
   let pp_id = Procdesc.Node.pp_id
+
+  module OrderedId = struct
+    type t = id
+
+    let compare = compare_id
+
+    let pp = pp_id
+  end
+
+  module IdMap = Procdesc.IdMap
+  module IdSet = PrettyPrintable.MakePPSet (OrderedId)
 end
 
-module InstrNode = struct
-  type t = Procdesc.Node.t
+module InstrNode : sig
+  type instr_index = int
 
-  type id = Procdesc.Node.id * index
+  include
+    Node with type t = Procdesc.Node.t * instr_index and type id = Procdesc.Node.id * instr_index
+end = struct
+  type instr_index = int [@@deriving compare]
 
-  let kind = Procdesc.Node.get_kind
+  type t = Procdesc.Node.t * instr_index
 
-  let underlying_node t = t
+  type id = Procdesc.Node.id * instr_index [@@deriving compare]
 
-  let id t = (Procdesc.Node.get_id (underlying_node t), Node_index)
+  let kind (t, _) = Procdesc.Node.get_kind t
+
+  let underlying_node (t, _) = t
+
+  let of_underlying_node t = (t, 0)
+
+  let id (t, index) = (Procdesc.Node.get_id t, index)
 
   let hash node = Hashtbl.hash (id node)
 
-  let loc t = Procdesc.Node.get_loc t
+  let loc (t, _) = Procdesc.Node.get_loc t
 
-  let compare_index = compare_index
+  let pp_id fmt (id, index) = F.fprintf fmt "(%a: %d)" Procdesc.Node.pp_id id index
 
-  let compare_id (id1, index1) (id2, index2) =
-    let n = Procdesc.Node.compare_id id1 id2 in
-    if n <> 0 then n else compare_index index1 index2
+  module OrderedId = struct
+    type t = id
 
+    let compare = compare_id
 
-  let pp_id fmt (id, index) =
-    match index with
-    | Node_index ->
-        Procdesc.Node.pp_id fmt id
-    | Instr_index i ->
-        F.fprintf fmt "(%a: %d)" Procdesc.Node.pp_id id i
+    let pp = pp_id
+  end
+
+  module IdMap = PrettyPrintable.MakePPMap (OrderedId)
+  module IdSet = PrettyPrintable.MakePPSet (OrderedId)
 end
 
 module type S = sig
   type t
 
-  type node
+  type instrs_dir
 
-  include Node with type t := node
+  module Node : Node
 
-  val instrs : node -> Sil.instr list
+  val instrs : Node.t -> instrs_dir Instrs.t
   (** get the instructions from a node *)
 
-  val instr_ids : node -> (Sil.instr * id option) list
-  (** explode a block into its instructions and an optional id for the instruction. the purpose of
-      this is to specify a policy for fine-grained storage of invariants by the abstract
-      interpreter. the interpreter will forget invariants at program points where the id is None,
-      and remember them otherwise *)
+  val fold_succs : t -> (Node.t, Node.t, 'accum) Container.fold
 
-  val succs : t -> node -> node list
+  val fold_preds : t -> (Node.t, Node.t, 'accum) Container.fold
+  (** fold over all predecessors (normal and exceptional) *)
 
-  val preds : t -> node -> node list
-  (** all predecessors (normal and exceptional) *)
+  val fold_normal_succs : t -> (Node.t, Node.t, 'accum) Container.fold
+  (** fold over non-exceptional successors *)
 
-  val normal_succs : t -> node -> node list
-  (** non-exceptional successors *)
+  val fold_normal_preds : t -> (Node.t, Node.t, 'accum) Container.fold
+  (** fold over non-exceptional predecessors *)
 
-  val normal_preds : t -> node -> node list
-  (** non-exceptional predecessors *)
+  val fold_exceptional_succs : t -> (Node.t, Node.t, 'accum) Container.fold
+  (** fold over exceptional successors *)
 
-  val exceptional_succs : t -> node -> node list
-  (** exceptional successors *)
+  val fold_exceptional_preds : t -> (Node.t, Node.t, 'accum) Container.fold
+  (** fold over exceptional predecessors *)
 
-  val exceptional_preds : t -> node -> node list
-  (** exceptional predescessors *)
+  val start_node : t -> Node.t
 
-  val start_node : t -> node
-
-  val exit_node : t -> node
+  val exit_node : t -> Node.t
 
   val proc_desc : t -> Procdesc.t
 
-  val nodes : t -> node list
+  val fold_nodes : (t, Node.t, 'accum) Container.fold
 
   val from_pdesc : Procdesc.t -> t
 
-  val is_loop_head : Procdesc.t -> node -> bool
+  val is_loop_head : Procdesc.t -> Node.t -> bool
+
+  val wto : t -> Node.t WeakTopologicalOrder.Partition.t
 end
 
 (** Forward CFG with no exceptional control-flow *)
 module Normal = struct
   type t = Procdesc.t
 
-  type node = DefaultNode.t
+  type instrs_dir = Instrs.not_reversed
 
-  include (DefaultNode : module type of DefaultNode with type t := node)
+  module Node = DefaultNode
 
   let instrs = Procdesc.Node.get_instrs
 
-  let instr_ids n = List.map ~f:(fun i -> (i, None)) (instrs n)
+  let fold_normal_succs _ n ~init ~f = n |> Procdesc.Node.get_succs |> List.fold ~init ~f
 
-  let normal_succs _ n = Procdesc.Node.get_succs n
-
-  let normal_preds _ n = Procdesc.Node.get_preds n
+  let fold_normal_preds _ n ~init ~f = n |> Procdesc.Node.get_preds |> List.fold ~init ~f
 
   (* prune away exceptional control flow *)
-  let exceptional_succs _ _ = []
+  let fold_exceptional_succs _ _ ~init ~f:_ = init
 
-  let exceptional_preds _ _ = []
+  let fold_exceptional_preds _ _ ~init ~f:_ = init
 
-  let succs = normal_succs
+  let fold_succs = fold_normal_succs
 
-  let preds = normal_preds
+  let fold_preds = fold_normal_preds
 
   let start_node = Procdesc.get_start_node
 
@@ -163,24 +180,26 @@ module Normal = struct
 
   let proc_desc t = t
 
-  let nodes = Procdesc.get_nodes
+  let fold_nodes = Procdesc.fold_nodes
 
   let from_pdesc pdesc = pdesc
 
   let is_loop_head = Procdesc.is_loop_head
+
+  let wto = Procdesc.get_wto
 end
 
 (** Forward CFG with exceptional control-flow *)
 module Exceptional = struct
-  type node = DefaultNode.t
+  module Node = DefaultNode
 
-  type id_node_map = node list Procdesc.IdMap.t
+  type instrs_dir = Instrs.not_reversed
+
+  type id_node_map = Node.t list Procdesc.IdMap.t
 
   type t = Procdesc.t * id_node_map
 
-  include (DefaultNode : module type of DefaultNode with type t := node)
-
-  let exceptional_succs _ n = Procdesc.Node.get_exn n
+  let fold_exceptional_succs _ n ~init ~f = n |> Procdesc.Node.get_exn |> List.fold ~init ~f
 
   let from_pdesc pdesc =
     (* map from a node to its exceptional predecessors *)
@@ -188,55 +207,60 @@ module Exceptional = struct
       let add_exn_pred exn_preds_acc exn_succ_node =
         let exn_succ_node_id = Procdesc.Node.get_id exn_succ_node in
         let existing_exn_preds =
-          try Procdesc.IdMap.find exn_succ_node_id exn_preds_acc with Not_found -> []
+          try Procdesc.IdMap.find exn_succ_node_id exn_preds_acc with Caml.Not_found -> []
         in
         if not (List.mem ~equal:Procdesc.Node.equal existing_exn_preds n) then
           (* don't add duplicates *)
           Procdesc.IdMap.add exn_succ_node_id (n :: existing_exn_preds) exn_preds_acc
         else exn_preds_acc
       in
-      List.fold ~f:add_exn_pred ~init:exn_preds_acc (exceptional_succs pdesc n)
+      fold_exceptional_succs pdesc n ~f:add_exn_pred ~init:exn_preds_acc
     in
     let exceptional_preds =
-      List.fold ~f:add_exn_preds ~init:Procdesc.IdMap.empty (Procdesc.get_nodes pdesc)
+      Procdesc.fold_nodes pdesc ~f:add_exn_preds ~init:Procdesc.IdMap.empty
     in
     (pdesc, exceptional_preds)
 
 
   let instrs = Procdesc.Node.get_instrs
 
-  let instr_ids n = List.map ~f:(fun i -> (i, None)) (instrs n)
+  let fold_nodes (t, _) ~init ~f = Procdesc.fold_nodes t ~init ~f
 
-  let nodes (t, _) = Procdesc.get_nodes t
+  let fold_normal_succs _ n ~init ~f = n |> Procdesc.Node.get_succs |> List.fold ~init ~f
 
-  let normal_succs _ n = Procdesc.Node.get_succs n
+  let fold_normal_preds _ n ~init ~f = n |> Procdesc.Node.get_preds |> List.fold ~init ~f
 
-  let normal_preds _ n = Procdesc.Node.get_preds n
-
-  let exceptional_preds (_, exn_pred_map) n =
-    try Procdesc.IdMap.find (Procdesc.Node.get_id n) exn_pred_map with Not_found -> []
-
-
-  (** get all normal and exceptional successors of [n]. *)
-  let succs t n =
-    let normal_succs = normal_succs t n in
-    match exceptional_succs t n with
-    | [] ->
-        normal_succs
-    | exceptional_succs ->
-        normal_succs @ exceptional_succs |> List.sort ~cmp:Procdesc.Node.compare
-        |> List.remove_consecutive_duplicates ~equal:Procdesc.Node.equal
+  let fold_exceptional_preds (_, exn_pred_map) n ~init ~f =
+    match Procdesc.IdMap.find (Procdesc.Node.get_id n) exn_pred_map with
+    | exn_preds ->
+        List.fold exn_preds ~init ~f
+    | exception Caml.Not_found ->
+        init
 
 
-  (** get all normal and exceptional predecessors of [n]. *)
-  let preds t n =
-    let normal_preds = normal_preds t n in
-    match exceptional_preds t n with
-    | [] ->
-        normal_preds
-    | exceptional_preds ->
-        normal_preds @ exceptional_preds |> List.sort ~cmp:Procdesc.Node.compare
-        |> List.remove_consecutive_duplicates ~equal:Procdesc.Node.equal
+  let fold_avoid_duplicates fold_normal_alpha fold_normal_idset fold_exceptional t n ~init ~f =
+    (* need a copy of [fold_normal] otherwise OCaml wants the types *)
+    let acc_normal = fold_normal_alpha t n ~init ~f in
+    let normal_set =
+      lazy
+        (fold_normal_idset t n ~init:Node.IdSet.empty ~f:(fun set node ->
+             Node.IdSet.add (Procdesc.Node.get_id node) set ))
+    in
+    let f acc node =
+      if Node.IdSet.mem (Procdesc.Node.get_id node) (Lazy.force_val normal_set) then acc
+      else f acc node
+    in
+    fold_exceptional t n ~init:acc_normal ~f
+
+
+  (** fold over all normal and exceptional successors of [n]. *)
+  let fold_succs t n ~init ~f =
+    fold_avoid_duplicates fold_normal_succs fold_normal_succs fold_exceptional_succs t n ~init ~f
+
+
+  (** fold over all normal and exceptional predecessors of [n]. *)
+  let fold_preds t n ~init ~f =
+    fold_avoid_duplicates fold_normal_preds fold_normal_preds fold_exceptional_preds t n ~init ~f
 
 
   let proc_desc (pdesc, _) = pdesc
@@ -246,58 +270,174 @@ module Exceptional = struct
   let exit_node (pdesc, _) = Procdesc.get_exit_node pdesc
 
   let is_loop_head = Procdesc.is_loop_head
+
+  module WTO = WeakTopologicalOrder.Bourdoncle_SCC (struct
+    module Node = Node
+
+    type t = Procdesc.t
+
+    let fold_succs _cfg n ~init ~f =
+      (* we do not care about duplicate edges *)
+      let init = List.fold ~init ~f (Procdesc.Node.get_succs n) in
+      List.fold ~init ~f (Procdesc.Node.get_exn n)
+
+
+    let start_node = Procdesc.get_start_node
+  end)
+
+  let wto (pdesc, _) = WTO.make pdesc
 end
 
 (** Wrapper that reverses the direction of the CFG *)
-module Backward (Base : S) = struct
-  include Base
+module Backward (Base : S with type instrs_dir = Instrs.not_reversed) = struct
+  include (
+    Base :
+      S with type t = Base.t and type instrs_dir := Base.instrs_dir and module Node = Base.Node )
 
-  let instrs n = List.rev (Base.instrs n)
+  type instrs_dir = Instrs.reversed
 
-  let instr_ids n = List.rev (Base.instr_ids n)
+  let instrs n = Instrs.reverse_order (Base.instrs n)
 
-  let succs = Base.preds
+  let fold_succs = Base.fold_preds
 
-  let preds = Base.succs
+  let fold_preds = Base.fold_succs
 
   let start_node = Base.exit_node
 
   let exit_node = Base.start_node
 
-  let normal_succs = Base.normal_preds
+  let fold_normal_succs = Base.fold_normal_preds
 
-  let normal_preds = Base.normal_succs
+  let fold_normal_preds = Base.fold_normal_succs
 
-  let exceptional_succs = Base.exceptional_preds
+  let fold_exceptional_succs = Base.fold_exceptional_preds
 
-  let exceptional_preds = Base.exceptional_succs
+  let fold_exceptional_preds = Base.fold_exceptional_succs
+
+  module WTO = WeakTopologicalOrder.Bourdoncle_SCC (struct
+    module Node = Node
+
+    type nonrec t = t
+
+    let fold_succs = fold_succs
+
+    let start_node = start_node
+  end)
+
+  let wto = WTO.make
 end
 
-module OneInstrPerNode (Base : S with type node = Procdesc.Node.t and type id = Procdesc.Node.id) =
-struct
-  include (Base : module type of Base with type id := Procdesc.Node.id and type t = Base.t)
+module OneInstrPerNode (Base : S with module Node = DefaultNode) : sig
+  include
+    S with type t = Base.t and module Node = InstrNode and type instrs_dir = Instrs.not_reversed
 
-  type id = Base.id * index
+  val last_of_underlying_node : Procdesc.Node.t -> Node.t
+end = struct
+  type t = Base.t
 
-  include (InstrNode : module type of InstrNode with type t := node and type id := id)
+  type instrs_dir = Instrs.not_reversed
 
-  (* keep the invariants before/after each instruction *)
-  let instr_ids t =
-    List.mapi
-      ~f:(fun i instr ->
-        let id = (Procdesc.Node.get_id t, Instr_index i) in
-        (instr, Some id) )
-      (instrs t)
+  module Node = InstrNode
+
+  let instrs (node, index) =
+    let instrs = Base.instrs node in
+    if Instrs.is_empty instrs then Instrs.empty
+    else Instrs.nth_exn instrs index |> Instrs.singleton
+
+
+  let first_of_node node = (node, 0)
+
+  let last_of_node node = (node, max 0 (Instrs.count (Base.instrs node) - 1))
+
+  let last_of_underlying_node = last_of_node
+
+  let fold_normal_succs _ _ ~init:_ ~f:_ = (* not used *) assert false
+
+  let fold_exceptional_succs _ _ ~init:_ ~f:_ = (* not used *) assert false
+
+  let fold_succs cfg (node, index) ~init ~f =
+    let succ_index = index + 1 in
+    if Instrs.nth_exists (Base.instrs node) succ_index then f init (node, succ_index)
+    else
+      let f acc node = f acc (first_of_node node) in
+      Base.fold_succs cfg node ~init ~f
+
+
+  let call_on_last ~f acc node = f acc (last_of_node node)
+
+  let fold_normal_preds cfg (node, index) ~init ~f =
+    if index >= 1 then f init (node, index - 1)
+    else Base.fold_normal_preds cfg node ~init ~f:(call_on_last ~f)
+
+
+  let fold_exceptional_preds cfg (node, index) ~init ~f =
+    if index >= 1 then init else Base.fold_exceptional_preds cfg node ~init ~f:(call_on_last ~f)
+
+
+  let fold_preds cfg (node, index) ~init ~f =
+    if index >= 1 then f init (node, index - 1)
+    else Base.fold_preds cfg node ~init ~f:(call_on_last ~f)
+
+
+  let start_node cfg = first_of_node (Base.start_node cfg)
+
+  let exit_node cfg = last_of_node (Base.exit_node cfg)
+
+  let proc_desc = Base.proc_desc
+
+  let fold_instr_nodes node ~init ~f =
+    match Base.instrs node |> Instrs.count with
+    | 0 ->
+        f init (node, 0)
+    | nb_instrs ->
+        IContainer.forto nb_instrs ~init ~f:(fun acc index -> f acc (node, index))
+
+
+  let fold_nodes cfg ~init ~f =
+    Base.fold_nodes cfg ~init ~f:(fun acc node -> fold_instr_nodes node ~init:acc ~f)
+
+
+  let from_pdesc = Base.from_pdesc
+
+  let is_loop_head pdesc = function node, 0 -> Base.is_loop_head pdesc node | _ -> false
+
+  let fold_right_instr_nodes node ~init ~f =
+    match Base.instrs node |> Instrs.count with
+    | 0 ->
+        f init (node, 0)
+    | nb_instrs ->
+        IContainer.forto_right nb_instrs ~init ~f:(fun acc index -> f acc (node, index))
+
+
+  let wto cfg =
+    Base.wto cfg |> WeakTopologicalOrder.Partition.expand ~fold_right:fold_right_instr_nodes
 end
 
-module NodeIdMap (CFG : S) = Caml.Map.Make (struct
-  type t = CFG.id
+module NormalOneInstrPerNode = OneInstrPerNode (Normal)
 
-  let compare = CFG.compare_id
-end)
+(* Make ProcCfg compatible with ocamlgraph *)
+module MakeOcamlGraph (Base : S) = struct
+  type t = Base.t
 
-module NodeIdSet (CFG : S) = Caml.Set.Make (struct
-  type t = CFG.id
+  module V = struct
+    type t = Base.Node.t
 
-  let compare = CFG.compare_id
-end)
+    let compare n1 n2 = Base.Node.compare_id (Base.Node.id n1) (Base.Node.id n2)
+
+    let equal = [%compare.equal: t]
+
+    let hash = Base.Node.hash
+  end
+
+  let pred g = IContainer.to_rev_list ~fold:(Base.fold_normal_preds g)
+
+  let succ g = IContainer.to_rev_list ~fold:(Base.fold_normal_succs g)
+
+  let iter_succ f g node = Container.iter ~fold:(Base.fold_normal_succs g) ~f node
+
+  let fold_vertex f g init = Base.fold_nodes ~init ~f:(Fn.flip f) g
+
+  let iter_vertex f g = Container.iter ~fold:Base.fold_nodes g ~f
+
+  let nb_vertex = Container.length ~fold:Base.fold_nodes
+end

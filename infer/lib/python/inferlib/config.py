@@ -1,9 +1,7 @@
-# Copyright (c) 2015 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2015-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 from __future__ import absolute_import
 from __future__ import division
@@ -39,6 +37,7 @@ WRAPPERS_DIRECTORY = os.path.join(LIB_DIRECTORY, 'wrappers')
 DEFAULT_INFER_OUT = os.path.join(os.getcwd().decode(CODESET), 'infer-out')
 
 JSON_REPORT_FILENAME = 'report.json'
+JSON_COSTS_REPORT_FILENAME = 'costs-report.json'
 INFER_BUCK_DEPS_FILENAME = 'infer-deps.txt'
 BUGS_FILENAME = 'bugs.txt'
 JAVAC_FILELISTS_FILENAME = 'filelists'
@@ -47,7 +46,7 @@ PMD_XML_FILENAME = 'report.xml'
 IOS_CAPTURE_ERRORS = 'errors'
 IOS_BUILD_OUTPUT = 'build_output'
 
-LOG_FILE = 'toplevel.log'
+LOG_FILE = 'infer.py.log'
 
 BUCK_INFER_OUT = 'infer'
 
@@ -58,21 +57,3 @@ TRASH = '.trash'
 BUCK_OUT_TRASH = os.path.join(BUCK_OUT, TRASH)
 
 BUCK_OUT_GEN = os.path.join(BUCK_OUT, 'gen')
-
-
-# list of possible analyzers
-ANALYZER_INFER = 'infer'
-ANALYZER_CHECKERS = 'checkers'
-ANALYZER_CAPTURE = 'capture'
-ANALYZER_COMPILE = 'compile'
-ANALYZER_CRASHCONTEXT = 'crashcontext'
-ANALYZER_LINTERS = 'linters'
-
-ANALYZERS = [
-    ANALYZER_CAPTURE,
-    ANALYZER_CHECKERS,
-    ANALYZER_COMPILE,
-    ANALYZER_CRASHCONTEXT,
-    ANALYZER_INFER,
-    ANALYZER_LINTERS,
-]

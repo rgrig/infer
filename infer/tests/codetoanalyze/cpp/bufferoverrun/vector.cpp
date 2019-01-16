@@ -1,13 +1,12 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 #include <vector>
 #include <list>
+#include <assert.h>
 
 void out_of_bound_Bad(std::vector<int> v) {
   unsigned int n = v.size();
@@ -155,4 +154,70 @@ void data_Bad() {
   int* p = v.data();
   p[4] = 10;
   p[v[4]] = 1;
+}
+
+void assert_Good() {
+  std::vector<int> v;
+  for (int i = 0; i < 5; i++) {
+    v.push_back(1);
+  }
+  assert(v.size() == 5);
+  v[4] = 1;
+}
+
+void assert_Good_FP(int x) {
+  std::vector<int> v;
+  for (int i = 0; i < 5; i++) {
+    v.push_back(1);
+  }
+  assert(((v.size() == 5) ? 1 : 0) ? 1 : 0);
+  v[4] = 1;
+}
+
+void assert_Bad() {
+  std::vector<int> v;
+  for (int i = 0; i < 5; i++) {
+    v.push_back(1);
+  }
+  assert(v.size() == 5);
+  v[6] = 1;
+}
+
+class CharVector {
+ public:
+  CharVector(char* init) : a(init) {}
+
+  char& operator[](int idx) { return a[idx]; }
+
+ private:
+  char* a;
+};
+
+void access_in_sixth(int count, CharVector v) {
+  assert(count >= 0);
+  assert(count < 5);
+  v[count + 1] = '0';
+}
+
+void access_minus_one(int count, CharVector v) {
+  assert(count >= 0);
+  v[count - 1] = '0';
+}
+
+void precise_subst_Good() {
+  char a[10];
+  CharVector v(a);
+  access_in_sixth(0, v);
+}
+
+void precise_subst_Good_FP() {
+  char a[10];
+  CharVector v(a);
+  access_minus_one(1, v);
+}
+
+void precise_subst_Bad() {
+  char a[10];
+  CharVector v(a);
+  access_minus_one(0, v);
 }

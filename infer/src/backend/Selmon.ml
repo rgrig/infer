@@ -164,9 +164,9 @@ let dummy_no =
   ; mon_decide_no = [] }
 
 (* NOTE: does not glue if markov component is distinct *)
-let minimize_product markov_chain dfa_final pair =
+let minimize_product (markov_chain : mc) dfa_final pair =
   assert (Int.equal initial_vertex 0); (* fails badly otherwise :( *)
-  let keys_of h = List.sort ~cmp:Int.compare (Hashtbl.keys h) in
+  let keys_of h = List.sort ~compare:Int.compare (Hashtbl.keys h) in
   let old_vertices = keys_of markov_chain in
   let old_decide_yes, old_decide_no =
     get_deciding markov_chain (fun sq -> Int.equal dfa_final (snd (pair sq))) in
@@ -198,7 +198,7 @@ let minimize_product markov_chain dfa_final pair =
           | (s, i) :: tail ->
               String.hash s + 31 * (Int.hash i + 31 * hash tail)
       end in
-      let by_targets = Hashtbl.create (module SIL) () in
+      let by_targets = Hashtbl.create (module SIL) in
       let do_vertex ~key:x ~data:arcs =
         let ts = String.Table.create () in
         let rec_arc { arc_label = (_prob, l); arc_target } =
@@ -206,17 +206,17 @@ let minimize_product markov_chain dfa_final pair =
           Hashtbl.set ts ~key:l ~data:cls in
         List.iter ~f:rec_arc arcs;
         let ts = Hashtbl.fold ~init:[] ~f:(fun ~key ~data xs -> (key,data)::xs) ts in
-        let cmp (s1, x1) (s2, x2) =
+        let compare (s1, x1) (s2, x2) =
           let cs = String.compare s1 s2 in
           if Int.equal cs 0 then Int.compare x1 x2 else cs in
-        let ts = List.sort ~cmp ts in
+        let ts = List.sort ~compare ts in
         let nc = Hashtbl.find_or_add by_targets ~default:next_refinement ts in
         Hashtbl.set refinement ~key:x ~data:nc in
       Hashtbl.iteri ~f:do_vertex markov_chain;
       check_keys refinement;
       let new_classes =
         let h = Int.Table.create () in
-        let g = Hashtbl.create (module IntIntPair) () in
+        let g = Hashtbl.create (module IntIntPair) in
         let cr x = (* old-class and refinement of vertex x *)
           ( Hashtbl.find_exn old_classes x
           , Hashtbl.find_exn refinement x ) in
@@ -275,7 +275,7 @@ let product ((dfa, dfa_final) : dfa) (markov_chain : mc) : monitor =
     (old_state : vertex -> (vertex * vertex))
   =
     let next_id = make_next_id initial_vertex in
-    let new_of_old = Hashtbl.create (module IntIntPair) () in
+    let new_of_old = Hashtbl.create (module IntIntPair) in
     let old_of_new = Int.Table.create () in
     Hashtbl.set new_of_old ~key:(initial_vertex, initial_vertex) ~data:initial_vertex;
     Hashtbl.set old_of_new ~key:initial_vertex ~data:(initial_vertex, initial_vertex);
@@ -289,10 +289,10 @@ let product ((dfa, dfa_final) : dfa) (markov_chain : mc) : monitor =
     let old_state n_sq = Hashtbl.find_exn old_of_new n_sq in
     (new_state, old_state) in
   let result = Int.Table.create () in
-  let all_final = Int.Hash_set.create () in
+(*   let all_final = Int.Hash_set.create () in *)
   let rec go (s, q) =
     let sq = new_state (s, q) in
-    if Int.equal q dfa_final then Hash_set.add all_final sq;
+(*     if Int.equal q dfa_final then Hash_set.add all_final sq; *)
     if not (Hashtbl.mem result sq) then begin
       Hashtbl.set result ~key:sq ~data:[]; (* mark it *)
       let s_out = Hashtbl.find_or_add markov_chain ~default:(fun ()->[]) s in
@@ -342,7 +342,7 @@ let cost_seeall filename comment { mon_mc; mon_decide_yes; mon_decide_no } =
 
 let compute_confused_pairs product =
   (* group arcs in a (nested) map: letter->target->(source list) *)
-  let groups = Hashtbl.create (module StringIntPair) () in
+  let groups = Hashtbl.create (module StringIntPair) in
   let bin_arc ~source ~label:{ nh_letter; nh_target; _ } ~target =
     let letter = (nh_letter, nh_target) in
     let g = Hashtbl.find_or_add groups ~default:Int.Table.create letter in
@@ -465,7 +465,7 @@ let mc_of_calls (Paths.{ start_node; edges; _ } : Paths.path_calls) : mc =
   let add_probabilities arcs =
     let n = List.length arcs in
     let xs = List.init (n - 1) ~f:(fun _ -> Random.float_range 0.0 1.0) in
-    let xs = List.sort ~cmp:Float.compare xs in
+    let xs = List.sort ~compare:Float.compare xs in
     let probs = List.map2_exn ~f:(-.) (xs @ [1.0]) (0.0 :: xs) in
     let add_one p { arc_label; arc_target } =
       { arc_label = (p, arc_label); arc_target } in

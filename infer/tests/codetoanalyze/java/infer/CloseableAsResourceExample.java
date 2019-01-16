@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.infer;
@@ -12,13 +10,15 @@ package codetoanalyze.java.infer;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.StringReader;
-import java.util.Map;
 import java.util.HashMap;
+import java.util.Map;
 
-class LocalException extends IOException {
-}
+class LocalException extends IOException {}
 
 class SomeResource implements Closeable {
 
@@ -31,21 +31,23 @@ class SomeResource implements Closeable {
   public void close() {}
 
   native void foo(int i);
-  native static void bar(SomeResource r);
 
+  static native void bar(SomeResource r);
 }
 
 class Resource implements Closeable {
-  public Resource() {
-  }
+  public Resource() {}
+
   public void close() {}
 }
 
 class Wrapper implements Closeable {
   Resource mR;
+
   public Wrapper(Resource r) {
     mR = r;
   }
+
   public void close() {
     mR.close();
   }
@@ -66,9 +68,18 @@ class ResourceWithException implements Closeable {
   }
 }
 
+class ByteArrayOutputStreamWrapper extends ByteArrayOutputStream {}
+
+class ByteArrayInputStreamWrapper extends ByteArrayInputStream {
+
+  public ByteArrayInputStreamWrapper(byte[] arr) {
+    super(arr);
+  }
+}
+
 public class CloseableAsResourceExample {
 
-  native static boolean star();
+  static native boolean star();
 
   void closingCloseable() {
     SomeResource res = new SomeResource();
@@ -77,7 +88,7 @@ public class CloseableAsResourceExample {
 
   void notClosingCloseable() {
     SomeResource res = new SomeResource();
-  }  // should report a resource leak
+  } // should report a resource leak
 
   void tryWithResource() {
     try (SomeResource res = new SomeResource()) {
@@ -95,7 +106,6 @@ public class CloseableAsResourceExample {
     res.close();
   } // should report a resource leak
 
-
   void closingWrapper() {
     Resource r = new Resource();
     Sub s = new Sub(r);
@@ -105,7 +115,7 @@ public class CloseableAsResourceExample {
   void notClosingWrapper() {
     Sub s = new Sub(new Resource());
     s.mR.close();
-  }  // should report a resource leak
+  } // should report a resource leak
 
   void noNeedToCloseStringReader() {
     StringReader stringReader = new StringReader("paf!");
@@ -113,6 +123,11 @@ public class CloseableAsResourceExample {
 
   void noNeedToCloseByteArrayOutputStream() {
     ByteArrayOutputStream stream = new ByteArrayOutputStream(42);
+  }
+
+  void noCloseByteArrayWrappersOk(byte[] array) {
+    ByteArrayOutputStreamWrapper stream1 = new ByteArrayOutputStreamWrapper();
+    ByteArrayInputStreamWrapper stream2 = new ByteArrayInputStreamWrapper(array);
   }
 
   void noNeedToCloseByteArrayInputStream(byte[] array) {
@@ -198,11 +213,36 @@ public class CloseableAsResourceExample {
     resourceMap.put(key, res);
   }
 
-  void notClearinglocalMapContainingResourcesBad() {
+  // this case is not supported
+  void FN_notClearinglocalMapContainingResourcesBad() {
     HashMap<Integer, Closeable> map = new HashMap<>();
     SomeResource res = new SomeResource();
     Integer key = 42;
     map.put(key, res);
   }
 
+  public static void closeCloseable(Closeable closeable) {
+    try {
+      if (closeable != null) {
+        closeable.close();
+      }
+    } catch (Exception ex) {
+    }
+  }
+
+  public void finallyCloseOk(File file, String fileContent) {
+    if (!file.exists()) {
+      FileWriter writer = null;
+      try {
+        writer = new FileWriter(file);
+        writer.write(fileContent);
+      } catch (FileNotFoundException e) {
+        e.printStackTrace();
+      } catch (IOException e) {
+        e.printStackTrace();
+      } finally {
+        closeCloseable(writer);
+      }
+    }
+  }
 }

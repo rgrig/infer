@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 import javax.annotation.concurrent.ThreadSafe;
 
@@ -34,7 +32,7 @@ class Arrays {
   }
 
   int arrayParameterLiteralReadOk() {
-    return (new int[] { 2, 3})[1];
+    return (new int[] {2, 3})[1];
   }
 
   public void writeWriteRaceBad(String s) {
@@ -59,7 +57,7 @@ class Arrays {
 
   // arrays are compatible types and can alias
   public Child FN_readWriteAliasRaceBad() {
-    synchronized(this) {
+    synchronized (this) {
       parentArr[3] = null;
     }
     return childArr[3];
@@ -70,11 +68,10 @@ class Arrays {
 
   // arrays are different types and thus cannot alias
   public Parent noRaceOk() {
-    synchronized(this) {
+    synchronized (this) {
       type1Arr[3] = null;
     }
 
     return type2Arr[3];
   }
-
 }

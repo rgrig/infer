@@ -1,17 +1,15 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 
 let make_var var_str = Pvar.mk (Mangled.from_string var_str) Typ.Procname.empty_block
 
-let make_base ?(typ= Typ.mk Tvoid) base_str = AccessPath.base_of_pvar (make_var base_str) typ
+let make_base ?(typ = Typ.mk Tvoid) base_str = AccessPath.base_of_pvar (make_var base_str) typ
 
 let make_fieldname = Typ.Fieldname.Java.from_string
 

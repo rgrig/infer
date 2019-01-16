@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -28,7 +26,7 @@ type transitions =
   | Cond
   | PointerToDecl  (** stmt to decl *)
   | Protocol  (** decl to decl *)
-  [@@deriving compare]
+[@@deriving compare]
 (* In formulas below prefix
    "E" means "exists a path"
    "A" means "for all path" *)
@@ -65,9 +63,10 @@ type t =
                                    there exists a node defining a super class in the hierarchy of the class
                                    defined by the current node (if any) where  phi holds *)
   | ET of ALVar.alexp list * transitions option * t
-      (** ET[T][l] phi <=> there exists a descentant an of the current node such that an is of type in set T
+      (** ET [T] [l] phi <=> there exists a descentant an of the current node such that an is of type in set T
           making a transition to a node an' via label l, such that in an phi holds. *)
-  [@@deriving compare]
+  | InObjCClass of t * t
+[@@deriving compare]
 
 (* "set" clauses are used for defining mandatory variables that will be used
    by when reporting issues: eg for defining the condition.
@@ -98,8 +97,7 @@ type clause =
   | CPath of [`WhitelistPath | `BlacklistPath] * ALVar.t list
 
 type ctl_checker =
-  {id: string; (* Checker's id *)
-  definitions: clause list (* A list of let/set definitions *)}
+  {id: string; (* Checker's id *) definitions: clause list (* A list of let/set definitions *)}
 
 type al_file =
   { import_files: string list

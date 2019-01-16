@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -14,33 +12,17 @@ open! IStd
 
 module Tags : sig
   type t
-
-  val tag_value_records_of_tags : t -> Jsonbug_t.tag_value_record list
-  (** convert error description's tags to atd-serializable format *)
-
-  val tags_of_tag_value_records : Jsonbug_t.tag_value_record list -> t
-  (** convert atd-serializable format to error description's tags *)
-
-  val lines_of_tags : t -> int list
-  (** collect all lines from tags *)
 end
 
 (** description field of error messages *)
-type error_desc =
-  {descriptions: string list; advice: string option; tags: Tags.t; dotty: string option}
-  [@@deriving compare]
+type error_desc = {descriptions: string list; tags: Tags.t; dotty: string option}
+[@@deriving compare]
 
 val no_desc : error_desc
 (** empty error description *)
 
 val verbatim_desc : string -> error_desc
 (** verbatim desc from a string, not to be used for user-visible descs *)
-
-val custom_desc : string -> (string * string) list -> error_desc
-(** verbatim desc with custom tags *)
-
-val custom_desc_with_advice : string -> string -> (string * string) list -> error_desc
-(** verbatim desc with advice and custom tags *)
 
 module BucketLevel : sig
   val b1 : string
@@ -50,23 +32,11 @@ module BucketLevel : sig
 
   val b3 : string
 
-  val b4 : string
+  val b4 : string [@@warning "-32"]
 
   val b5 : string
   (** lowest likelihood *)
 end
-
-val error_desc_extract_tag_value : error_desc -> string -> string
-(** returns the value of a tag or the empty string *)
-
-val error_desc_to_tag_value_pairs : error_desc -> (string * string) list
-(** returns all the tuples (tag, value) of an error_desc *)
-
-val error_desc_get_tag_value : error_desc -> string
-(** returns the content of the value tag of the error_desc *)
-
-val error_desc_get_tag_call_procedure : error_desc -> string
-(** returns the content of the call_procedure tag of the error_desc *)
 
 val error_desc_get_bucket : error_desc -> string option
 (** get the bucket value of an error_desc, if any *)
@@ -85,12 +55,6 @@ val error_desc_equal : error_desc -> error_desc -> bool
 
 val pp_error_desc : Format.formatter -> error_desc -> unit
 (** pretty print an error description *)
-
-val pp_error_advice : Format.formatter -> error_desc -> unit
-(** pretty print an error advice *)
-
-val error_desc_get_tags : error_desc -> (string * string) list
-(** get tags of error description *)
 
 val error_desc_get_dotty : error_desc -> string option
 
@@ -120,9 +84,6 @@ val deref_str_dangling : PredSymb.dangling_kind option -> deref_str
 val deref_str_array_bound : IntLit.t option -> IntLit.t option -> deref_str
 (** dereference strings for an array out of bound access *)
 
-val deref_str_uninitialized : Sil.atom option -> deref_str
-(** dereference strings for an uninitialized access whose lhs has the given attribute *)
-
 val deref_str_nil_argument_in_variadic_method : Typ.Procname.t -> int -> int -> deref_str
 (** dereference strings for nonterminal nil arguments in c/objc variadic methods *)
 
@@ -148,30 +109,21 @@ val is_parameter_not_null_checked_desc : error_desc -> bool
 
 val is_field_not_null_checked_desc : error_desc -> bool
 
-val is_parameter_field_not_null_checked_desc : error_desc -> bool
-
 val desc_allocation_mismatch :
-  Typ.Procname.t * Typ.Procname.t * Location.t -> Typ.Procname.t * Typ.Procname.t * Location.t
+     Typ.Procname.t * Typ.Procname.t * Location.t
+  -> Typ.Procname.t * Typ.Procname.t * Location.t
   -> error_desc
 
 val desc_class_cast_exception :
   Typ.Procname.t option -> string -> string -> string option -> Location.t -> error_desc
 
-val desc_comparing_floats_for_equality : Location.t -> error_desc
-
 val desc_condition_always_true_false : IntLit.t -> string option -> Location.t -> error_desc
-
-val desc_unreachable_code_after : Location.t -> error_desc
 
 val desc_deallocate_stack_variable : string -> Typ.Procname.t -> Location.t -> error_desc
 
 val desc_deallocate_static_memory : string -> Typ.Procname.t -> Location.t -> error_desc
 
 val desc_divide_by_zero : string -> Location.t -> error_desc
-
-val desc_double_lock : Typ.Procname.t option -> string -> Location.t -> error_desc
-
-val is_double_lock_desc : error_desc -> bool
 
 val desc_empty_vector_access : Typ.Procname.t option -> string -> Location.t -> error_desc
 
@@ -180,19 +132,17 @@ val is_empty_vector_access_desc : error_desc -> bool
 val desc_frontend_warning : string -> string option -> Location.t -> error_desc
 
 val desc_leak :
-  Exp.t option -> string option -> PredSymb.resource option -> PredSymb.res_action option
-  -> Location.t -> string option -> error_desc
-
-val desc_buffer_overrun : string -> error_desc
+     Exp.t option
+  -> string option
+  -> PredSymb.resource option
+  -> PredSymb.res_action option
+  -> Location.t
+  -> string option
+  -> error_desc
 
 val desc_null_test_after_dereference : string -> int -> Location.t -> error_desc
 
 val java_unchecked_exn_desc : Typ.Procname.t -> Typ.Name.t -> string -> error_desc
-
-val desc_context_leak :
-  Typ.Procname.t -> Typ.t -> Typ.Fieldname.t -> (Typ.Fieldname.t option * Typ.t) list -> error_desc
-
-val desc_fragment_retains_view : Typ.t -> Typ.Fieldname.t -> Typ.t -> Typ.Procname.t -> error_desc
 
 val desc_custom_error : Location.t -> error_desc
 (** Create human-readable error description for assertion failures *)
@@ -202,17 +152,9 @@ type pnm_kind = Pnm_bounds | Pnm_dangling
 
 val desc_precondition_not_met : pnm_kind option -> Typ.Procname.t -> Location.t -> error_desc
 
-val desc_return_expression_required : string -> Location.t -> error_desc
-
 val desc_retain_cycle : string -> Location.t -> string option -> error_desc
 
-val registered_observer_being_deallocated_str : string -> string
-
 val desc_registered_observer_being_deallocated : Pvar.t -> Location.t -> error_desc
-
-val desc_return_statement_missing : Location.t -> error_desc
-
-val desc_return_value_ignored : Typ.Procname.t -> Location.t -> error_desc
 
 val desc_stack_variable_address_escape : Pvar.t -> string option -> Location.t -> error_desc
 
@@ -227,4 +169,4 @@ val desc_unsafe_guarded_by_access : Typ.Fieldname.t -> string -> Location.t -> e
 
 val desc_uninitialized_dangling_pointer_deref : deref_str -> string -> Location.t -> error_desc
 
-val access_desc : (string, string) Base__List.Assoc.t ref -> access option -> string list
+val access_desc : access option -> string list

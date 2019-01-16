@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -20,15 +18,23 @@ type method_call_type = MCVirtual | MCNoVirtual | MCStatic [@@deriving compare]
 
 val equal_method_call_type : method_call_type -> method_call_type -> bool
 
-val should_add_return_param : Typ.t -> is_objc_method:bool -> bool
-
 val create_local_procdesc :
-  ?set_objc_accessor_attr:bool -> CFrontend_config.translation_unit_context -> Cfg.t -> Tenv.t
-  -> CMethod_signature.method_signature -> Clang_ast_t.stmt list -> (Pvar.t * Typ.t) list -> bool
+     ?set_objc_accessor_attr:bool
+  -> CFrontend_config.translation_unit_context
+  -> Cfg.t
+  -> Tenv.t
+  -> CMethodSignature.t
+  -> Clang_ast_t.stmt list
+  -> (Pvar.t * Typ.t) list
   -> bool
 
 val create_external_procdesc :
-  Cfg.t -> Typ.Procname.t -> bool -> (Typ.t * Typ.t list) option -> unit
+     CFrontend_config.translation_unit_context
+  -> Cfg.t
+  -> Typ.Procname.t
+  -> ClangMethodKind.t
+  -> (Typ.t * Typ.t list) option
+  -> unit
 
 val get_objc_method_data :
   Clang_ast_t.obj_c_message_expr_info -> string * Clang_ast_t.pointer option * method_call_type
@@ -37,20 +43,11 @@ val get_class_name_method_call_from_receiver_kind :
   CContext.t -> Clang_ast_t.obj_c_message_expr_info -> (Exp.t * Typ.t) list -> Typ.Name.t
 
 val get_class_name_method_call_from_clang :
-  CFrontend_config.translation_unit_context -> Tenv.t -> Clang_ast_t.obj_c_message_expr_info
-  -> Typ.Name.t option
+  Tenv.t -> Clang_ast_t.obj_c_message_expr_info -> Typ.Name.t option
 
-val method_signature_of_decl :
-  CFrontend_config.translation_unit_context -> Tenv.t -> Clang_ast_t.decl
-  -> CModule_type.block_data option
-  -> CMethod_signature.method_signature * Clang_ast_t.stmt option * CModule_type.instr_type list
+val method_signature_of_pointer : Tenv.t -> Clang_ast_t.pointer -> CMethodSignature.t option
 
-val method_signature_of_pointer :
-  CFrontend_config.translation_unit_context -> Tenv.t -> Clang_ast_t.pointer
-  -> CMethod_signature.method_signature option
-
-val get_method_name_from_clang :
-  Tenv.t -> CMethod_signature.method_signature option -> CMethod_signature.method_signature option
+val get_method_name_from_clang : Tenv.t -> CMethodSignature.t option -> Typ.Procname.t option
 
 val create_procdesc_with_pointer :
   CContext.t -> Clang_ast_t.pointer -> Typ.Name.t option -> string -> Typ.Procname.t

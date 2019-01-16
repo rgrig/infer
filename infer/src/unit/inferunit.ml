@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -33,14 +31,20 @@ let () =
         ; AccessTreeTests.tests
         ; AddressTakenTests.tests
         ; BoundedCallTreeTests.tests
-        ; DifferentialTests.tests
         ; DifferentialFiltersTests.tests
-        ; ProcCfgTests.tests
+        ; DifferentialTests.tests
+        ; FileDiffTests.tests
+        ; IListTests.tests
+        ; JavaProfilerSamplesTest.tests
         ; LivenessTests.tests
+        ; PerfProfilerATDParserTest.tests
+        ; ProcCfgTests.tests
         ; SchedulerTests.tests
+        ; SeverityTests.tests
         ; StacktraceTests.tests
         ; TaintTests.tests
-        ; TraceTests.tests ]
+        ; TraceTests.tests
+        ; WeakTopologicalOrderTests.tests ]
       @ ClangTests.tests )
   in
   let test_suite = "all" >::: tests in

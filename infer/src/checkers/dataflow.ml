@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -47,7 +45,7 @@ module type DF = sig
 end
 
 (** Determine if the node can throw an exception. *)
-let node_throws pdesc node (proc_throws: Typ.Procname.t -> throws) : throws =
+let node_throws pdesc node (proc_throws : Typ.Procname.t -> throws) : throws =
   let instr_throws instr =
     let is_return pvar =
       let ret_pvar = Procdesc.get_ret_var pdesc in
@@ -57,9 +55,10 @@ let node_throws pdesc node (proc_throws: Typ.Procname.t -> throws) : throws =
     | Sil.Store (Exp.Lvar pvar, _, Exp.Exn _, _) when is_return pvar ->
         (* assignment to return variable is an artifact of a throw instruction *)
         Throws
-    | Sil.Call (_, Exp.Const Const.Cfun callee_pn, _, _, _) when BuiltinDecl.is_declared callee_pn ->
+    | Sil.Call (_, Exp.Const (Const.Cfun callee_pn), _, _, _)
+      when BuiltinDecl.is_declared callee_pn ->
         if Typ.Procname.equal callee_pn BuiltinDecl.__cast then DontKnow else DoesNotThrow
-    | Sil.Call (_, Exp.Const Const.Cfun callee_pn, _, _, _) ->
+    | Sil.Call (_, Exp.Const (Const.Cfun callee_pn), _, _, _) ->
         proc_throws callee_pn
     | _ ->
         DoesNotThrow
@@ -75,7 +74,7 @@ let node_throws pdesc node (proc_throws: Typ.Procname.t -> throws) : throws =
         res := t
   in
   let do_instr instr = update_res (instr_throws instr) in
-  List.iter ~f:do_instr (Procdesc.Node.get_instrs node) ;
+  Instrs.iter ~f:do_instr (Procdesc.Node.get_instrs node) ;
   !res
 
 
@@ -104,7 +103,7 @@ module MakeDF (St : DFStateType) : DF with type state = St.t = struct
   let join states initial_state = List.fold ~f:St.join ~init:initial_state states
 
   (** Propagate [new_state] to all the nodes immediately reachable. *)
-  let propagate t node states_succ states_exn (throws: throws) =
+  let propagate t node states_succ states_exn (throws : throws) =
     let propagate_to_dest new_state dest_node =
       let push_state s =
         H.replace t.pre_states dest_node s ;
@@ -114,7 +113,7 @@ module MakeDF (St : DFStateType) : DF with type state = St.t = struct
         let dest_state = H.find t.pre_states dest_node in
         let dest_joined = St.join dest_state new_state in
         if not (St.equal dest_state dest_joined) then push_state dest_joined
-      with Not_found -> push_state new_state
+      with Caml.Not_found -> push_state new_state
     in
     let succ_nodes = Procdesc.Node.get_succs node in
     let exn_nodes = Procdesc.Node.get_exn node in
@@ -149,12 +148,12 @@ module MakeDF (St : DFStateType) : DF with type state = St.t = struct
           let state = H.find t.pre_states node in
           let states_succ, states_exn = St.do_node tenv node state in
           propagate t node states_succ states_exn (node_throws proc_desc node St.proc_throws)
-        with Not_found -> ()
+        with Caml.Not_found -> ()
       done
     in
     let transitions node =
       try Transition (H.find t.pre_states node, H.find t.post_states node, H.find t.exn_states node)
-      with Not_found -> Dead_state
+      with Caml.Not_found -> Dead_state
     in
     transitions
 end
@@ -162,7 +161,7 @@ end
 (* MakeDF *)
 
 (** Example dataflow callback: compute the the distance from a node to the start node. *)
-let callback_test_dataflow {Callbacks.proc_desc; tenv; summary} =
+let _callback_test_dataflow {Callbacks.proc_desc; tenv; summary} =
   let verbose = false in
   let module DFCount = MakeDF (struct
     type t = int

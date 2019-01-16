@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 open! IStd
 
@@ -12,23 +10,33 @@ open! IStd
      we want to keep track of the list of all the issues ever declared. *)
 module Unsafe : sig
   type t = private
-    {unique_id: string; mutable enabled: bool; mutable hum: string}
-    [@@deriving compare]
+    { unique_id: string
+    ; mutable enabled: bool
+    ; mutable hum: string
+    ; mutable doc_url: string option
+    ; mutable linters_def_file: string option }
+  [@@deriving compare]
 
   val equal : t -> t -> bool
 
-  val from_string : ?enabled:bool -> ?hum:string -> string -> t
+  val from_string :
+    ?enabled:bool -> ?hum:string -> ?doc_url:string -> ?linters_def_file:string -> string -> t
 
   val all_issues : unit -> t list
 
   val set_enabled : t -> bool -> unit
 end = struct
   module T = struct
-    type t = {unique_id: string; mutable enabled: bool; mutable hum: string}
+    type t =
+      { unique_id: string
+      ; mutable enabled: bool
+      ; mutable hum: string
+      ; mutable doc_url: string option
+      ; mutable linters_def_file: string option }
 
     let compare {unique_id= id1} {unique_id= id2} = String.compare id1 id2
 
-    let equal = [%compare.equal : t]
+    let equal = [%compare.equal: t]
   end
 
   include T
@@ -54,16 +62,18 @@ end = struct
         2., but issues of type 2. have not yet been defined. Thus, we record only there [enabled]
         status definitely. The [hum]an-readable description can be updated when we encounter the
         definition of the issue type, eg in AL. *)
-  let from_string ?(enabled= true) ?hum:hum0 unique_id =
+  let from_string ?(enabled = true) ?hum:hum0 ?doc_url ?linters_def_file unique_id =
     let hum = match hum0 with Some str -> str | _ -> prettify unique_id in
-    let issue = {unique_id; enabled; hum} in
+    let issue = {unique_id; enabled; hum; doc_url; linters_def_file} in
     try
       let old = IssueSet.find issue !all_issues in
       (* update human-readable string in case it was supplied this time, but keep the previous
            value of enabled (see doc comment) *)
       if Option.is_some hum0 then old.hum <- hum ;
+      if Option.is_some doc_url then old.doc_url <- doc_url ;
+      if Option.is_some linters_def_file then old.linters_def_file <- linters_def_file ;
       old
-    with Not_found ->
+    with Caml.Not_found ->
       all_issues := IssueSet.add issue !all_issues ;
       issue
 
@@ -74,7 +84,7 @@ end
 include Unsafe
 
 (** pretty print a localised string *)
-let pp fmt t = Format.fprintf fmt "%s" t.unique_id
+let pp fmt t = Format.pp_print_string fmt t.unique_id
 
 let abduction_case_not_implemented = from_string "Abduction_case_not_implemented"
 
@@ -102,11 +112,13 @@ let buffer_overrun_l4 = from_string ~enabled:false "BUFFER_OVERRUN_L4"
 
 let buffer_overrun_l5 = from_string ~enabled:false "BUFFER_OVERRUN_L5"
 
+let buffer_overrun_r2 = from_string "BUFFER_OVERRUN_R2"
+
 let buffer_overrun_s2 = from_string "BUFFER_OVERRUN_S2"
 
-let cannot_star = from_string "Cannot_star"
+let buffer_overrun_u5 = from_string ~enabled:false "BUFFER_OVERRUN_U5"
 
-let checkers_access_global = from_string "CHECKERS_ACCESS_GLOBAL"
+let cannot_star = from_string "Cannot_star"
 
 let checkers_allocates_memory = from_string "CHECKERS_ALLOCATES_MEMORY"
 
@@ -122,25 +134,33 @@ let checkers_fragment_retain_view = from_string "CHECKERS_FRAGMENT_RETAINS_VIEW"
 
 let checkers_immutable_cast = from_string "CHECKERS_IMMUTABLE_CAST"
 
-let checkers_print_c_call = from_string "CHECKERS_PRINT_C_CALL"
-
-let checkers_print_objc_method_calls = from_string "CHECKERS_PRINT_OBJC_METHOD_CALLS"
-
 let checkers_printf_args = from_string "CHECKERS_PRINTF_ARGS"
 
 let class_cast_exception = from_string ~enabled:false "CLASS_CAST_EXCEPTION"
 
-let cluster_callback = from_string "CLUSTER_CALLBACK"
+let class_load = from_string "CLASS_LOAD"
 
 let codequery = from_string "Codequery"
 
 let comparing_floats_for_equality = from_string "COMPARING_FLOAT_FOR_EQUALITY"
 
+let component_factory_function = from_string "COMPONENT_FACTORY_FUNCTION"
+
+let component_file_cyclomatic_complexity = from_string "COMPONENT_FILE_CYCLOMATIC_COMPLEXITY"
+
+let component_file_line_count = from_string "COMPONENT_FILE_LINE_COUNT"
+
+let component_initializer_with_side_effects = from_string "COMPONENT_INITIALIZER_WITH_SIDE_EFFECTS"
+
+let component_with_multiple_factory_methods = from_string "COMPONENT_WITH_MULTIPLE_FACTORY_METHODS"
+
+let component_with_unconventional_superclass =
+  from_string "COMPONENT_WITH_UNCONVENTIONAL_SUPERCLASS"
+
+
 let condition_always_false = from_string ~enabled:false "CONDITION_ALWAYS_FALSE"
 
 let condition_always_true = from_string ~enabled:false "CONDITION_ALWAYS_TRUE"
-
-let context_leak = from_string "CONTEXT_LEAK"
 
 let create_intent_from_uri = from_string "CREATE_INTENT_FROM_URI"
 
@@ -150,6 +170,8 @@ let dangling_pointer_dereference = from_string ~enabled:false "DANGLING_POINTER_
 
 let dead_store = from_string "DEAD_STORE"
 
+let deadlock = from_string "DEADLOCK"
+
 let deallocate_stack_variable = from_string "DEALLOCATE_STACK_VARIABLE"
 
 let deallocate_static_memory = from_string "DEALLOCATE_STATIC_MEMORY"
@@ -157,8 +179,6 @@ let deallocate_static_memory = from_string "DEALLOCATE_STATIC_MEMORY"
 let deallocation_mismatch = from_string "DEALLOCATION_MISMATCH"
 
 let divide_by_zero = from_string ~enabled:false "DIVIDE_BY_ZERO"
-
-let double_lock = from_string "DOUBLE_LOCK"
 
 let do_not_report = from_string "DO_NOT_REPORT"
 
@@ -232,9 +252,15 @@ let eradicate_value_not_present =
   from_string "ERADICATE_VALUE_NOT_PRESENT" ~hum:"Value Not Present"
 
 
+let expensive_execution_time_call = from_string ~enabled:false "EXPENSIVE_EXECUTION_TIME_CALL"
+
+let exposed_insecure_intent_handling = from_string "EXPOSED_INSECURE_INTENT_HANDLING"
+
 let failure_exe = from_string "Failure_exe"
 
-let field_should_be_nullable = from_string "FIELD_SHOULD_BE_NULLABLE"
+let nullsafe_field_not_nullable =
+  from_string "NULLSAFE_FIELD_NOT_NULLABLE" ~hum:"Field Not Nullable"
+
 
 let field_not_null_checked = from_string "IVAR_NOT_NULL_CHECKED"
 
@@ -251,15 +277,31 @@ let inferbo_alloc_is_negative = from_string "INFERBO_ALLOC_IS_NEGATIVE"
 
 let inferbo_alloc_is_zero = from_string "INFERBO_ALLOC_IS_ZERO"
 
-let inferbo_alloc_may_be_big = from_string ~enabled:false "INFERBO_ALLOC_MAY_BE_BIG"
+let inferbo_alloc_may_be_big = from_string "INFERBO_ALLOC_MAY_BE_BIG"
 
-let inferbo_alloc_may_be_negative = from_string ~enabled:false "INFERBO_ALLOC_MAY_BE_NEGATIVE"
+let inferbo_alloc_may_be_negative = from_string "INFERBO_ALLOC_MAY_BE_NEGATIVE"
+
+let infinite_execution_time_call = from_string ~enabled:false "INFINITE_EXECUTION_TIME_CALL"
 
 let inherently_dangerous_function = from_string "INHERENTLY_DANGEROUS_FUNCTION"
+
+let insecure_intent_handling = from_string "INSECURE_INTENT_HANDLING"
+
+let integer_overflow_l1 = from_string "INTEGER_OVERFLOW_L1"
+
+let integer_overflow_l2 = from_string "INTEGER_OVERFLOW_L2"
+
+let integer_overflow_l5 = from_string ~enabled:false "INTEGER_OVERFLOW_L5"
+
+let integer_overflow_r2 = from_string "INTEGER_OVERFLOW_R2"
+
+let integer_overflow_u5 = from_string ~enabled:false "INTEGER_OVERFLOW_U5"
 
 let interface_not_thread_safe = from_string "INTERFACE_NOT_THREAD_SAFE"
 
 let internal_error = from_string "Internal_error"
+
+let invariant_call = from_string "INVARIANT_CALL"
 
 let javascript_injection = from_string "JAVASCRIPT_INJECTION"
 
@@ -271,9 +313,17 @@ let lock_consistency_violation = from_string "LOCK_CONSISTENCY_VIOLATION"
 
 let logging_private_data = from_string "LOGGING_PRIVATE_DATA"
 
+let loop_invariant_call = from_string "LOOP_INVARIANT_CALL"
+
 let memory_leak = from_string "MEMORY_LEAK"
 
 let missing_fld = from_string "Missing_fld" ~hum:"Missing Field"
+
+let missing_required_prop = from_string "MISSING_REQUIRED_PROP"
+
+let mutable_local_variable_in_component_file =
+  from_string "MUTABLE_LOCAL_VARIABLE_IN_COMPONENT_FILE"
+
 
 let null_dereference = from_string "NULL_DEREFERENCE"
 
@@ -283,6 +333,8 @@ let nullable_dereference = from_string "NULLABLE_DEREFERENCE"
 
 let parameter_not_null_checked = from_string "PARAMETER_NOT_NULL_CHECKED"
 
+let performance_variation = from_string "PERFORMANCE_VARIATION"
+
 let pointer_size_mismatch = from_string "POINTER_SIZE_MISMATCH"
 
 let precondition_not_found = from_string "PRECONDITION_NOT_FOUND"
@@ -291,7 +343,7 @@ let precondition_not_met = from_string "PRECONDITION_NOT_MET"
 
 let premature_nil_termination = from_string "PREMATURE_NIL_TERMINATION_ARGUMENT"
 
-let proc_callback = from_string "PROC_CALLBACK" ~hum:"Procedure Callback"
+let pure_function = from_string "PURE_FUNCTION"
 
 let quandary_taint_error = from_string "QUANDARY_TAINT_ERROR"
 
@@ -321,11 +373,19 @@ let sql_injection_risk = from_string "SQL_INJECTION_RISK"
 
 let stack_variable_address_escape = from_string ~enabled:false "STACK_VARIABLE_ADDRESS_ESCAPE"
 
+let starvation = from_string "STARVATION" ~hum:"UI Thread Starvation"
+
 let static_initialization_order_fiasco = from_string "STATIC_INITIALIZATION_ORDER_FIASCO"
+
+let strict_mode_violation = from_string "STRICT_MODE_VIOLATION" ~hum:"Strict Mode Violation"
 
 let symexec_memory_error =
   from_string "Symexec_memory_error" ~hum:"Symbolic Execution Memory Error"
 
+
+let tainted_buffer_access = from_string "TAINTED_BUFFER_ACCESS"
+
+let tainted_memory_allocation = from_string "TAINTED_MEMORY_ALLOCATION"
 
 let thread_safety_violation = from_string "THREAD_SAFETY_VIOLATION"
 
@@ -343,22 +403,38 @@ let unreachable_code_after = from_string "UNREACHABLE_CODE"
 
 let unsafe_guarded_by_access = from_string "UNSAFE_GUARDED_BY_ACCESS"
 
+let use_after_delete = from_string "USE_AFTER_DELETE"
+
+let use_after_destructor = from_string "USE_AFTER_DESTRUCTOR"
+
 let use_after_free = from_string "USE_AFTER_FREE"
+
+let use_after_lifetime = from_string "USE_AFTER_LIFETIME"
 
 let user_controlled_sql_risk = from_string "USER_CONTROLLED_SQL_RISK"
 
+let untrusted_buffer_access = from_string ~enabled:false "UNTRUSTED_BUFFER_ACCESS"
+
 let untrusted_deserialization = from_string "UNTRUSTED_DESERIALIZATION"
+
+let untrusted_deserialization_risk = from_string "UNTRUSTED_DESERIALIZATION_RISK"
+
+let untrusted_environment_change_risk = from_string "UNTRUSTED_ENVIRONMENT_CHANGE_RISK"
 
 let untrusted_file = from_string "UNTRUSTED_FILE"
 
 let untrusted_file_risk = from_string "UNTRUSTED_FILE_RISK"
 
-let untrusted_intent_creation = from_string "UNTRUSTED_INTENT_CREATION"
+let untrusted_heap_allocation = from_string ~enabled:false "UNTRUSTED_HEAP_ALLOCATION"
 
-let untrusted_url = from_string "UNTRUSTED_URL"
+let untrusted_intent_creation = from_string "UNTRUSTED_INTENT_CREATION"
 
 let untrusted_url_risk = from_string "UNTRUSTED_URL_RISK"
 
 let untrusted_variable_length_array = from_string "UNTRUSTED_VARIABLE_LENGTH_ARRAY"
 
+let vector_invalidation = from_string "VECTOR_INVALIDATION"
+
 let wrong_argument_number = from_string "Wrong_argument_number" ~hum:"Wrong Argument Number"
+
+let zero_execution_time_call = from_string ~enabled:false "ZERO_EXECUTION_TIME_CALL"

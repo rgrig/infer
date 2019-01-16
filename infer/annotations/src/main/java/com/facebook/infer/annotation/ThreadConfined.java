@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2004 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2004-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package com.facebook.infer.annotation;
@@ -19,12 +17,13 @@ import java.lang.annotation.Target;
  * class/field/method are confined to the given thread name. For the thread name, you can either use
  * the default constants UI/ANY or add your own.
  */
-
-@Target({ ElementType.TYPE, ElementType.FIELD, ElementType.METHOD })
+@Target({ElementType.TYPE, ElementType.FIELD, ElementType.METHOD})
 @Retention(RetentionPolicy.CLASS)
 public @interface ThreadConfined {
-  String value(); /** the thread that the mutations should be confined to */
-  public static String UI = "UI"; /** confined to the UI thread */
-  public static String ANY = "ANY"; /** confined to any thread (but only that thread!) */
-
+  String value();
+  /** the thread that the mutations should be confined to */
+  public static String UI = "UI";
+  /** confined to the UI thread */
+  public static String ANY = "ANY";
+  /** confined to any thread (but only that thread!) */
 }

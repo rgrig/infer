@@ -1,15 +1,13 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-open! PVariant
+open PolyVariantEqual
 
 (** This module handles buckets of memory leaks in Objective-C/C++ *)
 
@@ -17,9 +15,9 @@ let bucket_to_message bucket =
   match bucket with `MLeak_cpp -> "[CPP]" | `MLeak_unknown -> "[UNKNOWN ORIGIN]"
 
 
-let contains_cpp = List.mem ~equal:PVariant.( = ) Config.ml_buckets `MLeak_cpp
+let contains_cpp = List.mem ~equal:( = ) Config.ml_buckets `MLeak_cpp
 
-let contains_unknown_origin = List.mem ~equal:PVariant.( = ) Config.ml_buckets `MLeak_unknown
+let contains_unknown_origin = List.mem ~equal:( = ) Config.ml_buckets `MLeak_unknown
 
 let should_raise_leak_unknown_origin = contains_unknown_origin
 

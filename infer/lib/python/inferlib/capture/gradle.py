@@ -1,9 +1,7 @@
-# Copyright (c) 2015 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2015-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 import itertools
 import logging
@@ -54,7 +52,7 @@ def extract_argfiles_from_rev(javac_arguments):
     java_opts = []
     saved = []
     java_arg = pop(javac_arguments)
-    while java_arg:
+    while java_arg is not None:
         if java_arg.startswith('@'):
             # Probably got an @argfile
             path = ' '.join([java_arg[1:]] + saved)
@@ -114,7 +112,7 @@ def extract_all(javac_arguments):
     # Reversed Javac options parameters
     rev_opt_params = []
     java_arg = pop(javac_arguments)
-    while java_arg:
+    while java_arg is not None:
         if java_arg.endswith('.java'):
             # Probably got a file
             remainder, path = extract_filepath(javac_arguments + [java_arg])
@@ -177,7 +175,7 @@ class GradleCapture:
         argument_start_pattern = ' Compiler arguments: '
         calls = []
         seen_build_cmds = set([])
-        for line in verbose_output:
+        for line in verbose_output.split('\n'):
             if argument_start_pattern in line:
                 content = line.partition(argument_start_pattern)[2].strip()
                 # if we're building both the debug and release configuration
@@ -187,8 +185,10 @@ class GradleCapture:
                 if build_agnostic_cmd in seen_build_cmds:
                     continue
                 seen_build_cmds.add(build_agnostic_cmd)
-                # Filter out the empty elements
-                arguments = list(filter(None, content.split(' ')))
+                arguments = content.split(' ')
+                # Note: do *not* try to filter out empty strings from the arguments (as was done
+                # here previously)! It will make compilation commands like
+                # `javac -classpath '' -Xmaxerrs 1000` fail with "Unrecognized option 1000"
                 extracted = extract_all(arguments)
                 java_files = extracted['files']
                 java_args = extracted['opts']
@@ -209,9 +209,9 @@ class GradleCapture:
 
     def capture(self):
         print('Running and capturing gradle compilation...')
-        (code, verbose_out) = util.get_build_output(self.build_cmd)
-        if code != os.EX_OK:
-            return code
+        (build_code, (verbose_out, _)) = util.get_build_output(self.build_cmd)
         cmds = self.get_infer_commands(verbose_out)
-        clean_cmd = '%s clean' % self.build_cmd[0]
-        return util.run_compilation_commands(cmds, clean_cmd)
+        capture_code = util.run_compilation_commands(cmds)
+        if build_code != os.EX_OK:
+            return build_code
+        return capture_code

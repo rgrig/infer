@@ -1,9 +1,7 @@
-# Copyright (c) 2013 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2013-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 from __future__ import absolute_import
 from __future__ import division
@@ -28,22 +26,16 @@ base_group.add_argument('--continue', dest="continue_capture",
                         action='store_true',
                         help='''Continue the capture, do not delete previous
                         results''')
-base_group.add_argument('-r', '--reactive', action='store_true',
-                        help='''Analyze in reactive propagation mode
-                        starting from changed files.''')
-base_group.add_argument('--debug-exceptions', action='store_true',
-                        help='''Generate lightweight debugging information:
-                        just print the internal exceptions during analysis''')
 base_group.add_argument('-g', '--debug', action='store_true',
                         help='Generate all debugging information')
-base_group.add_argument('-a', '--analyzer',
-                        help='Select the analyzer within: {0}'.format(
-                            ', '.join(config.ANALYZERS)),
-                        default=config.ANALYZER_INFER)
 base_group.add_argument('-nf', '--no-filtering', action='store_true',
                         help='''Also show the results from the experimental
                         checks. Warning: some checks may contain many false
                         alarms''')
+base_group.add_argument('--force-integration', metavar='<build system>',
+                        type=utils.decode,
+                        help='Force the integration to be used regardless of \
+                        the build command that is passed')
 base_group.add_argument('--pmd-xml',
                         action='store_true',
                         help='''Output issues in (PMD) XML format.''')

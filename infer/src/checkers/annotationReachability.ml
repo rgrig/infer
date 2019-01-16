@@ -1,16 +1,13 @@
 (*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 open! AbstractDomain.Types
 module F = Format
-module L = Logging
 module MF = MarkupFormatter
 
 let dummy_constructor_annot = "__infer_is_constructor"
@@ -26,7 +23,7 @@ module Domain = struct
         astate
     | NonBottom _ ->
         let sink_map =
-          try AnnotReachabilityDomain.find annot annot_map with Not_found ->
+          try AnnotReachabilityDomain.find annot annot_map with Caml.Not_found ->
             AnnotReachabilityDomain.SinkMap.empty
         in
         let sink_map' =
@@ -39,7 +36,7 @@ module Domain = struct
         else (AnnotReachabilityDomain.add annot sink_map' annot_map, previous_vstate)
 
 
-  let stop_tracking ((annot_map, _): astate) = (annot_map, Bottom)
+  let stop_tracking ((annot_map, _) : t) = (annot_map, Bottom)
 
   let add_tracking_var var ((annot_map, previous_vstate) as astate) =
     match previous_vstate with
@@ -61,23 +58,21 @@ module Domain = struct
     match vstate with Bottom -> false | NonBottom vars -> TrackingVar.mem var vars
 end
 
-module Summary = Summary.Make (struct
-  type payload = AnnotReachabilityDomain.astate
+module Payload = SummaryPayload.Make (struct
+  type t = AnnotReachabilityDomain.t
 
-  let update_payload annot_map (summary: Specs.summary) =
-    {summary with payload= {summary.payload with annot_map= Some annot_map}}
+  let update_payloads annot_map (payloads : Payloads.t) = {payloads with annot_map= Some annot_map}
 
-
-  let read_payload (summary: Specs.summary) = summary.payload.annot_map
+  let of_payloads (payloads : Payloads.t) = payloads.annot_map
 end)
 
 let is_modeled_expensive tenv = function
   | Typ.Procname.Java proc_name_java as proc_name ->
-      not (BuiltinDecl.is_declared proc_name)
+      (not (BuiltinDecl.is_declared proc_name))
       &&
       let is_subclass =
         let classname =
-          Typ.Name.Java.from_string (Typ.Procname.java_get_class_name proc_name_java)
+          Typ.Name.Java.from_string (Typ.Procname.Java.get_class_name proc_name_java)
         in
         PatternMatch.is_subtype_of_str tenv classname
       in
@@ -90,10 +85,11 @@ let is_allocator tenv pname =
   match pname with
   | Typ.Procname.Java pname_java ->
       let is_throwable () =
-        let class_name = Typ.Name.Java.from_string (Typ.Procname.java_get_class_name pname_java) in
+        let class_name = Typ.Name.Java.from_string (Typ.Procname.Java.get_class_name pname_java) in
         PatternMatch.is_throwable tenv class_name
       in
-      Typ.Procname.is_constructor pname && not (BuiltinDecl.is_declared pname)
+      Typ.Procname.is_constructor pname
+      && (not (BuiltinDecl.is_declared pname))
       && not (is_throwable ())
   | _ ->
       false
@@ -101,7 +97,7 @@ let is_allocator tenv pname =
 
 let check_attributes check tenv pname =
   PatternMatch.check_class_attributes check tenv pname
-  || Annotations.pname_has_return_annot pname ~attrs_of_pname:Specs.proc_resolve_attributes check
+  || Annotations.pname_has_return_annot pname ~attrs_of_pname:Summary.proc_resolve_attributes check
 
 
 let method_overrides is_annotated tenv pname =
@@ -118,10 +114,10 @@ let method_has_annot annot tenv pname =
 
 let method_overrides_annot annot tenv pname = method_overrides (method_has_annot annot) tenv pname
 
-let lookup_annotation_calls caller_pdesc annot pname =
-  match Ondemand.analyze_proc_name caller_pdesc pname with
-  | Some {Specs.payload= {Specs.annot_map= Some annot_map}} -> (
-    try AnnotReachabilityDomain.find annot annot_map with Not_found ->
+let lookup_annotation_calls ~caller_pdesc annot pname =
+  match Ondemand.analyze_proc_name ~caller_pdesc pname with
+  | Some {Summary.payloads= {Payloads.annot_map= Some annot_map}} -> (
+    try AnnotReachabilityDomain.find annot annot_map with Caml.Not_found ->
       AnnotReachabilityDomain.SinkMap.empty )
   | _ ->
       AnnotReachabilityDomain.SinkMap.empty
@@ -136,7 +132,7 @@ let string_of_pname = Typ.Procname.to_simplified_string ~withclass:true
 
 let report_allocation_stack src_annot summary fst_call_loc trace stack_str constructor_pname
     call_loc =
-  let pname = Specs.get_proc_name summary in
+  let pname = Summary.get_proc_name summary in
   let final_trace = List.rev (update_trace call_loc trace) in
   let constr_str = string_of_pname constructor_pname in
   let description =
@@ -145,14 +141,13 @@ let report_allocation_stack src_annot summary fst_call_loc trace stack_str const
       MF.pp_monospaced ("@" ^ src_annot) MF.pp_monospaced constr_str MF.pp_monospaced
       (stack_str ^ "new " ^ constr_str)
   in
-  let exn =
-    Exceptions.Checkers (IssueType.checkers_allocates_memory, Localise.verbatim_desc description)
-  in
-  Reporting.log_error summary ~loc:fst_call_loc ~ltr:final_trace exn
+  Reporting.log_error summary ~loc:fst_call_loc ~ltr:final_trace
+    IssueType.checkers_allocates_memory description
 
 
-let report_annotation_stack src_annot snk_annot src_summary loc trace stack_str snk_pname call_loc =
-  let src_pname = Specs.get_proc_name src_summary in
+let report_annotation_stack src_annot snk_annot src_summary loc trace stack_str snk_pname call_loc
+    =
+  let src_pname = Summary.get_proc_name src_summary in
   if String.equal snk_annot dummy_constructor_annot then
     report_allocation_stack src_annot src_summary loc trace stack_str snk_pname call_loc
   else
@@ -165,19 +160,17 @@ let report_annotation_stack src_annot snk_annot src_summary loc trace stack_str 
         MF.pp_monospaced ("@" ^ src_annot) MF.pp_monospaced (stack_str ^ exp_pname_str)
         MF.pp_monospaced exp_pname_str MF.pp_monospaced ("@" ^ snk_annot)
     in
-    let msg =
+    let issue_type =
       if String.equal src_annot Annotations.performance_critical then
         IssueType.checkers_calls_expensive_method
       else IssueType.checkers_annotation_reachability_error
     in
-    let exn = Exceptions.Checkers (msg, Localise.verbatim_desc description) in
-    Reporting.log_error src_summary ~loc ~ltr:final_trace exn
+    Reporting.log_error src_summary ~loc ~ltr:final_trace issue_type description
 
 
 let report_call_stack summary end_of_stack lookup_next_calls report call_site sink_map =
-  (* TODO: stop using this; we can use the call site instead *)
   let lookup_location pname =
-    Option.value_map ~f:Specs.get_loc ~default:Location.dummy (Specs.get_summary pname)
+    Option.value_map ~f:Procdesc.get_loc ~default:Location.dummy (Ondemand.get_proc_desc pname)
   in
   let rec loop fst_call_loc visited_pnames (trace, stack_str) (callee_pname, call_loc) =
     if end_of_stack callee_pname then
@@ -197,7 +190,7 @@ let report_call_stack summary end_of_stack lookup_next_calls report call_site si
               let loc = CallSite.loc call_site in
               if Typ.Procname.Set.mem p visited then accu
               else ((p, loc) :: unseen, Typ.Procname.Set.add p visited)
-            with Not_found -> accu )
+            with Caml.Not_found -> accu )
           next_calls ([], visited_pnames)
       in
       List.iter ~f:(loop fst_call_loc updated_callees (new_trace, new_stack_str)) unseen_callees
@@ -210,7 +203,7 @@ let report_call_stack summary end_of_stack lookup_next_calls report call_site si
         let fst_call_loc = CallSite.loc fst_call_site in
         let start_trace = update_trace (CallSite.loc call_site) [] in
         loop fst_call_loc Typ.Procname.Set.empty (start_trace, "") (fst_callee_pname, fst_call_loc)
-      with Not_found -> () )
+      with Caml.Not_found -> () )
     sink_map
 
 
@@ -220,7 +213,7 @@ let report_src_snk_path {Callbacks.proc_desc; tenv; summary} sink_map snk_annot 
   if method_overrides_annot src_annot tenv proc_name then
     let f_report = report_annotation_stack src_annot.Annot.class_name snk_annot.Annot.class_name in
     report_call_stack summary (method_has_annot snk_annot tenv)
-      (lookup_annotation_calls proc_desc snk_annot)
+      (lookup_annotation_calls ~caller_pdesc:proc_desc snk_annot)
       f_report (CallSite.make proc_name loc) sink_map
 
 
@@ -228,7 +221,7 @@ let report_src_snk_paths proc_data annot_map src_annot_list snk_annot =
   try
     let sink_map = AnnotReachabilityDomain.find snk_annot annot_map in
     List.iter ~f:(report_src_snk_path proc_data sink_map snk_annot) src_annot_list
-  with Not_found -> ()
+  with Caml.Not_found -> ()
 
 
 (* New implementation starts here *)
@@ -243,7 +236,7 @@ module AnnotationSpec = struct
     ; sink_predicate: predicate
     ; sanitizer_predicate: predicate
     ; sink_annotation: Annot.t
-    ; report: Callbacks.proc_callback_args -> AnnotReachabilityDomain.astate -> unit }
+    ; report: Callbacks.proc_callback_args -> AnnotReachabilityDomain.t -> unit }
 
   (* The default sanitizer does not sanitize anything *)
   let default_sanitizer _ _ = false
@@ -303,11 +296,8 @@ module ExpensiveAnnotationSpec = struct
           (Typ.Procname.to_string overridden_pname)
           MF.pp_monospaced ("@" ^ Annotations.expensive)
       in
-      let exn =
-        Exceptions.Checkers
-          (IssueType.checkers_expensive_overrides_unexpensive, Localise.verbatim_desc description)
-      in
-      Reporting.log_error summary ~loc exn
+      Reporting.log_error summary ~loc IssueType.checkers_expensive_overrides_unexpensive
+        description
 
 
   let spec =
@@ -349,8 +339,7 @@ let annot_specs =
           (List.map ~f:annotation_of_str src_annots)
           (annotation_of_str snk_annot) )
   in
-  ExpensiveAnnotationSpec.spec
-  :: NoAllocationAnnotationSpec.spec
+  ExpensiveAnnotationSpec.spec :: NoAllocationAnnotationSpec.spec
   :: StandardAnnotationSpec.from_annotations
        [annotation_of_str Annotations.any_thread; annotation_of_str Annotations.for_non_ui_thread]
        (annotation_of_str Annotations.ui_thread)
@@ -372,7 +361,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   let is_unlikely pname =
     match pname with
     | Typ.Procname.Java java_pname ->
-        String.equal (Typ.Procname.java_get_method java_pname) "unlikely"
+        String.equal (Typ.Procname.Java.get_method java_pname) "unlikely"
     | _ ->
         false
 
@@ -397,16 +386,16 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
   let check_call tenv callee_pname caller_pname call_site astate =
     List.fold ~init:astate
-      ~f:(fun astate (spec: AnnotationSpec.t) ->
-        if spec.sink_predicate tenv callee_pname
-           && not (spec.sanitizer_predicate tenv caller_pname)
+      ~f:(fun astate (spec : AnnotationSpec.t) ->
+        if
+          spec.sink_predicate tenv callee_pname && not (spec.sanitizer_predicate tenv caller_pname)
         then Domain.add_call_site spec.sink_annotation callee_pname call_site astate
         else astate )
       annot_specs
 
 
   let merge_callee_map call_site pdesc callee_pname astate =
-    match Summary.read_summary pdesc callee_pname with
+    match Payload.read pdesc callee_pname with
     | None ->
         astate
     | Some callee_call_map ->
@@ -421,9 +410,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
 
   let exec_instr astate {ProcData.pdesc; tenv} _ = function
-    | Sil.Call (Some (id, _), Const Cfun callee_pname, _, _, _) when is_unlikely callee_pname ->
+    | Sil.Call ((id, _), Const (Cfun callee_pname), _, _, _) when is_unlikely callee_pname ->
         Domain.add_tracking_var (Var.of_id id) astate
-    | Sil.Call (_, Const Cfun callee_pname, _, call_loc, _) ->
+    | Sil.Call (_, Const (Cfun callee_pname), _, call_loc, _) ->
         let caller_pname = Procdesc.get_proc_name pdesc in
         let call_site = CallSite.make callee_pname call_loc in
         check_call tenv callee_pname caller_pname call_site astate
@@ -436,20 +425,21 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         Domain.remove_tracking_var (Var.of_pvar pvar) astate
     | Sil.Prune (exp, _, _, _) when prunes_tracking_var astate exp ->
         Domain.stop_tracking astate
-    | Sil.Call (None, _, _, _, _) ->
-        L.(die InternalError) "Expecting a return identifier"
     | _ ->
         astate
+
+
+  let pp_session_name _node fmt = F.pp_print_string fmt "annotation reachability"
 end
 
-module Analyzer = AbstractInterpreter.Make (ProcCfg.Exceptional) (TransferFunctions)
+module Analyzer = AbstractInterpreter.MakeRPO (TransferFunctions (ProcCfg.Exceptional))
 
-let checker ({Callbacks.proc_desc; tenv; summary} as callback) : Specs.summary =
+let checker ({Callbacks.proc_desc; tenv; summary} as callback) : Summary.t =
   let initial = (AnnotReachabilityDomain.empty, NonBottom Domain.TrackingVar.empty) in
   let proc_data = ProcData.make_default proc_desc tenv in
   match Analyzer.compute_post proc_data ~initial with
   | Some (annot_map, _) ->
-      List.iter annot_specs ~f:(fun (spec: AnnotationSpec.t) -> spec.report callback annot_map) ;
-      Summary.update_summary annot_map summary
+      List.iter annot_specs ~f:(fun (spec : AnnotationSpec.t) -> spec.report callback annot_map) ;
+      Payload.update_summary annot_map summary
   | None ->
       summary

@@ -1,19 +1,22 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** Given a clang command, normalize it via `clang -###` if needed to get a clear view of what work
     is being done and which source files are being compiled, if any, then replace compilation
     commands by our own clang with our plugin attached for each source file. *)
 open! IStd
+
 module L = Logging
 
-type action_item = Command of ClangCommand.t | ClangError of string | ClangWarning of string
+type action_item =
+  | CanonicalCommand of ClangCommand.t  (** commands output by [clang -###] *)
+  | DriverCommand of ClangCommand.t  (** commands prior to [clang -###] treatment *)
+  | ClangError of string
+  | ClangWarning of string
 
 let clang_ignore_regex = Option.map ~f:Str.regexp Config.clang_ignore_regex
 
@@ -33,11 +36,9 @@ let check_for_existing_file args =
           ()
       | option :: rest ->
           if String.equal option "-c" then
-            match
-              (* infer-capture-all flavour of buck produces path to generated file that doesn't exist.
+            (* infer-capture-all flavour of buck produces path to generated file that doesn't exist.
              Create empty file empty file and pass that to clang. This is to enable compilation to continue *)
-              (clang_ignore_regex, List.hd rest)
-            with
+            match (clang_ignore_regex, List.hd rest) with
             | Some regexp, Some arg ->
                 if Str.string_match regexp arg 0 && Sys.file_exists arg <> `Yes then (
                   Unix.mkdir_p (Filename.dirname arg) ;
@@ -50,10 +51,10 @@ let check_for_existing_file args =
     check_for_existing_file_arg all_args
 
 
-(** Given a list of arguments for clang [args], return a list of new commands to run according to
-    the results of `clang -### [args]`. *)
-let normalize ~prog ~args : action_item list =
-  let cmd = ClangCommand.mk ClangQuotes.SingleQuotes ~prog ~args in
+(** Given a clang command, return a list of new commands to run according to the results of `clang
+   -### [args]`. *)
+let clang_driver_action_items : ClangCommand.t -> action_item list =
+ fun cmd ->
   let clang_hashhashhash =
     Printf.sprintf "%s 2>&1"
       ( ClangCommand.prepend_arg "-###" cmd
@@ -65,9 +66,17 @@ let normalize ~prog ~args : action_item list =
            pass it now.
 
            Using clang instead of gcc may trigger warnings about unsupported optimization flags;
-           passing -Wno-ignored-optimization-argument prevents that. *)
+           passing -Wno-ignored-optimization-argument prevents that.
+
+           Clang adds "-faddrsig" by default on ELF targets. This is ok in itself, but for some
+           reason that flag is the only one to show up *after* the source file name in the -cc1
+           commands emitted by [clang -### ...]. Passing [-fno-addrsig] ensures that the source
+           path is always the last argument.  *)
          ClangCommand.append_args
-           ["-fno-cxx-modules"; "-Qunused-arguments"; "-Wno-ignored-optimization-argument"]
+           [ "-fno-cxx-modules"
+           ; "-Qunused-arguments"
+           ; "-Wno-ignored-optimization-argument"
+           ; "-fno-addrsig" ]
       |> (* If -fembed-bitcode is passed, it leads to multiple cc1 commands, which try to read .bc
             files that don't get generated, and fail. So pass -fembed-bitcode=off to disable. *)
          ClangCommand.append_args ["-fembed-bitcode=off"]
@@ -77,14 +86,14 @@ let normalize ~prog ~args : action_item list =
   let normalized_commands = ref [] in
   let one_line line =
     if String.is_prefix ~prefix:" \"" line then
-      Command
-        ( match
-            (* massage line to remove edge-cases for splitting *)
-            "\"" ^ line ^ " \"" |> (* split by whitespace *)
-                                   Str.split (Str.regexp_string "\" \"")
-          with
+      CanonicalCommand
+        ( (* massage line to remove edge-cases for splitting *)
+        match
+          "\"" ^ line ^ " \"" |> (* split by whitespace *)
+                                 Str.split (Str.regexp_string "\" \"")
+        with
         | prog :: args ->
-            ClangCommand.mk ClangQuotes.EscapedDoubleQuotes ~prog ~args
+            ClangCommand.mk ~is_driver:false ClangQuotes.EscapedDoubleQuotes ~prog ~args
         | [] ->
             L.(die InternalError) "ClangWrapper: argv cannot be empty" )
     else if Str.string_match (Str.regexp "clang[^ :]*: warning: ") line 0 then ClangWarning line
@@ -102,8 +111,9 @@ let normalize ~prog ~args : action_item list =
       while true do
         let line = In_channel.input_line_exn i in
         (* keep only commands and errors *)
-        if Str.string_match commands_or_errors line 0
-           && not (Str.string_match ignored_errors line 0)
+        if
+          Str.string_match commands_or_errors line 0
+          && not (Str.string_match ignored_errors line 0)
         then normalized_commands := one_line line :: !normalized_commands
       done
     with End_of_file -> ()
@@ -114,17 +124,38 @@ let normalize ~prog ~args : action_item list =
   !normalized_commands
 
 
+(** Given a list of arguments for clang [args], return a list of new commands to run according to
+    the results of `clang -### [args]` if the command can be analysed. *)
+let normalize ~prog ~args : action_item list =
+  let cmd = ClangCommand.mk ~is_driver:true ClangQuotes.SingleQuotes ~prog ~args in
+  if ClangCommand.may_capture cmd then clang_driver_action_items cmd else [DriverCommand cmd]
+
+
 let exec_action_item ~prog ~args = function
   | ClangError error ->
       (* An error in the output of `clang -### ...`. Outputs the error and fail. This is because
        `clang -###` pretty much never fails, but warns of failures on stderr instead. *)
       L.(die UserError)
-        "Failed to execute compilation command:@\n'%s' %a@\n@\nError message:@\n%s@\n@\n*** Infer needs a working compilation command to run."
+        "Failed to execute compilation command:@\n\
+         '%s' %a@\n\
+         @\n\
+         Error message:@\n\
+         %s@\n\
+         @\n\
+         *** Infer needs a working compilation command to run."
         prog Pp.cli_args args error
   | ClangWarning warning ->
       L.external_warning "%s@\n" warning
-  | Command clang_cmd ->
+  | CanonicalCommand clang_cmd ->
       Capture.capture clang_cmd
+  | DriverCommand clang_cmd ->
+      if
+        Option.is_none Config.buck_compilation_database
+        || Config.skip_analysis_in_path_skips_compilation
+      then Capture.run_clang clang_cmd Utils.echo_in
+      else
+        L.debug Capture Quiet "Skipping seemingly uninteresting clang driver command %s@\n"
+          (ClangCommand.command_to_run clang_cmd)
 
 
 let exe ~prog ~args =
@@ -156,6 +187,8 @@ let exe ~prog ~args =
            will fail with the appropriate error message from clang instead of silently analyzing 0
            files. *)
       L.(debug Capture Quiet)
-        "WARNING: `clang -### <args>` returned an empty set of commands to run and no error. Will run the original command directly:@\n  %s@\n"
-        (String.concat ~sep:" " @@ prog :: args) ;
+        "WARNING: `clang -### <args>` returned an empty set of commands to run and no error. Will \
+         run the original command directly:@\n\
+        \  %s@\n"
+        (String.concat ~sep:" " @@ (prog :: args)) ;
     Process.create_process_and_wait ~prog ~args )

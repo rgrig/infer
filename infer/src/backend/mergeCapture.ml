@@ -1,16 +1,13 @@
 (*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-open! PVariant
+open PolyVariantEqual
 module L = Logging
-module F = Format
 
 (** Module to merge the results of capture for different buck targets. *)
 
@@ -37,7 +34,7 @@ let empty_stats () = {files_linked= 0; targets_merged= 0}
 
 let link_exists s =
   try
-    let _ = Unix.lstat s in
+    ignore (Unix.lstat s) ;
     true
   with Unix.Unix_error _ -> false
 
@@ -92,7 +89,7 @@ let should_link ~target ~target_results_dir ~stats infer_out_src infer_out_dst =
         ~f:(fun file ->
           let file_path = Filename.concat captured_file file in
           Sys.file_exists file_path = `Yes
-          && (not check_timestamp_of_symlinks || symlink_up_to_date file_path) )
+          && ((not check_timestamp_of_symlinks) || symlink_up_to_date file_path) )
         contents
     else true
   in
@@ -102,10 +99,10 @@ let should_link ~target ~target_results_dir ~stats infer_out_src infer_out_dst =
   let was_copied () =
     let captured_src = Filename.concat infer_out_src Config.captured_dir_name in
     let captured_dst = Filename.concat infer_out_dst Config.captured_dir_name in
-    if Sys.file_exists captured_src = `Yes && Sys.is_directory captured_src = `Yes then
+    if Sys.file_exists captured_src = `Yes && Sys.is_directory captured_src = `Yes then (
       let captured_files = Array.to_list (Sys.readdir captured_src) in
       num_captured_files := List.length captured_files ;
-      List.for_all ~f:(fun file -> check_file (Filename.concat captured_dst file)) captured_files
+      List.for_all ~f:(fun file -> check_file (Filename.concat captured_dst file)) captured_files )
     else true
   in
   let was_modified () = String.Set.mem !modified_targets target in
@@ -134,7 +131,7 @@ let process_merge_file deps_file =
           else target_results_dir
         in
         let skiplevels = 2 in
-        (* Don't link toplevel files, definitely not .start *)
+        (* Don't link toplevel files *)
         if should_link ~target ~target_results_dir ~stats infer_out_src infer_out_dst then
           slink ~stats ~skiplevels infer_out_src infer_out_dst
     | _ ->
@@ -156,3 +153,10 @@ let merge_captured_targets () =
   MergeResults.merge_buck_flavors_results infer_deps_file ;
   process_merge_file infer_deps_file ;
   L.progress "Merging captured Buck targets took %a@\n%!" Mtime.Span.pp (Mtime_clock.count time0)
+
+
+(* shadowed for tracing *)
+let merge_captured_targets () =
+  PerfEvent.(log (fun logger -> log_begin_event logger ~name:"merge buck targets" ())) ;
+  merge_captured_targets () ;
+  PerfEvent.(log (fun logger -> log_end_event logger ()))

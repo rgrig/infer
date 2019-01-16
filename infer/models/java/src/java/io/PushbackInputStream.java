@@ -1,16 +1,13 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package java.io;
 
 import com.facebook.infer.builtins.InferUndefined;
-
 
 public class PushbackInputStream {
 
@@ -49,5 +46,4 @@ public class PushbackInputStream {
   public void unread(int b) throws IOException {
     InferUndefined.can_throw_ioexception_void();
   }
-
 }

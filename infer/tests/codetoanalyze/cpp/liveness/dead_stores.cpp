@@ -1,14 +1,14 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
+#include <exception>
 #include <mutex>
 #include <new>
+#include <stdexcept>
 #include <thread>
 
 namespace infer {
@@ -61,8 +61,7 @@ void FN_capture_no_read_bad() {
 
 void init_capture_reassign_bad() {
   int i = 1; // this is a dead store
-  return [i = 1]() { return i; }
-  ();
+  return [i = 1]() { return i; }();
 }
 
 void init_capture_no_call_bad() {
@@ -70,8 +69,7 @@ void init_capture_no_call_bad() {
 }
 
 int FN_init_capture_no_read_bad() {
-  return [i = 1]() { return 0; }
-  ();
+  return [i = 1]() { return 0; }();
 }
 
 int return_ok() {
@@ -130,12 +128,6 @@ void by_ref1_ok(int& ref) { ref = 7; }
 
 void by_ref2_ok(int& ref) { ref++; }
 
-int capture_by_ref3_ok() {
-  int x = 1;
-  [&](auto y) { x += y; }(3);
-  return x;
-}
-
 int plus_plus_ok() {
   int x = 1;
   return ++x;
@@ -183,6 +175,35 @@ int capture_by_ref2_ok() {
   return x + y;
 }
 
+int capture_by_ref3_ok() {
+  int x = 1;
+  [&](auto y) { x += y; }(3);
+  return x;
+}
+
+int capture_by_ref4_ok() {
+  int x = 1;
+  auto lambda = [&] { return x; };
+  x = 2; // not a dead store; updates captured x
+  return lambda();
+}
+
+int dead_store_before_capture_by_ref_bad() {
+  int x = 1; // this is dead. should report it even though x is captured by ref
+             // later on
+  x = 2;
+  auto lambda = [&] { return x; };
+  x = 2;
+  return lambda();
+}
+
+int capture_by_value_bad() {
+  int x = 1;
+  auto lambda = [=] { return x; };
+  x = 2; // this is dead
+  return lambda();
+}
+
 int FN_capture_by_ref_reuseBad() {
   int x = 1;
   [&x]() {
@@ -193,52 +214,52 @@ int FN_capture_by_ref_reuseBad() {
 }
 
 int init_capture1_ok() {
-  return [i = 1]() { return i; }
-  ();
+  return [i = 1]() { return i; }();
 }
 
 int init_capture2_ok() {
   int i = 1;
-  return [j = i]() { return j; }
-  ();
+  return [j = i]() { return j; }();
 }
 
 int init_capture3_ok() {
   int i = 1;
-  return [i = i]() { return i; }
-  ();
+  return [i = i]() { return i; }();
 }
 
 int init_capture4_ok() {
   int i = 1;
   int j = 1;
-  return [ a = 1, b = i, c = j ]() { return a + b + c; }
-  ();
+  return [a = 1, b = i, c = j]() { return a + b + c; }();
 }
 
 int init_capture5_ok() {
   int i = 1;
-  int k = [j = i]() { return j; }
-  ();
+  int k = [j = i]() { return j; }();
   i = 5; // should not be flagged
   return i + k;
 }
 
 int init_capture6_ok() {
   int i = 1;
-  int k = [i = i + 1]() { return i; }
-  ();
+  int k = [i = i + 1]() { return i; }();
   i = 5; // should not be flagged;
   return i + k;
 }
 
 char* global;
 
-void FP_assign_array_tricky_ok() {
+void assign_array_tricky_ok() {
   char arr[1];
   global = arr;
-  *(int*)arr = 123; // think this is a bug in the frontend... this instruction
-  // looks like &arr:int = 123
+  *(int*)arr = 123;
+}
+
+// Currently the frontend does not translate the casting of pointers to float.
+void FP_assign_array_tricky2_ok() {
+  char arr[1];
+  global = arr;
+  *(float*)arr = 1.0;
 }
 
 void placement_new_ok(int len, int* ptr) {
@@ -323,10 +344,165 @@ struct NoDestructor {};
 
 void dead_struct_no_destructor_bad() { NoDestructor dead; }
 
+void no_destructor_void_read_ok() {
+  NoDestructor dead;
+  (void)dead;
+}
+
+struct NoDestructorDefinition {
+  ~NoDestructorDefinition();
+};
+
+void dead_struct_no_destructor_definition_ok() { NoDestructorDefinition dead; }
+
 std::mutex my_mutex;
 
 void dead_lock_guard_ok() { std::lock_guard<std::mutex> lock(my_mutex); }
 
 void dead_unique_lock_ok() { std::unique_lock<std::mutex> lock(my_mutex); }
 
+extern int maybe_throw();
+
+class Exceptions {
+
+  int read_in_catch1_ok() {
+    int i = 1;
+    try {
+      throw std::runtime_error("error");
+    } catch (...) {
+      return i;
+    }
+    return 0;
+  }
+
+  int read_in_catch_explicit_throw_ok() {
+    int i = 1;
+    try {
+      maybe_throw();
+    } catch (...) {
+      return i;
+    }
+    return 0;
+  }
+
+  int dead_in_catch_bad() {
+    try {
+      throw std::runtime_error("error");
+    } catch (...) {
+      int i = 1;
+    }
+    return 0;
+  }
+
+  int unreachable_catch_bad() {
+    int i = 1;
+    try {
+    } catch (...) {
+      return i;
+    }
+    return 0;
+  }
+
+  int multiple_catches_ok(bool b) {
+    int i = 1;
+    int j = 2;
+    try {
+      if (b) {
+        throw std::length_error("error");
+      } else {
+        throw std::range_error("error");
+      }
+    } catch (std::length_error& msg) {
+      return i;
+    } catch (std::range_error& msg) {
+      return j;
+    }
+    return 0;
+  }
+
+  void dont_throw() {}
+
+  int FN_harder_unreachable_catch_bad() {
+    int i = 1;
+    try {
+      dont_throw();
+    } catch (...) {
+      return i;
+    }
+    return 0;
+  }
+
+  // currently, the only transition to the catch block is at the end of the try
+  // block
+  int FP_read_in_catch_tricky_ok(bool b1, bool b2) {
+    int i = 1;
+    try {
+      if (b1) {
+        throw std::runtime_error("error");
+      }
+      i = 2;
+      if (b2) {
+        throw std::runtime_error("error");
+      }
+    } catch (...) {
+      return i;
+    }
+    return 0;
+  }
+
+  int return_in_try1_ok() {
+    bool b;
+
+    try {
+      maybe_throw();
+      return 3;
+    } catch (const char* msg) {
+      b = true;
+    }
+
+    if (b) {
+      return 2;
+    }
+    return 3;
+  }
+
+  int return_in_try2_ok() {
+    bool b;
+
+    try {
+      return maybe_throw();
+    } catch (const char* msg) {
+      b = true;
+    }
+
+    if (b) {
+      return 2;
+    }
+    return 3;
+  }
+};
+
+void init_in_binop_bad(int x) { x = -x & ~int{0}; }
+
+void FN_unused_tmp_bad() {
+  // T32000971
+  int __tmp = 1;
 }
+
+#define UNUSED(a) __typeof__(&a) __attribute__((unused)) __tmp = &a;
+
+void unused_attribute_ok() {
+  int x;
+  UNUSED(x);
+}
+
+struct ChainedCalls {
+  ChainedCalls chained(int i);
+};
+
+ChainedCalls chain_method_calls_ok() {
+  ChainedCalls x;
+  return x.chained(5).chained(6);
+}
+
+} // namespace dead_stores

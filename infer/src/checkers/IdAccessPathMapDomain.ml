@@ -1,30 +1,31 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 module IdMap = Var.Map
 module L = Logging
 
-type astate = AccessPath.t IdMap.t
+include (IdMap : module type of IdMap with type 'a t := 'a IdMap.t)
 
-include IdMap
+type t = HilExp.AccessExpression.t IdMap.t
 
-let pp fmt astate = IdMap.pp ~pp_value:AccessPath.pp fmt astate
+type value = HilExp.AccessExpression.t
+
+let pp fmt astate = IdMap.pp ~pp_value:HilExp.AccessExpression.pp fmt astate
 
 let check_invariant ap1 ap2 = function
   | Var.ProgramVar pvar when Pvar.is_ssa_frontend_tmp pvar ->
       (* Sawja reuses temporary variables which sometimes breaks this invariant *)
       ()
   | id ->
-      if not (AccessPath.equal ap1 ap2) then
+      if not (HilExp.AccessExpression.equal ap1 ap2) then
         L.(die InternalError)
-          "Id %a maps to both %a and %a" Var.pp id AccessPath.pp ap1 AccessPath.pp ap2
+          "Id %a maps to both %a and %a" Var.pp id HilExp.AccessExpression.pp ap1
+          HilExp.AccessExpression.pp ap2
 
 
 let ( <= ) ~lhs ~rhs =

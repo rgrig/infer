@@ -27,7 +27,7 @@ run:
 make devsetup
 ```
 
-### Tips and Tricks
+### Building Infer for Development
 
 - Build the code faster: `make -j BUILD_MODE=default`. By default `make` builds infer with flambda
   enabled, which makes it very slow (but makes infer significantly faster).
@@ -49,7 +49,38 @@ make devsetup
 - To switch the default build mode to flambda disabled, you can `export BUILD_MODE=default` in your
   shell.
 
-## Hacking on the Code in facebook-clang-plugins 
+### Debugging OCaml Code
+
+- Printf-debug using `Logging.debug_dev`. It comes with a warning so
+  that you don't accidentally push code with calls to `debug_dev` to
+  the repo.
+
+- Browse the documentation of OCaml modules in your browser with `make doc`
+
+- When using `ocamldebug`, and in particular when setting break points
+  with `break @ <module> <line>` don't forget that an infer module `M`
+  is in reality called `InferModules__M`, or `InferBase__M`, or
+  ... See the html documentation of the OCaml modules from `make doc`
+  if you're unsure of a module name.
+
+```console
+$ ledit ocamldebug infer/bin/infer.bc
+(ocd) break @ InferModules__InferAnalyze 100
+Breakpoint 1 at 9409684: file backend/InferAnalyze.ml, line 99, characters 18-78
+```
+
+- To test the infer OCaml code you can use the OCaml toplevel. To
+  build the OCaml toplevel with the infer modules pre-loaded, run
+  `make toplevel` and follow the instructions.
+
+  To pass infer options to the toplevel, use `INFER_ARGS`, for
+  instance: `INFER_ARGS=--debug^-o^infer-out-foo`.
+
+  Many operations require the results directory and database to be
+  initialized with `ResultsDir.assert_results_dir ""`.
+
+
+## Hacking on the Code in facebook-clang-plugins
 
 Infer uses `ASTExporter` from the [facebook-clang-plugins](https://github.com/facebook/facebook-clang-plugins)
 repository. To change that part of the code:
@@ -61,8 +92,11 @@ repository. To change that part of the code:
 We require contributors to sign our Contributor License Agreement. In
 order for us to review and merge your code, please sign up at
 https://code.facebook.com/cla. If you have any questions, please drop
-us a line at cla@fb.com. Thanks!
+us a line at cla@fb.com.
 
+You are also expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md), so please read that if you are a new contributor.
+
+Thanks!
 
 ## Coding Style
 
@@ -100,7 +134,7 @@ Error: This variant expression is expected to have type 'a list
 
 - Polymorphic equality is disabled; use type-specific equality instead, even for primitive types
   (e.g., `Int.equal`). However, if your module uses a lot of polymorphic variants with no arguments
-  you may safely `open! PVariant`.
+  you may safely `open PolyVariantEqual`.
 
   If you try and use polymorphic equality `=` in your code you will get a compilation error, such as:
 ```
@@ -114,8 +148,8 @@ Error: This expression has type int but an expression was expected of type
 - Check that your code compiles without warnings with `make -j test_build` (this also runs as part
   of `make test`).
 
-- Apart from `IStd` and `PVariant`, refrain from globally `open`ing modules. Using local open
-  instead when it improves readability: `let open MyModule in ...`.
+- Apart from `IStd` and `PolyVariantEqual`, refrain from globally `open`ing modules. Using
+  local open instead when it improves readability: `let open MyModule in ...`.
 
 - Avoid the use of module aliases, except for the following commonly-aliased modules. Use
   module aliases consistently (e.g., do not alias `L` to a module other than `Logging`).
@@ -153,7 +187,7 @@ Follow `clang-format` (see ".clang-format" at the root of the repository).
 
 ## Testing your Changes
 
-- Make sure infer builds: `make -j `. Refer to the [installation
+- Make sure infer builds: `make -j test_build`. Refer to the [installation
   document](https://github.com/facebook/infer/blob/master/INSTALL.md) for details.
 
 - Run the tests: `make -j 4 test` (adjust 4 to the number of cores available of your machine). The
@@ -199,13 +233,13 @@ $ infer --debug -- clang -c examples/hello.c
 $ firefox infer-out/captured/hello.c.*.html
 ```
 
-## Updating opam and opam.lock
+## Updating opam and opam.locked
 
-tl; dr: Run `make opam.lock`.
+tl; dr: Run `make opam.locked`.
 
-opam.lock records fixed versions of the opam dependencies known to work with infer and to respect
+opam.locked records fixed versions of the opam dependencies known to work with infer and to respect
 the constraints in opam. This prevents unpredictable breakages of infer or its dependencies,
 especially for infer releases, for which it is more difficult to change their package constraints
 after the fact.
 
-To add an opam package or update its version constraints, edit 'opam' then run `make opam.lock`.
+To add an opam package or update its version constraints, edit 'opam' then run `make opam.locked`.

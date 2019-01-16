@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -16,22 +14,7 @@ module Key : sig
   (** Serialization key, used to distinguish versions of serializers and avoid assert faults *)
   type t
 
-  val analysis_results : t
-  (** current key for an analysis results value *)
-
-  val attributes : t
-  (** current key for proc attributes *)
-
-  val cfg : t
-  (** current key for a cfg *)
-
-  val cg : t
-  (** current key for a call graph *)
-
-  val cluster : t
-  (** current key for a cluster *)
-
-  val lint_issues : t
+  val issues : t
   (** current key for lint issues *)
 
   val summary : t
@@ -39,9 +22,6 @@ module Key : sig
 
   val tenv : t
   (** current key for tenv *)
-
-  val trace : t
-  (** current key for an error trace *)
 end
 
 (** Generic serializer *)
@@ -57,9 +37,9 @@ val read_from_file : 'a serializer -> DB.filename -> 'a option
 val read_from_string : 'a serializer -> string -> 'a option
 (** Deserialize a string and check the keys *)
 
-val update_file : 'a serializer -> f:('a option -> 'a) -> DB.filename -> unit
-(** Serialize into a file.
-    The upd function takes the old value, if any, and returns the value to write *)
-
 val write_to_file : 'a serializer -> data:'a -> DB.filename -> unit
 (** Serialize into a file writing value *)
+
+val generate_keys : unit -> int * int * int * int * int
+  [@@warning "-32"]
+(** Generate new (random) serialization keys, to be used in an ocaml toplevel *)

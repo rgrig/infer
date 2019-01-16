@@ -1,16 +1,14 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** The Smallfoot Intermediate Language: Annotations *)
 open! IStd
-module L = Logging
+
 module F = Format
 
 type parameters = string list [@@deriving compare]
@@ -19,34 +17,28 @@ type parameters = string list [@@deriving compare]
 type t =
   { class_name: string  (** name of the annotation *)
   ; parameters: parameters  (** currently only one string parameter *) }
-  [@@deriving compare]
+[@@deriving compare]
 
 let volatile = {class_name= "volatile"; parameters= []}
 
 let final = {class_name= "final"; parameters= []}
 
 (** Pretty print an annotation. *)
-let prefix = match Config.curr_language_is Config.Java with true -> "@" | false -> "_"
+let prefix = match Language.curr_language_is Java with true -> "@" | false -> "_"
 
-let pp fmt annotation = F.fprintf fmt "%s%s" prefix annotation.class_name
+let pp fmt annotation =
+  F.fprintf fmt "%s%s%s" prefix annotation.class_name
+    (String.concat ~sep:"," annotation.parameters)
 
-module Map = PrettyPrintable.MakePPMap (struct
-  type nonrec t = t
-
-  let compare = compare
-
-  let pp = pp
-end)
 
 module Item = struct
   (* Don't use nonrec due to https://github.com/janestreet/ppx_compare/issues/2 *)
   (* type nonrec t = list (t, bool) [@@deriving compare]; *)
+
   (** Annotation for one item: a list of annotations with visibility. *)
   type t_ = (t * bool) list [@@deriving compare]
 
   type t = t_ [@@deriving compare]
-
-  let equal = [%compare.equal : t]
 
   (** Pretty print an item annotation. *)
   let pp fmt ann =
@@ -54,15 +46,10 @@ module Item = struct
     F.fprintf fmt "<%a>" (Pp.seq pp) ann
 
 
-  let to_string ann =
-    let pp fmt = pp fmt ann in
-    F.asprintf "%t" pp
-
-
   (** Empty item annotation. *)
   let empty = []
 
-  (** Check if the item annodation is empty. *)
+  (** Check if the item annotation is empty. *)
   let is_empty ia = List.is_empty ia
 end
 
@@ -79,15 +66,16 @@ module Class = struct
 end
 
 module Method = struct
-  (** Annotation for a method: return value and list of parameters. *)
-  type t = Item.t * Item.t list [@@deriving compare]
+  type t = {return: Item.t; params: Item.t list}
 
   (** Pretty print a method annotation. *)
-  let pp s fmt (ia, ial) = F.fprintf fmt "%a %s(%a)" Item.pp ia s (Pp.seq Item.pp) ial
+  let pp s fmt {return; params} =
+    F.fprintf fmt "%a %s(%a)" Item.pp return s (Pp.seq Item.pp) params
+
 
   (** Empty method annotation. *)
-  let empty = ([], [])
+  let empty = {return= []; params= []}
 
-  (** Check if the method annodation is empty. *)
-  let is_empty (ia, ial) = List.for_all ~f:Item.is_empty (ia :: ial)
+  (** Check if the method annotation is empty. *)
+  let is_empty {return; params} = Item.is_empty return && List.for_all ~f:Item.is_empty params
 end

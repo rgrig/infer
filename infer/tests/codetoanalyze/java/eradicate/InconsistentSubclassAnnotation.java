@@ -1,21 +1,19 @@
 /*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.eradicate;
 
+import external.library.SomeExternalClass;
 import javax.annotation.Nullable;
 
 class SubclassExample {
 
   class T {
-    public void f() {
-    }
+    public void f() {}
   }
 
   class A {
@@ -24,9 +22,7 @@ class SubclassExample {
       return new T();
     }
 
-    public
-    @Nullable
-    T bar() {
+    public @Nullable T bar() {
       return null;
     }
 
@@ -36,23 +32,18 @@ class SubclassExample {
       }
     }
 
-    public void noDeref(T t) {
-    }
-
+    public void noDeref(T t) {}
   }
 
   class B extends A {
 
-    public
-    @Nullable
-    T foo() {
+    public @Nullable T foo() {
       return null;
     }
 
     public T bar() {
       return new T();
     }
-
   }
 
   interface I {
@@ -61,9 +52,7 @@ class SubclassExample {
 
   class C implements I {
 
-    public
-    @Nullable
-    T baz() {
+    public @Nullable T baz() {
       return null;
     }
   }
@@ -79,20 +68,33 @@ class SubclassExample {
         t.f();
       }
     }
-
   }
 }
 
 class ConstructorsAreExcluded {
   class Base {
-    Base (@Nullable String s) {
-    }
+    Base(@Nullable String s) {}
   }
 
   class Derived extends Base {
-    Derived (String s) { // OK: there's no sub-typing between constructors
+    Derived(String s) { // OK: there's no sub-typing between constructors
       super(s);
     }
+  }
+}
+
+class ExtendsExternalLibrary extends SomeExternalClass {
+
+  @Override
+  public @Nullable Object externalMethod1() {
+    // subtyping error on the return type not reported as we cannot
+    // rely on the external libraries to be correctly annotated
+    return null;
+  }
+
+  @Override
+  public void externalMethod2(Object object) {
+    // subtyping error on the parameter type are reported
   }
 }
 
@@ -111,4 +113,11 @@ public class InconsistentSubclassAnnotation implements InconsistentSubclassAnnot
     return "";
   }
 
+  public @Nullable Object overloadedMethod() {
+    return null;
+  }
+
+  public Object overloadedMethod(Object object) {
+    return object;
+  }
 }

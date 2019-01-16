@@ -1,14 +1,11 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.infer;
-
 
 import java.io.*;
 import java.security.DigestInputStream;
@@ -16,12 +13,11 @@ import java.util.zip.CheckedInputStream;
 import java.util.zip.DeflaterInputStream;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.InflaterInputStream;
-
 import javax.crypto.CipherInputStream;
 
 public class FilterInputStreamLeaks {
 
-  //BufferedInputStream  tests
+  // BufferedInputStream  tests
 
   public void bufferedInputStreamNotClosedAfterRead() {
     FileInputStream fis;
@@ -47,7 +43,7 @@ public class FilterInputStreamLeaks {
     }
   }
 
-  //CheckedInputStream  tests
+  // CheckedInputStream  tests
 
   public void checkedInputStreamNotClosedAfterRead() {
     FileInputStream fis;
@@ -73,7 +69,7 @@ public class FilterInputStreamLeaks {
     }
   }
 
-  //CipherInputStream  tests
+  // CipherInputStream  tests
 
   public void cipherInputStreamNotClosedAfterSkip() {
     FileInputStream fis;
@@ -99,7 +95,7 @@ public class FilterInputStreamLeaks {
     }
   }
 
-  //DataInputStream  tests
+  // DataInputStream  tests
 
   public void dataInputStreamNotClosedAfterRead() {
     byte[] arr = new byte[10];
@@ -126,7 +122,7 @@ public class FilterInputStreamLeaks {
     }
   }
 
-  //DeflaterInputStream  tests
+  // DeflaterInputStream  tests
 
   public void deflaterInputStreamNotClosedAfterRead() {
     FileInputStream fis;
@@ -152,7 +148,7 @@ public class FilterInputStreamLeaks {
     }
   }
 
-  //GZipInputStream  tests
+  // GZipInputStream  tests
 
   public void gzipInputStreamNotClosedAfterRead() {
     FileInputStream fis;
@@ -174,14 +170,12 @@ public class FilterInputStreamLeaks {
       gzipInputStream.read();
     } catch (IOException e) {
     } finally {
-      if (gzipInputStream != null)
-        gzipInputStream.close();
-      else if (fis != null)
-        fis.close();
+      if (gzipInputStream != null) gzipInputStream.close();
+      else if (fis != null) fis.close();
     }
   }
 
-  //DigestInputStream  tests
+  // DigestInputStream  tests
 
   public void digestInputStreamNotClosedAfterRead() {
     byte[] arr = new byte[10];
@@ -208,7 +202,7 @@ public class FilterInputStreamLeaks {
     }
   }
 
-  //InflaterInputStream  tests
+  // InflaterInputStream  tests
 
   public void inflaterInputStreamNotClosedAfterRead() {
     FileInputStream fis;
@@ -234,7 +228,7 @@ public class FilterInputStreamLeaks {
     }
   }
 
-  //PushbackInputStream tests
+  // PushbackInputStream tests
 
   public void pushbackInputStreamNotClosedAfterRead() {
     FileInputStream fis;
@@ -264,5 +258,4 @@ public class FilterInputStreamLeaks {
     DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(file)));
     in.close();
   }
-
 }

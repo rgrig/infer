@@ -1,3 +1,7 @@
+// Copyright (c) 2018-present, Facebook, Inc.
+//
+// This source code is licensed under the MIT license found in the
+// LICENSE file in the root directory of this source tree.
 DEFINE-CHECKER TEST_REFERENCE = {
   SET report_when =
           WHEN method_return_type("instancetype")
@@ -193,4 +197,39 @@ DEFINE-CHECKER FIELD_STRUCT_STRING = {
 	SET message = "Found a field of type NSString";
 	SET severity = "WARNING";
 	SET mode = "ON";
+};
+
+DEFINE-CHECKER OBJC_BLOCK_CAPTURING_VALUES = {
+
+			 SET report_when =
+				 		 WHEN
+				 			 objc_block_is_capturing_values()
+				 		 HOLDS-IN-NODE BlockDecl;
+
+      SET message = "ObjC Block capturing values";
+      SET mode = "ON";
+};
+
+DEFINE-CHECKER ADHERE_TO_PROTOCOL = {
+
+  SET report_when =
+  WHEN
+    adhere_to_protocol()
+  HOLDS-IN-NODE ObjCInterfaceDecl;
+
+  SET message = "Found class adhering to protocol";
+  SET mode = "ON";
+
+};
+
+DEFINE-CHECKER ONLY_ONE_CLASS_METHOD = {
+
+  SET report_when =
+       WHEN
+          objc_class_has_only_one_constructor_method_named(REGEXP("newWith.+"))
+       HOLDS-IN-NODE ObjCImplementationDecl;
+
+  SET message = "Found class with only one class method";
+  SET mode = "ON";
+
 };

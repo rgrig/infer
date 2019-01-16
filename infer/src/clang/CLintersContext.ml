@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -19,11 +17,15 @@ type context =
   ; current_method: Clang_ast_t.decl option
   ; parent_methods: Clang_ast_t.decl list
   ; in_synchronized_block: bool
-        (** True if the translation unit contains an ObjC class impl that's a subclass
-      of CKComponent or CKComponentController. *)
   ; is_ck_translation_unit: bool
-        (** If inside an objc class, contains the objc class (impl or interface) decl. *)
+        (** True if the translation unit contains an ObjC class impl that's a subclass
+            of CKComponent or CKComponentController. *)
   ; current_objc_class: Clang_ast_t.decl option
+        (** If inside an objc class, contains the objc class (impl or interface) decl. *)
+  ; current_objc_category: Clang_ast_t.decl option
+        (** If inside an objc category, contains the objc category (impl or interface) decl. *)
+  ; current_objc_protocol: Clang_ast_t.decl option
+        (** If inside an objc protocol, contains the objc protocol decl. *)
   ; et_evaluation_node: string option
   ; if_context: if_context option
   ; in_for_loop_declaration: bool }
@@ -35,6 +37,8 @@ let empty translation_unit_context =
   ; in_synchronized_block= false
   ; is_ck_translation_unit= false
   ; current_objc_class= None
+  ; current_objc_category= None
+  ; current_objc_protocol= None
   ; et_evaluation_node= None
   ; if_context= None
   ; in_for_loop_declaration= false }

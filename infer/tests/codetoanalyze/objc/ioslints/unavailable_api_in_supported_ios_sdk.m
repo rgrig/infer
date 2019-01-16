@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
@@ -22,12 +20,6 @@ NS_CLASS_AVAILABLE(10_12, 10_0)
 @end
 
 @implementation Unavailable_api_in_supported_ios_sdk
-
-// bug
-- (void)test:(int)n and:(NSData*)data {
-  NSDictionary* cacheData =
-      [NSKeyedUnarchiver unarchiveTopLevelObjectWithData:data error:nil];
-}
 
 // no bug
 - (void)test_no_bug:(int)n and:(NSData*)data {

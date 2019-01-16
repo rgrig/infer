@@ -1,15 +1,12 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 module F = Format
-module L = Logging
 
 module type S = sig
   module TraceDomain : AbstractDomain.WithBottom
@@ -18,36 +15,34 @@ module type S = sig
 
   module BaseMap = AccessPath.BaseMap
 
-  type node = TraceDomain.astate * tree
+  type node = TraceDomain.t * tree
  and tree = Subtree of node AccessMap.t | Star
 
-  type t = node BaseMap.t
-
-  include AbstractDomain.WithBottom with type astate = t
+  include AbstractDomain.WithBottom with type t = node BaseMap.t
 
   val empty_node : node
 
-  val make_node : TraceDomain.astate -> node AccessMap.t -> node
+  val make_node : TraceDomain.t -> node AccessMap.t -> node
 
-  val make_access_node : TraceDomain.astate -> AccessPath.access -> TraceDomain.astate -> node
+  val make_access_node : TraceDomain.t -> AccessPath.access -> TraceDomain.t -> node
 
-  val make_normal_leaf : TraceDomain.astate -> node
+  val make_normal_leaf : TraceDomain.t -> node
 
-  val make_starred_leaf : TraceDomain.astate -> node
+  val make_starred_leaf : TraceDomain.t -> node
 
   val get_node : AccessPath.Abs.t -> t -> node option
 
-  val get_trace : AccessPath.Abs.t -> t -> TraceDomain.astate option
+  val get_trace : AccessPath.Abs.t -> t -> TraceDomain.t option
 
   val add_node : AccessPath.Abs.t -> node -> t -> t
 
-  val add_trace : AccessPath.Abs.t -> TraceDomain.astate -> t -> t
+  val add_trace : AccessPath.Abs.t -> TraceDomain.t -> t -> t
 
   val node_join : node -> node -> node
 
   val fold : ('a -> AccessPath.Abs.t -> node -> 'a) -> t -> 'a -> 'a
 
-  val trace_fold : ('a -> AccessPath.Abs.t -> TraceDomain.astate -> 'a) -> t -> 'a -> 'a
+  val trace_fold : ('a -> AccessPath.Abs.t -> TraceDomain.t -> 'a) -> t -> 'a -> 'a
 
   val exists : (AccessPath.Abs.t -> node -> bool) -> t -> bool
 
@@ -93,12 +88,11 @@ module Make (TraceDomain : AbstractDomain.WithBottom) (Config : Config) = struct
 
   module BaseMap = AccessPath.BaseMap
 
-  type node = (TraceDomain.astate * tree)
- and tree = Subtree of node AccessMap.t | Star
+  type node = TraceDomain.t * tree
+
+  and tree = Subtree of node AccessMap.t | Star
 
   type t = node BaseMap.t
-
-  type astate = t
 
   let empty = BaseMap.empty
 
@@ -137,7 +131,7 @@ module Make (TraceDomain : AbstractDomain.WithBottom) (Config : Config) = struct
 
 
   (** find all of the traces in the subtree and join them with [orig_trace] *)
-  let rec join_all_traces ?(join_traces= TraceDomain.join) orig_trace = function
+  let rec join_all_traces ?(join_traces = TraceDomain.join) orig_trace = function
     | Subtree subtree ->
         let join_all_traces_ orig_trace tree =
           let node_join_traces _ (trace, node) trace_acc =
@@ -173,7 +167,7 @@ module Make (TraceDomain : AbstractDomain.WithBottom) (Config : Config) = struct
           (* input query was [ap]*, and [trace] is the trace associated with [ap]. get the traces
              associated with the children of [ap] in [tree] and join them with [trace] *)
           Some (join_all_traces trace subtree, subtree)
-    | exception Not_found ->
+    | exception Caml.Not_found ->
         None
 
 
@@ -191,7 +185,7 @@ module Make (TraceDomain : AbstractDomain.WithBottom) (Config : Config) = struct
               try
                 let rhs_v = AccessMap.find k rhs_subtree in
                 access_tree_lteq lhs_v rhs_v
-              with Not_found -> false )
+              with Caml.Not_found -> false )
             lhs_subtree
       | _, Star ->
           true
@@ -207,7 +201,7 @@ module Make (TraceDomain : AbstractDomain.WithBottom) (Config : Config) = struct
           try
             let rhs_v = BaseMap.find k rhs in
             access_tree_lteq lhs_v rhs_v
-          with Not_found -> false )
+          with Caml.Not_found -> false )
         lhs
 
 
@@ -298,7 +292,7 @@ module Make (TraceDomain : AbstractDomain.WithBottom) (Config : Config) = struct
               access_tree_add_trace_ ~seen_array_access accesses empty_starred_leaf depth'
             else
               let access_node =
-                try AccessMap.find access subtree with Not_found -> empty_normal_leaf
+                try AccessMap.find access subtree with Caml.Not_found -> empty_normal_leaf
               in
               (* once we encounter a subtree rooted in an array access, we have to do weak updates in
                the entire subtree. the reason: if I do x[i].f.g = <interesting trace>, then
@@ -327,7 +321,7 @@ module Make (TraceDomain : AbstractDomain.WithBottom) (Config : Config) = struct
     let base, accesses = AccessPath.Abs.extract ap in
     let is_exact = AccessPath.Abs.is_exact ap in
     let base_node =
-      try BaseMap.find base tree with Not_found ->
+      try BaseMap.find base tree with Caml.Not_found ->
         (* note: we interpret max_depth <= 0 as max_depth = 1 *)
         if Config.max_depth > 1 then empty_normal_leaf else empty_starred_leaf
     in
@@ -358,36 +352,38 @@ module Make (TraceDomain : AbstractDomain.WithBottom) (Config : Config) = struct
         f acc (AccessPath.Abs.Abstracted cur_ap_raw) node
 
 
-  let node_fold (f: 'a -> AccessPath.Abs.t -> node -> 'a) base node acc =
+  let node_fold (f : 'a -> AccessPath.Abs.t -> node -> 'a) base node acc =
     node_fold_ f base [] node acc
 
 
-  let fold (f: 'a -> AccessPath.Abs.t -> node -> 'a) tree acc_ =
+  let fold (f : 'a -> AccessPath.Abs.t -> node -> 'a) tree acc_ =
     BaseMap.fold (fun base node acc -> node_fold f base node acc) tree acc_
 
 
-  let trace_fold (f: 'a -> AccessPath.Abs.t -> TraceDomain.astate -> 'a) =
+  let trace_fold (f : 'a -> AccessPath.Abs.t -> TraceDomain.t -> 'a) =
     let f_ acc ap (trace, _) = f acc ap trace in
     fold f_
 
 
   exception Found
 
-  let exists (f: AccessPath.Abs.t -> node -> bool) tree =
+  let exists (f : AccessPath.Abs.t -> node -> bool) tree =
     try
       fold (fun _ access_path node -> if f access_path node then raise Found else false) tree false
     with Found -> true
 
 
-  let iter (f: AccessPath.Abs.t -> node -> unit) tree =
+  let iter (f : AccessPath.Abs.t -> node -> unit) tree =
     fold (fun () access_path node -> f access_path node) tree ()
 
 
   (* try for a bit to reach a fixed point before widening aggressively *)
   let joins_before_widen = 3
 
+  let max_iter = 10
+
   let widen ~prev ~next ~num_iters =
-    if phys_equal prev next then prev
+    if phys_equal prev next || num_iters >= max_iter then prev
     else if Int.( <= ) num_iters joins_before_widen then join prev next
     else
       let trace_widen prev next = TraceDomain.widen ~prev ~next ~num_iters in
@@ -422,13 +418,13 @@ module Make (TraceDomain : AbstractDomain.WithBottom) (Config : Config) = struct
       | Subtree access_map ->
           AccessMap.pp ~pp_value:pp_node fmt access_map
       | Star ->
-          F.fprintf fmt "*"
+          F.pp_print_char fmt '*'
     in
     if not (TraceDomain.is_empty trace) then
       if not (is_empty_tree subtree) then
         F.fprintf fmt "(%a, %a)" TraceDomain.pp trace pp_subtree subtree
-      else F.fprintf fmt "%a" TraceDomain.pp trace
-    else F.fprintf fmt "%a" pp_subtree subtree
+      else TraceDomain.pp fmt trace
+    else pp_subtree fmt subtree
 
 
   let pp fmt base_tree = BaseMap.pp ~pp_value:pp_node fmt base_tree

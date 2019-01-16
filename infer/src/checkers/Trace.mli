@@ -1,15 +1,12 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 module F = Format
-module L = Logging
 
 module type Spec = sig
   module Source : Source.S
@@ -26,11 +23,7 @@ end
 module type S = sig
   include Spec
 
-  type t
-
-  type astate = t
-
-  include AbstractDomain.WithBottom with type astate := astate
+  include AbstractDomain.WithBottom
 
   module Sources : sig
     (** Set of sources returned by callees of the current function *)
@@ -44,9 +37,7 @@ module type S = sig
     (** Set of sanitizers that have been applied to these sources *)
     module Sanitizers : module type of AbstractDomain.FiniteSet (Sanitizer)
 
-    type astate = {known: Known.astate; footprint: Footprint.astate; sanitizers: Sanitizers.astate}
-
-    type t = astate
+    type t = {known: Known.t; footprint: Footprint.t; sanitizers: Sanitizers.t}
 
     val empty : t
 
@@ -97,8 +88,11 @@ module type S = sig
       [cur_site] restricts the reported paths to ones introduced by the call at [cur_site] *)
 
   val to_loc_trace :
-    ?desc_of_source:(Source.t -> string) -> ?source_should_nest:(Source.t -> bool)
-    -> ?desc_of_sink:(Sink.t -> string) -> ?sink_should_nest:(Sink.t -> bool) -> path
+       ?desc_of_source:(Source.t -> string)
+    -> ?source_should_nest:(Source.t -> bool)
+    -> ?desc_of_sink:(Sink.t -> string)
+    -> ?sink_should_nest:(Sink.t -> bool)
+    -> path
     -> Errlog.loc_trace
   (** create a loc_trace from a path; [source_should_nest s] should be true when we are going one
       deeper into a call-chain, ie when lt_level should be bumper in the next loc_trace_elem, and

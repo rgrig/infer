@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -21,14 +19,11 @@ type mode =
   | ClangCompilationDB of [`Escaped of string | `Raw of string] list
   | Javac of Javac.compiler * string * string list
   | Maven of string * string list
-  | Python of string list
   | PythonCapture of Config.build_system * string list
   | XcodeXcpretty of string * string list
-  [@@deriving compare]
+[@@deriving compare]
 
 val equal_mode : mode -> mode -> bool
-
-val pp_mode : Format.formatter -> mode -> unit
 
 val mode_from_command_line : mode Lazy.t
 (** driver mode computed from the command-line arguments and settings in Config *)

@@ -1,18 +1,14 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.checkers;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
-
-
 import javax.annotation.concurrent.ThreadSafe;
 import javax.inject.Inject;
 import javax.inject.Provider;
@@ -33,20 +29,21 @@ public class Ownership {
 
   Obj field;
 
-  public Ownership() {
-  }
+  public Ownership() {}
 
   public Ownership(Obj o) {
     field = o;
   }
 
   // understand that ownership can be acquired via DI
-  @Inject Ownership(Provider<Obj> objProvider) {
+  @Inject
+  Ownership(Provider<Obj> objProvider) {
     Obj owned = objProvider.get();
     owned.f = new Object(); // should not report
   }
 
-  @Inject Ownership(CustomProvider<Obj> objProvider) {
+  @Inject
+  Ownership(CustomProvider<Obj> objProvider) {
     Obj owned = objProvider.get();
     owned.f = new Object(); // should not report
   }
@@ -56,7 +53,8 @@ public class Ownership {
 
   // because this constructor is meant to be called via DI, we assume that injectedField and other
   // parameters passed to the constructor will always be freshly allocated
-  @Inject Ownership(Obj injectedField1, Obj injectedField2) {
+  @Inject
+  Ownership(Obj injectedField1, Obj injectedField2) {
     mInjectedField1 = injectedField1;
     mInjectedField2 = injectedField2;
     mInjectedField1.f = new Object(); // should not warn
@@ -355,7 +353,7 @@ public class Ownership {
     castThenReturn(o).f = new Object();
   }
 
-  void castThenReturnBad() {
+  void FN_castThenReturnBad() {
     Obj o = getMaybeUnownedObj();
     castThenReturn(o).f = new Object();
   }
@@ -367,7 +365,8 @@ public class Ownership {
   }
 
   void ownViaReflectionOk2()
-    throws IllegalAccessException, InstantiationException, InvocationTargetException, NoSuchMethodException {
+      throws IllegalAccessException, InstantiationException, InvocationTargetException,
+          NoSuchMethodException {
     Class<Obj> oClass = Obj.class;
     Constructor<Obj> oConstructor = oClass.getConstructor();
     Obj o = oConstructor.newInstance();
@@ -379,13 +378,13 @@ public class Ownership {
     c.f = new Object();
   }
 
-  void cloningAquiresOwnershipOk(){
-   Ownership ow;
-   try {
-     ow = (Ownership) this.clone();
-     ow.field = null;
-   }
-   catch (CloneNotSupportedException e) {}
+  void cloningAquiresOwnershipOk() {
+    Ownership ow;
+    try {
+      ow = (Ownership) this.clone();
+      ow.field = null;
+    } catch (CloneNotSupportedException e) {
+    }
   }
 
   static MyObj global;
@@ -410,7 +409,7 @@ public class Ownership {
 
   private Obj returnOwnedWithException() {
     Obj options = new Obj();
-    if (options.f==null) {
+    if (options.f == null) {
       throw new IllegalArgumentException();
     }
     return options;
@@ -424,7 +423,9 @@ public class Ownership {
   // not propagating ownership to unowned local access path
   public void notPropagatingOwnershipToUnownedLocalAccessPathBad() {
     Obj m;
-    synchronized(this) { m = field; }
+    synchronized (this) {
+      m = field;
+    }
     m.g = new Obj();
   }
 
@@ -442,17 +443,19 @@ public class Ownership {
   }
 
   Obj unownedField1;
+
   void reassignParamToOwnedOk() {
     reassignParamToOwned(this.unownedField1); // ok even though this.unownedField1 isn't owned
   }
 
   Obj unownedField2;
+
   private void reassignParamToUnowned(Obj o) {
     o = this.unownedField2;
     o.f = null; // don't know that this.unownedField2 is owned
   }
 
-  void reassignParamToUnownedBad() {
+  void FN_reassignParamToUnownedBad() {
     reassignParamToUnowned(new Obj()); // although o is owned here, it gets reassigned in the callee
   }
 
@@ -475,6 +478,7 @@ public class Ownership {
   }
 
   Obj unownedField3;
+
   private void ownedViaThisAlias() {
     Ownership alias = this;
     alias.unownedField3 = null; // ok if this owned in caller
@@ -505,17 +509,17 @@ public class Ownership {
   void conditionalAliasBad(Obj unowned) {
     conditionalAlias(new Obj(), unowned);
   }
-
 }
 
-class MyObj { int data; }
+class MyObj {
+  int data;
+}
 
 class Subclass extends Obj {
 
   public void doWrite() {
     f = new Object();
   }
-
 }
 
 @ThreadSafe

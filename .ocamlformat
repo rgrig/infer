@@ -1,3 +1,4 @@
-margin 100
-sparse true
-version 0.3
+let-binding-spacing = sparse
+break-cases = nested
+margin = 100
+version = 0.8

@@ -1,18 +1,20 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 
 (** type of string used for localisation *)
 type t = private
-  {unique_id: string; mutable enabled: bool; mutable hum: string}
-  [@@deriving compare]
+  { unique_id: string
+  ; mutable enabled: bool
+  ; mutable hum: string
+  ; mutable doc_url: string option
+  ; mutable linters_def_file: string option }
+[@@deriving compare]
 
 val equal : t -> t -> bool
 
@@ -22,7 +24,8 @@ val all_issues : unit -> t list
 val pp : Format.formatter -> t -> unit
 (** pretty print a localised string *)
 
-val from_string : ?enabled:bool -> ?hum:string -> string -> t
+val from_string :
+  ?enabled:bool -> ?hum:string -> ?doc_url:string -> ?linters_def_file:string -> string -> t
 (** create from an ordinary string *)
 
 val set_enabled : t -> bool -> unit
@@ -53,11 +56,13 @@ val buffer_overrun_l4 : t
 
 val buffer_overrun_l5 : t
 
+val buffer_overrun_r2 : t
+
 val buffer_overrun_s2 : t
 
-val cannot_star : t
+val buffer_overrun_u5 : t
 
-val checkers_access_global : t
+val cannot_star : t
 
 val checkers_allocates_memory : t
 (** Warning name when a performance critical method directly or indirectly
@@ -77,25 +82,31 @@ val checkers_fragment_retain_view : t
 
 val checkers_immutable_cast : t
 
-val checkers_print_c_call : t
-
-val checkers_print_objc_method_calls : t
-
 val checkers_printf_args : t
 
 val class_cast_exception : t
 
-val cluster_callback : t
+val class_load : t
 
 val codequery : t
 
 val comparing_floats_for_equality : t
 
+val component_factory_function : t
+
+val component_file_cyclomatic_complexity : t
+
+val component_file_line_count : t
+
+val component_initializer_with_side_effects : t
+
+val component_with_multiple_factory_methods : t
+
+val component_with_unconventional_superclass : t
+
 val condition_always_false : t
 
 val condition_always_true : t
-
-val context_leak : t
 
 val create_intent_from_uri : t
 
@@ -105,6 +116,8 @@ val dangling_pointer_dereference : t
 
 val dead_store : t
 
+val deadlock : t
+
 val deallocate_stack_variable : t
 
 val deallocate_static_memory : t
@@ -112,8 +125,6 @@ val deallocate_static_memory : t
 val deallocation_mismatch : t
 
 val divide_by_zero : t
-
-val double_lock : t
 
 val do_not_report : t
 (** an issue type that should never be reported *)
@@ -154,9 +165,13 @@ val eradicate_return_value_not_present : t
 
 val eradicate_value_not_present : t
 
+val expensive_execution_time_call : t
+
+val exposed_insecure_intent_handling : t
+
 val failure_exe : t
 
-val field_should_be_nullable : t
+val nullsafe_field_not_nullable : t
 
 val field_not_null_checked : t
 
@@ -172,11 +187,27 @@ val inferbo_alloc_may_be_big : t
 
 val inferbo_alloc_may_be_negative : t
 
+val infinite_execution_time_call : t
+
 val inherently_dangerous_function : t
+
+val insecure_intent_handling : t
+
+val integer_overflow_l1 : t
+
+val integer_overflow_l2 : t
+
+val integer_overflow_l5 : t
+
+val integer_overflow_r2 : t
+
+val integer_overflow_u5 : t
 
 val interface_not_thread_safe : t
 
 val internal_error : t
+
+val invariant_call : t
 
 val javascript_injection : t
 
@@ -188,9 +219,15 @@ val lock_consistency_violation : t
 
 val logging_private_data : t
 
+val loop_invariant_call : t
+
 val memory_leak : t
 
 val missing_fld : t
+
+val missing_required_prop : t
+
+val mutable_local_variable_in_component_file : t
 
 val null_dereference : t
 
@@ -200,6 +237,8 @@ val nullable_dereference : t
 
 val parameter_not_null_checked : t
 
+val performance_variation : t
+
 val pointer_size_mismatch : t
 
 val precondition_not_found : t
@@ -208,7 +247,7 @@ val precondition_not_met : t
 
 val premature_nil_termination : t
 
-val proc_callback : t
+val pure_function : t
 
 val quandary_taint_error : t
 
@@ -238,9 +277,17 @@ val sql_injection_risk : t
 
 val stack_variable_address_escape : t
 
+val starvation : t
+
 val static_initialization_order_fiasco : t
 
+val strict_mode_violation : t
+
 val symexec_memory_error : t
+
+val tainted_buffer_access : t
+
+val tainted_memory_allocation : t
 
 val thread_safety_violation : t
 
@@ -256,22 +303,38 @@ val unreachable_code_after : t
 
 val unsafe_guarded_by_access : t
 
+val use_after_delete : t
+
+val use_after_destructor : t
+
 val use_after_free : t
 
+val use_after_lifetime : t
+
+val untrusted_buffer_access : t
+
 val untrusted_deserialization : t
+
+val untrusted_deserialization_risk : t
 
 val untrusted_file : t
 
 val untrusted_file_risk : t
 
+val untrusted_heap_allocation : t
+
 val untrusted_intent_creation : t
 
-val untrusted_url : t
-
 val untrusted_url_risk : t
+
+val untrusted_environment_change_risk : t
 
 val untrusted_variable_length_array : t
 
 val user_controlled_sql_risk : t
 
+val vector_invalidation : t
+
 val wrong_argument_number : t
+
+val zero_execution_time_call : t

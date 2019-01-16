@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 void prune_alias_le_Ok(int x) {
   int a[1];
@@ -100,10 +98,193 @@ void prune_alias_exp_Ok(int x) {
   }
 }
 
-void FP_prune_alias_exp_Ok(int x) {
+void prune_alias_exp2_CAF(int x) {
   int a[1];
 
-  if (x + 1 != 1 + x) {
+  if (x + 1 != 1 + x) { // Condition always false
     a[1] = 0;
   }
 }
+
+void FP_prune_alias_exp_Ok(int* x) {
+  int a[1];
+
+  if (*x + 1 != 1 + *x) {
+    a[1] = 0;
+  }
+}
+
+#include <stdlib.h>
+
+void prune_arrblk_ne_CAT(int* x) {
+  int* y = x + 10;
+
+  if (x != y) { // always true
+    x[5] = 1;
+  }
+}
+
+void call_prune_arrblk_ne_Ok() {
+  int* x = (int*)malloc(sizeof(int) * 10);
+  prune_arrblk_ne_CAT(x);
+}
+
+void call_prune_arrblk_ne_Bad() {
+  int* x = (int*)malloc(sizeof(int) * 5);
+  prune_arrblk_ne_CAT(x);
+}
+
+void prune_arrblk_eq_CAF(int* x) {
+  int* y = x + 10;
+
+  if (x == y) { // always false
+    x[5] = 1; /* unreachable */
+  }
+}
+
+void FP_call_prune_arrblk_eq_Ok() {
+  int* x = (int*)malloc(sizeof(int) * 5);
+  prune_arrblk_eq_CAF(x);
+}
+
+void prune_minmax1_Ok(unsigned int x, unsigned int y) {
+  if (x > 0) {
+    if (y >= x + 1) {
+      unsigned int z = y - 1;
+    }
+  }
+}
+
+void call_prune_minmax1_Ok() { prune_minmax1_Ok(0, 0); }
+
+void prune_minmax2_Ok(unsigned int x, unsigned int y) {
+  if (x > y) {
+    unsigned int z = x - y;
+  }
+}
+
+void call_prune_minmax2_Ok() { prune_minmax2_Ok(0, 2); }
+
+void loop_prune_Good(int length, int j) {
+  int i;
+  char a[length];
+
+  for (i = length - 1; i >= 0; i--) {
+    if (j >= 0 && j < i) {
+      /* here we always have i >= 1 */
+      a[length - i] = 'Z';
+    }
+  }
+}
+
+void loop_prune2_Good_FP(int length, int j) {
+  int i;
+  char a[length];
+
+  for (i = length - 1; i >= 0; i--) {
+    /* need a relational domain */
+    if (j < i && j >= 0) {
+      /* here we always have i >= 1 */
+      a[length - i] = 'Z';
+    }
+  }
+}
+
+void nested_loop_prune_Good(int length) {
+  int i, j;
+  char a[length];
+
+  for (i = length - 1; i >= 0; i--) {
+    for (j = 0; j < i; j++) {
+      /* here we always have i >= 1 */
+      a[length - i] = 'Z';
+    }
+  }
+}
+
+void bad_if_alias(int* x, int* y) {
+  char a[1];
+  if (x == y) {
+    a[1] = 'A';
+  }
+}
+
+void call_bad_if_alias_Bad_AlreadyReported() {
+  int x;
+  bad_if_alias(x, x);
+}
+
+void call_bad_if_alias_Good() {
+  int x, y;
+  bad_if_alias(x, y);
+}
+
+void bad_if_not_alias(int* x, int* y) {
+  char a[1];
+  if (x != y) {
+    a[1] = 'B';
+  }
+}
+
+void call_bad_if_not_alias_Good() {
+  int x;
+  bad_if_not_alias(x, x);
+}
+
+void call_bad_if_not_alias_Bad_AlreadyReported() {
+  int x, y;
+  bad_if_not_alias(x, y);
+}
+
+int unknown_function();
+
+void latest_prune_join(int* a, int n) {
+  int x;
+  if (unknown_function()) {
+    if (n < 4) {
+      x = 1;
+    } else {
+      x = 0;
+    }
+  } else {
+    if (n < 5) {
+      x = 1;
+    } else {
+      return;
+    }
+  }
+  if (x) {
+    a[n] = 0;
+  }
+}
+
+void call_latest_prune_join_1_Good() {
+  int a[5];
+  latest_prune_join(a, 3);
+}
+
+void call_latest_prune_join_2_Good() {
+  int a[5];
+  latest_prune_join(a, 10);
+}
+
+void call_latest_prune_join_3_Bad() {
+  int a[2];
+  latest_prune_join(a, 3);
+}
+
+void forget_locs_latest_prune(unsigned int n) {
+  int x;
+  int* a[5];
+  if (n < 5) {
+    x = 1;
+  } else {
+    x = 0;
+    x = 2;
+  }
+  if (x) {
+    a[n] = 0;
+  }
+}
+
+void call_forget_locs_latest_prune_Bad() { forget_locs_latest_prune(10); }

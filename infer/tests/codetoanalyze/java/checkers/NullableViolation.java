@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 package codetoanalyze.java.checkers;
 
@@ -41,6 +39,13 @@ public class NullableViolation {
     if (returnsNullable() != null) {
       returnsNullable().doSomething(); // does not report here
     }
+  }
+
+  void nullableMethodCheckedForNullAndReturnOkay() {
+    if (returnsNullable() == null) {
+      return;
+    }
+    returnsNullable().doSomething(); // does not report here
   }
 
   void dereferenceNullableMethodIncorrectlyCheckedForNullBad() {
@@ -90,5 +95,20 @@ public class NullableViolation {
   void pointerAssignmentWithSubtype() {
     Object object = getNullableObject();
     object = "Hello";
+  }
+
+  void deferenceAliasOfNullableValueCheckedForNullOkay() {
+    T t = returnsNullable();
+    T s = t;
+    if (t != null) {
+      s.x = 42;
+    }
+  }
+
+  void dereferenceWithAssignmentExpressionsOkay() {
+    T t;
+    while ((t = returnsNullable()) != null) {
+      t.doSomething();
+    }
   }
 }

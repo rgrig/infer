@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -14,46 +12,49 @@ open! IStd
 (** Type for type environment. *)
 type t
 
-val add : t -> Typ.Name.t -> Typ.Struct.t -> unit
-(** Add a (name,typename) pair to the global type environment. *)
-
 val create : unit -> t
 (** Create a new type environment. *)
 
-val fold : (Typ.Name.t -> Typ.Struct.t -> 'a -> 'a) -> t -> 'a -> 'a
-(** Fold a function over the elements of the type environment. *)
+val load : SourceFile.t -> t option
+(** Load a type environment for a source file *)
 
-val iter : (Typ.Name.t -> Typ.Struct.t -> unit) -> t -> unit
-(** iterate over a type environment *)
+val store_debug_file_for_source : SourceFile.t -> t -> unit
 
-val load_from_file : DB.filename -> t option
-(** Load a type environment from a file *)
+val load_global : unit -> t option
+(** load the global type environment (Java) *)
+
+val store_global : t -> unit
+(** save a global type environment (Java) *)
 
 val lookup : t -> Typ.Name.t -> Typ.Struct.t option
 (** Look up a name in the global type environment. *)
 
 val mk_struct :
-  t -> ?default:Typ.Struct.t -> ?fields:Typ.Struct.fields -> ?statics:Typ.Struct.fields
-  -> ?methods:Typ.Procname.t list -> ?supers:Typ.Name.t list -> ?annots:Annot.Item.t -> Typ.Name.t
+     t
+  -> ?default:Typ.Struct.t
+  -> ?fields:Typ.Struct.fields
+  -> ?statics:Typ.Struct.fields
+  -> ?methods:Typ.Procname.t list
+  -> ?supers:Typ.Name.t list
+  -> ?annots:Annot.Item.t
+  -> Typ.Name.t
   -> Typ.Struct.t
 (** Construct a struct_typ, normalizing field types *)
 
 val add_field : t -> Typ.Name.t -> Typ.Struct.field -> unit
 (** Add a field to a given struct in the global type environment. *)
 
-val sort_fields_tenv : t -> unit
-
-val mem : t -> Typ.Name.t -> bool
-(** Check if typename is found in t *)
-
-val pp : Format.formatter -> t -> unit
+val pp : Format.formatter -> t -> unit [@@warning "-32"]
 (** print a type environment *)
 
-val store_to_file : DB.filename -> t -> unit
-(** Save a type environment into a file *)
+type per_file = Global | FileLocal of t
 
-val get_overriden_method : t -> Typ.Procname.java -> Typ.Procname.t option
-(** Get method that is being overriden by java_pname (if any) **)
+val pp_per_file : Format.formatter -> per_file -> unit
+  [@@warning "-32"]
+(** print per file type environment *)
 
-val language_is : t -> Config.language -> bool
-(** Test the language from which the types in the tenv were translated *)
+val merge : src:per_file -> dst:per_file -> per_file
+(** Best-effort merge of [src] into [dst]. If a procedure is both in [dst] and [src], the one in
+   [src] will get overwritten. *)
+
+module SQLite : SqliteUtils.Data with type t = per_file

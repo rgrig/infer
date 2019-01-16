@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.checkers;
@@ -16,18 +14,15 @@ import java.lang.annotation.Target;
 
 @Target({ElementType.METHOD})
 @Retention(RetentionPolicy.CLASS)
-@interface UserDefinedSource1 {
-}
+@interface UserDefinedSource1 {}
 
 @Target({ElementType.METHOD})
 @Retention(RetentionPolicy.CLASS)
-@interface UserDefinedSource2 {
-}
+@interface UserDefinedSource2 {}
 
 @Target({ElementType.METHOD})
 @Retention(RetentionPolicy.CLASS)
-@interface UserDefinedSink {
-}
+@interface UserDefinedSink {}
 
 class CustomAnnotations {
 
@@ -42,8 +37,7 @@ class CustomAnnotations {
   }
 
   @UserDefinedSink
-  void sink() {
-  }
+  void sink() {}
 
   @UserDefinedSource1
   void source1Ok() {
@@ -55,6 +49,5 @@ class CustomAnnotations {
     safeMethod();
   }
 
-  void safeMethod() {
-  }
+  void safeMethod() {}
 }

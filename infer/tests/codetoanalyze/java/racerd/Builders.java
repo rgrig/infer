@@ -1,16 +1,13 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.checkers;
 
 import com.facebook.infer.annotation.ThreadSafe;
-
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableList.Builder;
 
@@ -92,7 +89,6 @@ public class Builders {
     input.g = "";
     return output;
   }
-
 }
 
 @ThreadSafe
@@ -102,5 +98,22 @@ class TopLevelBuilder {
   public void setG(String g) {
     this.g = g; // still want to warn if the builder is annotated ThreadSafe
   }
+}
 
+class MyBuilder {
+  Obj mObj;
+
+  public static MyBuilder create() {
+    return new MyBuilder();
+  }
+
+  public MyBuilder setNestedPath(int i) {
+    this.mObj.f = i;
+    return this;
+  }
+
+  @ThreadSafe
+  static void setNestedPathOk(int i) {
+    MyBuilder.create().setNestedPath(1);
+  }
 }

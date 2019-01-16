@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -20,10 +18,10 @@ module MockTrace = Trace.Make (struct
   module Source = Source.Make (struct
     include MockTraceElem
 
-    let get pname _ _ =
+    let get ~caller_pname:_ pname _ _ =
       if String.is_prefix ~prefix:"SOURCE" (Typ.Procname.to_string pname) then
-        Some (CallSite.make pname Location.dummy, None)
-      else None
+        [(CallSite.make pname Location.dummy, None)]
+      else []
 
 
     let get_tainted_formals _ _ = []
@@ -32,10 +30,10 @@ module MockTrace = Trace.Make (struct
   module Sink = Sink.Make (struct
     include MockTraceElem
 
-    let get pname _ _ =
+    let get pname _ _ _ =
       if String.is_prefix ~prefix:"SINK" (Typ.Procname.to_string pname) then
-        Some (CallSite.make pname Location.dummy, IntSet.singleton 0)
-      else None
+        [(CallSite.make pname Location.dummy, IntSet.singleton 0)]
+      else []
   end)
 
   module Sanitizer = Sanitizer.Dummy
@@ -56,30 +54,29 @@ module MockTaintAnalysis = TaintAnalysis.Make (struct
   let is_taintable_type _ = true
 
   let get_model _ _ _ _ _ = None
+
+  let name = ""
 end)
 
 module TestInterpreter =
   AnalyzerTester.Make
-    (ProcCfg.Normal)
-    (LowerHil.Make (MockTaintAnalysis.TransferFunctions) (LowerHil.DefaultConfig))
+    (LowerHil.Make (MockTaintAnalysis.TransferFunctions (ProcCfg.Normal)) (LowerHil.DefaultConfig))
 
 let tests =
   let open OUnit2 in
   let open AnalyzerTester.StructuredSil in
   (* less verbose form of pretty-printing to make writing tests easy *)
   let pp_sparse fmt astate =
-    let pp_call_site fmt call_site =
-      F.fprintf fmt "%a" Typ.Procname.pp (CallSite.pname call_site)
-    in
+    let pp_call_site fmt call_site = Typ.Procname.pp fmt (CallSite.pname call_site) in
     let pp_sources fmt sources =
-      if MockTrace.Sources.is_empty sources then F.fprintf fmt "?"
+      if MockTrace.Sources.is_empty sources then F.pp_print_char fmt '?'
       else
         MockTrace.Sources.Known.iter
           (fun source -> pp_call_site fmt (MockTrace.Source.call_site source))
           sources.MockTrace.Sources.known
     in
     let pp_sinks fmt sinks =
-      if MockTrace.Sinks.is_empty sinks then F.fprintf fmt "?"
+      if MockTrace.Sinks.is_empty sinks then F.pp_print_char fmt '?'
       else
         MockTrace.Sinks.iter (fun sink -> pp_call_site fmt (MockTrace.Sink.call_site sink)) sinks
     in
@@ -99,15 +96,15 @@ let tests =
   in
   let assign_to_source ret_str =
     let procname = Typ.Procname.from_string_c_fun "SOURCE" in
-    make_call ~procname (Some (ident_of_str ret_str, dummy_typ)) []
+    make_call ~procname ~return:(ident_of_str ret_str, dummy_typ) []
   in
   let assign_to_non_source ret_str =
     let procname = Typ.Procname.from_string_c_fun "NON-SOURCE" in
-    make_call ~procname (Some (ident_of_str ret_str, dummy_typ)) []
+    make_call ~procname ~return:(ident_of_str ret_str, dummy_typ) []
   in
   let call_sink_with_exp exp =
     let procname = Typ.Procname.from_string_c_fun "SINK" in
-    make_call ~procname None [(exp, dummy_typ)]
+    make_call ~procname [(exp, dummy_typ)]
   in
   let call_sink actual_str = call_sink_with_exp (Exp.Var (ident_of_str actual_str)) in
   let assign_id_to_field root_str fld_str rhs_id_str =
@@ -120,8 +117,7 @@ let tests =
   let assert_empty = invariant "{ }" in
   (* hack: register an empty analyze_ondemand to prevent a crash because the callback is unset *)
   let analyze_ondemand summary _ = summary in
-  let get_proc_desc _ = None in
-  let callbacks = {Ondemand.analyze_ondemand; get_proc_desc} in
+  let callbacks = {Ondemand.exe_env= Exe_env.mk (); analyze_ondemand} in
   Ondemand.set_callbacks callbacks ;
   let test_list =
     [ ("source recorded", [assign_to_source "ret_id"; invariant "{ ret_id$0* => (SOURCE -> ?) }"])
@@ -129,7 +125,7 @@ let tests =
     ; ( "source flows to var"
       , [ assign_to_source "ret_id"
         ; var_assign_id "var" "ret_id"
-        ; invariant "{ ret_id$0* => (SOURCE -> ?), &var* => (SOURCE -> ?) }" ] )
+        ; invariant "{ ret_id$0* => (SOURCE -> ?), var* => (SOURCE -> ?) }" ] )
     ; ( "source flows to field"
       , [ assign_to_source "ret_id"
         ; assign_id_to_field "base_id" "f" "ret_id"
@@ -140,12 +136,13 @@ let tests =
         ; read_field_to_id "read_id" "base_id" "f"
         ; var_assign_id "var" "read_id"
         ; invariant
-            "{ base_id$0.f* => (SOURCE -> ?),\n  ret_id$0* => (SOURCE -> ?),\n  &var* => (SOURCE -> ?) }"
-        ] )
+            "{ base_id$0.f* => (SOURCE -> ?),\n\
+            \  ret_id$0* => (SOURCE -> ?),\n\
+            \  var* => (SOURCE -> ?) }" ] )
     ; ( "source flows to var then cleared"
       , [ assign_to_source "ret_id"
         ; var_assign_id "var" "ret_id"
-        ; invariant "{ ret_id$0* => (SOURCE -> ?), &var* => (SOURCE -> ?) }"
+        ; invariant "{ ret_id$0* => (SOURCE -> ?), var* => (SOURCE -> ?) }"
         ; assign_to_non_source "non_source_id"
         ; var_assign_id "var" "non_source_id"
         ; invariant "{ ret_id$0* => (SOURCE -> ?) }" ] )
@@ -159,7 +156,7 @@ let tests =
     ; ( "sink without source not tracked"
       , [assign_to_non_source "ret_id"; call_sink "ret_id"; assert_empty] ) ]
     |> TestInterpreter.create_tests ~pp_opt:pp_sparse
-         {formal_map= FormalMap.empty; summary= Specs.dummy}
-         ~initial:(MockTaintAnalysis.Domain.empty, IdAccessPathMapDomain.empty)
+         {formal_map= FormalMap.empty; summary= Summary.dummy}
+         ~initial:(MockTaintAnalysis.Domain.empty, Bindings.empty)
   in
   "taint_test_suite" >::: test_list

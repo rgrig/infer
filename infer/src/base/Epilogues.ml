@@ -1,38 +1,50 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 open! IStd
 module F = Format
 
-(* Run the epilogues when we get SIGINT (Control-C). We do not want to mask SIGINT unless at least
-   one epilogue has been registered, so make this value lazy. *)
-let activate_run_epilogues_on_signal =
-  lazy
-    (let run_epilogues_on_signal s =
-       F.eprintf "*** %s: Caught %s, time to die@."
-         (Filename.basename Sys.executable_name)
-         (Signal.to_string s) ;
-       (* Invoke the callback that runs at the end of uncaught_exception_handler *)
-       Config.late_epilogue () ;
-       (* Epilogues are registered with [at_exit] so exiting will make them run. *)
-       Pervasives.exit 0
-     in
-     Signal.Expert.handle Signal.int run_epilogues_on_signal)
+let early_callback = ref (fun () -> ())
 
+let late_callback = ref (fun () -> ())
 
-let register ~f desc =
+let register callback_ref ~f ~description =
   let f_no_exn () =
-    if not !ProcessPool.in_child then
-      try f () with exn ->
-        F.eprintf "Error while running epilogue \"%s\":@ %a.@ Powering through...@." desc Exn.pp
-          exn
+    try f () with exn ->
+      F.eprintf "%a: Error while running epilogue \"%s\":@ %a.@ Powering through...@." Pid.pp
+        (Unix.getpid ()) description Exn.pp exn
   in
-  (* We call `exit` in a bunch of places, so register the epilogues with [at_exit]. *)
-  Pervasives.at_exit f_no_exn ;
-  (* Register signal masking. *)
-  Lazy.force activate_run_epilogues_on_signal
+  let g = !callback_ref in
+  callback_ref := fun () -> f_no_exn () ; g ()
+
+
+let register_early ~f ~description = register early_callback ~f ~description
+
+let register_late ~f ~description = register late_callback ~f ~description
+
+let early () = !early_callback ()
+
+let late () = !late_callback ()
+
+let run () = early () ; late ()
+
+(* Run the epilogues when we get SIGINT (Control-C). *)
+let () =
+  let run_epilogues_on_signal s =
+    F.eprintf "*** %s: Caught %s, time to die@."
+      (Filename.basename Sys.executable_name)
+      (Signal.to_string s) ;
+    run ()
+  in
+  Signal.Expert.handle Signal.int run_epilogues_on_signal
+
+
+let reset () =
+  (early_callback := fun () -> ()) ;
+  late_callback := fun () -> ()
+
+
+let register = register_early

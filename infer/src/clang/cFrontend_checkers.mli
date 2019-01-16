@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -30,7 +28,5 @@ val available_ios_sdk : Ctl_parser_types.ast_node -> string
 val class_available_ios_sdk : Ctl_parser_types.ast_node -> string
 
 val receiver_method_call : Ctl_parser_types.ast_node -> string
-
-val tag_name_of_node : Ctl_parser_types.ast_node -> string
 
 val class_name : Ctl_parser_types.ast_node -> string

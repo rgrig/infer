@@ -1,15 +1,11 @@
-# Copyright (c) 2016 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2016-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 TESTS_DIR = ../../..
 include $(TESTS_DIR)/java.make
 include $(TESTS_DIR)/base.make
-
-ANALYZER = crashcontext
 
 SOURCES = $(wildcard *.java)
 OBJECTS = $(patsubst %.java,%.class,$(SOURCES))
@@ -22,7 +18,7 @@ $(OBJECTS): $(SOURCES)
 # analyze a single source file and generate the test results for it
 issues-%.exp.test: $(JAVA_DEPS) %.stacktrace.json %.java
 	$(QUIET)$(call silent_on_success,Testing crashcontext: $*,\
-	  $(INFER_BIN) -a $(ANALYZER) -o infer-out-$* --stacktrace $*.stacktrace.json \
+	  $(INFER_BIN) --crashcontext-only -o infer-out-$* --stacktrace $*.stacktrace.json \
 	  -- $(JAVAC) -cp $(CLASSPATH) $*.java)
 #	add a newline at the end of the json when creating the exp.test
 	$(QUIET)$(COPY) infer-out-$*/crashcontext/crashcontext.json $@ && echo >> $@

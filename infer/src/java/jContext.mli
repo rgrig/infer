@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -22,7 +20,7 @@ module NodeTbl : Caml.Hashtbl.S with type key = Procdesc.Node.t
 (** data structure for saving the three structures tht contain the intermediate
     representation of a file: the type environment, the control graph and the control
     flow graph *)
-type icfg = {tenv: Tenv.t; cg: Cg.t; cfg: Cfg.t}
+type icfg = {tenv: Tenv.t; cfg: Cfg.t}
 
 (** data structure for storing the context elements.  *)
 type t = private
@@ -42,12 +40,6 @@ val create_context :
 
 val get_tenv : t -> Tenv.t
 (** returns the type environment that corresponds to the current file. *)
-
-val get_cg : t -> Cg.t
-(** returns the control graph that corresponds to the current file.  *)
-
-val get_cfg : t -> Cfg.t
-(**  returns the control flow graph that corresponds to the current file. *)
 
 val add_if_jump : t -> Procdesc.Node.t -> int -> unit
 (** adds to the context the line that an if-node will jump to *)
@@ -79,6 +71,3 @@ val reset_exn_node_table : unit -> unit
 
 val add_exn_node : Typ.Procname.t -> Procdesc.Node.t -> unit
 (** adds the exception node for a given method *)
-
-val get_exn_node : Procdesc.t -> Procdesc.Node.t option
-(** returns the exception node of a given method *)

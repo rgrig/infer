@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 struct item {
   int data;
@@ -29,9 +27,9 @@ struct List {
   E* E::*next_ptr;
 };
 
-int main() {
-  List<item> l(&item::next);
+void skip() { List<item> l(&item::next); }
 
+void noskip(List<item> l) {
   item i;
   l.add(&i);
   l.add_byref(i);

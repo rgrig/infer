@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -14,7 +12,7 @@ let test_correct_removing_new_lines =
   let pp_diff_of_desc fmt (expected, actual) =
     Format.fprintf fmt "Expected: [%s] Found: [%s]" expected actual
   in
-  let create_test (desc: string) (expected_desc: string) _ =
+  let create_test (desc : string) (expected_desc : string) _ =
     let output = CFrontend_errors.remove_new_lines_and_whitespace desc in
     let cmp s1 s2 = String.equal s1 s2 in
     assert_equal ~pp_diff:pp_diff_of_desc ~cmp expected_desc output

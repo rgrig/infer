@@ -1,13 +1,11 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 open! IStd
-open! PVariant
+open PolyVariantEqual
 module L = Logging
 
 let aggregated_stats_filename = "aggregated_stats.json"
@@ -16,8 +14,11 @@ let aggregated_stats_by_target_filename = "aggregated_stats_by_target.json"
 
 let json_files_to_ignore_regex =
   Str.regexp
-    ( ".*\\(" ^ Str.quote aggregated_stats_filename ^ "\\|"
-    ^ Str.quote aggregated_stats_by_target_filename ^ "\\)$" )
+    ( ".*\\("
+    ^ Str.quote aggregated_stats_filename
+    ^ "\\|"
+    ^ Str.quote aggregated_stats_by_target_filename
+    ^ "\\)$" )
 
 
 let dir_exists dir = Sys.is_directory dir = `Yes
@@ -26,7 +27,8 @@ let find_json_files_in_dir dir =
   let is_valid_json_file path =
     let s = Unix.lstat path in
     let json_regex = Str.regexp_case_fold ".*\\.json$" in
-    not (Str.string_match json_files_to_ignore_regex path 0) && Str.string_match json_regex path 0
+    (not (Str.string_match json_files_to_ignore_regex path 0))
+    && Str.string_match json_regex path 0
     && Polymorphic_compare.( = ) s.st_kind Unix.S_REG
   in
   match dir_exists dir with
@@ -65,7 +67,8 @@ let load_data_from_infer_deps file =
         Error (error "malformed input")
   in
   let parse_lines lines = List.map lines ~f:extract_target_and_path |> Result.all in
-  Utils.read_file file |> Result.map_error ~f:(fun msg -> error "%s" msg)
+  Utils.read_file file
+  |> Result.map_error ~f:(fun msg -> error "%s" msg)
   |> Result.bind ~f:parse_lines
 
 

@@ -1,14 +1,11 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.infer;
-
 
 import android.app.DownloadManager;
 import android.content.ContentProviderClient;
@@ -24,20 +21,16 @@ import android.provider.MediaStore;
 public class CursorLeaks {
 
   public int cursorClosed(SQLiteDatabase sqLiteDatabase) {
-    Cursor cursor = sqLiteDatabase.query(
-        "events", null,
-        null, null, null, null, null);
-      try {
-        return cursor.getCount();
-      } finally {
-        cursor.close();
-      }
+    Cursor cursor = sqLiteDatabase.query("events", null, null, null, null, null, null);
+    try {
+      return cursor.getCount();
+    } finally {
+      cursor.close();
+    }
   }
 
   public Object cursorClosedCheckNull(SQLiteDatabase sqLiteDatabase) {
-    Cursor cursor = sqLiteDatabase.query(
-        "events", null,
-        null, null, null, null, null);
+    Cursor cursor = sqLiteDatabase.query("events", null, null, null, null, null, null);
     Object value = null;
 
     try {
@@ -55,9 +48,7 @@ public class CursorLeaks {
   }
 
   public Object cursorClosedCheckNullCheckClosed_FP(SQLiteDatabase sqLiteDatabase) {
-    Cursor cursor = sqLiteDatabase.query(
-        "events", null,
-        null, null, null, null, null);
+    Cursor cursor = sqLiteDatabase.query("events", null, null, null, null, null, null);
     Object value = null;
 
     try {
@@ -75,10 +66,8 @@ public class CursorLeaks {
   }
 
   public int cursorNotClosed(SQLiteDatabase sqLiteDatabase) {
-    Cursor cursor = sqLiteDatabase.query(
-        "events", null,
-        null, null, null, null, null);
-      return cursor.getCount();
+    Cursor cursor = sqLiteDatabase.query("events", null, null, null, null, null, null);
+    return cursor.getCount();
   }
 
   Context mContext;
@@ -89,19 +78,15 @@ public class CursorLeaks {
 
     String selectionClause = selectionClause = customClause;
 
-    Cursor cursor = mContext.getContentResolver().query(
-        null,
-        projection,
-        selectionClause,
-        null,
-        null);
+    Cursor cursor =
+        mContext.getContentResolver().query(null, projection, selectionClause, null, null);
 
     if (cursor != null) {
       int count = cursor.getInt(0);
       // cursor.close();
       return count;
     } else {
-    return 0;
+      return 0;
     }
   }
 
@@ -110,12 +95,8 @@ public class CursorLeaks {
 
     String selectionClause = selectionClause = customClause;
 
-    Cursor cursor = mContext.getContentResolver().query(
-        null,
-        projection,
-        selectionClause,
-        null,
-        null);
+    Cursor cursor =
+        mContext.getContentResolver().query(null, projection, selectionClause, null, null);
 
     if (cursor != null) {
       int count = cursor.getInt(0);
@@ -127,8 +108,7 @@ public class CursorLeaks {
   }
 
   public int getBucketCountNotClosed() {
-    Cursor cursor = MediaStore.Images.Media.query(
-        mContentResolver, null, null, null, null, null);
+    Cursor cursor = MediaStore.Images.Media.query(mContentResolver, null, null, null, null, null);
     if (cursor == null) {
       return 0;
     } else {
@@ -138,12 +118,10 @@ public class CursorLeaks {
       }
       return count;
     }
-
   }
 
   public int getBucketCountClosed() {
-    Cursor cursor = MediaStore.Images.Media.query(
-        mContentResolver, null, null, null, null, null);
+    Cursor cursor = MediaStore.Images.Media.query(mContentResolver, null, null, null, null, null);
     if (cursor == null) {
       return 0;
     } else {
@@ -199,13 +177,12 @@ public class CursorLeaks {
         return cursor.getColumnIndex(DownloadManager.COLUMN_STATUS);
       }
     } finally {
-      //cursor.close();
+      // cursor.close();
     }
   }
 
   private void loadPrefsFromContentProviderClosed() {
-    ContentProviderClient contentProviderClient =
-        mContentResolver.acquireContentProviderClient("");
+    ContentProviderClient contentProviderClient = mContentResolver.acquireContentProviderClient("");
     if (contentProviderClient != null) {
       Cursor cursor = null;
       try {
@@ -222,8 +199,7 @@ public class CursorLeaks {
   }
 
   private void loadPrefsFromContentProviderNotClosed() {
-    ContentProviderClient contentProviderClient =
-        mContentResolver.acquireContentProviderClient("");
+    ContentProviderClient contentProviderClient = mContentResolver.acquireContentProviderClient("");
     if (contentProviderClient == null) return;
     Cursor cursor = null;
     try {
@@ -233,7 +209,7 @@ public class CursorLeaks {
       }
     } finally {
       if (cursor != null) {
-        //cursor.close();
+        // cursor.close();
       }
     }
   }
@@ -253,11 +229,11 @@ public class CursorLeaks {
   }
 
   // TODO (#7474990): investigate why is Infer reporting a resource leak here
-//  public void cursorWrapperClosed(SQLiteDatabase sqLiteDatabase) {
-//    Cursor cursor = sqLiteDatabase.query("events", null, null, null, null, null, null);
-//    Cursor c = new NamedCursor(cursor, "abc");
-//    c.close();
-//  }
+  //  public void cursorWrapperClosed(SQLiteDatabase sqLiteDatabase) {
+  //    Cursor cursor = sqLiteDatabase.query("events", null, null, null, null, null, null);
+  //    Cursor c = new NamedCursor(cursor, "abc");
+  //    c.close();
+  //  }
 
   native NamedCursor createWrapper(Cursor cursor);
 
@@ -265,5 +241,4 @@ public class CursorLeaks {
     Cursor cursor = sqLiteDatabase.query("events", null, null, null, null, null, null);
     return createWrapper(cursor);
   }
-
 }

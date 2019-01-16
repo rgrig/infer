@@ -1,19 +1,15 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.eradicate;
 
-import java.lang.System;
+import android.annotation.SuppressLint;
 import java.net.URL;
 import javax.annotation.Nullable;
-
-import android.annotation.SuppressLint;
 
 public class ParameterNotNullable {
 
@@ -23,8 +19,7 @@ public class ParameterNotNullable {
     testPrimitive(field);
   }
 
-  void testPrimitive(boolean f) {
-  }
+  void testPrimitive(boolean f) {}
 
   void test(String s) {
     int n = s.length();
@@ -58,8 +53,7 @@ public class ParameterNotNullable {
     testN(s);
   }
 
-  private ParameterNotNullable(@Nullable String s) {
-  }
+  private ParameterNotNullable(@Nullable String s) {}
 
   class Builder {
     ParameterNotNullable getEradicateParameterNotNullable() {
@@ -72,7 +66,8 @@ public class ParameterNotNullable {
     return s;
   }
 
-  @Nullable String testSystemGetenvBad() {
+  @Nullable
+  String testSystemGetenvBad() {
     return System.getenv(null);
   }
 
@@ -80,8 +75,7 @@ public class ParameterNotNullable {
     return cls.getResource(null);
   }
 
-  void threeParameters(String s1, String s2, String s3) {
-  }
+  void threeParameters(String s1, String s2, String s3) {}
 
   void testThreeParameters() {
     String s = "";
@@ -91,8 +85,7 @@ public class ParameterNotNullable {
   }
 
   class ConstructorCall {
-    ConstructorCall(int x, String s) {
-    }
+    ConstructorCall(int x, String s) {}
 
     ConstructorCall() {
       this(3, ""); // OK
@@ -102,4 +95,24 @@ public class ParameterNotNullable {
       this(3, null); // NPE
     }
   }
+
+  void indirectSignatureLookupOk(SomeClass c) {
+    c.acceptsNullableParameter(null);
+  }
+
+  void doesNotAcceptNullableFirstParameter(Object object, boolean test) {}
+
+  void callWithNullableFirstParameter(boolean t1, boolean t2) {
+    doesNotAcceptNullableFirstParameter(null, t1 && t2);
+  }
+
+  void callWithConditionalAssignment(Object object, boolean test) {
+    doesNotAcceptNullableFirstParameter(test ? object : null, test);
+  }
 }
+
+interface SomeInterface {
+  void acceptsNullableParameter(@Nullable Object object);
+}
+
+abstract class SomeClass implements SomeInterface {}

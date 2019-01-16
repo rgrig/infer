@@ -1,17 +1,14 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 module Hashtbl = Caml.Hashtbl
 open Sawja_pack
-module E = Logging
 
 let create_handler_table impl =
   let handler_tb = Hashtbl.create 1 in
@@ -19,15 +16,14 @@ let create_handler_table impl =
     try
       let handlers = Hashtbl.find handler_tb pc in
       Hashtbl.replace handler_tb pc (exn_handler :: handlers)
-    with Not_found -> Hashtbl.add handler_tb pc [exn_handler]
+    with Caml.Not_found -> Hashtbl.add handler_tb pc [exn_handler]
   in
   List.iter ~f:collect (JBir.exception_edges impl) ;
   handler_tb
 
 
-let translate_exceptions (context: JContext.t) exit_nodes get_body_nodes handler_table =
+let translate_exceptions (context : JContext.t) exit_nodes get_body_nodes handler_table =
   let catch_block_table = Hashtbl.create 1 in
-  let exn_message = "exception handler" in
   let procdesc = context.procdesc in
   let create_node loc node_kind instrs = Procdesc.create_node procdesc loc node_kind instrs in
   let ret_var = Procdesc.get_ret_var procdesc in
@@ -41,7 +37,7 @@ let translate_exceptions (context: JContext.t) exit_nodes get_body_nodes handler
     let instr_unwrap_ret_val =
       let unwrap_builtin = Exp.Const (Const.Cfun BuiltinDecl.__unwrap_exception) in
       Sil.Call
-        ( Some (id_exn_val, ret_type)
+        ( (id_exn_val, ret_type)
         , unwrap_builtin
         , [(Exp.Var id_ret_val, ret_type)]
         , loc
@@ -51,7 +47,7 @@ let translate_exceptions (context: JContext.t) exit_nodes get_body_nodes handler
       [instr_get_ret_val; instr_deactivate_exn; instr_unwrap_ret_val]
   in
   let create_entry_block handler_list =
-    try ignore (Hashtbl.find catch_block_table handler_list) with Not_found ->
+    try ignore (Hashtbl.find catch_block_table handler_list) with Caml.Not_found ->
       let collect succ_nodes rethrow_exception handler =
         let catch_nodes = get_body_nodes handler.JBir.e_handler in
         let loc =
@@ -63,7 +59,7 @@ let translate_exceptions (context: JContext.t) exit_nodes get_body_nodes handler
         in
         match handler.JBir.e_catch_type with
         | None ->
-            let finally_node = create_node loc (Procdesc.Node.Stmt_node "Finally branch") [] in
+            let finally_node = create_node loc (Procdesc.Node.Stmt_node FinallyBranch) [] in
             Procdesc.node_set_succs_exn procdesc finally_node catch_nodes exit_nodes ;
             [finally_node]
         | Some exn_class_name ->
@@ -87,7 +83,7 @@ let translate_exceptions (context: JContext.t) exit_nodes get_body_nodes handler
                   , Typ.mk Tvoid ) ]
               in
               Sil.Call
-                ( Some (id_instanceof, Typ.mk (Tint IBool))
+                ( (id_instanceof, Typ.mk (Tint IBool))
                 , instanceof_builtin
                 , args
                 , loc
@@ -105,8 +101,12 @@ let translate_exceptions (context: JContext.t) exit_nodes get_body_nodes handler
             let instr_rethrow_exn =
               Sil.Store (Exp.Lvar ret_var, ret_type, Exp.Exn (Exp.Var id_exn_val), loc)
             in
-            let node_kind_true = Procdesc.Node.Prune_node (true, if_kind, exn_message) in
-            let node_kind_false = Procdesc.Node.Prune_node (false, if_kind, exn_message) in
+            let node_kind_true =
+              Procdesc.Node.Prune_node (true, if_kind, PruneNodeKind_ExceptionHandler)
+            in
+            let node_kind_false =
+              Procdesc.Node.Prune_node (false, if_kind, PruneNodeKind_ExceptionHandler)
+            in
             let node_true =
               let instrs_true = [instr_call_instanceof; instr_prune_true; instr_set_catch_var] in
               create_node loc node_kind_true instrs_true
@@ -152,7 +152,7 @@ let create_exception_handlers context exit_nodes get_body_nodes impl =
   match JBir.exc_tbl impl with
   | [] ->
       fun _ -> exit_nodes
-  | _ ->
+  | _ -> (
       let handler_table = create_handler_table impl in
       let catch_block_table =
         translate_exceptions context exit_nodes get_body_nodes handler_table
@@ -161,4 +161,4 @@ let create_exception_handlers context exit_nodes get_body_nodes impl =
         try
           let handler_list = Hashtbl.find handler_table pc in
           Hashtbl.find catch_block_table handler_list
-        with Not_found -> exit_nodes
+        with Caml.Not_found -> exit_nodes )

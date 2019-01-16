@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -14,37 +12,26 @@ module Hashtbl = Caml.Hashtbl
 
 module L = Logging
 
-(* Extract the element of a singleton list. If the list is not a singleton *)
-(* It stops the computation giving a warning. We use this because we       *)
-(* assume in many places that a list is just a singleton. We use the       *)
-(* warning if to see which assumption was not correct                      *)
-let extract_item_from_singleton l warning_string failure_val =
+(** Extract the element of a singleton list. If the list is not a singleton it crashes. *)
+let extract_item_from_singleton l pp source_range warning_string =
   match l with
   | [item] ->
       item
   | _ ->
-      L.(debug Capture Medium) "%s" warning_string ;
-      failure_val
+      L.die InternalError "At %a: List has %d elements, 1 expected:@\n[@[<h>%a@]]@\n%s"
+        (Pp.to_string ~f:Clang_ast_j.string_of_source_range)
+        source_range (List.length l) (Pp.semicolon_seq pp) l warning_string
 
 
-let dummy_exp = (Exp.minus_one, Typ.mk (Tint Typ.IInt))
-
-(* Extract the element of a singleton list. If the list is not a singleton *)
-(* Gives a warning and return -1 as standard value indicating something    *)
-(* went wrong.                                                             *)
-let extract_exp_from_list el warning_string =
-  extract_item_from_singleton el warning_string dummy_exp
+let source_range_of_stmt stmt =
+  let {Clang_ast_t.si_source_range}, _ = Clang_ast_proj.get_stmt_tuple stmt in
+  si_source_range
 
 
 module Nodes = struct
-  let prune_kind b = Procdesc.Node.Prune_node (b, Sil.Ik_bexp, string_of_bool b ^ " Branch")
-
-  let is_join_node n =
-    match Procdesc.Node.get_kind n with Procdesc.Node.Join_node -> true | _ -> false
-
-
-  let is_prune_node n =
-    match Procdesc.Node.get_kind n with Procdesc.Node.Prune_node _ -> true | _ -> false
+  let prune_kind b if_kind =
+    Procdesc.Node.Prune_node
+      (b, if_kind, if b then PruneNodeKind_TrueBranch else PruneNodeKind_FalseBranch)
 
 
   let is_true_prune_node n =
@@ -55,19 +42,10 @@ module Nodes = struct
         false
 
 
-  let create_node node_kind instrs loc context =
-    let procdesc = CContext.get_procdesc context in
-    Procdesc.create_node procdesc loc node_kind instrs
-
-
-  let create_prune_node ~branch ~negate_cond e_cond instrs_cond loc ik context =
-    let e_cond', _ =
-      extract_exp_from_list e_cond
-        "@\nWARNING: Missing expression for Conditional operator. Need to be fixed"
-    in
-    let e_cond'' = if negate_cond then Exp.UnOp (Unop.LNot, e_cond', None) else e_cond' in
-    let instrs_cond' = instrs_cond @ [Sil.Prune (e_cond'', loc, branch, ik)] in
-    create_node (prune_kind branch) instrs_cond' loc context
+  let create_prune_node proc_desc ~branch ~negate_cond e_cond instrs_cond loc if_kind =
+    let e_cond = if negate_cond then Exp.UnOp (Unop.LNot, e_cond, None) else e_cond in
+    let instrs_cond' = instrs_cond @ [Sil.Prune (e_cond, loc, branch, if_kind)] in
+    Procdesc.create_node proc_desc loc (prune_kind branch if_kind) instrs_cond'
 
 
   (** Check if this binary opertor requires the creation of a node in the cfg. *)
@@ -105,24 +83,19 @@ module Nodes = struct
     | `Or
     | `LAnd
     | `LOr
+    | `Cmp
     | `Comma ->
-        false
-
-
-  (** Check if this unary opertor requires the creation of a node in the cfg. *)
-  let need_unary_op_node uoi =
-    match uoi.Clang_ast_t.uoi_kind with
-    | `PostInc | `PostDec | `PreInc | `PreDec | `AddrOf | `Deref | `Plus ->
-        true
-    | `Minus | `Not | `LNot | `Real | `Imag | `Extension | `Coawait ->
         false
 end
 
 module GotoLabel = struct
   let find_goto_label context label sil_loc =
-    try Hashtbl.find context.CContext.label_map label with Not_found ->
+    try Hashtbl.find context.CContext.label_map label with Caml.Not_found ->
       let node_name = Format.sprintf "GotoLabel_%s" label in
-      let new_node = Nodes.create_node (Procdesc.Node.Skip_node node_name) [] sil_loc context in
+      let new_node =
+        Procdesc.create_node context.CContext.procdesc sil_loc (Procdesc.Node.Skip_node node_name)
+          []
+      in
       Hashtbl.add context.CContext.label_map label new_node ;
       new_node
 end
@@ -137,10 +110,6 @@ let is_return_temp continuation =
   match continuation with Some cont -> cont.return_temp | _ -> false
 
 
-let ids_to_parent cont ids = if is_return_temp cont then ids else []
-
-let ids_to_node cont ids = if is_return_temp cont then [] else ids
-
 let mk_cond_continuation cont =
   match cont with
   | Some cont' ->
@@ -151,76 +120,70 @@ let mk_cond_continuation cont =
 
 type priority_node = Free | Busy of Clang_ast_t.pointer
 
-(* A translation state. It provides the translation function with the info*)
-(* it need to carry on the tranlsation. *)
+(** A translation state. It provides the translation function with the info it needs to carry on the
+   translation. *)
 type trans_state =
-  { context: CContext.t
-  ; (* current context of the translation *)
-  succ_nodes: Procdesc.Node.t list
-  ; (* successor nodes in the cfg *)
-  continuation: continuation option
-  ; (* current continuation *)
-  priority: priority_node
+  { context: CContext.t  (** current context of the translation *)
+  ; succ_nodes: Procdesc.Node.t list  (** successor nodes in the cfg *)
+  ; continuation: continuation option  (** current continuation *)
+  ; priority: priority_node
   ; var_exp_typ: (Exp.t * Typ.t) option
-  ; opaque_exp: (Exp.t * Typ.t) option }
+  ; opaque_exp: (Exp.t * Typ.t) option
+  ; is_fst_arg_objc_instance_method_call: bool }
 
-(* A translation result. It is returned by the translation function. *)
-type trans_result =
+let default_trans_state context =
+  { context
+  ; succ_nodes= []
+  ; continuation= None
+  ; priority= Free
+  ; var_exp_typ= None
+  ; opaque_exp= None
+  ; is_fst_arg_objc_instance_method_call= false }
+
+
+type control =
   { root_nodes: Procdesc.Node.t list
-  ; (* Top cfg nodes (root) created by the translation *)
-  leaf_nodes: Procdesc.Node.t list
-  ; (* Bottom cfg nodes (leaf) created by the translate *)
-  instrs: Sil.instr list
-  ; (* list of SIL instruction that need to be placed in cfg nodes of the parent*)
-  exps: (Exp.t * Typ.t) list
-  ; (* SIL expressions resulting from translation of clang stmt *)
-  initd_exps: Exp.t list
+  ; leaf_nodes: Procdesc.Node.t list
+  ; instrs: Sil.instr list
+  ; initd_exps: Exp.t list }
+
+type trans_result =
+  { control: control
+  ; return: Exp.t * Typ.t
+  ; method_name: Typ.Procname.t option
   ; is_cpp_call_virtual: bool }
 
-(* Empty result translation *)
-let empty_res_trans =
-  {root_nodes= []; leaf_nodes= []; instrs= []; exps= []; initd_exps= []; is_cpp_call_virtual= false}
+let empty_control = {root_nodes= []; leaf_nodes= []; instrs= []; initd_exps= []}
+
+let mk_trans_result ?method_name ?(is_cpp_call_virtual = false) return control =
+  {control; return; method_name; is_cpp_call_virtual}
 
 
 let undefined_expression () = Exp.Var (Ident.create_fresh Ident.knormal)
 
 (** Collect the results of translating a list of instructions, and link up the nodes created. *)
-let collect_res_trans pdesc l =
-  let rec collect l rt =
-    match l with
-    | [] ->
-        rt
-    | rt' :: l' ->
-        let root_nodes = if rt.root_nodes <> [] then rt.root_nodes else rt'.root_nodes in
-        let leaf_nodes = if rt'.leaf_nodes <> [] then rt'.leaf_nodes else rt.leaf_nodes in
-        if rt'.root_nodes <> [] then
-          List.iter
-            ~f:(fun n -> Procdesc.node_set_succs_exn pdesc n rt'.root_nodes [])
-            rt.leaf_nodes ;
-        collect l'
-          { root_nodes
-          ; leaf_nodes
-          ; instrs= List.rev_append rt'.instrs rt.instrs
-          ; exps= List.rev_append rt'.exps rt.exps
-          ; initd_exps= List.rev_append rt'.initd_exps rt.initd_exps
-          ; is_cpp_call_virtual= false }
+let collect_controls pdesc l =
+  let collect_one result_rev {root_nodes; leaf_nodes; instrs; initd_exps} =
+    if root_nodes <> [] then
+      List.iter
+        ~f:(fun n -> Procdesc.node_set_succs_exn pdesc n root_nodes [])
+        result_rev.leaf_nodes ;
+    let root_nodes = if result_rev.root_nodes <> [] then result_rev.root_nodes else root_nodes in
+    let leaf_nodes = if leaf_nodes <> [] then leaf_nodes else result_rev.leaf_nodes in
+    { root_nodes
+    ; leaf_nodes
+    ; instrs= List.rev_append instrs result_rev.instrs
+    ; initd_exps= List.rev_append initd_exps result_rev.initd_exps }
   in
-  let rt = collect l empty_res_trans in
-  {rt with instrs= List.rev rt.instrs; exps= List.rev rt.exps; initd_exps= List.rev rt.initd_exps}
+  let rev_result = List.fold l ~init:empty_control ~f:collect_one in
+  {rev_result with instrs= List.rev rev_result.instrs; initd_exps= List.rev rev_result.initd_exps}
 
 
-(* priority_node is used to enforce some kind of policy for creating nodes *)
-(* in the cfg. Certain elements of the AST must__ create nodes therefore   *)
-(* there is no need for them to use priority_node. Certain elements        *)
-(* instead need or need not to create a node depending of certain factors. *)
-(* When an element of the latter kind wants to create a node it must claim *)
-(* priority first (like taking a lock). priority can be claimes only when  *)
-(* it is free. If an element of AST succedes in claiming priority its id   *)
-(* (pointer) is recorded in priority. After an element has finished it     *)
-(* frees the priority. In general an AST element E checks if an ancestor   *)
-(* has claimed priority. If priority is already claimed E does not have to *)
-(* create a node. If priority is free then it means E has to create the    *)
-(* node. Then E claims priority and release it afterward.                  *)
+let collect_trans_results pdesc ~return trans_results =
+  List.map trans_results ~f:(fun {control} -> control)
+  |> collect_controls pdesc |> mk_trans_result return
+
+
 module PriorityNode = struct
   type t = priority_node
 
@@ -246,60 +209,62 @@ module PriorityNode = struct
     match pri with Busy p when Int.equal p stmt_info.Clang_ast_t.si_pointer -> true | _ -> false
 
 
-  (* Used by translation functions to handle potenatial cfg nodes. *)
+  (* Used by translation functions to handle potential cfg nodes. *)
   (* It connects nodes returned by translation of stmt children and *)
   (* deals with creating or not a cfg node depending of owning the *)
   (* priority_node. It returns nodes, ids, instrs that should be passed to parent *)
-  let compute_results_to_parent trans_state loc nd_name stmt_info res_states_children =
-    let res_state = collect_res_trans trans_state.context.procdesc res_states_children in
+  let compute_controls_to_parent trans_state loc ~node_name stmt_info res_states_children =
+    let res_state = collect_controls trans_state.context.procdesc res_states_children in
     let create_node = own_priority_node trans_state.priority stmt_info && res_state.instrs <> [] in
-    if create_node then
+    if create_node then (
       (* We need to create a node *)
-      let node_kind = Procdesc.Node.Stmt_node nd_name in
-      let node = Nodes.create_node node_kind res_state.instrs loc trans_state.context in
+      let node_kind = Procdesc.Node.Stmt_node node_name in
+      let node =
+        Procdesc.create_node trans_state.context.CContext.procdesc loc node_kind res_state.instrs
+      in
       Procdesc.node_set_succs_exn trans_state.context.procdesc node trans_state.succ_nodes [] ;
       List.iter
         ~f:(fun leaf -> Procdesc.node_set_succs_exn trans_state.context.procdesc leaf [node] [])
         res_state.leaf_nodes ;
       (* Invariant: if root_nodes is empty then the params have not created a node.*)
       let root_nodes = if res_state.root_nodes <> [] then res_state.root_nodes else [node] in
-      {res_state with root_nodes; leaf_nodes= [node]; instrs= []; exps= []}
-    else
-      (* The node is created by the parent. We just pass back nodes/leafs params *)
-      {res_state with exps= []}
+      {res_state with root_nodes; leaf_nodes= [node]; instrs= []} )
+    else (* The node is created by the parent. We just pass back nodes/leafs params *)
+      res_state
+
+
+  let compute_results_to_parent trans_state loc ~node_name stmt_info ~return trans_results =
+    List.map trans_results ~f:(fun trans_result -> trans_result.control)
+    |> compute_controls_to_parent trans_state loc ~node_name stmt_info
+    |> mk_trans_result return
+
+
+  let compute_control_to_parent trans_state loc ~node_name stmt_info control =
+    compute_controls_to_parent trans_state loc ~node_name stmt_info [control]
+
+
+  let compute_result_to_parent trans_state loc ~node_name stmt_info trans_result =
+    compute_control_to_parent trans_state loc ~node_name stmt_info trans_result.control
+    |> mk_trans_result trans_result.return
 end
 
 module Loops = struct
   type loop_kind =
     | For of
-        Clang_ast_t.stmt
-        * Clang_ast_t.stmt
-        * Clang_ast_t.stmt
-        * Clang_ast_t.stmt
-        * Clang_ast_t.stmt
-    (* init, decl_stmt, condition, increment and body *)
-    | While of Clang_ast_t.stmt option * Clang_ast_t.stmt * Clang_ast_t.stmt
-    (* decl_stmt, condition and body *)
-    | DoWhile of Clang_ast_t.stmt * Clang_ast_t.stmt
-
-  (* condition and body *)
-
-  let loop_kind_to_if_kind loop_kind =
-    match loop_kind with
-    | For _ ->
-        Sil.Ik_for
-    | While _ ->
-        Sil.Ik_while
-    | DoWhile _ ->
-        Sil.Ik_dowhile
-
+        { init: Clang_ast_t.stmt
+        ; decl_stmt: Clang_ast_t.stmt
+        ; condition: Clang_ast_t.stmt
+        ; increment: Clang_ast_t.stmt
+        ; body: Clang_ast_t.stmt }
+    | While of {decl_stmt: Clang_ast_t.stmt; condition: Clang_ast_t.stmt; body: Clang_ast_t.stmt}
+    | DoWhile of {condition: Clang_ast_t.stmt; body: Clang_ast_t.stmt}
 
   let get_body loop_kind =
-    match loop_kind with For (_, _, _, _, body) | While (_, _, body) | DoWhile (_, body) -> body
+    match loop_kind with For {body} | While {body} | DoWhile {body} -> body
 
 
   let get_cond loop_kind =
-    match loop_kind with For (_, _, cond, _, _) | While (_, cond, _) | DoWhile (cond, _) -> cond
+    match loop_kind with For {condition} | While {condition} | DoWhile {condition} -> condition
 end
 
 module Scope = struct
@@ -364,7 +329,8 @@ module Scope = struct
 end
 
 (** This function handles ObjC new/alloc and C++ new calls *)
-let create_alloc_instrs ~alloc_builtin ?size_exp sil_loc function_type =
+let create_alloc_instrs integer_type_widths ~alloc_builtin ?size_exp ?placement_args_exps sil_loc
+    function_type =
   let function_type, function_type_np =
     match function_type.Typ.desc with
     | Tptr (styp, Typ.Pk_pointer)
@@ -377,20 +343,27 @@ let create_alloc_instrs ~alloc_builtin ?size_exp sil_loc function_type =
   in
   let ret_id = Ident.create_fresh Ident.knormal in
   let args =
+    let nbytes =
+      match function_type_np.Typ.desc with
+      | Tint ikind ->
+          Some (Typ.width_of_ikind integer_type_widths ikind / 8)
+      | _ ->
+          None
+    in
     let sizeof_exp_ =
-      Exp.Sizeof {typ= function_type_np; nbytes= None; dynamic_length= None; subtype= Subtype.exact}
+      Exp.Sizeof {typ= function_type_np; nbytes; dynamic_length= None; subtype= Subtype.exact}
     in
     let sizeof_exp =
       match size_exp with
       | Some exp ->
-          Exp.BinOp (Binop.Mult, sizeof_exp_, exp)
+          Exp.BinOp (Binop.Mult (Some Typ.size_t), sizeof_exp_, exp)
       | None ->
           sizeof_exp_
     in
     let exp = (sizeof_exp, Typ.mk (Tint Typ.IULong)) in
-    [exp]
+    match placement_args_exps with Some args -> exp :: args | None -> [exp]
   in
-  let ret_id_typ = Some (ret_id, function_type) in
+  let ret_id_typ = (ret_id, function_type) in
   let stmt_call =
     Sil.Call (ret_id_typ, Exp.Const (Const.Cfun alloc_builtin), args, sil_loc, CallFlags.default)
   in
@@ -398,39 +371,41 @@ let create_alloc_instrs ~alloc_builtin ?size_exp sil_loc function_type =
 
 
 let alloc_trans trans_state ~alloc_builtin loc stmt_info function_type =
-  let function_type, instrs, exp = create_alloc_instrs ~alloc_builtin loc function_type in
-  let res_trans_tmp = {empty_res_trans with instrs} in
-  let res_trans =
-    let nname = "Call alloc" in
-    PriorityNode.compute_results_to_parent trans_state loc nname stmt_info [res_trans_tmp]
+  let integer_type_widths = trans_state.context.translation_unit_context.integer_type_widths in
+  let function_type, instrs, exp =
+    create_alloc_instrs integer_type_widths ~alloc_builtin loc function_type
   in
-  {res_trans with exps= [(exp, function_type)]}
+  let control_tmp = {empty_control with instrs} in
+  PriorityNode.compute_control_to_parent trans_state loc ~node_name:(Call "alloc") stmt_info
+    control_tmp
+  |> mk_trans_result (exp, function_type)
 
 
 let objc_new_trans trans_state ~alloc_builtin loc stmt_info cls_name function_type =
+  let integer_type_widths = trans_state.context.translation_unit_context.integer_type_widths in
   let alloc_ret_type, alloc_stmt_call, alloc_ret_exp =
-    create_alloc_instrs ~alloc_builtin loc function_type
+    create_alloc_instrs integer_type_widths ~alloc_builtin loc function_type
   in
   let init_ret_id = Ident.create_fresh Ident.knormal in
   let is_instance = true in
   let call_flags = {CallFlags.default with CallFlags.cf_virtual= is_instance} in
+  let method_kind = ClangMethodKind.OBJC_INSTANCE in
   let pname =
-    CProcname.NoAstDecl.objc_method_of_string_kind cls_name CFrontend_config.init
-      Typ.Procname.ObjCInstanceMethod
+    CType_decl.CProcname.NoAstDecl.objc_method_of_string_kind cls_name CFrontend_config.init
+      Typ.Procname.ObjC_Cpp.ObjCInstanceMethod
   in
-  CMethod_trans.create_external_procdesc trans_state.context.CContext.cfg pname is_instance None ;
+  CMethod_trans.create_external_procdesc trans_state.context.CContext.translation_unit_context
+    trans_state.context.CContext.cfg pname method_kind None ;
   let args = [(alloc_ret_exp, alloc_ret_type)] in
-  let ret_id_typ = Some (init_ret_id, alloc_ret_type) in
+  let ret_id_typ = (init_ret_id, alloc_ret_type) in
   let init_stmt_call =
     Sil.Call (ret_id_typ, Exp.Const (Const.Cfun pname), args, loc, call_flags)
   in
   let instrs = alloc_stmt_call @ [init_stmt_call] in
-  let res_trans_tmp = {empty_res_trans with instrs} in
-  let res_trans =
-    let nname = "Call objC new" in
-    PriorityNode.compute_results_to_parent trans_state loc nname stmt_info [res_trans_tmp]
-  in
-  {res_trans with exps= [(Exp.Var init_ret_id, alloc_ret_type)]}
+  let res_trans_tmp = {empty_control with instrs} in
+  let node_name = Procdesc.Node.CallObjCNew in
+  PriorityNode.compute_control_to_parent trans_state loc ~node_name stmt_info res_trans_tmp
+  |> mk_trans_result (Exp.Var init_ret_id, alloc_ret_type)
 
 
 let new_or_alloc_trans trans_state loc stmt_info qual_type class_name_opt selector =
@@ -452,20 +427,31 @@ let new_or_alloc_trans trans_state loc stmt_info qual_type class_name_opt select
   else Logging.die InternalError "Expected selector new or alloc but got, %s" selector
 
 
-let cpp_new_trans sil_loc function_type size_exp =
+let cpp_new_trans integer_type_widths sil_loc function_type size_exp placement_args_exps =
   let alloc_builtin =
-    match size_exp with Some _ -> BuiltinDecl.__new_array | None -> BuiltinDecl.__new
+    match placement_args_exps with
+    | [] -> (
+      match size_exp with Some _ -> BuiltinDecl.__new_array | None -> BuiltinDecl.__new )
+    | _ ->
+        (* TODO: call user defined `new` when there is more than one placement argument *)
+        BuiltinDecl.__placement_new
   in
   let function_type, stmt_call, exp =
-    create_alloc_instrs ~alloc_builtin ?size_exp sil_loc function_type
+    create_alloc_instrs integer_type_widths ~alloc_builtin ?size_exp ~placement_args_exps sil_loc
+      function_type
   in
-  {empty_res_trans with instrs= stmt_call; exps= [(exp, function_type)]}
+  mk_trans_result (exp, function_type) {empty_control with instrs= stmt_call}
 
 
 let create_call_to_free_cf sil_loc exp typ =
   let pname = BuiltinDecl.__free_cf in
   let stmt_call =
-    Sil.Call (None, Exp.Const (Const.Cfun pname), [(exp, typ)], sil_loc, CallFlags.default)
+    Sil.Call
+      ( (Ident.create_fresh Ident.knormal, Typ.mk Tvoid)
+      , Exp.Const (Const.Cfun pname)
+      , [(exp, typ)]
+      , sil_loc
+      , CallFlags.default )
   in
   stmt_call
 
@@ -476,22 +462,32 @@ let dereference_var_sil (exp, typ) sil_loc =
   ([sil_instr], Exp.Var id)
 
 
-(** Given trans_result with ONE expression, create temporary variable with value of an expression
-    assigned to it *)
-let dereference_value_from_result sil_loc trans_result ~strip_pointer =
-  let obj_sil, class_typ = extract_exp_from_list trans_result.exps "" in
-  let typ_no_ptr = match class_typ.Typ.desc with Tptr (typ, _) -> typ | _ -> assert false in
+let dereference_value_from_result ?(strip_pointer = false) source_range sil_loc trans_result =
+  let obj_sil, class_typ = trans_result.return in
+  let typ_no_ptr =
+    match class_typ.Typ.desc with
+    | Tptr (typ, _) ->
+        typ
+    | _ ->
+        CFrontend_config.incorrect_assumption __POS__ source_range
+          "Expected pointer type but found type %a" (Typ.pp_full Pp.text) class_typ
+  in
   let cast_typ = if strip_pointer then typ_no_ptr else class_typ in
   let cast_inst, cast_exp = dereference_var_sil (obj_sil, cast_typ) sil_loc in
-  {trans_result with instrs= trans_result.instrs @ cast_inst; exps= [(cast_exp, cast_typ)]}
+  { trans_result with
+    control= {trans_result.control with instrs= trans_result.control.instrs @ cast_inst}
+  ; return= (cast_exp, cast_typ) }
 
 
-let cast_operation cast_kind exps cast_typ sil_loc =
-  let exp, typ = extract_exp_from_list exps "" in
+let cast_operation cast_kind ((exp, typ) as exp_typ) cast_typ sil_loc =
   match cast_kind with
   | `NoOp | `DerivedToBase | `UncheckedDerivedToBase ->
       (* These casts ignore change of type *)
-      ([], (exp, typ))
+      ([], exp_typ)
+  | `BitCast when Typ.is_pointer_to_int cast_typ ->
+      ([], (Exp.Cast (cast_typ, exp), cast_typ))
+  | `IntegralCast when Typ.is_unsigned_int cast_typ ->
+      ([], (Exp.Cast (cast_typ, exp), cast_typ))
   | `BitCast | `IntegralCast | `IntegralToBoolean ->
       (* This is treated as a nop by returning the same expressions exps*)
       ([], (exp, cast_typ))
@@ -506,6 +502,16 @@ let cast_operation cast_kind exps cast_typ sil_loc =
       (instrs, (deref_exp, cast_typ))
   | `NullToPointer ->
       if Exp.is_zero exp then ([], (Exp.null, cast_typ)) else ([], (exp, cast_typ))
+  | `ToVoid ->
+      (* If exp is not used later, i.e. as in `(void) exp;` we miss reads *)
+      (* We create a call to skip function passing the exp as a parameter *)
+      let skip_builtin = Exp.Const (Const.Cfun BuiltinDecl.__infer_skip) in
+      let args = [(exp, typ)] in
+      let no_id = Ident.create_none () in
+      let call_instr =
+        Sil.Call ((no_id, cast_typ), skip_builtin, args, sil_loc, CallFlags.default)
+      in
+      ([call_instr], (exp, cast_typ))
   | _ ->
       L.(debug Capture Verbose)
         "@\nWARNING: Missing translation for Cast Kind %s. The construct has been ignored...@\n"
@@ -513,23 +519,34 @@ let cast_operation cast_kind exps cast_typ sil_loc =
       ([], (exp, cast_typ))
 
 
-let trans_assertion_failure sil_loc (context: CContext.t) =
+let trans_assertion_failure sil_loc (context : CContext.t) =
   let assert_fail_builtin = Exp.Const (Const.Cfun BuiltinDecl.__infer_fail) in
   let args = [(Exp.Const (Const.Cstr Config.default_failure_name), Typ.mk Tvoid)] in
-  let call_instr = Sil.Call (None, assert_fail_builtin, args, sil_loc, CallFlags.default) in
-  let exit_node = Procdesc.get_exit_node (CContext.get_procdesc context)
+  let ret_id = Ident.create_fresh Ident.knormal in
+  let ret_typ = Typ.mk Tvoid in
+  let call_instr =
+    Sil.Call ((ret_id, ret_typ), assert_fail_builtin, args, sil_loc, CallFlags.default)
+  in
+  let exit_node = Procdesc.get_exit_node context.procdesc
   and failure_node =
-    Nodes.create_node (Procdesc.Node.Stmt_node "Assertion failure") [call_instr] sil_loc context
+    Procdesc.create_node context.CContext.procdesc sil_loc
+      (Procdesc.Node.Stmt_node AssertionFailure) [call_instr]
   in
   Procdesc.node_set_succs_exn context.procdesc failure_node [exit_node] [] ;
-  {empty_res_trans with root_nodes= [failure_node]}
+  mk_trans_result (Exp.Var ret_id, ret_typ) {empty_control with root_nodes= [failure_node]}
 
 
-let trans_assume_false sil_loc (context: CContext.t) succ_nodes =
-  let instrs_cond = [Sil.Prune (Exp.zero, sil_loc, true, Sil.Ik_land_lor)] in
-  let prune_node = Nodes.create_node (Nodes.prune_kind true) instrs_cond sil_loc context in
+let trans_assume_false sil_loc (context : CContext.t) succ_nodes =
+  let if_kind = Sil.Ik_land_lor in
+  let instrs_cond = [Sil.Prune (Exp.zero, sil_loc, true, if_kind)] in
+  let prune_node =
+    Procdesc.create_node context.CContext.procdesc sil_loc (Nodes.prune_kind true if_kind)
+      instrs_cond
+  in
   Procdesc.node_set_succs_exn context.procdesc prune_node succ_nodes [] ;
-  {empty_res_trans with root_nodes= [prune_node]; leaf_nodes= [prune_node]}
+  mk_trans_result
+    (Exp.zero, Typ.(mk (Tint IInt)))
+    {empty_control with root_nodes= [prune_node]; leaf_nodes= [prune_node]}
 
 
 let trans_assertion trans_state sil_loc =
@@ -550,129 +567,80 @@ let trans_std_addressof params_trans_res =
   match params_trans_res with [_; fst_arg_res] -> Some fst_arg_res | _ -> assert false
 
 
-let trans_replace_with_deref_first_arg sil_loc params_trans_res ~cxx_method_call =
+let trans_replace_with_deref_first_arg source_range sil_loc params_trans_res ~cxx_method_call =
   let first_arg_res_trans =
-    match params_trans_res with
-    | _ :: fst_arg_res :: _ when not cxx_method_call ->
-        fst_arg_res
-    | ({exps= _method_exp :: this_exp} as fst_arg_res) :: _ when cxx_method_call ->
-        (* method_deref_trans uses different format to store first argument - it stores
-           two things in exps: [method_exp; this_exp].
-           We need to get rid of first exp before calling dereference_value_from_result *)
-        {fst_arg_res with exps= this_exp}
-    | _ ->
-        assert false
+    if cxx_method_call then
+      match params_trans_res with
+      | fst_arg_res :: _ ->
+          assert (Option.is_some fst_arg_res.method_name) ;
+          fst_arg_res
+      | [] ->
+          assert false
+    else
+      match params_trans_res with _ :: fst_arg_res :: _ -> fst_arg_res | [] | [_] -> assert false
   in
-  dereference_value_from_result sil_loc first_arg_res_trans ~strip_pointer:true
+  dereference_value_from_result ~strip_pointer:true source_range sil_loc first_arg_res_trans
 
 
-let builtin_trans trans_state loc params_trans_res pname =
+let builtin_trans trans_state source_range loc params_trans_res pname =
   if CTrans_models.is_assert_log pname then Some (trans_assertion trans_state loc)
   else if CTrans_models.is_builtin_expect pname then trans_builtin_expect params_trans_res
   else if CTrans_models.is_replace_with_deref_first_arg pname then
-    Some (trans_replace_with_deref_first_arg loc params_trans_res ~cxx_method_call:false)
+    Some
+      (trans_replace_with_deref_first_arg source_range loc params_trans_res ~cxx_method_call:false)
   else if CTrans_models.is_std_addressof pname then trans_std_addressof params_trans_res
   else None
 
 
-let cxx_method_builtin_trans trans_state loc params_trans_res pname =
+let cxx_method_builtin_trans trans_state source_range loc params_trans_res pname =
   if CTrans_models.is_assert_log pname then Some (trans_assertion trans_state loc)
   else if CTrans_models.is_replace_with_deref_first_arg pname then
-    Some (trans_replace_with_deref_first_arg loc params_trans_res ~cxx_method_call:true)
+    Some
+      (trans_replace_with_deref_first_arg source_range loc params_trans_res ~cxx_method_call:true)
   else None
 
 
-let define_condition_side_effects e_cond instrs_cond sil_loc =
-  let e', typ =
-    extract_exp_from_list e_cond "@\nWARNING: Missing expression in IfStmt. Need to be fixed@\n"
-  in
-  match e' with
+let define_condition_side_effects ((e_cond_exp, e_cond_typ) as e_cond) instrs_cond sil_loc =
+  match e_cond_exp with
   | Exp.Lvar pvar ->
       let id = Ident.create_fresh Ident.knormal in
-      ([(Exp.Var id, typ)], [Sil.Load (id, Exp.Lvar pvar, typ, sil_loc)])
+      ((Exp.Var id, e_cond_typ), [Sil.Load (id, Exp.Lvar pvar, e_cond_typ, sil_loc)])
   | _ ->
-      ([(e', typ)], instrs_cond)
+      (e_cond, instrs_cond)
 
 
 let is_superinstance mei =
   match mei.Clang_ast_t.omei_receiver_kind with `SuperInstance -> true | _ -> false
 
 
-let get_selector_receiver obj_c_message_expr_info =
-  ( obj_c_message_expr_info.Clang_ast_t.omei_selector
-  , obj_c_message_expr_info.Clang_ast_t.omei_receiver_kind )
-
-
-let is_member_exp stmt = match stmt with Clang_ast_t.MemberExpr _ -> true | _ -> false
-
-let is_enumeration_constant stmt =
-  match stmt with
-  | Clang_ast_t.DeclRefExpr (_, _, _, drei) -> (
-    match drei.Clang_ast_t.drti_decl_ref with
-    | Some d -> (
-      match d.Clang_ast_t.dr_kind with `EnumConstant -> true | _ -> false )
-    | _ ->
-        false )
-  | _ ->
-      false
-
-
 let is_null_stmt s = match s with Clang_ast_t.NullStmt _ -> true | _ -> false
 
-let extract_stmt_from_singleton stmt_list warning_string =
-  extract_item_from_singleton stmt_list warning_string (Ast_expressions.dummy_stmt ())
-
-
-let rec get_type_from_exp_stmt stmt =
-  let do_decl_ref_exp i =
-    match i.Clang_ast_t.drti_decl_ref with
-    | Some d -> (
-      match d.Clang_ast_t.dr_qual_type with Some n -> n | _ -> assert false )
-    | _ ->
-        assert false
-  in
-  let open Clang_ast_t in
-  match stmt with
-  | CXXOperatorCallExpr (_, _, ei) | CallExpr (_, _, ei) ->
-      ei.Clang_ast_t.ei_qual_type
-  | MemberExpr (_, _, ei, _) ->
-      ei.Clang_ast_t.ei_qual_type
-  | ParenExpr (_, _, ei) ->
-      ei.Clang_ast_t.ei_qual_type
-  | ArraySubscriptExpr (_, _, ei) ->
-      ei.Clang_ast_t.ei_qual_type
-  | ObjCIvarRefExpr (_, _, ei, _) ->
-      ei.Clang_ast_t.ei_qual_type
-  | ObjCMessageExpr (_, _, ei, _) ->
-      ei.Clang_ast_t.ei_qual_type
-  | PseudoObjectExpr (_, _, ei) ->
-      ei.Clang_ast_t.ei_qual_type
-  | CStyleCastExpr (_, stmt_list, _, _, _)
-  | UnaryOperator (_, stmt_list, _, _)
-  | ImplicitCastExpr (_, stmt_list, _, _) ->
-      get_type_from_exp_stmt
-        (extract_stmt_from_singleton stmt_list "WARNING: We expect only one stmt.")
-  | DeclRefExpr (_, _, _, info) ->
-      do_decl_ref_exp info
-  | _ ->
-      L.die InternalError "get_type_from_expr_stmt failure: %s" (Clang_ast_j.string_of_stmt stmt)
+let extract_stmt_from_singleton stmt_list source_range warning_string =
+  extract_item_from_singleton stmt_list
+    (Pp.to_string ~f:Clang_ast_j.string_of_stmt)
+    source_range warning_string
 
 
 module Self = struct
-  exception SelfClassException of Typ.Name.t
+  exception
+    SelfClassException of
+      { class_name: Typ.Name.t
+      ; position: Logging.ocaml_pos
+      ; source_range: Clang_ast_t.source_range }
 
-  let add_self_parameter_for_super_instance context procname loc mei =
+  let add_self_parameter_for_super_instance stmt_info context procname loc mei =
     if is_superinstance mei then
-      let typ, self_expr, ins =
+      let typ, self_expr, instrs =
         let t' =
-          CType.add_pointer_to_typ (Typ.mk (Tstruct (CContext.get_curr_class_typename context)))
+          CType.add_pointer_to_typ
+            (Typ.mk (Tstruct (CContext.get_curr_class_typename stmt_info context)))
         in
         let e = Exp.Lvar (Pvar.mk (Mangled.from_string CFrontend_config.self) procname) in
         let id = Ident.create_fresh Ident.knormal in
         (t', Exp.Var id, [Sil.Load (id, e, t', loc)])
       in
-      {empty_res_trans with exps= [(self_expr, typ)]; instrs= ins}
-    else empty_res_trans
+      Some (mk_trans_result (self_expr, typ) {empty_control with instrs})
+    else None
 
 
   let is_var_self pvar is_objc_method =
@@ -680,40 +648,16 @@ module Self = struct
     is_self && is_objc_method
 end
 
-let rec is_method_call s =
-  match s with
-  | Clang_ast_t.ObjCMessageExpr _ ->
-      true
-  | _ ->
-    match snd (Clang_ast_proj.get_stmt_tuple s) with [] -> false | s'' :: _ -> is_method_call s''
-
-
-let rec get_decl_ref_info s =
-  match s with
-  | Clang_ast_t.DeclRefExpr (_, _, _, decl_ref_expr_info) -> (
-    match decl_ref_expr_info.Clang_ast_t.drti_decl_ref with
-    | Some decl_ref ->
-        decl_ref
-    | None ->
-        assert false )
-  | _ ->
-    match Clang_ast_proj.get_stmt_tuple s with
-    | _, [] ->
-        assert false
-    | _, s'' :: _ ->
-        get_decl_ref_info s''
-
-
 let rec contains_opaque_value_expr s =
   match s with
   | Clang_ast_t.OpaqueValueExpr _ ->
       true
-  | _ ->
+  | _ -> (
     match snd (Clang_ast_proj.get_stmt_tuple s) with
     | [] ->
         false
     | s'' :: _ ->
-        contains_opaque_value_expr s''
+        contains_opaque_value_expr s'' )
 
 
 (* checks if a unary operator is a logic negation applied to integers*)
@@ -728,21 +672,18 @@ let is_logical_negation_of_int tenv ei uoi =
       false
 
 
-let is_block_enumerate_function mei =
-  String.equal mei.Clang_ast_t.omei_selector CFrontend_config.enumerateObjectsUsingBlock
+let mk_fresh_void_exp_typ () = (Exp.Var (Ident.create_fresh Ident.knormal), Typ.mk Tvoid)
 
-(*
-(** Similar to extract_item_from_singleton but for option type *)
-let extract_item_from_option op warning_string =
-  match op with
-  | Some item -> item
-  | _ -> L.(debug Capture Verbose) warning_string; assert false
+let mk_fresh_void_id_typ () = (Ident.create_fresh Ident.knormal, Typ.mk Tvoid)
 
-let extract_id_from_singleton id_list warning_string =
-  extract_item_from_singleton id_list warning_string (dummy_id ())
+let mk_fresh_void_return () =
+  let id = Ident.create_fresh Ident.knormal and void = Typ.mk Tvoid in
+  ((id, void), (Exp.Var id, void))
 
-let get_decl_pointer decl_ref_expr_info =
-  match decl_ref_expr_info.Clang_ast_t.drti_decl_ref with
-  | Some decl_ref -> decl_ref.Clang_ast_t.dr_decl_pointer
-  | None -> assert false
-*)
+
+let last_or_mk_fresh_void_exp_typ exp_typs =
+  match List.last exp_typs with
+  | Some last_exp_typ ->
+      last_exp_typ
+  | None ->
+      mk_fresh_void_exp_typ ()

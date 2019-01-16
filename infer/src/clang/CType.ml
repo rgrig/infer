@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -14,10 +12,6 @@ open! IStd
 module L = Logging
 
 let add_pointer_to_typ typ = Typ.mk (Tptr (typ, Typ.Pk_pointer))
-
-let remove_pointer_to_typ typ =
-  match typ.Typ.desc with Typ.Tptr (typ, Typ.Pk_pointer) -> typ | _ -> typ
-
 
 let objc_classname_of_type typ =
   match typ.Typ.desc with
@@ -39,13 +33,13 @@ let is_class typ =
       false
 
 
-let rec return_type_of_function_qual_type (qual_type: Clang_ast_t.qual_type) =
+let rec return_type_of_function_qual_type (qual_type : Clang_ast_t.qual_type) =
   let open Clang_ast_t in
   match CAst_utils.get_type qual_type.qt_type_ptr with
-  | Some FunctionProtoType (_, function_type_info, _)
-  | Some FunctionNoProtoType (_, function_type_info) ->
+  | Some (FunctionProtoType (_, function_type_info, _))
+  | Some (FunctionNoProtoType (_, function_type_info)) ->
       function_type_info.Clang_ast_t.fti_return_type
-  | Some BlockPointerType (_, in_qual) ->
+  | Some (BlockPointerType (_, in_qual)) ->
       return_type_of_function_qual_type in_qual
   | Some _ ->
       L.(debug Capture Verbose)
@@ -64,7 +58,7 @@ let return_type_of_function_type qual_type = return_type_of_function_qual_type q
 let is_block_type {Clang_ast_t.qt_type_ptr} =
   let open Clang_ast_t in
   match CAst_utils.get_desugared_type qt_type_ptr with
-  | Some BlockPointerType _ ->
+  | Some (BlockPointerType _) ->
       true
   | _ ->
       false
@@ -72,31 +66,20 @@ let is_block_type {Clang_ast_t.qt_type_ptr} =
 
 let is_reference_type {Clang_ast_t.qt_type_ptr} =
   match CAst_utils.get_desugared_type qt_type_ptr with
-  | Some Clang_ast_t.LValueReferenceType _ ->
+  | Some (Clang_ast_t.LValueReferenceType _) ->
       true
-  | Some Clang_ast_t.RValueReferenceType _ ->
+  | Some (Clang_ast_t.RValueReferenceType _) ->
       true
   | _ ->
       false
 
 
-(* To be called with strings of format "<pointer_type_info>*<class_name>" *)
-let get_name_from_type_pointer custom_type_pointer =
-  match Str.split (Str.regexp "*") custom_type_pointer with
-  | [pointer_type_info; class_name] ->
-      (pointer_type_info, class_name)
+let is_pointer_to_const {Clang_ast_t.qt_type_ptr} =
+  match CAst_utils.get_type qt_type_ptr with
+  | Some (PointerType (_, {Clang_ast_t.qt_is_const}))
+  | Some (ObjCObjectPointerType (_, {Clang_ast_t.qt_is_const}))
+  | Some (RValueReferenceType (_, {Clang_ast_t.qt_is_const}))
+  | Some (LValueReferenceType (_, {Clang_ast_t.qt_is_const})) ->
+      qt_is_const
   | _ ->
-      assert false
-
-(*
-let rec get_type_list nn ll =
-  match ll with
-  | [] -> []
-  | (n, t):: ll' ->
-      (* L.(debug Capture Verbose) ">>>>>Searching for type '%s'. Seen '%s'.@." nn n; *)
-      if n = nn then (
-        L.(debug Capture Verbose) ">>>>>>>>>>>>>>>>>>>>>>>NOW Found, Its type is: '%s'@."
-          (Typ.to_string t);
-        [t]
-      ) else get_type_list nn ll'
-*)
+      false

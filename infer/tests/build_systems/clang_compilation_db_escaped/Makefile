@@ -1,13 +1,10 @@
-# Copyright (c) 2016 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2016-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 TESTS_DIR = ../..
 
-ANALYZER = checkers
 INFER_OPTIONS = --report-custom-error --developer-mode
 SOURCES = ../codetoanalyze/path\ with\ spaces/hel\ lo.c
 OBJECTS = $(SOURCES:.c=.o)
@@ -19,7 +16,8 @@ include $(TESTS_DIR)/infer.make
 ../codetoanalyze/path\ with\ spaces/hel\ lo.c: ../codetoanalyze/path_with_spaces/hel_lo.c
 #	make does not want to interpret "$(@D)" in the right way here...
 	$(QUIET)$(MKDIR_P) ../codetoanalyze/path\ with\ spaces/
-	$(QUIET)cp "$<" "$@"
+#	allow copy races with other tests if they are doing the same action
+	$(QUIET)$(call copy_or_same_file,$<,$@)
 	$(QUIET)touch "$@"
 
 compile_commands.json: compile_commands.json.in
@@ -28,5 +26,5 @@ compile_commands.json: compile_commands.json.in
 infer-out/report.json: compile_commands.json $(SOURCES) Makefile \
                        ../codetoanalyze/path\ with\ spaces/hel\ lo.c $(CLANG_DEPS)
 	$(QUIET)$(call silent_on_success,Clang compilation database escaped integration,\
-	  $(INFER_BIN) -a $(ANALYZER) $(INFER_OPTIONS) --project-root $(TESTS_DIR) \
+	  $(INFER_BIN) $(INFER_OPTIONS) --project-root $(TESTS_DIR) \
 	  --compilation-database-escaped $<)

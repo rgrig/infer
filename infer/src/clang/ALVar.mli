@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -16,12 +14,8 @@ type formula_id = Formula_id of string [@@deriving compare]
 (** a regexp and its cached compiled version *)
 type cached_regexp = {string: string; regexp: Str.regexp Lazy.t} [@@deriving compare]
 
-type alexp =
-  | Const of string
-  | Regexp of cached_regexp
-  | Var of string
-  | FId of formula_id
-  [@@deriving compare]
+type alexp = Const of string | Regexp of cached_regexp | Var of string | FId of formula_id
+[@@deriving compare]
 
 type t = alexp
 

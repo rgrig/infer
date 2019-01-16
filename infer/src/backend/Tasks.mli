@@ -1,50 +1,27 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 
-(** A sequence of tasks that can be executed in parallel,
-    with a continuation to be executed at the end *)
-type t
+type 'a doer = 'a -> unit
 
-type tasks = t
-
-(** Each task/continuation executes a closure *)
-type closure = unit -> unit
-
-(* Aggregate closures into groups of the given size *)
-
-val aggregate : size:int -> t -> t
-
-val create : ?continuation:closure option -> closure list -> t
-(** Create tasks with a list of closures to be executed in parallel,
-    and an optional continuation to be executed afterwards *)
-
-val empty : t
-(** No-op tasks *)
-
-val run : t -> unit
-(** Run the closures and continuation *)
+val run_sequentially : f:'a doer -> 'a list -> unit
+(** Run the tasks sequentially *)
 
 val fork_protect : f:('a -> 'b) -> 'a -> 'b
 (** does the bookkeeping necessary to safely execute an infer function [f] after a call to fork(2) *)
 
+(** A runner accepts new tasks repeatedly for parallel execution *)
 module Runner : sig
-  (** A runner accepts new tasks repeatedly for parallel execution *)
-  type runner
+  type 'a t
 
-  val create : jobs:int -> runner
-  (** Create a runner *)
+  val create : jobs:int -> f:'a doer -> 'a t
+  (** Create a runner running [jobs] jobs in parallel *)
 
-  val start : runner -> tasks:t -> unit
-  (** Start the given tasks with the runner *)
-
-  val complete : runner -> unit
-  (** Complete all the outstanding tasks *)
+  val run : 'a t -> tasks:'a list -> unit
+  (** Start the given tasks with the runner and wait until completion *)
 end

@@ -1,9 +1,7 @@
-// Copyright (c) 2016 - present Facebook, Inc.
-// All rights reserved.
+// Copyright (c) 2016-present, Facebook, Inc.
 //
-// This source code is licensed under the BSD style license found in the
-// LICENSE file in the root directory of this source tree. An additional grant
-// of patent rights can be found in the PATENTS file in the same directory.
+// This source code is licensed under the MIT license found in the
+// LICENSE file in the root directory of this source tree.
 
 // DIRECT_ATOMIC_PROPERTY_ACCESS:
 // a property declared atomic should not be accessed directly via its ivar
@@ -40,39 +38,35 @@ DEFINE-CHECKER ASSIGN_POINTER_WARNING = {
 // Fires whenever a NSNumber is dangerously coerced to a boolean in a comparison
 DEFINE-CHECKER BAD_POINTER_COMPARISON = {
 
-	LET is_binop = is_node("BinaryOperator");
-	LET is_binop_eq = is_binop_with_kind("EQ");
-	LET is_binop_ne = is_binop_with_kind("NE");
-	LET is_binop_neq = is_binop_eq OR is_binop_ne;
-	LET is_unop_lnot = is_unop_with_kind("LNot");
-	LET is_implicit_cast_expr = is_node("ImplicitCastExpr");
-	LET is_expr_with_cleanups = is_node("ExprWithCleanups");
-	LET is_nsnumber = isa("NSNumber");
+	LET bool_op =
+		is_binop_with_kind("LAnd") OR is_binop_with_kind("LOr")
+		OR is_unop_with_kind("LNot") OR is_unop_with_kind("LNot");
 
-  LET eu =(
-	 					(NOT is_binop_neq)
-						AND (is_expr_with_cleanups
-	 								OR is_implicit_cast_expr
-	 								OR is_binop
-	 								OR is_unop_lnot)
-					)
-						HOLDS-UNTIL
-					(
-						is_nsnumber
-					);
+  LET comparison_with_integral =
+	  ( is_binop_with_kind("EQ") OR is_binop_with_kind("NE")
+			OR is_binop_with_kind("GT") OR is_binop_with_kind("GE")
+			OR is_binop_with_kind("LT") OR is_binop_with_kind("LE"))
+		AND
+		( (is_node("ImplicitCastExpr") AND has_type("NSNumber *")
+			AND has_cast_kind("IntegralToPointer")
+		) HOLDS-NEXT);
 
-  LET etx = eu HOLDS-NEXT WITH-TRANSITION Cond;
+	LET root_is_stmt_expecting_bool =
+		is_node("IfStmt") OR is_node("ForStmt") OR is_node("WhileStmt");
 
+	LET use_num_as_bool =
+		(bool_op OR root_is_stmt_expecting_bool) AND (has_type("NSNumber *") HOLDS-NEXT);
 
- 	SET report_when =
-					WHEN
-         		etx
-					HOLDS-IN-NODE IfStmt, ForStmt, WhileStmt, ConditionalOperator;
+	LET bad_conditional =
+	  is_node("ConditionalOperator") AND (has_type("NSNumber *") HOLDS-NEXT WITH-TRANSITION Cond);
 
-  SET message = "Implicitly checking whether NSNumber pointer is nil";
+	SET report_when =
+		use_num_as_bool OR comparison_with_integral OR bad_conditional;
+
+  SET message = "Implicitly checking whether NSNumber pointer is nil or comparing to integral value";
 
 	SET suggestion =
-		"Did you mean to compare against the unboxed value instead? Please either explicitly compare the NSNumber instance to nil, or use one of the NSNumber accessors before the comparison.";
+		"Did you mean to use/compare against the unboxed value instead? Please either explicitly compare the NSNumber instance to nil, or use one of the NSNumber accessors before the comparison.";
 };
 
 
@@ -188,20 +182,13 @@ DEFINE-CHECKER CXX_REFERENCE_CAPTURED_IN_OBJC_BLOCK = {
 					 HOLDS-NEXT)
          HOLDS-IN-NODE BlockExpr;
 
-// * Alternative ways of writing this check:
-//			 SET report_when =
-//				 		 WHEN
-//				 			 captures_cxx_references()
-//				 		 HOLDS-IN-NODE BlockDecl;
-//
-//		SET report_when =
-//		is_node(BlockDecl) AND captures_cxx_references();
-
 	  SET message =
 	        "C++ Reference variable(s) %cxx_ref_captured_in_block% captured by Objective-C block";
 
-	  SET suggestion = "C++ References are unmanaged and may be invalid by the time the block executes.";
+	  SET suggestion = "This will very likely cause a crash because C++ References are unmanaged and may be invalid by the time the block executes.";
 
+    SET severity = "ERROR";
+		SET mode = "ON";
 	};
 
 	// If the declaration has availability attributes, check that it's compatible with
@@ -225,8 +212,8 @@ DEFINE-CHECKER CXX_REFERENCE_CAPTURED_IN_OBJC_BLOCK = {
 		SET report_when =
 				 WHEN ((class_unavailable_in_supported_ios_sdk()) AND
 				       NOT within_available_class_block() AND
-							 (call_class_method(REGEXP(".*"), "alloc") OR
-							 call_class_method(REGEXP(".*"), "new")))
+							 (call_class_method("alloc") OR
+							 call_class_method("new")))
 				 HOLDS-IN-NODE ObjCMessageExpr;
 
 			SET message =
@@ -272,4 +259,17 @@ DEFINE-CHECKER DISCOURAGED_WEAK_PROPERTY_CUSTOM_SETTER = {
   SET message = "Custom setters are not called when ARC sets weak properties to nil.";
   SET severity = "WARNING";
   SET mode = "OFF";
+};
+
+DEFINE-CHECKER WRONG_SCOPE_FOR_DISPATCH_ONCE_T = {
+
+  SET report_when =
+	    WHEN
+			  NOT (is_global_var() OR is_static_local_var()) AND
+				has_type("dispatch_once_t")
+			HOLDS-IN-NODE VarDecl;
+
+		SET message = "Variables of type dispatch_once_t must have global or static scope. The result of using this type with automatic or dynamic allocation is undefined.";
+		SET severity = "WARNING";
+		SET mode = "ON";
 };

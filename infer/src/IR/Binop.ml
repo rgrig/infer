@@ -1,26 +1,26 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** The Smallfoot Intermediate Language: Binary Operators *)
 open! IStd
-module L = Logging
-module F = Format
+
+type ikind_option_for_binop = Typ.ikind option
+
+let compare_ikind_option_for_binop _ _ = 0
 
 (** Binary operations *)
 type t =
-  | PlusA  (** arithmetic + *)
+  | PlusA of ikind_option_for_binop  (** arithmetic + *)
   | PlusPI  (** pointer + integer *)
-  | MinusA  (** arithmetic - *)
+  | MinusA of ikind_option_for_binop  (** arithmetic - *)
   | MinusPI  (** pointer - integer *)
   | MinusPP  (** pointer - pointer *)
-  | Mult  (** * *)
+  | Mult of ikind_option_for_binop  (** * *)
   | Div  (** / *)
   | Mod  (** % *)
   | Shiftlt  (** shift left *)
@@ -36,48 +36,29 @@ type t =
   | BOr  (** inclusive-or *)
   | LAnd  (** logical and. Does not always evaluate both operands. *)
   | LOr  (** logical or. Does not always evaluate both operands. *)
-  [@@deriving compare]
+[@@deriving compare]
 
-let equal = [%compare.equal : t]
+let equal = [%compare.equal: t]
 
 (** This function returns true if the operation is injective
     wrt. each argument: op(e,-) and op(-, e) is injective for all e.
     The return value false means "don't know". *)
-let injective = function PlusA | PlusPI | MinusA | MinusPI | MinusPP -> true | _ -> false
-
-(** This function returns true if the operation can be inverted. *)
-let invertible = function PlusA | PlusPI | MinusA | MinusPI -> true | _ -> false
-
-(** This function inverts an invertible injective binary operator.
-    If the [binop] operation is not invertible, the function raises Assert_failure. *)
-let invert bop =
-  match bop with
-  | PlusA ->
-      MinusA
-  | PlusPI ->
-      MinusPI
-  | MinusA ->
-      PlusA
-  | MinusPI ->
-      PlusPI
-  | _ ->
-      assert false
-
+let injective = function PlusA _ | PlusPI | MinusA _ | MinusPI | MinusPP -> true | _ -> false
 
 (** This function returns true if 0 is the right unit of [binop].
     The return value false means "don't know". *)
-let is_zero_runit = function PlusA | PlusPI | MinusA | MinusPI | MinusPP -> true | _ -> false
+let is_zero_runit = function PlusA _ | PlusPI | MinusA _ | MinusPI | MinusPP -> true | _ -> false
 
 let text = function
-  | PlusA ->
+  | PlusA _ ->
       "+"
   | PlusPI ->
       "+"
-  | MinusA | MinusPP ->
+  | MinusA _ | MinusPP ->
       "-"
   | MinusPI ->
       "-"
-  | Mult ->
+  | Mult _ ->
       "*"
   | Div ->
       "/"

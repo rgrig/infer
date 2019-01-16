@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -15,7 +13,7 @@ module F = Format
     you'll diverge at loops if you don't widen *)
 
 module PathCountDomain = struct
-  type astate = PathCount of int | Top
+  type t = PathCount of int | Top
 
   let make_path_count c =
     (* guarding against overflow *)
@@ -44,7 +42,7 @@ module PathCountDomain = struct
 
   let widen ~prev:_ ~next:_ ~num_iters:_ = Top
 
-  let pp fmt = function PathCount c -> F.fprintf fmt "%d" c | Top -> F.fprintf fmt "T"
+  let pp fmt = function PathCount c -> F.pp_print_int fmt c | Top -> F.pp_print_char fmt 'T'
 end
 
 module PathCountTransferFunctions (CFG : ProcCfg.S) = struct
@@ -55,11 +53,13 @@ module PathCountTransferFunctions (CFG : ProcCfg.S) = struct
 
   (* just propagate the current path count *)
   let exec_instr astate _ _ _ = astate
+
+  let pp_session_name _node _fmt = ()
 end
 
-module NormalTestInterpreter = AnalyzerTester.Make (ProcCfg.Normal) (PathCountTransferFunctions)
+module NormalTestInterpreter = AnalyzerTester.Make (PathCountTransferFunctions (ProcCfg.Normal))
 module ExceptionalTestInterpreter =
-  AnalyzerTester.Make (ProcCfg.Exceptional) (PathCountTransferFunctions)
+  AnalyzerTester.Make (PathCountTransferFunctions (ProcCfg.Exceptional))
 
 let tests =
   let open OUnit2 in
@@ -123,7 +123,7 @@ let tests =
               ; (* point 2 *)
                 invariant "1" ]
             , (* point 4 *)
-              [ (* ... so |paths through catch block| shoud be |number of instructions in try block| *)
+              [ (* ... so |paths through catch block| should be |number of instructions in try block| *)
                 invariant "2" ]
             , (* could arrive here via (1, 2, 3), (1, 4), or (2, 4) *)
               [invariant "3"] )

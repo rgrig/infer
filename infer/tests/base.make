@@ -1,9 +1,7 @@
-# Copyright (c) 2016 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2016-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 ROOT_DIR = $(TESTS_DIR)/../..
 include $(ROOT_DIR)/Makefile.config
@@ -14,10 +12,16 @@ include $(ROOT_DIR)/Makefile.config
 TEST_REL_DIR = $(patsubst $(abspath $(TESTS_DIR))/%,%,$(abspath $(CURDIR)))
 
 define check_no_duplicates
-  grep "DUPLICATE_SYMBOLS" $(1); test $$? -ne 0 || \
-  (echo '$(TEST_ERROR)Duplicate symbols found in $(CURDIR).' \
-   'Please make sure all the function names in all the source test files are different.$(TEST_RESET)';\
-   exit 1)
+  if grep -q "DUPLICATE_SYMBOLS" $(1); then \
+    printf '$(TERM_ERROR)Duplicate symbols found in $(CURDIR):$(TERM_RESET)\n' >&2; \
+    printf '$(TERM_ERROR)========$(TERM_RESET)\n' >&2; \
+    while read line; do \
+      printf '$(TERM_ERROR)%s$(TERM_RESET)\n' "$$line" >&2; \
+    done <$(1); \
+    printf '$(TERM_ERROR)========$(TERM_RESET)\n' >&2; \
+    printf '$(TERM_ERROR)Please make sure all the function names in all the source test files are different.$(TERM_RESET)\n' >&2; \
+    exit 1; \
+  fi
 endef
 
 define check_no_diff

@@ -1,17 +1,15 @@
 /*
- * Copyright (c) 2004 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2004-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package com.facebook.infer.annotation;
 
-import javax.annotation.Nullable;
 import java.util.List;
 import java.util.Map;
+import javax.annotation.Nullable;
 
 public class Assertions {
 
@@ -55,11 +53,9 @@ public class Assertions {
     return assertNotNull(map.get(key));
   }
 
-  public static void assumeCondition(boolean condition) {
-  }
+  public static void assumeCondition(boolean condition) {}
 
-  public static void assumeCondition(boolean condition, String explanation) {
-  }
+  public static void assumeCondition(boolean condition, String explanation) {}
 
   public static void assertCondition(boolean condition) {
     if (!condition) {

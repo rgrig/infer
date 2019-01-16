@@ -1,21 +1,13 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 open Javalib_pack
-
-val models_jar : string ref
-(** Jar file containing the models *)
-
-val models_tenv : Tenv.t ref
-(** Type environment of the models *)
 
 val add_models : string -> unit
 (**  Adds the set of procnames for the models of Java libraries so that methods
@@ -23,8 +15,6 @@ val add_models : string -> unit
 
 val is_model : Typ.Procname.t -> bool
 (** Check if there is a model for the given procname *)
-
-val split_classpath : string -> string list
 
 (** map entry for source files with potential basename collision within the same compiler call *)
 type file_entry = Singleton of SourceFile.t | Duplicate of (string * SourceFile.t) list
@@ -51,7 +41,14 @@ val load_program : string -> JBasics.ClassSet.t -> program
 (** load a java program *)
 
 val lookup_node : JBasics.class_name -> program -> JCode.jcode Javalib.interface_or_class option
-(** retrive a Java node from the classname *)
+(** retrieve a Java node from the classname *)
 
-val collect_classes : classmap -> string -> classmap
-(** [collect_classes cmap filename] adds to [cmap] the classes found in the jar file [filename] *)
+val add_missing_callee :
+  program -> Typ.Procname.t -> JBasics.class_name -> JBasics.method_signature -> unit
+(** add the class name of method signature to the list of callees  *)
+
+val set_callee_translated : program -> Typ.Procname.t -> unit
+(** set that the CFG for the procedure has been created *)
+
+val iter_missing_callees :
+  program -> f:(Typ.Procname.t -> JBasics.class_name -> JBasics.method_signature -> unit) -> unit

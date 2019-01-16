@@ -1,15 +1,11 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.quandary;
-
-import java.net.URISyntaxException;
 
 import android.app.Activity;
 import android.content.Context;
@@ -18,15 +14,14 @@ import android.net.Uri;
 import android.webkit.JavascriptInterface;
 import android.webkit.JsPromptResult;
 import android.webkit.JsResult;
-import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
-import android.webkit.WebMessage;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-
 import com.facebook.infer.builtins.InferTaint;
+import java.io.File;
+import java.net.URISyntaxException;
 
 public class WebViews {
 
@@ -65,6 +60,10 @@ public class WebViews {
     public WebResourceResponse shouldInterceptRequest(WebView w, WebResourceRequest request) {
       mActivity.startActivity(new Intent("action", request.getUrl())); // should report
       return null;
+    }
+
+    File webResourceToFileBad(WebResourceRequest request) {
+      return new File(request.getUrl().getPath());
     }
 
     @Override
@@ -139,5 +138,4 @@ public class WebViews {
     // should warn here
     webview.addJavascriptInterface(new JsObject(), "injectedObject");
   }
-
 }

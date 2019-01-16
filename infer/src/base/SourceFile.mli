@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -16,6 +14,8 @@ module Map : Caml.Map.S with type key = t
 
 (** Set of source files *)
 module Set : Caml.Set.S with type elt = t
+
+module Hash : Caml.Hashtbl.S with type key = t
 
 val is_invalid : t -> bool
 (** Is the source file the invalid source file? *)
@@ -67,7 +67,7 @@ val to_abs_path : t -> string
 val to_rel_path : t -> string
 (** get the relative path of a source file *)
 
-val to_string : t -> string
+val to_string : ?force_relative:bool -> t -> string
 (** convert a source file to a string
     WARNING: result may not be valid file path, do not use this function to perform operations
              on filenames *)
