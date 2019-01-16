@@ -96,6 +96,8 @@ module ItvPure : sig
   val succ : t -> t
 
   val mult : t -> t -> t
+
+  val exists_str : f:(string -> bool) -> t -> bool
 end
 
 include module type of AbstractDomain.BottomLifted (ItvPure)
@@ -153,6 +155,8 @@ val incr : t -> t
 val neg : t -> t
 
 val normalize : t -> t
+
+val is_symbolic : t -> bool
 
 val get_symbols : t -> SymbolSet.t
 

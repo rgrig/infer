@@ -18,7 +18,11 @@ module BoundEnd = struct
 end
 
 module SymbolPath = struct
-  type deref_kind = Deref_ArrayIndex | Deref_CPointer | Deref_JavaPointer
+  type deref_kind =
+    | Deref_ArrayIndex
+    | Deref_COneValuePointer
+    | Deref_CPointer
+    | Deref_JavaPointer
 
   let compare_deref_kind _ _ = 0
 
@@ -49,6 +53,8 @@ module SymbolPath = struct
 
   let length p = Length p
 
+  let is_this = function Pvar pvar -> Pvar.is_this pvar || Pvar.is_self pvar | _ -> false
+
   let rec get_pvar = function
     | Pvar pvar ->
         Some pvar
@@ -65,9 +71,9 @@ module SymbolPath = struct
         pp_partial_paren ~paren fmt p
     | Deref (Deref_ArrayIndex, p) ->
         F.fprintf fmt "%a[*]" (pp_partial_paren ~paren:true) p
-    | Deref ((Deref_CPointer | Deref_JavaPointer), p) ->
+    | Deref ((Deref_COneValuePointer | Deref_CPointer | Deref_JavaPointer), p) ->
         pp_pointer ~paren fmt p
-    | Field (fn, Deref (Deref_CPointer, p)) ->
+    | Field (fn, Deref ((Deref_COneValuePointer | Deref_CPointer), p)) ->
         BufferOverrunField.pp ~pp_lhs:(pp_partial_paren ~paren:true)
           ~pp_lhs_alone:(pp_pointer ~paren) ~sep:"->" fmt p fn
     | Field (fn, p) ->
@@ -104,7 +110,7 @@ module SymbolPath = struct
         true
     | Deref (Deref_CPointer, p)
     (* Deref_CPointer is unsound here but avoids many FPs for non-array pointers *)
-    | Deref (Deref_JavaPointer, p)
+    | Deref ((Deref_COneValuePointer | Deref_JavaPointer), p)
     | Field (_, p) ->
         represents_multiple_values p
 
@@ -116,7 +122,7 @@ module SymbolPath = struct
         false
     | Deref ((Deref_ArrayIndex | Deref_CPointer), _) ->
         true
-    | Deref (Deref_JavaPointer, p) | Field (_, p) ->
+    | Deref ((Deref_COneValuePointer | Deref_JavaPointer), p) | Field (_, p) ->
         represents_multiple_values_sound p
 
 
@@ -127,6 +133,20 @@ module SymbolPath = struct
         false
     | Deref (_, p) | Field (_, p) ->
         represents_callsite_sound_partial p
+
+
+  let rec exists_str_partial ~f = function
+    | Pvar pvar ->
+        f (Pvar.to_string pvar)
+    | Deref (_, x) ->
+        exists_str_partial ~f x
+    | Field (fld, x) ->
+        f (Typ.Fieldname.to_string fld) || exists_str_partial ~f x
+    | Callsite _ ->
+        false
+
+
+  let exists_str ~f = function Normal p | Offset p | Length p -> exists_str_partial ~f p
 end
 
 module Symbol = struct
@@ -195,6 +215,9 @@ module Symbol = struct
 
   let assert_bound_end s be =
     match s with OneValue _ -> () | BoundEnd {bound_end} -> assert (BoundEnd.equal be bound_end)
+
+
+  let exists_str ~f = function OneValue {path} | BoundEnd {path} -> SymbolPath.exists_str ~f path
 end
 
 module SymbolSet = struct

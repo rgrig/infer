@@ -16,6 +16,88 @@ module MF = MarkupFormatter
 module Relation = BufferOverrunDomainRelation
 module ValTrace = BufferOverrunTrace
 
+module ConditionTrace = struct
+  type intra_cond_trace = Intra | Inter of {call_site: Location.t; callee_pname: Typ.Procname.t}
+  [@@deriving compare]
+
+  type 'cond_trace t0 =
+    {cond_trace: 'cond_trace; issue_location: Location.t; val_traces: ValTrace.Issue.t}
+  [@@deriving compare]
+
+  type t = intra_cond_trace t0 [@@deriving compare]
+
+  type summary_t = unit t0
+
+  let pp_summary : F.formatter -> _ t0 -> unit =
+   fun fmt ct -> F.fprintf fmt "at %a" Location.pp_file_pos ct.issue_location
+
+
+  let pp : F.formatter -> t -> unit =
+   fun fmt ct ->
+    pp_summary fmt ct ;
+    if Config.bo_debug > 1 then
+      match ct.cond_trace with
+      | Inter {callee_pname; call_site} ->
+          let pname = Typ.Procname.to_string callee_pname in
+          F.fprintf fmt " by call to %s at %a (%a)" pname Location.pp_file_pos call_site
+            ValTrace.Issue.pp ct.val_traces
+      | Intra ->
+          F.fprintf fmt " (%a)" ValTrace.Issue.pp ct.val_traces
+
+
+  let pp_description : F.formatter -> t -> unit =
+   fun fmt ct ->
+    match ct.cond_trace with
+    | Inter {callee_pname}
+      when Config.bo_debug >= 1 || not (SourceFile.is_cpp_model ct.issue_location.Location.file) ->
+        F.fprintf fmt " by call to %a " MF.pp_monospaced (Typ.Procname.to_string callee_pname)
+    | _ ->
+        ()
+
+
+  let get_val_traces {val_traces} = val_traces
+
+  let get_report_location : t -> Location.t =
+   fun ct -> match ct.cond_trace with Intra -> ct.issue_location | Inter {call_site} -> call_site
+
+
+  let make : Location.t -> ValTrace.Issue.t -> t =
+   fun issue_location val_traces -> {issue_location; cond_trace= Intra; val_traces}
+
+
+  let make_call_and_subst ~traces_caller ~callee_pname call_site ct =
+    let val_traces = ValTrace.Issue.call call_site traces_caller ct.val_traces in
+    {ct with cond_trace= Inter {callee_pname; call_site}; val_traces}
+
+
+  let has_unknown ct = ValTrace.Issue.has_unknown ct.val_traces
+
+  let has_risky ct = ValTrace.Issue.has_risky ct.val_traces
+
+  let exists_str ~f ct = ValTrace.Issue.exists_str ~f ct.val_traces
+
+  let check ~issue_type_u5 ~issue_type_r2 : _ t0 -> IssueType.t option =
+   fun ct ->
+    if has_risky ct then Some issue_type_r2
+    else if has_unknown ct then Some issue_type_u5
+    else None
+
+
+  let check_buffer_overrun ct =
+    let issue_type_u5 = IssueType.buffer_overrun_u5 in
+    let issue_type_r2 = IssueType.buffer_overrun_r2 in
+    check ~issue_type_u5 ~issue_type_r2 ct
+
+
+  let check_integer_overflow ct =
+    let issue_type_u5 = IssueType.integer_overflow_u5 in
+    let issue_type_r2 = IssueType.integer_overflow_r2 in
+    check ~issue_type_u5 ~issue_type_r2 ct
+
+
+  let for_summary : _ t0 -> summary_t = fun ct -> {ct with cond_trace= ()}
+end
+
 type report_issue_type = NotIssue | Issue of IssueType.t | SymbolicIssue
 
 type checked_condition = {report_issue_type: report_issue_type; propagate: bool}
@@ -435,8 +517,19 @@ module BinaryOperationCondition = struct
     (not cannot_underflow, not cannot_overflow)
 
 
-  let check ({binop; typ; integer_widths; lhs; rhs} as c) =
-    if is_mult_one binop lhs rhs then {report_issue_type= NotIssue; propagate= false}
+  let is_deliberate_integer_overflow =
+    let whitelist = ["lfsr"; "prng"; "rand"; "seed"] in
+    let f x =
+      List.exists whitelist ~f:(fun whitelist -> String.is_substring x ~substring:whitelist)
+    in
+    fun {typ; lhs; rhs} ct ->
+      Typ.ikind_is_unsigned typ
+      && (ConditionTrace.exists_str ~f ct || ItvPure.exists_str ~f lhs || ItvPure.exists_str ~f rhs)
+
+
+  let check ({binop; typ; integer_widths; lhs; rhs} as c) (trace : ConditionTrace.t) =
+    if is_mult_one binop lhs rhs || is_deliberate_integer_overflow c trace then
+      {report_issue_type= NotIssue; propagate= false}
     else
       let v =
         match binop with
@@ -578,13 +671,14 @@ module Condition = struct
         BinaryOperationCondition.pp_description ~markup fmt c
 
 
-  let check = function
+  let check cond trace =
+    match cond with
     | AllocSize c ->
         AllocSizeCondition.check c
     | ArrayAccess c ->
         ArrayAccessCondition.check c
     | BinaryOperation c ->
-        BinaryOperationCondition.check c
+        BinaryOperationCondition.check c trace
 
 
   let forget_locs locs x =
@@ -593,86 +687,6 @@ module Condition = struct
         ArrayAccess (ArrayAccessCondition.forget_locs locs c)
     | AllocSize _ | BinaryOperation _ ->
         x
-end
-
-module ConditionTrace = struct
-  type intra_cond_trace = Intra | Inter of {call_site: Location.t; callee_pname: Typ.Procname.t}
-  [@@deriving compare]
-
-  type 'cond_trace t0 =
-    {cond_trace: 'cond_trace; issue_location: Location.t; val_traces: ValTrace.Issue.t}
-  [@@deriving compare]
-
-  type t = intra_cond_trace t0 [@@deriving compare]
-
-  type summary_t = unit t0
-
-  let pp_summary : F.formatter -> _ t0 -> unit =
-   fun fmt ct -> F.fprintf fmt "at %a" Location.pp_file_pos ct.issue_location
-
-
-  let pp : F.formatter -> t -> unit =
-   fun fmt ct ->
-    pp_summary fmt ct ;
-    if Config.bo_debug > 1 then
-      match ct.cond_trace with
-      | Inter {callee_pname; call_site} ->
-          let pname = Typ.Procname.to_string callee_pname in
-          F.fprintf fmt " by call to %s at %a (%a)" pname Location.pp_file_pos call_site
-            ValTrace.Issue.pp ct.val_traces
-      | Intra ->
-          F.fprintf fmt " (%a)" ValTrace.Issue.pp ct.val_traces
-
-
-  let pp_description : F.formatter -> t -> unit =
-   fun fmt ct ->
-    match ct.cond_trace with
-    | Inter {callee_pname}
-      when Config.bo_debug >= 1 || not (SourceFile.is_cpp_model ct.issue_location.Location.file) ->
-        F.fprintf fmt " by call to %a " MF.pp_monospaced (Typ.Procname.to_string callee_pname)
-    | _ ->
-        ()
-
-
-  let get_val_traces {val_traces} = val_traces
-
-  let get_report_location : t -> Location.t =
-   fun ct -> match ct.cond_trace with Intra -> ct.issue_location | Inter {call_site} -> call_site
-
-
-  let make : Location.t -> ValTrace.Issue.t -> t =
-   fun issue_location val_traces -> {issue_location; cond_trace= Intra; val_traces}
-
-
-  let make_call_and_subst ~traces_caller ~callee_pname call_site ct =
-    let val_traces = ValTrace.Issue.call call_site traces_caller ct.val_traces in
-    {ct with cond_trace= Inter {callee_pname; call_site}; val_traces}
-
-
-  let has_unknown ct = ValTrace.Issue.has_unknown ct.val_traces
-
-  let has_risky ct = ValTrace.Issue.has_risky ct.val_traces
-
-  let check ~issue_type_u5 ~issue_type_r2 : _ t0 -> IssueType.t option =
-   fun ct ->
-    if has_risky ct then Some issue_type_r2
-    else if has_unknown ct then Some issue_type_u5
-    else None
-
-
-  let check_buffer_overrun ct =
-    let issue_type_u5 = IssueType.buffer_overrun_u5 in
-    let issue_type_r2 = IssueType.buffer_overrun_r2 in
-    check ~issue_type_u5 ~issue_type_r2 ct
-
-
-  let check_integer_overflow ct =
-    let issue_type_u5 = IssueType.integer_overflow_u5 in
-    let issue_type_r2 = IssueType.integer_overflow_r2 in
-    check ~issue_type_u5 ~issue_type_r2 ct
-
-
-  let for_summary : _ t0 -> summary_t = fun ct -> {ct with cond_trace= ()}
 end
 
 module Reported = struct
@@ -688,9 +702,11 @@ module ConditionWithTrace = struct
     { cond: Condition.t
     ; trace: 'cond_trace ConditionTrace.t0
     ; reported: Reported.t option
-    ; latest_prune: Dom.LatestPrune.t }
+    ; reachability: Dom.Reachability.t }
 
-  let make cond trace latest_prune = {cond; trace; reported= None; latest_prune}
+  let make cond trace latest_prune =
+    {cond; trace; reported= None; reachability= Dom.Reachability.make latest_prune}
+
 
   let pp fmt {cond; trace} = F.fprintf fmt "%a %a" Condition.pp cond ConditionTrace.pp trace
 
@@ -703,12 +719,14 @@ module ConditionWithTrace = struct
   let have_similar_bounds {cond= cond1} {cond= cond2} = Condition.have_similar_bounds cond1 cond2
 
   let xcompare ~lhs ~rhs =
-    match Condition.xcompare ~lhs:lhs.cond ~rhs:rhs.cond with
-    | `Equal ->
-        if ConditionTrace.compare lhs.trace rhs.trace <= 0 then `LeftSubsumesRight
-        else `RightSubsumesLeft
-    | (`LeftSubsumesRight | `RightSubsumesLeft | `NotComparable) as cmp ->
-        cmp
+    if Dom.Reachability.equal lhs.reachability rhs.reachability then
+      match Condition.xcompare ~lhs:lhs.cond ~rhs:rhs.cond with
+      | `Equal ->
+          if ConditionTrace.compare lhs.trace rhs.trace <= 0 then `LeftSubsumesRight
+          else `RightSubsumesLeft
+      | (`LeftSubsumesRight | `RightSubsumesLeft | `NotComparable) as cmp ->
+          cmp
+    else `NotComparable
 
 
   let subst eval_sym_trace rel_map caller_relation callee_pname call_site cwt =
@@ -718,9 +736,8 @@ module ConditionWithTrace = struct
         "Trying to substitute a non-symbolic condition %a from %a at %a. Why was it propagated in \
          the first place?"
         pp_summary cwt Typ.Procname.pp callee_pname Location.pp call_site ;
-    Option.find_map
-      (Dom.LatestPrune.subst cwt.latest_prune (eval_sym_trace ~strict:true) call_site)
-      ~f:(fun latest_prune ->
+    match Dom.Reachability.subst cwt.reachability (eval_sym_trace ~strict:true) call_site with
+    | `Reachable reachability -> (
         let {Dom.eval_sym; trace_of_sym} = eval_sym_trace ~strict:false in
         match Condition.subst eval_sym rel_map caller_relation cwt.cond with
         | None ->
@@ -734,7 +751,9 @@ module ConditionWithTrace = struct
             let trace =
               ConditionTrace.make_call_and_subst ~traces_caller ~callee_pname call_site cwt.trace
             in
-            Some {cond; trace; reported= cwt.reported; latest_prune} )
+            Some {cond; trace; reported= cwt.reported; reachability} )
+    | `Unreachable ->
+        None
 
 
   let set_u5 {cond; trace} issue_type =
@@ -750,7 +769,7 @@ module ConditionWithTrace = struct
 
 
   let check cwt =
-    let ({report_issue_type; propagate} as checked) = Condition.check cwt.cond in
+    let ({report_issue_type; propagate} as checked) = Condition.check cwt.cond cwt.trace in
     match report_issue_type with
     | NotIssue | SymbolicIssue ->
         checked

@@ -122,8 +122,15 @@ module Loc = struct
         else F.pp_print_string fmt s
     | Allocsite a ->
         Allocsite.pp_paren ~paren fmt a
-    | Field (Allocsite (Allocsite.Symbol (SP.Deref (SP.Deref_CPointer, p))), f)
-    | Field (Allocsite (Allocsite.Known {path= Some (SP.Deref (SP.Deref_CPointer, p))}), f) ->
+    | Field
+        ( Allocsite
+            (Allocsite.Symbol (SP.Deref ((SP.Deref_COneValuePointer | SP.Deref_CPointer), p)))
+        , f )
+    | Field
+        ( Allocsite
+            (Allocsite.Known
+              {path= Some (SP.Deref ((SP.Deref_COneValuePointer | SP.Deref_CPointer), p))})
+        , f ) ->
         BufferOverrunField.pp ~pp_lhs:(SP.pp_partial_paren ~paren:true)
           ~pp_lhs_alone:(SP.pp_pointer ~paren) ~sep:"->" fmt p f
     | Field (l, f) ->
@@ -208,6 +215,10 @@ module Loc = struct
         Allocsite.represents_multiple_values allocsite
     | Field (l, _) ->
         represents_multiple_values l
+
+
+  let exists_str ~f l =
+    Option.exists (get_path l) ~f:(fun path -> Symb.SymbolPath.exists_str_partial ~f path)
 end
 
 module PowLoc = struct
@@ -240,6 +251,9 @@ module PowLoc = struct
 
   let subst x (eval_locpath : eval_locpath) =
     fold (fun l acc -> join acc (subst_loc l eval_locpath)) x empty
+
+
+  let exists_str ~f x = exists (fun l -> Loc.exists_str ~f l) x
 end
 
 let always_strong_update = false

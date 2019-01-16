@@ -227,6 +227,8 @@ let component_with_unconventional_superclass_advice context an =
                      ; ckcomponentcontroller_cl
                      ; "CKCompositeComponent"
                      ; "CKRenderComponent"
+                     ; "CKRenderLayoutComponent"
+                     ; "CKRenderLayoutWithChildrenComponent"
                      ; "CKRenderWithChildrenComponent"
                      ; "CKStatefulViewComponent"
                      ; "CKStatefulViewComponentController"
