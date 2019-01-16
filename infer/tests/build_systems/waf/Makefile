@@ -1,14 +1,10 @@
-# Copyright (c) 2016 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2016-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 CUR_DIR = $(shell pwd)
 TESTS_DIR = ../..
-
-ANALYZER = checkers
 
 CLANG_OPTIONS = -c
 INFERPRINT_OPTIONS = --issues-tests
@@ -21,5 +17,5 @@ infer-out/report.json: $(CLANG_DEPS) $(SOURCES)
 	$(QUIET)$(MAKE) -C ../codetoanalyze/make clean
 	$(QUIET)cd ../codetoanalyze/make && \
 	$(call silent_on_success,Testing Waf clang integration,\
-	  $(INFER_BIN) --dump-duplicate-symbols --results-dir $(CUR_DIR)/$(@D) -a $(ANALYZER) -- \
+	  $(INFER_BIN) --dump-duplicate-symbols --results-dir $(CUR_DIR)/$(@D) -- \
 	    ./waf)

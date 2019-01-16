@@ -1,34 +1,30 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 module F = Format
 
 module Access : sig
-  type t = private
-    | Read of AccessPath.t  (** Field or array read *)
-    | Write of AccessPath.t  (** Field or array write *)
-    | ContainerRead of AccessPath.t * Typ.Procname.t  (** Read of container object *)
-    | ContainerWrite of AccessPath.t * Typ.Procname.t  (** Write to container object *)
+  (** Below [original] is the path used to create the access.  
+      [path] may differ from [original] because of substitution of actuals *)
+  type t =
+    | Read of {path: AccessPath.t; original: AccessPath.t}  (** Field or array read *)
+    | Write of {path: AccessPath.t; original: AccessPath.t}  (** Field or array write *)
+    | ContainerRead of {path: AccessPath.t; original: AccessPath.t; pname: Typ.Procname.t}
+        (** Read of container object *)
+    | ContainerWrite of {path: AccessPath.t; original: AccessPath.t; pname: Typ.Procname.t}
+        (** Write to container object *)
     | InterfaceCall of Typ.Procname.t
         (** Call to method of interface not annotated with @ThreadSafe *)
-    [@@deriving compare]
+  [@@deriving compare]
 
-  val matches : caller:t -> callee:t -> bool
-  (** returns true if the caller access matches the callee access after accounting for mismatch
-      between the formals and actuals *)
+  include TraceElem.Kind with type t := t
 
   val get_access_path : t -> AccessPath.t option
-
-  val equal : t -> t -> bool
-
-  val pp : F.formatter -> t -> unit
 end
 
 module TraceElem : sig
@@ -47,72 +43,119 @@ module TraceElem : sig
   val make_container_access : AccessPath.t -> Typ.Procname.t -> is_write:bool -> Location.t -> t
 
   val make_field_access : AccessPath.t -> is_write:bool -> Location.t -> t
-
-  val make_unannotated_call_access : Typ.Procname.t -> Location.t -> t
 end
+
+module PathDomain :
+  SinkTrace.S with module Source = Source.Dummy and module Sink = SinkTrace.MakeSink(TraceElem)
 
 (** Overapproximation of number of locks that are currently held *)
 module LocksDomain : sig
-  include AbstractDomain.WithBottom
+  type t
 
-  val is_locked : astate -> bool
-    [@@warning "-32"]
-  (** returns true if the number of locks held is greater than zero or Top *)
-
-  val add_lock : astate -> astate
+  val acquire_lock : t -> t
   (** record acquisition of a lock *)
 
-  val remove_lock : astate -> astate
+  val release_lock : t -> t
   (** record release of a lock *)
+
+  val integrate_summary : caller_astate:t -> callee_astate:t -> t
+  (** integrate current state with a callee summary *)
 end
 
 (** Abstraction of threads that may run in parallel with the current thread.
     NoThread < AnyThreadExceptSelf < AnyThread *)
 module ThreadsDomain : sig
-  type astate =
+  type t =
     | NoThread
         (** No threads can run in parallel with the current thread (concretization: empty set). We
         assume this by default unless we see evidence to the contrary (annotations, use of locks,
         etc.) *)
     | AnyThreadButSelf
-        (** Current thread can run in parallel with other threads, but not with itself.
-        (concretization : { t | t \in TIDs ^ t != t_cur } ) *)
+        (** Current thread can run in parallel with other threads, but not with a copy of itself.
+        (concretization : {% \{ t | t \in TIDs ^ t != t_cur \} %} ) *)
     | AnyThread
-        (** Current thread can run in parallel with any thread, including itself (concretization: set
-        of all TIDs ) *)
+        (** Current thread can run in parallel with any thread, including itself (concretization:
+            set of all TIDs ) *)
 
-  include AbstractDomain.WithBottom with type astate := astate
+  val can_conflict : t -> t -> bool
+  (** return true if two accesses with these thread values can run concurrently *)
 
-  val is_any : astate -> bool
+  val is_any : t -> bool
+
+  val integrate_summary : caller_astate:t -> callee_astate:t -> t
+  (** integrate current state with a callee summary *)
 end
 
-module PathDomain : module type of SinkTrace.Make (TraceElem)
+(** snapshot of the relevant state at the time of a heap access: concurrent thread(s), lock(s) held,
+    ownership precondition *)
+module AccessSnapshot : sig
+  (** precondition for owned access; access is owned if it evaluates to true *)
+  module OwnershipPrecondition : sig
+    type t =
+      | Conjunction of IntSet.t
+          (** Conjunction of "formal index must be owned" predicates. true if empty *)
+      | False
 
-(** Powerset domain on the formal indexes in OwnedIf with a distinguished bottom element (Owned) and top element (Unowned) *)
+    include PrettyPrintable.PrintableOrderedType with type t := t
+
+    val is_true : t -> bool
+    (** return [true] if the precondition evaluates to true *)
+  end
+
+  type t = private
+    { access: PathDomain.Sink.t
+    ; thread: ThreadsDomain.t
+    ; lock: bool
+    ; ownership_precondition: OwnershipPrecondition.t }
+
+  include PrettyPrintable.PrintableOrderedType with type t := t
+
+  val make :
+       PathDomain.Sink.t
+    -> LocksDomain.t
+    -> ThreadsDomain.t
+    -> OwnershipPrecondition.t
+    -> Procdesc.t
+    -> t
+
+  val make_from_snapshot : PathDomain.Sink.t -> t -> t
+
+  val is_unprotected : t -> bool
+  (** return true if not protected by lock, thread, or ownership *)
+end
+
+(** map of access metadata |-> set of accesses. the map should hold all accesses to a
+    possibly-unowned access path *)
+module AccessDomain : AbstractDomain.FiniteSetS with type elt = AccessSnapshot.t
+
 module OwnershipAbstractValue : sig
-  type astate = private
+  type t = private
     | Owned  (** Owned value; bottom of the lattice *)
     | OwnedIf of IntSet.t  (** Owned if the formals at the given indexes are owned in the caller *)
     | Unowned  (** Unowned value; top of the lattice *)
-    [@@deriving compare]
+  [@@deriving compare]
 
-  val owned : astate
+  val owned : t
 
-  val unowned : astate
+  val unowned : t
 
-  val make_owned_if : int -> astate
-
-  include AbstractDomain.S with type astate := astate
+  val make_owned_if : int -> t
 end
 
 module OwnershipDomain : sig
-  include module type of AbstractDomain.Map (AccessPath) (OwnershipAbstractValue)
+  type t
 
-  val get_owned : AccessPath.t -> astate -> OwnershipAbstractValue.astate
+  val empty : t
 
-  val is_owned : AccessPath.t -> astate -> bool
+  val add : AccessPath.t -> OwnershipAbstractValue.t -> t -> t
 
-  val find : [`Use_get_owned_instead]  [@@warning "-32"]
+  val get_owned : AccessPath.t -> t -> OwnershipAbstractValue.t
+
+  val is_owned : AccessPath.t -> t -> bool
+
+  val propagate_assignment : AccessPath.t -> HilExp.t -> t -> t
+
+  val propagate_return : AccessPath.t -> OwnershipAbstractValue.t -> HilExp.t list -> t -> t
 end
 
 (** attribute attached to a boolean variable specifying what it means when the boolean is true *)
@@ -120,104 +163,65 @@ module Choice : sig
   type t =
     | OnMainThread  (** the current procedure is running on the main thread *)
     | LockHeld  (** a lock is currently held *)
-    [@@deriving compare]
+
+  include PrettyPrintable.PrintableOrderedType with type t := t
 end
 
 module Attribute : sig
   type t =
     | Functional  (** holds a value returned from a callee marked @Functional *)
     | Choice of Choice.t  (** holds a boolean choice variable *)
-    [@@deriving compare]
 
-  val pp : F.formatter -> t -> unit
-
-  module Set : PrettyPrintable.PPSet with type elt = t
+  include PrettyPrintable.PrintableOrderedType with type t := t
 end
 
-module AttributeSetDomain : module type of AbstractDomain.InvertedSet (Attribute)
+module AttributeSetDomain : sig
+  type t
+
+  val empty : t
+end
 
 module AttributeMapDomain : sig
-  include module type of AbstractDomain.InvertedMap (AccessPath) (AttributeSetDomain)
+  type t
 
-  val add : AccessPath.t -> AttributeSetDomain.astate -> astate -> astate
+  val find : AccessPath.t -> t -> AttributeSetDomain.t
 
-  val has_attribute : AccessPath.t -> Attribute.t -> astate -> bool
+  val add : AccessPath.t -> AttributeSetDomain.t -> t -> t
 
-  val get_choices : AccessPath.t -> astate -> Choice.t list
+  val has_attribute : AccessPath.t -> Attribute.t -> t -> bool
+
+  val get_choices : AccessPath.t -> t -> Choice.t list
   (** get the choice attributes associated with the given access path *)
 
-  val add_attribute : AccessPath.t -> Attribute.t -> astate -> astate
+  val add_attribute : AccessPath.t -> Attribute.t -> t -> t
+
+  val propagate_assignment : AccessPath.t -> HilExp.t -> t -> t
+  (** propagate attributes from the leaves to the root of an RHS Hil expression *)
 end
 
-(** Data shared among a set of accesses: current thread, lock(s) held, ownership precondition *)
-module AccessData : sig
-  (** Precondition for owned access; access is owned if it evaluates to ture *)
-  module Precondition : sig
-    type t =
-      | Conjunction of IntSet.t
-          (** Conjunction of "formal index must be owned" predicates.
-                                         true if empty *)
-      | False
-      [@@deriving compare]
-
-    val is_true : t -> bool
-    (** return [true] if the precondition evaluates to true *)
-
-    val pp : F.formatter -> t -> unit  [@@warning "-32"]
-  end
-
-  type t = private
-    {thread: bool; lock: bool; ownership_precondition: Precondition.t}
-    [@@deriving compare]
-
-  val make : LocksDomain.astate -> ThreadsDomain.astate -> Precondition.t -> Procdesc.t -> t
-
-  val is_unprotected : t -> bool
-  (** return true if not protected by lock, thread, or ownership *)
-
-  val pp : F.formatter -> t -> unit
-end
-
-(** map of access metadata |-> set of accesses. the map should hold all accesses to a
-    possibly-unowned access path *)
-module AccessDomain : sig
-  include module type of AbstractDomain.Map (AccessData) (PathDomain)
-
-  val add_access : AccessData.t -> TraceElem.t -> astate -> astate
-  (** add the given (access, precondition) pair to the map *)
-
-  val get_accesses : AccessData.t -> astate -> PathDomain.astate
-  (** get all accesses with the given precondition *)
-end
-
-type astate =
-  { threads: ThreadsDomain.astate  (** current thread: main, background, or unknown *)
-  ; locks: LocksDomain.astate  (** boolean that is true if a lock must currently be held *)
-  ; accesses: AccessDomain.astate
+type t =
+  { threads: ThreadsDomain.t  (** current thread: main, background, or unknown *)
+  ; locks: LocksDomain.t  (** boolean that is true if a lock must currently be held *)
+  ; accesses: AccessDomain.t
         (** read and writes accesses performed without ownership permissions *)
-  ; ownership: OwnershipDomain.astate  (** map of access paths to ownership predicates *)
-  ; attribute_map: AttributeMapDomain.astate
+  ; ownership: OwnershipDomain.t  (** map of access paths to ownership predicates *)
+  ; attribute_map: AttributeMapDomain.t
         (** map of access paths to attributes such as owned, functional, ... *) }
 
 (** same as astate, but without [attribute_map] (since these involve locals) and with the addition
     of the ownership/attributes associated with the return value as well as the set of formals which
     may escape *)
 type summary =
-  { threads: ThreadsDomain.astate
-  ; locks: LocksDomain.astate
-  ; accesses: AccessDomain.astate
-  ; return_ownership: OwnershipAbstractValue.astate
-  ; return_attributes: AttributeSetDomain.astate }
+  { threads: ThreadsDomain.t
+  ; locks: LocksDomain.t
+  ; accesses: AccessDomain.t
+  ; return_ownership: OwnershipAbstractValue.t
+  ; return_attributes: AttributeSetDomain.t }
 
-include AbstractDomain.WithBottom with type astate := astate
+val empty_summary : summary
+
+include AbstractDomain.WithBottom with type t := t
 
 val pp_summary : F.formatter -> summary -> unit
 
-val attributes_of_expr :
-  AttributeSetDomain.t AttributeMapDomain.t -> HilExp.t -> AttributeSetDomain.t
-(** propagate attributes from the leaves to the root of an RHS Hil expression *)
-
-val ownership_of_expr :
-  HilExp.t -> OwnershipAbstractValue.astate AttributeMapDomain.t -> OwnershipAbstractValue.astate
-
-val get_all_accesses : (TraceElem.t -> bool) -> PathDomain.t AccessDomain.t -> PathDomain.t
+val add_unannotated_call_access : Typ.Procname.t -> Location.t -> Procdesc.t -> t -> t

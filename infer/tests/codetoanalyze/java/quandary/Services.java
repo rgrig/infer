@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2018 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2018-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.quandary;
@@ -12,40 +10,87 @@ package codetoanalyze.java.quandary;
 import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.lang.Runtime;
+import java.sql.SQLException;
+import java.sql.Statement;
 
-class Services {
+class Services {}
 
-}
-
-// classes annotated with @ThriftService are servers (sources), whereas interfaces
-// annotated with @ThriftService are clients (sinks): see
-// https://github.com/facebook/swift/blob/master/swift-service/README.md#clients-and-servers
 @Retention(RetentionPolicy.CLASS)
-@interface ThriftService {
-}
-
+@interface ThriftService {}
 
 @ThriftService
-class Service1 {
+interface GeneratedServiceInterface {
+  public void serviceMethodBad(String s) throws IOException;
 
+  public void paramToSql1Bad(String s) throws SQLException;
+
+  public void paramToSql2Bad(String s) throws SQLException;
+
+  public void paramToSql3Bad(String s) throws SQLException;
+
+  public void paramToSql4Bad(String s) throws SQLException;
+
+  public void paramToSql5Bad(String s) throws SQLException;
+
+  void packageProtectedServiceMethodBad(String s) throws IOException;
+}
+
+class Service1 implements GeneratedServiceInterface {
+
+  @Override
   public void serviceMethodBad(String s) throws IOException {
     Runtime.getRuntime().exec(s); // RCE if s is tainted, we should warn
   }
 
-}
+  Statement mStatement;
 
-@ThriftService
-interface ThriftInterface {
-
-  public void interfaceServiceMethodBad(String s) throws IOException;
-}
-
-// this is a service too
-class Implementer implements ThriftInterface {
-
-  public void interfaceServiceMethodBad(String s) throws IOException {
-    Runtime.getRuntime().exec(s); // RCE if s is tainted, we should warn
+  @Override
+  public void paramToSql1Bad(String s) throws SQLException {
+    mStatement.execute(s);
   }
 
+  @Override
+  public void paramToSql2Bad(String s) throws SQLException {
+    mStatement.executeLargeUpdate(s);
+  }
+
+  @Override
+  public void paramToSql3Bad(String s) throws SQLException {
+    mStatement.executeQuery(s);
+  }
+
+  @Override
+  public void paramToSql4Bad(String s) throws SQLException {
+    mStatement.executeUpdate(s);
+  }
+
+  @Override
+  public void paramToSql5Bad(String s) throws SQLException {
+    mStatement.addBatch(s);
+    mStatement.executeBatch();
+  }
+
+  @Override
+  public void packageProtectedServiceMethodBad(String s) throws IOException {
+    Runtime.getRuntime().exec(s);
+  }
+
+  // doesn't override a method from the service interface; not an endpoint
+  public void publicMethodNotEndpointOk(String s) throws IOException {
+    Runtime.getRuntime().exec(s);
+  }
+
+  // same
+  protected void protectedMethodNotEndpointOk(String s) throws IOException {
+    Runtime.getRuntime().exec(s);
+  }
+
+  void packageProtectedMethodNotEndpointOk(String s) throws IOException {
+    Runtime.getRuntime().exec(s);
+  }
+
+  // same
+  private void privateMethodNotEndpointOk(String s) throws IOException {
+    Runtime.getRuntime().exec(s);
+  }
 }

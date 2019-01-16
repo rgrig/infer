@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -33,5 +31,5 @@ val wrap_bold : (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a -> un
 val pp_bold : Format.formatter -> string -> unit
 (** pp to wrap into a bold block  *)
 
-val bold_to_string : string -> string  [@@warning "-32"]
+val bold_to_string : string -> string [@@warning "-32"]
 (** wrap into a bold block *)

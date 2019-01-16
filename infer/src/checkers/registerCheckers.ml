@@ -1,21 +1,22 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 
 (** Module for registering checkers. *)
 
-module L = Logging
 module F = Format
 
 (* make sure SimpleChecker.ml is not dead code *)
-let () = if false then let module SC = SimpleChecker.Make in ()
+let () =
+  if false then
+    let module SC = SimpleChecker.Make in
+    ()
+
 
 type callback_fun =
   | Procedure of Callbacks.proc_callback_t
@@ -33,17 +34,19 @@ let all_checkers =
     ; active= Config.annotation_reachability
     ; callbacks= [(Procedure AnnotationReachability.checker, Language.Java)] }
   ; { name= "nullable checks"
-    ; active= Config.check_nullable
+    ; active= Config.nullsafe
     ; callbacks=
         [ (Procedure NullabilityCheck.checker, Language.Clang)
         ; (Procedure NullabilityCheck.checker, Language.Java) ] }
   ; { name= "biabduction"
     ; active= Config.biabduction
     ; callbacks=
-        [ (Procedure Interproc.analyze_procedure, Language.Clang)
+        [ (DynamicDispatch Interproc.analyze_procedure, Language.Clang)
         ; (DynamicDispatch Interproc.analyze_procedure, Language.Java) ] }
   ; { name= "buffer overrun"
-    ; active= Config.bufferoverrun
+    ; active=
+        (Config.bufferoverrun || Config.quandaryBO) && not Config.cost
+        (* Cost analysis already triggers Inferbo *)
     ; callbacks=
         [ (Procedure BufferOverrunChecker.checker, Language.Clang)
         ; (Procedure BufferOverrunChecker.checker, Language.Java) ] }
@@ -74,8 +77,9 @@ let all_checkers =
   ; { name= "ownership"
     ; active= Config.ownership
     ; callbacks= [(Procedure Ownership.checker, Language.Clang)] }
+  ; {name= "pulse"; active= Config.pulse; callbacks= [(Procedure Pulse.checker, Language.Clang)]}
   ; { name= "quandary"
-    ; active= Config.quandary
+    ; active= Config.quandary || Config.quandaryBO
     ; callbacks=
         [ (Procedure JavaTaintAnalysis.checker, Language.Java)
         ; (Procedure ClangTaintAnalysis.checker, Language.Clang) ] }
@@ -98,7 +102,32 @@ let all_checkers =
   ; {name= "SIOF"; active= Config.siof; callbacks= [(Procedure Siof.checker, Language.Clang)]}
   ; { name= "uninitialized variables"
     ; active= Config.uninit
-    ; callbacks= [(Procedure Uninit.checker, Language.Clang)] } ]
+    ; callbacks= [(Procedure Uninit.checker, Language.Clang)] }
+  ; { name= "cost analysis"
+    ; active= Config.cost
+    ; callbacks= [(Procedure Cost.checker, Language.Clang); (Procedure Cost.checker, Language.Java)]
+    }
+  ; { name= "loop hoisting"
+    ; active= Config.loop_hoisting
+    ; callbacks=
+        ( (Procedure Hoisting.checker, Language.Clang)
+          :: (Procedure Hoisting.checker, Language.Java)
+          ::
+          ( if Config.hoisting_report_only_expensive then
+            [(Procedure Cost.checker, Language.Clang); (Procedure Cost.checker, Language.Java)]
+          else [] )
+        @ if Config.purity then [(Procedure Purity.checker, Language.Java)] else [] ) }
+  ; { name= "Starvation analysis"
+    ; active= Config.starvation
+    ; callbacks=
+        [ (Procedure Starvation.analyze_procedure, Language.Java)
+        ; (Cluster Starvation.reporting, Language.Java)
+        ; (Procedure Starvation.analyze_procedure, Language.Clang)
+        ; (Cluster Starvation.reporting, Language.Clang) ] }
+  ; {name= "purity"; active= Config.purity; callbacks= [(Procedure Purity.checker, Language.Java)]}
+  ; { name= "Class loading analysis"
+    ; active= Config.class_loads
+    ; callbacks= [(Procedure ClassLoads.analyze_procedure, Language.Java)] } ]
 
 
 let get_active_checkers () =
@@ -107,15 +136,15 @@ let get_active_checkers () =
 
 
 let register checkers =
-  let register_one {callbacks} =
+  let register_one {name; callbacks} =
     let register_callback (callback, language) =
       match callback with
       | Procedure procedure_cb ->
-          Callbacks.register_procedure_callback language procedure_cb
+          Callbacks.register_procedure_callback ~name language procedure_cb
       | DynamicDispatch procedure_cb ->
-          Callbacks.register_procedure_callback ~dynamic_dispath:true language procedure_cb
+          Callbacks.register_procedure_callback ~name ~dynamic_dispatch:true language procedure_cb
       | Cluster cluster_cb ->
-          Callbacks.register_cluster_callback language cluster_cb
+          Callbacks.register_cluster_callback ~name language cluster_cb
     in
     List.iter ~f:register_callback callbacks
   in

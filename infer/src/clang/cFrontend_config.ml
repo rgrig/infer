@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -14,17 +12,15 @@ module F = Format
 
 type clang_lang = C | CPP | ObjC | ObjCPP [@@deriving compare]
 
-let string_of_clang_lang (lang: clang_lang) : string =
+let string_of_clang_lang (lang : clang_lang) : string =
   match lang with C -> "C" | CPP -> "CPP" | ObjC -> "ObjC" | ObjCPP -> "ObjCPP"
 
 
-let equal_clang_lang = [%compare.equal : clang_lang]
-
-type ocaml_pos = string * int * int * int
+let equal_clang_lang = [%compare.equal: clang_lang]
 
 type exception_details =
   { msg: string
-  ; position: ocaml_pos
+  ; position: Logging.ocaml_pos
   ; source_range: Clang_ast_t.source_range
   ; ast_node: string option }
 
@@ -40,13 +36,14 @@ let incorrect_assumption position source_range ?ast_node fmt =
   F.kasprintf (fun msg -> raise (IncorrectAssumption {msg; position; source_range; ast_node})) fmt
 
 
-type translation_unit_context = {lang: clang_lang; source_file: SourceFile.t}
+type translation_unit_context =
+  {lang: clang_lang; source_file: SourceFile.t; integer_type_widths: Typ.IntegerWidths.t}
+
+exception Invalid_declaration
 
 (** Constants *)
 
 let alloc = "alloc"
-
-let array_with_objects_count_m = "arrayWithObjects:count:"
 
 let assert_fail = "__assert_fail"
 
@@ -92,6 +89,8 @@ let infer = "infer"
 let infer_skip_fun = "__infer_skip_function"
 
 let infer_skip_gcc_asm_stmt = "__infer_skip_gcc_asm_stmt"
+
+let infer_generic_selection_expr = "__infer_generic_selection_expr"
 
 let init = "init"
 
@@ -140,6 +139,16 @@ let sil_types_map = ref Clang_ast_extend.TypePointerMap.empty
 let procedures_attempted = ref 0
 
 let procedures_failed = ref 0
+
+(** Global counter for anonymous block*)
+let block_counter = ref 0
+
+let get_fresh_block_index () =
+  block_counter := !block_counter + 1 ;
+  !block_counter
+
+
+let reset_block_counter () = block_counter := 0
 
 let reset_global_state () =
   enum_map := ClangPointers.Map.empty ;

@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -41,13 +39,13 @@ let is_matching patterns source_file =
   let path = SourceFile.to_rel_path source_file in
   List.exists
     ~f:(fun pattern ->
-      try Int.equal (Str.search_forward pattern path 0) 0 with Not_found -> false )
+      try Int.equal (Str.search_forward pattern path 0) 0 with Caml.Not_found -> false )
     patterns
 
 
 (** Check if a proc name is matching the name given as string. *)
 let match_method language proc_name method_name =
-  not (BuiltinDecl.is_declared proc_name)
+  (not (BuiltinDecl.is_declared proc_name))
   && Language.equal (Typ.Procname.get_language proc_name) language
   && String.equal (Typ.Procname.get_method proc_name) method_name
 
@@ -61,7 +59,7 @@ module FileContainsStringMatcher = struct
   let file_contains regexp file_in =
     let rec loop () =
       try Str.search_forward regexp (In_channel.input_line_exn file_in) 0 >= 0 with
-      | Not_found ->
+      | Caml.Not_found ->
           loop ()
       | End_of_file ->
           false
@@ -75,18 +73,17 @@ module FileContainsStringMatcher = struct
       let source_map = ref SourceFile.Map.empty in
       let regexp = Str.regexp (String.concat ~sep:"\\|" s_patterns) in
       fun source_file ->
-        try SourceFile.Map.find source_file !source_map with Not_found ->
+        try SourceFile.Map.find source_file !source_map with Caml.Not_found -> (
           try
             let file_in = In_channel.create (SourceFile.to_abs_path source_file) in
             let pattern_found = file_contains regexp file_in in
             In_channel.close file_in ;
             source_map := SourceFile.Map.add source_file pattern_found !source_map ;
             pattern_found
-          with Sys_error _ -> false
+          with Sys_error _ -> false )
 end
 
-type method_pattern =
-  {class_name: string; method_name: string option; parameters: string list option}
+type method_pattern = {class_name: string; method_name: string option}
 
 type pattern =
   | Method_pattern of Language.t * method_pattern
@@ -104,7 +101,11 @@ module FileOrProcMatcher = struct
       let pattern_map =
         List.fold
           ~f:(fun map pattern ->
-            let previous = try String.Map.find_exn map pattern.class_name with Not_found -> [] in
+            let previous =
+              try String.Map.find_exn map pattern.class_name with
+              | Not_found_s _ | Caml.Not_found ->
+                  []
+            in
             String.Map.set ~key:pattern.class_name ~data:(pattern :: previous) map )
           ~init:String.Map.empty m_patterns
       in
@@ -117,7 +118,9 @@ module FileOrProcMatcher = struct
             ~f:(fun p ->
               match p.method_name with None -> true | Some m -> String.equal m method_name )
             class_patterns
-        with Not_found -> false
+        with
+        | Not_found_s _ | Caml.Not_found ->
+            false
       in
       fun _ proc_name ->
         match proc_name with Typ.Procname.Java pname_java -> do_java pname_java | _ -> false
@@ -143,23 +146,15 @@ module FileOrProcMatcher = struct
   let load_matcher = create_file_matcher
 
   let _pp_pattern fmt pattern =
-    let pp_string fmt s = Format.fprintf fmt "%s" s in
-    let pp_option pp_value fmt = function
-      | None ->
-          pp_string fmt "None"
-      | Some value ->
-          Format.fprintf fmt "%a" pp_value value
-    in
     let pp_key_value pp_value fmt (key, value) =
-      Format.fprintf fmt "  %s: %a,@\n" key (pp_option pp_value) value
+      Format.fprintf fmt "  %s: %a,@\n" key (Pp.option pp_value) value
     in
     let pp_method_pattern fmt mp =
-      let pp_params fmt l =
-        Format.fprintf fmt "[%a]" (Pp.semicolon_seq ~print_env:Pp.text pp_string) l
-      in
-      Format.fprintf fmt "%a%a%a" (pp_key_value pp_string) ("class", Some mp.class_name)
-        (pp_key_value pp_string) ("method", mp.method_name) (pp_key_value pp_params)
-        ("parameters", mp.parameters)
+      Format.fprintf fmt "%a%a"
+        (pp_key_value Format.pp_print_string)
+        ("class", Some mp.class_name)
+        (pp_key_value Format.pp_print_string)
+        ("method", mp.method_name)
     and pp_source_contains fmt sc = Format.fprintf fmt "  pattern: %s@\n" sc in
     match pattern with
     | Method_pattern (language, mp) ->
@@ -185,7 +180,7 @@ module OverridesMatcher = struct
 end
 
 let patterns_of_json_with_key (json_key, json) =
-  let default_method_pattern = {class_name= ""; method_name= None; parameters= None} in
+  let default_method_pattern = {class_name= ""; method_name= None} in
   let default_source_contains = "" in
   let language_of_string s =
     match Language.of_string s with
@@ -225,26 +220,13 @@ let patterns_of_json_with_key (json_key, json) =
         error
   in
   (* Translate a JSON entry into a matching pattern *)
-  let create_pattern (assoc: (string * Yojson.Basic.json) list) =
-    let collect_params l =
-      let collect accu = function
-        | `String s ->
-            s :: accu
-        | _ ->
-            L.(die UserError)
-              "Unrecognised parameters in %s"
-              (Yojson.Basic.to_string (`Assoc assoc))
-      in
-      List.rev (List.fold ~f:collect ~init:[] l)
-    in
+  let create_pattern (assoc : (string * Yojson.Basic.json) list) =
     let create_method_pattern assoc =
       let loop mp = function
         | key, `String s when String.equal key "class" ->
             {mp with class_name= s}
         | key, `String s when String.equal key "method" ->
             {mp with method_name= Some s}
-        | key, `List l when String.equal key "parameters" ->
-            {mp with parameters= Some (collect_params l)}
         | key, _ when String.equal key "language" ->
             mp
         | _ ->
@@ -263,9 +245,9 @@ let patterns_of_json_with_key (json_key, json) =
       List.fold ~f:loop ~init:default_source_contains assoc
     in
     match detect_pattern assoc with
-    | Ok Method_pattern (language, _) ->
+    | Ok (Method_pattern (language, _)) ->
         Ok (Method_pattern (language, create_method_pattern assoc))
-    | Ok Source_contains (language, _) ->
+    | Ok (Source_contains (language, _)) ->
         Ok (Source_contains (language, create_string_contains assoc))
     | Error _ as error ->
         error
@@ -306,11 +288,11 @@ let skip_implementation_matcher =
   FileOrProcMatcher.load_matcher (patterns_of_json_with_key Config.patterns_skip_implementation)
 
 
-let load_filters analyzer =
-  { whitelist= Config.analysis_path_regex_whitelist analyzer
-  ; blacklist= Config.analysis_path_regex_blacklist analyzer
-  ; blacklist_files_containing= Config.analysis_blacklist_files_containing analyzer
-  ; suppress_errors= Config.analysis_suppress_errors analyzer }
+let load_filters () =
+  { whitelist= Config.analysis_path_regex_whitelist
+  ; blacklist= Config.analysis_path_regex_blacklist
+  ; blacklist_files_containing= Config.analysis_blacklist_files_containing
+  ; suppress_errors= Config.analysis_suppress_errors }
 
 
 let filters_from_inferconfig inferconfig : filters =
@@ -326,9 +308,10 @@ let filters_from_inferconfig inferconfig : filters =
       FileContainsStringMatcher.create_matcher inferconfig.blacklist_files_containing
     in
     function
-      | source_file ->
-          whitelist_filter source_file && not (blacklist_filter source_file)
-          && not (blacklist_files_containing_filter source_file)
+    | source_file ->
+        whitelist_filter source_file
+        && (not (blacklist_filter source_file))
+        && not (blacklist_files_containing_filter source_file)
   in
   let error_filter = function
     | error_name ->
@@ -338,32 +321,20 @@ let filters_from_inferconfig inferconfig : filters =
   {path_filter; error_filter; proc_filter= default_proc_filter}
 
 
-(* Create filters based on .inferconfig *)
-let create_filters analyzer =
-  if not Config.filter_paths then do_not_filter
-  else filters_from_inferconfig (load_filters analyzer)
+(* Create filters based on configuration options *)
+let create_filters () =
+  if not Config.filter_paths then do_not_filter else filters_from_inferconfig (load_filters ())
 
 
-(* This function loads and list the path that are being filtered by the analyzer. The results *)
-(* are of the form: path/to/file.java -> {infer, checkers} meaning that analysis results will *)
-(* be reported on path/to/file.java both for infer and for the checkers *)
+(** This function loads and list the path that are being filtered by the analyzer. The results are
+   of the form: path/to/file.java -> true/false meaning that analysis results will be reported on
+   path/to/file.java or not *)
 let test () =
-  let filters =
-    List.map
-      ~f:(fun (name, analyzer) -> (name, analyzer, create_filters analyzer))
-      Config.string_to_analyzer
-  in
-  let matching_analyzers path =
-    List.fold
-      ~f:(fun l (n, a, f) -> if f.path_filter path then (n, a) :: l else l)
-      ~init:[] filters
-  in
-  Utils.directory_iter
-    (fun path ->
-      if DB.is_source_file path then
-        let source_file = SourceFile.from_abs_path path in
-        let matching = matching_analyzers source_file in
-        if matching <> [] then
-          let matching_s = String.concat ~sep:", " (List.map ~f:fst matching) in
-          L.result "%s -> {%s}@." (SourceFile.to_rel_path source_file) matching_s )
-    (Sys.getcwd ())
+  let filters = create_filters () in
+  let matches path = filters.path_filter path in
+  Sys.getcwd ()
+  |> Utils.directory_iter (fun path ->
+         if DB.is_source_file path then
+           let source_file = SourceFile.from_abs_path path in
+           let matching = matches source_file in
+           L.result "%s -> %b@." (SourceFile.to_rel_path source_file) matching )

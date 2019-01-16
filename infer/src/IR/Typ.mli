@@ -1,17 +1,28 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** The Smallfoot Intermediate Language: Types *)
 
 open! IStd
 module F = Format
+
+module IntegerWidths : sig
+  type t = {char_width: int; short_width: int; int_width: int; long_width: int; longlong_width: int}
+  [@@deriving compare]
+
+  val java : t
+
+  val load : SourceFile.t -> t option
+
+  module SQLite : sig
+    val serialize : t option -> Sqlite3.Data.t
+  end
+end
 
 (** Kinds of integers *)
 type ikind =
@@ -29,7 +40,13 @@ type ikind =
   | IULongLong  (** [unsigned long long] (or [unsigned _int64] on Microsoft Visual C) *)
   | I128  (** [__int128_t] *)
   | IU128  (** [__uint128_t] *)
-  [@@deriving compare]
+[@@deriving compare]
+
+val equal_ikind : ikind -> ikind -> bool
+
+val width_of_ikind : IntegerWidths.t -> ikind -> int
+
+val range_of_ikind : IntegerWidths.t -> ikind -> Z.t * Z.t
 
 val ikind_is_char : ikind -> bool
 (** Check whether the integer kind is a char *)
@@ -42,7 +59,7 @@ type fkind =
   | FFloat  (** [float] *)
   | FDouble  (** [double] *)
   | FLongDouble  (** [long double] *)
-  [@@deriving compare]
+[@@deriving compare]
 
 (** kind of pointer *)
 type ptr_kind =
@@ -51,14 +68,18 @@ type ptr_kind =
   | Pk_objc_weak  (** Obj-C __weak pointer *)
   | Pk_objc_unsafe_unretained  (** Obj-C __unsafe_unretained pointer *)
   | Pk_objc_autoreleasing  (** Obj-C __autoreleasing pointer *)
-  [@@deriving compare]
+[@@deriving compare]
 
 val equal_ptr_kind : ptr_kind -> ptr_kind -> bool
 
 type type_quals [@@deriving compare]
 
 val mk_type_quals :
-  ?default:type_quals -> ?is_const:bool -> ?is_restrict:bool -> ?is_volatile:bool -> unit
+     ?default:type_quals
+  -> ?is_const:bool
+  -> ?is_restrict:bool
+  -> ?is_volatile:bool
+  -> unit
   -> type_quals
 
 val is_const : type_quals -> bool
@@ -74,13 +95,13 @@ and desc =
   | Tint of ikind  (** integer type *)
   | Tfloat of fkind  (** float type *)
   | Tvoid  (** void type *)
-  | Tfun of bool  (** function type with noreturn attribute *)
+  | Tfun of {no_return: bool}  (** function type with noreturn attribute *)
   | Tptr of t * ptr_kind  (** pointer type *)
   | Tstruct of name  (** structured value type name *)
   | TVar of string  (** type variable (ie. C++ template variables) *)
-  | Tarray of t * IntLit.t option * IntLit.t option
-      (** array type with statically fixed stride and length *)
-  [@@deriving compare]
+  | Tarray of {elt: t; length: IntLit.t option; stride: IntLit.t option}
+      (** array type with statically fixed length and stride *)
+[@@deriving compare]
 
 and name =
   | CStruct of QualifiedCppName.t
@@ -92,7 +113,7 @@ and name =
   | JavaClass of Mangled.t
   | ObjcClass of QualifiedCppName.t
   | ObjcProtocol of QualifiedCppName.t
-  [@@deriving compare]
+[@@deriving compare]
 
 and template_arg = TType of t | TInt of Int64.t | TNull | TNullPtr | TOpaque [@@deriving compare]
 
@@ -104,16 +125,25 @@ and template_spec_info =
                 mangling is not guaranteed to be unique to a single type. All the information in
                 the template arguments is also needed for uniqueness. *)
       ; args: template_arg list }
-  [@@deriving compare]
+[@@deriving compare]
 
 val mk : ?default:t -> ?quals:type_quals -> desc -> t
 (** Create Typ.t from given desc. if [default] is passed then use its value to set other fields such as quals *)
 
+val mk_array : ?default:t -> ?quals:type_quals -> ?length:IntLit.t -> ?stride:IntLit.t -> t -> t
+(** Create an array type from a given element type. If [length] or [stride] value is given, use them as static length and size. *)
+
+val void : t
+(** void type *)
+
 val void_star : t
 (** void* type *)
 
-(** Stores information about type substitution *)
-type type_subst_t [@@deriving compare]
+val get_ikind_opt : t -> ikind option
+(** Get ikind if the type is integer. *)
+
+val size_t : ikind
+(** ikind of size_t *)
 
 module Name : sig
   (** Named types. *)
@@ -129,6 +159,9 @@ module Name : sig
 
   val is_class : t -> bool
   (** [is_class name] holds if [name] names CPP/Objc/Java class *)
+
+  val is_union : t -> bool
+  (** [is_union name] holds if [name] names C/CPP union *)
 
   val is_same_type : t -> t -> bool
   (** [is_class name1 name2] holds if [name1] and [name2] name same kind of type *)
@@ -150,6 +183,20 @@ module Name : sig
   end
 
   module Java : sig
+    module Split : sig
+      type t
+
+      val make : ?package:string -> string -> t
+
+      val java_lang_object : t
+
+      val java_lang_string : t
+
+      val package : t -> string option
+
+      val type_name : t -> string
+    end
+
     val from_string : string -> t
     (** Create a typename from a Java classname in the form "package.class" *)
 
@@ -159,9 +206,11 @@ module Name : sig
     val is_class : t -> bool
     (** [is_class name] holds if [name] names a Java class *)
 
-    val split_classname : string -> string option * string
-    (** Given a package.class_name string, look for the latest dot and split the string
-        in two (package, class_name). *)
+    val is_external_classname : string -> bool
+    (** return true if the string is in the .inferconfig list of external classes *)
+
+    val is_external : t -> bool
+    (** return true if the typename is in the .inferconfig list of external classes *)
 
     val get_outer_class : t -> t option
     (** Given an inner classname like C$Inner1$Inner2, return Some C$Inner1. If the class is not an
@@ -201,21 +250,8 @@ val equal_desc : desc -> desc -> bool
 
 val equal_quals : type_quals -> type_quals -> bool
 
-val sub_type : type_subst_t -> t -> t
-
-val sub_tname : type_subst_t -> Name.t -> Name.t
-
-val is_type_subst_empty : type_subst_t -> bool
-
-(** Sets of types. *)
-
-module Set : Caml.Set.S with type elt = t
-
-(** Maps with type keys. *)
-
-module Map : Caml.Map.S with type key = t
-
-module Tbl : Caml.Hashtbl.S with type key = t
+val equal_ignore_quals : t -> t -> bool
+(** Equality for types, but ignoring quals in it. *)
 
 val pp_full : Pp.env -> F.formatter -> t -> unit
 (** Pretty print a type with all the details. *)
@@ -247,7 +283,19 @@ val is_cpp_class : t -> bool
 
 val is_pointer_to_cpp_class : t -> bool
 
+val is_pointer_to_void : t -> bool
+
+val is_pointer_to_int : t -> bool
+
 val is_pointer : t -> bool
+
+val is_reference : t -> bool
+
+val is_struct : t -> bool
+
+val is_int : t -> bool
+
+val is_unsigned_int : t -> bool
 
 val has_block_prefix : string -> bool
 
@@ -267,17 +315,25 @@ module Procname : sig
 
     type t [@@deriving compare]
 
-    (** e.g. ("", "int") for primitive types or ("java.io", "PrintWriter") for objects *)
-    type java_type = string option * string
+    type java_type = Name.Java.Split.t
+
+    val constructor_method_name : string
+
+    val class_initializer_method_name : string
+
+    val compare_java_type : java_type -> java_type -> int
 
     val make : Name.t -> java_type option -> string -> java_type list -> kind -> t
     (** Create a Java procedure name from its
         class_name method_name args_type_name return_type_name method_kind. *)
 
-    val replace_parameters : t -> java_type list -> t
+    val replace_method_name : string -> t -> t
+    (** Replace the method name of an existing java procname. *)
+
+    val replace_parameters : java_type list -> t -> t
     (** Replace the parameters of a java procname. *)
 
-    val replace_return_type : t -> java_type -> t
+    val replace_return_type : java_type -> t -> t
     (** Replace the method of a java procname. *)
 
     val get_class_name : t -> string
@@ -297,9 +353,6 @@ module Procname : sig
 
     val get_parameters : t -> java_type list
     (** Return the parameters of a java procedure name. *)
-
-    val replace_method : t -> string -> t
-    (** Replace the method name of an existing java procname. *)
 
     val get_return_typ : t -> typ
     (** Return the return type of [pname_java]. return Tvoid if there's no return type *)
@@ -332,33 +385,49 @@ module Procname : sig
 
     val is_class_initializer : t -> bool
     (** Check if this is a class initializer. *)
+
+    val is_external : t -> bool
+    (** Check if the method belongs to one of the specified external packages *)
+  end
+
+  module Parameter : sig
+    (** Type for parameters in clang procnames, [Some name] means the parameter is of type pointer to struct, with [name]
+being the name of the struct, [None] means the parameter is of some other type. *)
+    type clang_parameter = Name.t option [@@deriving compare]
+
+    (** Type for parameters in procnames, for java and clang. *)
+    type t = JavaParameter of Java.java_type | ClangParameter of clang_parameter
+    [@@deriving compare]
+
+    val of_typ : typ -> clang_parameter
   end
 
   module ObjC_Cpp : sig
     type kind =
-      | CPPMethod of string option  (** with mangling *)
-      | CPPConstructor of (string option * bool)  (** with mangling + is it constexpr? *)
-      | CPPDestructor of string option  (** with mangling *)
+      | CPPMethod of {mangled: string option}
+      | CPPConstructor of {mangled: string option; is_constexpr: bool}
+      | CPPDestructor of {mangled: string option}
       | ObjCClassMethod
       | ObjCInstanceMethod
       | ObjCInternalMethod
-      [@@deriving compare]
+    [@@deriving compare]
 
     (** Type of Objective C and C++ procedure names: method signatures. *)
     type t =
-      { method_name: string
-      ; class_name: Name.t
+      { class_name: Name.t
       ; kind: kind
-      ; template_args: template_spec_info
-      ; is_generic_model: bool }
-      [@@deriving compare]
+      ; method_name: string
+      ; parameters: Parameter.clang_parameter list
+      ; template_args: template_spec_info }
+    [@@deriving compare]
 
-    val make : Name.t -> string -> kind -> template_spec_info -> is_generic_model:bool -> t
+    val make :
+      Name.t -> string -> kind -> template_spec_info -> Parameter.clang_parameter list -> t
     (** Create an objc procedure name from a class_name and method_name. *)
 
     val get_class_name : t -> string
 
-    val get_class_type_name : t -> Name.t
+    val get_class_type_name : t -> Name.t [@@warning "-32"]
 
     val get_class_qualifiers : t -> QualifiedCppName.t
 
@@ -374,22 +443,40 @@ module Procname : sig
     val is_destructor : t -> bool
     (** Check if this is a dealloc method. *)
 
+    val is_inner_destructor : t -> bool
+    (** Check if this is a frontend-generated "inner" destructor (see D5834555/D7189239) *)
+
     val is_constexpr : t -> bool
     (** Check if this is a constexpr function. *)
 
     val is_cpp_lambda : t -> bool
     (** Return whether the procname is a cpp lambda. *)
+
+    val is_operator_equal : t -> bool
+    (** Return true if the procname is operator= *)
   end
 
-  (** Type of c procedure names. *)
-  type c = private
-    { name: QualifiedCppName.t
-    ; mangled: string option
-    ; template_args: template_spec_info
-    ; is_generic_model: bool }
+  module C : sig
+    (** Type of c procedure names. *)
+    type t = private
+      { name: QualifiedCppName.t
+      ; mangled: string option
+      ; parameters: Parameter.clang_parameter list
+      ; template_args: template_spec_info }
 
-  (** Type of Objective C block names. *)
-  type block_name
+    val c :
+      QualifiedCppName.t -> string -> Parameter.clang_parameter list -> template_spec_info -> t
+    (** Create a C procedure name from plain and mangled name. *)
+  end
+
+  module Block : sig
+    (** Type of Objective C block names. *)
+    type block_name = string
+
+    type t = {name: block_name; parameters: Parameter.clang_parameter list} [@@deriving compare]
+
+    val make : block_name -> Parameter.clang_parameter list -> t
+  end
 
   (** Type of procedure names.
   WithBlockParameters is used for creating an instantiation of a method that contains block parameters
@@ -399,20 +486,30 @@ module Procname : sig
   where foo_my_block is created with WithBlockParameters (foo, [my_block]) *)
   type t =
     | Java of Java.t
-    | C of c
+    | C of C.t
     | Linters_dummy_method
-    | Block of block_name
+    | Block of Block.t
     | ObjC_Cpp of ObjC_Cpp.t
-    | WithBlockParameters of t * block_name list
-    [@@deriving compare]
+    | WithBlockParameters of t * Block.block_name list
+  [@@deriving compare]
 
-  val block_name_of_procname : t -> block_name
+  val block_name_of_procname : t -> Block.block_name
 
   val equal : t -> t -> bool
 
-  (** Hash tables with proc names as keys. *)
-  module Hashable : Caml.Hashtbl.HashedType with type t = t
+  val get_class_type_name : t -> Name.t option
 
+  val get_class_name : t -> string option
+
+  val get_parameters : t -> Parameter.t list
+
+  val replace_parameters : Parameter.t list -> t -> t
+
+  val parameter_of_name : t -> Name.t -> Parameter.t
+
+  val is_objc_method : t -> bool
+
+  (** Hash tables with proc names as keys. *)
   module Hash : Caml.Hashtbl.S with type key = t
 
   (** Maps from proc names. *)
@@ -424,19 +521,15 @@ module Procname : sig
   module SQLite : sig
     val serialize : t -> Sqlite3.Data.t
 
+    val deserialize : Sqlite3.Data.t -> t
+
     val clear_cache : unit -> unit
   end
 
   module SQLiteList : SqliteUtils.Data with type t = t list
 
-  val c : QualifiedCppName.t -> string -> template_spec_info -> is_generic_model:bool -> c
-  (** Create a C procedure name from plain and mangled name. *)
-
   val empty_block : t
   (** Empty block name. *)
-
-  val from_string_c_fun : string -> t
-  (** Convert a string to a proc name. *)
 
   val get_language : t -> Language.t
   (** Return the language of the procedure. *)
@@ -462,10 +555,7 @@ module Procname : sig
   val is_java : t -> bool
   (** Check if this is a Java procedure name. *)
 
-  val mangled_objc_block : string -> t
-  (** Create an objc block name. *)
-
-  val with_block_parameters : t -> block_name list -> t
+  val with_block_parameters : t -> Block.block_name list -> t
   (** Create a procedure name instantiated with block parameters from a base procedure name
     and a list of block procedure names (the arguments). *)
 
@@ -485,11 +575,16 @@ module Procname : sig
   (** Replace the class name component of a procedure name.
       In case of Java, replace package and class name. *)
 
+  val is_method_in_objc_protocol : t -> bool
+
   val to_string : t -> string
   (** Convert a proc name to a string for the user to see. *)
 
   val to_simplified_string : ?withclass:bool -> t -> string
   (** Convert a proc name into a easy string for the user to see in an IDE. *)
+
+  val from_string_c_fun : string -> t
+  (** Convert a string to a c function name. *)
 
   val hashable_name : t -> string
   (** Print the procedure name in a format suitable for computing the bug hash *)
@@ -546,8 +641,6 @@ module Fieldname : sig
 
   val to_full_string : t -> string
 
-  val class_name_replace : t -> f:(Name.t -> Name.t) -> t
-
   val to_simplified_string : t -> string
   (** Convert a fieldname to a simplified string with at most one-level path. *)
 
@@ -582,8 +675,14 @@ module Struct : sig
   (** Pretty print a struct type. *)
 
   val internal_mk_struct :
-    ?default:t -> ?fields:fields -> ?statics:fields -> ?methods:Procname.t list
-    -> ?supers:Name.t list -> ?annots:Annot.Item.t -> unit -> t
+       ?default:t
+    -> ?fields:fields
+    -> ?statics:fields
+    -> ?methods:Procname.t list
+    -> ?supers:Name.t list
+    -> ?annots:Annot.Item.t
+    -> unit
+    -> t
   (** Construct a struct_typ, normalizing field types *)
 
   val get_extensible_array_element_typ : lookup:lookup -> typ -> typ option

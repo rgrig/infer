@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 #pragma once
@@ -48,7 +46,7 @@ class shared_ptr : public std__shared_ptr<T> {
 // use it to avoid compilation errors and make infer analyzer happy
 #define __cast_to_infer_ptr(self) ((infer_shared_ptr_t)self)
 
-  // provide overload for volatile void* to accomodate for situation when
+  // provide overload for volatile void* to accommodate for situation when
   // T is volatile ('volatile int' for example). 'void*' and 'nullptr_t'
   // overloads are to avoid 'call to model_set is ambiguous' compilation errors
   static void model_set(infer_shared_ptr_t self, nullptr_t value) {

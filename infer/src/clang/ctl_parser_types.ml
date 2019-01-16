@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 (* Types used by the ctl parser *)
 
@@ -23,38 +21,38 @@ let rec ast_node_name an =
         n.Clang_ast_t.ni_name
     | None ->
         "" )
-  | Stmt DeclRefExpr (_, _, _, drti) -> (
+  | Stmt (DeclRefExpr (_, _, _, drti)) -> (
     match drti.drti_decl_ref with
     | Some dr ->
         let ndi, _, _ = CAst_utils.get_info_from_decl_ref dr in
         ndi.ni_name
     | _ ->
         "" )
-  | Stmt ObjCIvarRefExpr (_, _, _, obj_c_ivar_ref_expr_info) ->
+  | Stmt (ObjCIvarRefExpr (_, _, _, obj_c_ivar_ref_expr_info)) ->
       let ndi, _, _ = CAst_utils.get_info_from_decl_ref obj_c_ivar_ref_expr_info.ovrei_decl_ref in
       ndi.ni_name
-  | Stmt ObjCMessageExpr (_, _, _, {omei_selector}) ->
+  | Stmt (ObjCMessageExpr (_, _, _, {omei_selector})) ->
       omei_selector
-  | Stmt IntegerLiteral (_, _, _, integer_literal_info) ->
+  | Stmt (IntegerLiteral (_, _, _, integer_literal_info)) ->
       integer_literal_info.ili_value
-  | Stmt CStyleCastExpr (_, _, _, cast_expr_info, _) -> (
+  | Stmt (CStyleCastExpr (_, _, _, cast_expr_info, _)) -> (
     match cast_expr_info.cei_cast_kind with `NullToPointer -> "nil" | _ -> "" )
-  | Stmt ObjCSubscriptRefExpr (_, [stmt; stmt_index], _, _) ->
+  | Stmt (ObjCSubscriptRefExpr (_, [stmt; stmt_index], _, _)) ->
       ast_node_name (Stmt stmt) ^ "[" ^ ast_node_name (Stmt stmt_index) ^ "]"
-  | Stmt OpaqueValueExpr (_, _, _, opaque_value_expr_info) -> (
+  | Stmt (OpaqueValueExpr (_, _, _, opaque_value_expr_info)) -> (
     match opaque_value_expr_info.ovei_source_expr with
     | Some stmt ->
         ast_node_name (Stmt stmt)
     | None ->
         "" )
-  | Stmt ImplicitCastExpr (_, [stmt], _, _)
-  | Stmt PseudoObjectExpr (_, stmt :: _, _)
-  | Stmt ParenExpr (_, [stmt], _) ->
+  | Stmt (ImplicitCastExpr (_, [stmt], _, _))
+  | Stmt (PseudoObjectExpr (_, stmt :: _, _))
+  | Stmt (ParenExpr (_, [stmt], _)) ->
       ast_node_name (Stmt stmt)
-  | Stmt CallExpr (_, func :: _, _) ->
+  | Stmt (CallExpr (_, func :: _, _)) ->
       let func_str = ast_node_name (Stmt func) in
       func_str ^ "(...)"
-  | Stmt ObjCPropertyRefExpr (_, [stmt], _, obj_c_property_ref_expr_info) ->
+  | Stmt (ObjCPropertyRefExpr (_, [stmt], _, obj_c_property_ref_expr_info)) ->
       let property_str =
         match obj_c_property_ref_expr_info.oprei_kind with
         | `MethodRef obj_c_method_ref_info -> (
@@ -65,19 +63,42 @@ let rec ast_node_name an =
               name
           | _ ->
               "" )
-        | `PropertyRef decl_ref ->
-          match decl_ref.dr_name with Some name -> name.ni_name | None -> ""
+        | `PropertyRef decl_ref -> (
+          match decl_ref.dr_name with Some name -> name.ni_name | None -> "" )
       in
       ast_node_name (Stmt stmt) ^ "." ^ property_str
-  | Stmt StringLiteral (_, _, _, l) ->
+  | Stmt (StringLiteral (_, _, _, l)) ->
       String.concat ~sep:"" l
-  | Stmt ObjCStringLiteral (_, [stmt], _) ->
+  | Stmt (ObjCStringLiteral (_, [stmt], _)) ->
       "@" ^ ast_node_name (Stmt stmt)
-  | Stmt ObjCBoxedExpr (_, [stmt], _, objc_boxed_expr_info) ->
+  | Stmt (ObjCBoxedExpr (_, [stmt], _, objc_boxed_expr_info)) ->
       let selector =
         match objc_boxed_expr_info.obei_boxing_method with Some sel -> sel | None -> ""
       in
       selector ^ ast_node_name (Stmt stmt)
+  | _ ->
+      ""
+
+
+let rec ast_node_cxx_full_name an =
+  let full_name qual_name = "::" ^ String.concat ~sep:"::" (List.rev qual_name) in
+  let open Clang_ast_t in
+  match an with
+  | Decl dec -> (
+    match Clang_ast_proj.get_named_decl_tuple dec with
+    | Some (_, n) ->
+        full_name n.Clang_ast_t.ni_qual_name
+    | None ->
+        "" )
+  | Stmt (DeclRefExpr (_, _, _, {drti_decl_ref= Some dr})) ->
+      let ndi, _, _ = CAst_utils.get_info_from_decl_ref dr in
+      full_name ndi.ni_qual_name
+  | Stmt (OpaqueValueExpr (_, _, _, {ovei_source_expr= Some stmt}))
+  | Stmt (ImplicitCastExpr (_, [stmt], _, _))
+  | Stmt (PseudoObjectExpr (_, stmt :: _, _))
+  | Stmt (ParenExpr (_, [stmt], _))
+  | Stmt (CallExpr (_, stmt :: _, _)) ->
+      ast_node_cxx_full_name (Stmt stmt)
   | _ ->
       ""
 
@@ -88,16 +109,6 @@ let ast_node_kind node =
       Clang_ast_proj.get_stmt_kind_string stmt
   | Decl decl ->
       Clang_ast_proj.get_decl_kind_string decl
-
-
-let ast_node_source_range node =
-  match node with
-  | Stmt stmt ->
-      let s_stmt_info, _ = Clang_ast_proj.get_stmt_tuple stmt in
-      s_stmt_info.si_source_range
-  | Decl decl ->
-      let d_decl_info = Clang_ast_proj.get_decl_tuple decl in
-      d_decl_info.di_source_range
 
 
 (* true iff an ast node is a node of type among the list tl *)
@@ -122,12 +133,12 @@ let ast_node_cast_kind an =
   match an with
   | Decl _ ->
       ""
-  | Stmt stmt ->
+  | Stmt stmt -> (
     match Clang_ast_proj.get_cast_kind stmt with
     | Some cast_kind ->
         Clang_ast_proj.string_of_cast_kind cast_kind
     | None ->
-        ""
+        "" )
 
 
 let ast_node_equal node1 node2 = Int.equal (ast_node_pointer node1) (ast_node_pointer node2)
@@ -153,7 +164,7 @@ let get_successor_decls_of_decl decl =
   match Clang_ast_proj.get_decl_context_tuple decl with
   | Some (decls, _) ->
       decls
-  | None ->
+  | None -> (
     match decl with
     | FunctionDecl (_, _, _, fdi)
     | CXXMethodDecl (_, _, _, fdi, _)
@@ -166,7 +177,7 @@ let get_successor_decls_of_decl decl =
     | BlockDecl (_, block_decl_info) ->
         block_decl_info.Clang_ast_t.bdi_parameters
     | _ ->
-        []
+        [] )
 
 
 let get_successor_stmts_of_decl decl =
@@ -214,12 +225,12 @@ let rec is_node_successor_of ~is_successor:succ_node node =
   match succ_node with
   | Stmt _ ->
       let node_succ_stmts = get_successor_stmts node in
-      List.exists node_succ_stmts ~f:(fun (s: Clang_ast_t.stmt) ->
+      List.exists node_succ_stmts ~f:(fun (s : Clang_ast_t.stmt) ->
           ast_node_equal (Stmt s) succ_node
           || is_node_successor_of ~is_successor:succ_node (Stmt s) )
   | Decl _ ->
       let node_succ_decls = get_successor_decls node in
-      List.exists node_succ_decls ~f:(fun (d: Clang_ast_t.decl) ->
+      List.exists node_succ_decls ~f:(fun (d : Clang_ast_t.decl) ->
           ast_node_equal (Decl d) succ_node
           || is_node_successor_of ~is_successor:succ_node (Decl d) )
 
@@ -237,12 +248,12 @@ let get_direct_successor_nodes an =
       let _, succs_st = Clang_ast_proj.get_stmt_tuple st in
       let succs = List.map ~f:(fun s -> Stmt s) succs_st in
       succs @ get_decl_of_stmt st
-  | Decl dec ->
+  | Decl dec -> (
     match Clang_ast_proj.get_decl_context_tuple dec with
     | Some (decl_list, _) ->
         List.map ~f:(fun d -> Decl d) decl_list
     | None ->
-        []
+        [] )
 
 
 let infer_prefix = "__infer_ctl_"
@@ -280,13 +291,13 @@ type builtin_kind =
   | ObjCId  (** id *)
   | ObjCClass  (** Class *)
   | ObjCSel  (** SEL *)
-  [@@deriving compare]
+[@@deriving compare]
 
 (*  | OCLSampler | OCLEvent | OCLClkEvent | OCLQueue | OCLNDRange
     | OCLReserveID | Dependent | Overload | BoundMember | PseudoObject
     | UnknownAny | BuiltinFn | ARCUnbridgedCast | OMPArraySection *)
 
-let equal_builtin_kind = [%compare.equal : builtin_kind]
+let equal_builtin_kind = [%compare.equal: builtin_kind]
 
 let builtin_kind_to_string t =
   match t with
@@ -357,7 +368,8 @@ type abs_ctype =
 
 let display_equality_warning () =
   L.(debug Linters Medium)
-    "[WARNING:] Type Comparison failed... This might indicate that the types are different or the specified type is internally represented in a different way and therefore not recognized.@\n"
+    "[WARNING:] Type Comparison failed... This might indicate that the types are different or the \
+     specified type is internally represented in a different way and therefore not recognized.@\n"
 
 
 let rec abs_ctype_to_string t =
@@ -406,8 +418,8 @@ let builtin_type_kind_assoc =
   ; (`Half, Half) ]
 
 
-let builtin_equal (bi: Clang_ast_t.builtin_type_kind) (abi: builtin_kind) =
-  match List.Assoc.find ~equal:PVariant.( = ) builtin_type_kind_assoc bi with
+let builtin_equal (bi : Clang_ast_t.builtin_type_kind) (abi : builtin_kind) =
+  match List.Assoc.find ~equal:PolyVariantEqual.( = ) builtin_type_kind_assoc bi with
   | Some assoc_abi when equal_builtin_kind assoc_abi abi ->
       true
   | _ ->
@@ -483,7 +495,10 @@ and check_type_ptr type_ptr abs_ctype =
    comparison function for Clang_ast_t.c_type *)
 and c_type_equal c_type abs_ctype =
   L.(debug Linters Medium)
-    "@\nComparing c_type/abs_ctype for equality... Type compared: @\nc_type = `%s`  @\nabs_ctype =`%s`@\n"
+    "@\n\
+     Comparing c_type/abs_ctype for equality... Type compared: @\n\
+     c_type = `%s`  @\n\
+     abs_ctype =`%s`@\n"
     (Clang_ast_j.string_of_c_type c_type)
     (abs_ctype_to_string abs_ctype) ;
   let open Clang_ast_t in
@@ -494,9 +509,12 @@ and c_type_equal c_type abs_ctype =
       check_type_ptr tdi.tti_child_type.qt_type_ptr abs_ctype
   | PointerType _, BuiltIn _ | PointerType _, Pointer _ | ObjCObjectPointerType _, Pointer _ ->
       pointer_type_equal c_type abs_ctype
-  | LValueReferenceType (_, qt), Reference abs_typ | RValueReferenceType (_, qt), Reference abs_typ ->
+  | LValueReferenceType (_, qt), Reference abs_typ | RValueReferenceType (_, qt), Reference abs_typ
+    ->
       check_type_ptr qt.qt_type_ptr abs_typ
-  | ObjCObjectPointerType (_, qt), ObjCGenProt _ ->
+  | BlockPointerType (_, qt), TypeName _
+  | FunctionProtoType (_, {fti_return_type= qt}, _), TypeName _
+  | ObjCObjectPointerType (_, qt), _ ->
       check_type_ptr qt.qt_type_ptr abs_ctype
   | ObjCObjectType _, ObjCGenProt _ ->
       objc_object_type_equal c_type abs_ctype
@@ -506,7 +524,29 @@ and c_type_equal c_type abs_ctype =
       typename_equal pointer ae
   | TypedefType (_, tdi), TypeName ae ->
       typename_equal tdi.tti_decl_ptr ae
-  | TypedefType (ti, _), ObjCGenProt _ -> (
+  | NoneType ti, TypeName _
+  | ComplexType ti, TypeName _
+  | DependentSizedExtVectorType ti, TypeName _
+  | VectorType ti, TypeName _
+  | ExtVectorType ti, TypeName _
+  | UnresolvedUsingType ti, TypeName _
+  | TypeOfExprType ti, TypeName _
+  | TypeOfType ti, TypeName _
+  | UnaryTransformType ti, TypeName _
+  | TemplateTypeParmType ti, TypeName _
+  | SubstTemplateTypeParmType ti, TypeName _
+  | SubstTemplateTypeParmPackType ti, TypeName _
+  | DeducedTemplateSpecializationType ti, TypeName _
+  | InjectedClassNameType ti, TypeName _
+  | DependentNameType ti, TypeName _
+  | DependentTemplateSpecializationType ti, TypeName _
+  | ObjCTypeParamType ti, TypeName _
+  | PackExpansionType ti, TypeName _
+  | PipeType ti, TypeName _
+  | ElaboratedType ti, TypeName _
+  | AutoType ti, TypeName _
+  | TypedefType (ti, _), ObjCGenProt _
+  | AttributedType (ti, _), Pointer _ -> (
     match ti.ti_desugared_type with Some dt -> check_type_ptr dt abs_ctype | None -> false )
   | _, _ ->
       display_equality_warning () ; false
@@ -516,17 +556,17 @@ and c_type_equal c_type abs_ctype =
 let rec typ_string_of_type_ptr type_ptr =
   let open Clang_ast_t in
   match CAst_utils.get_type type_ptr with
-  | Some BuiltinType (_, bt) -> (
+  | Some (BuiltinType (_, bt)) -> (
     match List.Assoc.find ~equal:Poly.equal builtin_type_kind_assoc bt with
     | Some abt ->
         builtin_kind_to_string abt
     | None ->
         "" )
-  | Some PointerType (_, qt) | Some ObjCObjectPointerType (_, qt) ->
+  | Some (PointerType (_, qt)) | Some (ObjCObjectPointerType (_, qt)) ->
       typ_string_of_type_ptr qt.qt_type_ptr ^ "*"
-  | Some ObjCInterfaceType (_, pointer) ->
+  | Some (ObjCInterfaceType (_, pointer)) ->
       Option.value ~default:"" (typename_to_string pointer)
-  | Some TypedefType (_, tdi) ->
+  | Some (TypedefType (_, tdi)) ->
       Option.value ~default:"" (typename_to_string tdi.tti_decl_ptr)
   | _ ->
       ""
@@ -541,20 +581,19 @@ let ast_node_type an =
           typ_string_of_type_ptr expr_info.ei_qual_type.qt_type_ptr
       | _ ->
           "" )
-    | Decl decl ->
+    | Decl decl -> (
       match CAst_utils.type_of_decl decl with
       | Some type_ptr ->
           typ_string_of_type_ptr type_ptr
       | _ ->
-          ""
+          "" )
   in
   if String.length typ_str > 0 then typ_str else "<type not known>"
 
 
 let stmt_node_child_type an =
   match an with
-  | Stmt stmt
-    -> (
+  | Stmt stmt -> (
       let _, stmts = Clang_ast_proj.get_stmt_tuple stmt in
       match stmts with [stmt] -> ast_node_type (Stmt stmt) | _ -> "" )
   | _ ->

@@ -1,15 +1,12 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 module F = Format
-module L = Logging
 
 (** a map from a formal to its positional index *)
 type t
@@ -33,4 +30,4 @@ val get_formal_base : int -> t -> AccessPath.base option
 val get_formals_indexes : t -> (AccessPath.base * int) list
 (** Get a list of (base * index) pairs. Note: these are sorted by base, not index *)
 
-val pp : F.formatter -> t -> unit  [@@warning "-32"]
+val pp : F.formatter -> t -> unit [@@warning "-32"]

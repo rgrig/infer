@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package javax.net.ssl;
@@ -12,10 +10,7 @@ package javax.net.ssl;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.Socket;
-
 import javax.net.SocketFactory;
-
-import com.facebook.infer.builtins.InferBuiltins;
 
 public class SSLSocketFactory extends SocketFactory {
 
@@ -24,7 +19,8 @@ public class SSLSocketFactory extends SocketFactory {
   }
 
   @Override
-  public Socket createSocket(InetAddress addr1, int i, InetAddress addr2, int j) throws IOException {
+  public Socket createSocket(InetAddress addr1, int i, InetAddress addr2, int j)
+      throws IOException {
     return super.createSocket();
   }
 
@@ -43,5 +39,4 @@ public class SSLSocketFactory extends SocketFactory {
   public Socket createSocket(Socket s, String host, int i, boolean b) throws IOException {
     return super.createSocket();
   }
-
 }

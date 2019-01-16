@@ -1,9 +1,7 @@
-# Copyright (c) 2015 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2015-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 @SET_MAKE@
 
@@ -13,13 +11,13 @@ bindir = @bindir@
 BUCK = @BUCK@
 BUILD_C_ANALYZERS = @BUILD_C_ANALYZERS@
 BUILD_JAVA_ANALYZERS = @BUILD_JAVA_ANALYZERS@
-BUILD_PYTHON_ANALYZERS = @BUILD_PYTHON_ANALYZERS@
 CAML_LD_LIBRARY_PATH = @CAML_LD_LIBRARY_PATH@
 CC = @CC@
 CFLAGS = @CFLAGS@
 CLANG_INCLUDES = @CLANG_INCLUDES@
 CLANG_PREFIX = @CLANG_PREFIX@
 CMAKE = @CMAKE@
+CPATH = @CPATH@
 CPP = @CPP@
 CXX = @CXX@
 CXXFLAGS = @CXXFLAGS@
@@ -44,6 +42,7 @@ LDFLAGS = @LDFLAGS@
 libdir = @libdir@
 # override in your `make` command to make the install relocatable
 libdir_relative_to_bindir = $(libdir)
+LIBRARY_PATH = @LIBRARY_PATH@
 LIBS = @LIBS@
 mandir = @mandir@
 MENHIR = @MENHIR@
@@ -63,6 +62,7 @@ OCAMLOPT = @OCAMLOPT@
 OPAM = @OPAM@
 OPAMROOT = @OPAMROOT@
 OPAMSWITCH = @OPAMSWITCH@
+PATCHELF = @PATCHELF@
 PATH = @PATH@
 prefix = @prefix@
 PYTHON_lxml = @PYTHON_lxml@
@@ -70,6 +70,8 @@ SHASUM = @SHASUM@
 USER_JAVA_HOME = @USER_JAVA_HOME@
 UTOP = @UTOP@
 XCODE_SELECT = @XCODE_SELECT@
+XCODE_BASE = @XCODE_BASE@
+HAS_OBJC = @HAS_OBJC@
 XCPRETTY = @XCPRETTY@
 
 ifneq (,$(findstring s,$(MAKEFLAGS)))
@@ -81,5 +83,7 @@ endif
 
 # Export parts of the config relevant to running other programs
 export PATH := $(PATH)
+export CPATH := $(CPATH)
+export LIBRARY_PATH := $(LIBRARY_PATH)
 export CAML_LD_LIBRARY_PATH := $(CAML_LD_LIBRARY_PATH)
 export OPAMROOT := $(OPAMROOT)

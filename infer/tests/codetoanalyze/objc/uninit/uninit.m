@@ -1,12 +1,12 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
-#include <Foundation/Foundation.h>
+#import <Foundation/Foundation.h>
+#import <CoreGraphics/CGGeometry.h>
+#import <CoreGraphics/CGColor.h>
 
 @interface A : NSObject
 
@@ -28,6 +28,22 @@
   const CGSize labelSize = [self sizeThatFits:10];
 
   return labelSize.height; // Here we should not report uninit
+}
+
+typedef NS_ENUM(NSUInteger, SomeEnum) { ValueA, ValueB };
+
+CGColorRef FP_switch_ok(SomeEnum e, CGColorRef defaultcolor) {
+  CGColorRef color;
+
+  switch (e) {
+    case ValueA:
+      color = defaultcolor;
+      break;
+    case ValueB:
+      color = defaultcolor;
+      break;
+  }
+  return color; // false positive because of exausted switch
 }
 
 @end

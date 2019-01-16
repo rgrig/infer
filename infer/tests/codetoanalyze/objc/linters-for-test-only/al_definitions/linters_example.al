@@ -1,3 +1,8 @@
+// Copyright (c) 2018-present, Facebook, Inc.
+//
+// This source code is licensed under the MIT license found in the
+// LICENSE file in the root directory of this source tree.
+
 #IMPORT "library.al"
 
 GLOBAL-MACROS {
@@ -57,7 +62,7 @@ DEFINE-CHECKER MACRO_TEST1 = {
 // Test reverse parameter of macro
 DEFINE-CHECKER MACRO_TEST2 = {
 
-  LET my_macro_to_call_method_of_class(x,y) = call_instance_method(y,x);
+  LET my_macro_to_call_method_of_class(x,y) = call_instance_method(x) AND is_receiver_class_named(y);
 
   SET report_when = my_macro_to_call_method_of_class("foo:", "A");
 
@@ -68,7 +73,7 @@ DEFINE-CHECKER MACRO_TEST2 = {
 // Test macro call macro
 DEFINE-CHECKER MACRO_TEST3 = {
 
-  LET my_macro_to_call_method_of_class(x,y) = call_instance_method(y,x);
+  LET my_macro_to_call_method_of_class(x,y) = call_instance_method(x) AND is_receiver_class_named(y);
 
   LET call_my_macro(t,v) = my_macro_to_call_method_of_class(t,v);
 
@@ -107,7 +112,7 @@ DEFINE-CHECKER GLOBAL_MACRO_SUBCLASS = {
 
 DEFINE-CHECKER TEST_ALL_METHODS = {
 
-  SET report_when = call_class_method(REGEXP(".*"), REGEXP(".*"));
+  SET report_when = call_class_method(REGEXP(".*"));
 
   SET message = "Method call...";
 
@@ -128,7 +133,7 @@ DEFINE-CHECKER TEST_BUILTIN_TYPE = {
 
   SET report_when =
         WHEN
-          is_in_objc_class_named("TestType") AND 
+          is_in_objc_class_named("TestType") AND
           (method_return_type("void")
           OR method_return_type("bool")
           OR method_return_type("char")
@@ -441,5 +446,366 @@ DEFINE-CHECKER TEST_PARAMETER_SEL_TYPE = {
       HOLDS-IN-NODE ObjCMessageExpr;
 
   SET message = "Method %name% is not called with super.";
+
+};
+
+DEFINE-CHECKER TEST_IF_METHOD_IS_IN_INTERFACE_NAMED = {
+
+ SET report_when =
+     WHEN
+       is_in_objc_interface_named("MyBaseClass")
+     HOLDS-IN-NODE ObjCMethodDecl;
+
+ SET message = "Method %name% is in the interface named MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_METHOD_IS_IN_IMPLEMENTATION_NAMED = {
+
+ SET report_when =
+     WHEN
+       is_in_objc_implementation_named("MyBaseClass")
+     HOLDS-IN-NODE ObjCMethodDecl;
+
+ SET message = "Method %name% is in the implementation named MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_METHOD_IS_IN_CLASS_NAMED = {
+
+ SET report_when =
+     WHEN
+       is_in_objc_class_named("MyBaseClass")
+     HOLDS-IN-NODE ObjCMethodDecl;
+
+ SET message = "Method %name% is in the class named MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_METHOD_IS_IN_CATEGORY_INTERFACE_NAMED = {
+
+ SET report_when =
+     WHEN
+       is_in_objc_category_interface_named("MyBaseClassCategory")
+     HOLDS-IN-NODE ObjCMethodDecl;
+
+ SET message = "Method %name% is in the category interface named MyBaseClassCategory.";
+
+};
+
+DEFINE-CHECKER TEST_IF_METHOD_IS_IN_CATEGORY_IMPLEMENTATION_NAMED = {
+
+ SET report_when =
+     WHEN
+       is_in_objc_category_implementation_named("MyBaseClassCategory")
+     HOLDS-IN-NODE ObjCMethodDecl;
+
+ SET message = "Method %name% is in the category implementation named MyBaseClassCategory.";
+
+};
+
+DEFINE-CHECKER TEST_IF_METHOD_IS_IN_CATEGORY_NAMED = {
+
+ SET report_when =
+     WHEN
+       is_in_objc_category_named("MyBaseClassCategory")
+     HOLDS-IN-NODE ObjCMethodDecl;
+
+ SET message = "Method %name% is in the category named MyBaseClassCategory.";
+
+};
+
+DEFINE-CHECKER TEST_IF_METHOD_IS_IN_CATEGORY_INTERFACE_ON_CLASS_NAMED = {
+
+ SET report_when =
+     WHEN
+       is_in_objc_category_interface_on_class_named("MyBaseClass")
+     HOLDS-IN-NODE ObjCMethodDecl;
+
+ SET message = "Method %name% is in the category interface on a class named MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_METHOD_IS_IN_CATEGORY_IMPLEMENATION_ON_CLASS_NAMED = {
+
+ SET report_when =
+     WHEN
+       is_in_objc_category_implementation_on_class_named("MyBaseClass")
+     HOLDS-IN-NODE ObjCMethodDecl;
+
+ SET message = "Method %name% is in the category implementation on a class named MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_METHOD_IS_IN_CATEGORY_ON_CLASS_NAMED = {
+
+ SET report_when =
+     WHEN
+       is_in_objc_category_on_class_named("MyBaseClass")
+     HOLDS-IN-NODE ObjCMethodDecl;
+
+ SET message = "Method %name% is in the category on a class named MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_METHOD_IS_IN_CATEGORY_INTERFACE_ON_SUBCLASS_OF = {
+
+ SET report_when =
+     WHEN
+       is_in_objc_category_interface_on_subclass_of("MyBaseClass")
+     HOLDS-IN-NODE ObjCMethodDecl;
+
+ SET message = "Method %name% is in the category interface on a subclass of MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_METHOD_IS_IN_CATEGORY_IMPLEMENTATION_ON_SUBCLASS_OF = {
+
+ SET report_when =
+     WHEN
+       is_in_objc_category_implementation_on_subclass_of("MyBaseClass")
+     HOLDS-IN-NODE ObjCMethodDecl;
+
+ SET message = "Method %name% is in the category implementation on a subclass of MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_METHOD_IS_IN_CATEGORY_ON_SUBCLASS_OF = {
+
+ SET report_when =
+     WHEN
+       is_in_objc_category_on_subclass_of("MyBaseClass")
+     HOLDS-IN-NODE ObjCMethodDecl;
+
+ SET message = "Method %name% is in the category on a subclass of MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_METHOD_IS_IN_PROTOCOL_NAMED = {
+
+ SET report_when =
+     WHEN
+       is_in_objc_protocol_named("MyBaseClassProtocol")
+     HOLDS-IN-NODE ObjCMethodDecl;
+
+ SET message = "Method %name% is in the protocol named MyBaseClassProtocol.";
+
+};
+
+DEFINE-CHECKER TEST_IF_IS_CATEGORY_INTERFACE_NAMED = {
+
+ SET report_when =
+    is_objc_category_interface_named("MyBaseClassCategory");
+
+ SET message = "Node is a category interface named MyBaseClassCategory.";
+
+};
+
+DEFINE-CHECKER TEST_IF_IS_CATEGORY_IMPLEMENTATION_NAMED = {
+
+ SET report_when =
+    is_objc_category_implementation_named("MyBaseClassCategory");
+
+ SET message = "Node is a category implementation named MyBaseClassCategory.";
+
+};
+
+DEFINE-CHECKER TEST_IF_IS_CATEGORY_NAMED = {
+
+ SET report_when =
+    is_objc_category_named("MyBaseClassCategory");
+
+ SET message = "Node is a category named MyBaseClassCategory.";
+
+};
+
+
+DEFINE-CHECKER TEST_IF_IS_CATEGORY_INTERFACE_ON_CLASS_NAMED = {
+
+ SET report_when =
+    is_objc_category_interface_on_class_named("MyBaseClass");
+
+ SET message = "Node is a category interface on a class named MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_IS_CATEGORY_IMPLEMENTATION_ON_CLASS_NAMED = {
+
+ SET report_when =
+    is_objc_category_implementation_on_class_named("MyBaseClass");
+
+ SET message = "Node is a category implementation on a class named MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_IS_CATEGORY_ON_CLASS_NAMED = {
+
+ SET report_when =
+    is_objc_category_on_class_named("MyBaseClass");
+
+ SET message = "Node is a category on a class named MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_IS_CATEGORY_INTERFACE_ON_SUBCLASS_OF = {
+
+ SET report_when =
+    is_objc_category_interface_on_subclass_of("MyBaseClass");
+
+ SET message = "Node is a category interface on a subclass of MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_IS_CATEGORY_IMPLEMENTATION_ON_SUBCLASS_OF = {
+
+ SET report_when =
+    is_objc_category_implementation_on_subclass_of("MyBaseClass");
+
+ SET message = "Node is a category implementation on a subclass of MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_IS_CATEGORY_ON_SUBCLASS_OF = {
+
+ SET report_when =
+    is_objc_category_on_subclass_of("MyBaseClass");
+
+ SET message = "Node is a category on a subclass of MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_IS_IMPLEMENTATION_NAMED = {
+
+ SET report_when =
+    is_objc_implementation_named("MyBaseClass");
+
+ SET message = "Node is an implementation named MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_IS_CLASS_NAMED = {
+
+ SET report_when =
+    is_objc_class_named("MyBaseClass");
+
+ SET message = "Node is a class named MyBaseClass.";
+
+};
+
+DEFINE-CHECKER TEST_IF_IS_PROTOCOL_NAMED = {
+
+ SET report_when =
+    is_objc_protocol_named("MyBaseClassProtocol");
+
+ SET message = "Node is a protocol named MyBaseClassProtocol.";
+
+};
+
+DEFINE-CHECKER TEST_IF_IS_CLASS_METHOD_NAMED = {
+
+ SET report_when =
+    is_objc_class_method_named("myBaseClassClassMethod");
+
+ SET message = "Node is a class method named myBaseClassClassMethod.";
+
+};
+
+DEFINE-CHECKER TEST_IF_IS_INSTANCE_METHOD_NAMED = {
+
+ SET report_when =
+    is_objc_instance_method_named("mySubclassMethod");
+
+ SET message = "Node is an instance method named mySubclassMethod.";
+
+};
+
+DEFINE-CHECKER TEST_IF_IS_METHOD_NAMED = {
+
+ SET report_when =
+    is_objc_method_named("mySubclassMethod") OR
+    is_objc_method_named("myBaseClassClassMethod");
+
+ SET message = "Node is a method named mySubclassMethod or myBaseClassClassMethod.";
+
+};
+
+DEFINE-CHECKER TEST_IS_OVERRIDING_METHOD = {
+
+ SET report_when =
+    is_objc_method_overriding;
+
+ SET message = "Method %name% is overriding a method in a superclass.";
+
+};
+
+DEFINE-CHECKER TEST_IS_METHOD_EXPOSED = {
+
+ SET report_when =
+    is_objc_method_exposed;
+
+ SET message = "Method %name% is exposed in an interface.";
+
+};
+
+DEFINE-CHECKER TEST_IN_CLASS_METHOD = {
+
+  SET report_when =
+     is_in_objc_class_method("myBaseClassClassMethod");
+
+  SET message = "This node is in a class method named myBaseClassClassMethod.";
+
+};
+
+DEFINE-CHECKER TEST_IN_INSTANCE_METHOD = {
+
+  SET report_when =
+     is_in_objc_instance_method("myBaseClassMethod");
+
+  SET message = "This node is in an instance method named myBaseClassClassMethod.";
+
+};
+
+DEFINE-CHECKER TEST_IS_RECEIVER_CLASS_TYPE = {
+
+  SET report_when =
+     is_receiver_objc_class_type;
+
+  SET message = "This node is a method call to 'Class'.";
+
+};
+
+DEFINE-CHECKER TEST_IS_RECEIVER_ID_TYPE = {
+
+  SET report_when =
+     is_receiver_objc_id_type;
+
+  SET message = "This node is a method call to 'id'.";
+
+};
+
+DEFINE-CHECKER TEST_IS_RECEIVER_SUBCLASS_OF = {
+
+  SET report_when =
+     is_receiver_subclass_of("MyBaseClass");
+
+  SET message = "This node is a method call to an object which inherits from 'MyBaseClass'.";
+
+};
+
+DEFINE-CHECKER TEST_IS_RECEIVER_CLASS_NAMED = {
+
+  SET report_when =
+     is_receiver_class_named("MyBaseClass");
+
+  SET message = "This node is a method call to an object of class 'MyBaseClass'.";
+
+};
+
+DEFINE-CHECKER TEST_IS_RECEIVER_SUPER = {
+
+  SET report_when =
+     is_receiver_super();
+
+  SET message = "This node is a method call to 'super'.";
 
 };

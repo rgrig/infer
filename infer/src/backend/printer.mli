@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -36,11 +34,11 @@ val force_delayed_prints : unit -> unit
 val node_finish_session : Procdesc.Node.t -> unit
 (** Finish a session, and perform delayed print actions if required *)
 
-val node_start_session : Procdesc.Node.t -> int -> unit
+val node_start_session : pp_name:(Format.formatter -> unit) -> Procdesc.Node.t -> int -> unit
 (** Start a session, and create a new html fine for the node if it does not exist yet *)
 
 val write_proc_html : Procdesc.t -> unit
 (** Write html file for the procedure. *)
 
-val write_all_html_files : Cluster.t -> unit
+val write_all_html_files : SourceFile.t -> unit
 (** Create filename.ext.html for each file in the cluster. *)

@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.quandary;
@@ -13,7 +11,7 @@ import com.facebook.infer.builtins.InferTaint;
 
 class Exceptions {
 
-  native static void mayExcept() throws Exception;
+  static native void mayExcept() throws Exception;
 
   public static void sinkInCatchBad1() {
     Object source = InferTaint.inferSecretSource();
@@ -55,7 +53,7 @@ class Exceptions {
     InferTaint.inferSensitiveSink(source);
   }
 
-  public static void sinkInFinallyBad1() throws Exception{
+  public static void sinkInFinallyBad1() throws Exception {
     Object source = InferTaint.inferSecretSource();
     try {
       mayExcept();
@@ -129,5 +127,4 @@ class Exceptions {
       InferTaint.inferSensitiveSink(e);
     }
   }
-
 }

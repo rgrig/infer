@@ -1,23 +1,20 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 module F = Format
-module L = Logging
 
 (* Extremely simple abstraction of resources: count the number of acquired resources. If there's
    not a corresponding number of releases, there may be a leak. *)
-type astate = int
+type t = int
 
 (* 2(a) *)
 (* For now, type of abstract state and summary are the same *)
-type summary = astate
+type summary = t
 
 (* 4(a) *)
 

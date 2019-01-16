@@ -1,37 +1,55 @@
 (*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
-val map_changed : ('a -> 'a) -> 'a list -> 'a list
+open! IStd
+
+val map_changed : equal:('a -> 'a -> bool) -> f:('a -> 'a) -> 'a list -> 'a list
 (** like map, but returns the original list if unchanged *)
 
-val filter_changed : ('a -> bool) -> 'a list -> 'a list
+val filter_changed : f:('a -> bool) -> 'a list -> 'a list
 (** like filter, but returns the original list if unchanged *)
 
-val remove_irrelevant_duplicates : ('a -> 'a -> int) -> ('a -> bool) -> 'a list -> 'a list
-(** Remove consecutive equal irrelevant elements from a list (according to the given comparison and relevance functions) *)
+val remove_irrelevant_duplicates : equal:('a -> 'a -> bool) -> f:('a -> bool) -> 'a list -> 'a list
+(** Remove consecutive equal irrelevant elements from a list (according to the given comparison and
+    relevance functions) *)
 
-val merge_sorted_nodup : ('a -> 'a -> int) -> 'a list -> 'a list -> 'a list -> 'a list
-(** The function works on sorted lists without duplicates *)
+val merge_sorted_nodup : cmp:('a -> 'a -> int) -> res:'a list -> 'a list -> 'a list -> 'a list
+(** The function works on sorted lists without duplicates, and keeps only one copy of elements that
+    appear in both lists. *)
 
-val intersect : ('a -> 'a -> int) -> 'a list -> 'a list -> bool
-(** Returns whether there is an intersection in the elements of the two lists.
-    The compare function is required to sort the lists. *)
-
-val inter : ('a -> 'a -> int) -> 'a list -> 'a list -> 'a list
+val inter : cmp:('a -> 'a -> int) -> 'a list -> 'a list -> 'a list
 (** [inter cmp xs ys] are the elements in both [xs] and [ys], sorted according to [cmp]. *)
 
-val to_string : ('a -> string) -> 'a list -> string
+val fold_last : 'a list -> init:'b -> f:('b -> 'a -> 'b) -> f_last:('b -> 'a -> 'b) -> 'b
+(** like fold, but apply f_last to the last element *)
 
-val uncons_exn : 'a list -> 'a * 'a list
-(** deconstruct a list, like hd_exn and tl_exn *)
+val split_last_rev : 'a list -> ('a * 'a list) option
+(** [split_last_rev l] is [Some (last, rev_prefix)] where [last :: (List.rev rev_prefix) == l],
+    [None] if [l] is empty *)
 
-val append_no_duplicates : ('a -> 'a -> bool) -> 'a list -> 'a list -> 'a list
-(** [append_no_duplicates list1 list2], assuming that list1 and list2 have no duplicates on their own,
-   it computes list1 @ (filtered list2), so it keeps the order of both lists and has no duplicates.
-   However, the complexity is O(n^2), don't use for big lists!  *)
+val append_no_duplicates : cmp:('a -> 'a -> int) -> ('a list -> 'a list -> 'a list) Staged.t
+(** [append_no_duplicates list1 list2], assuming that list1 and list2 have no duplicates on their
+    own, it computes list1 @ (filtered list2), so it keeps the order of both lists and has no
+    duplicates. *)
+
+val merge_dedup : 'a list -> 'a list -> compare:('a -> 'a -> int) -> 'a list
+
+val drop : 'a list -> int -> 'a list
+(** [drop l n] returns [l] without the first [n] elements, or the empty list if [n > length l]. *)
+
+val opt_cons : 'a option -> 'a list -> 'a list
+(** [opt_cons None l] returns [l]. [opt_cons (Some x) l] returns [x :: l]*)
+
+val remove_first : 'a list -> f:('a -> bool) -> 'a list option
+
+val pp_print_list :
+     max:int
+  -> ?pp_sep:(Format.formatter -> unit -> unit)
+  -> (Format.formatter -> 'a -> unit)
+  -> Format.formatter
+  -> 'a list
+  -> unit

@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -49,7 +47,9 @@ let stracktree_of_frame frame =
 (** k = 1 implementation, where k is the number of levels of calls inlined *)
 let stitch_summaries stacktrace_file summary_files out_file =
   let stacktrace = Stacktrace.of_json_file stacktrace_file in
-  let summaries = List.map ~f:(Ag_util.Json.from_file Stacktree_j.read_stacktree) summary_files in
+  let summaries =
+    List.map ~f:(Atdgen_runtime.Util.Json.from_file Stacktree_j.read_stacktree) summary_files
+  in
   let summary_map =
     List.fold
       ~f:(fun acc stacktree ->
@@ -65,7 +65,7 @@ let stitch_summaries stacktrace_file summary_files out_file =
   in
   let expanded_frames = List.map ~f:expand_stack_frame stacktrace.frames in
   let crashcontext = {Stacktree_j.stack= expanded_frames} in
-  Ag_util.Json.to_file Stacktree_j.write_crashcontext_t out_file crashcontext
+  Atdgen_runtime.Util.Json.to_file Stacktree_j.write_crashcontext_t out_file crashcontext
 
 
 let collect_all_summaries root_summaries_dir stacktrace_file stacktraces_dir =
@@ -73,8 +73,10 @@ let collect_all_summaries root_summaries_dir stacktrace_file stacktraces_dir =
     Utils.directory_fold
       (fun summaries path ->
         (* check if the file is a JSON file under the crashcontext dir *)
-        if Sys.is_directory path <> `Yes && Filename.check_suffix path "json"
-           && String.is_suffix ~suffix:"crashcontext" (Filename.dirname path)
+        if
+          Sys.is_directory path <> `Yes
+          && Filename.check_suffix path "json"
+          && String.is_suffix ~suffix:"crashcontext" (Filename.dirname path)
         then path :: summaries
         else summaries )
       [] root_summaries_dir
@@ -85,14 +87,15 @@ let collect_all_summaries root_summaries_dir stacktrace_file stacktraces_dir =
         None
     | Some file ->
         let crashcontext_dir = Config.results_dir ^/ "crashcontext" in
-        Utils.create_dir crashcontext_dir ; Some (file, crashcontext_dir ^/ "crashcontext.json")
+        Utils.create_dir crashcontext_dir ;
+        Some (file, crashcontext_dir ^/ "crashcontext.json")
   in
   let trace_file_regexp = Str.regexp "\\(.*\\)\\.json" in
   let pairs_for_stactrace_dir =
     match stacktraces_dir with
     | None ->
         []
-    | Some s ->
+    | Some s -> (
         let dir = DB.filename_from_string s in
         let trace_file_matcher path =
           let path_str = DB.filename_to_string path in
@@ -108,8 +111,8 @@ let collect_all_summaries root_summaries_dir stacktrace_file stacktraces_dir =
         (* trace_fold runs immediately after trace_file_matcher in the
            DB.fold_paths_matching statement below, so we don't need to
            call Str.string_match again. *)
-        | Not_found
-        -> assert false
+        | Caml.Not_found
+        -> assert false )
   in
   let input_output_file_pairs =
     match pair_for_stacktrace_file with
@@ -140,4 +143,4 @@ let crashcontext_epilogue ~in_buck_mode =
   collect_all_summaries root_summaries_dir Config.stacktrace Config.stacktraces_dir
 
 
-let pp_stacktree fmt st = Format.fprintf fmt "%s" (Stacktree_j.string_of_stacktree st)
+let pp_stacktree fmt st = Format.pp_print_string fmt (Stacktree_j.string_of_stacktree st)

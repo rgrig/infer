@@ -1,34 +1,28 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.checkers;
-
-import javax.annotation.concurrent.ThreadSafe;
 
 import android.app.Activity;
 import android.content.Context;
 import android.content.res.AssetManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
-import android.view.View;
 import android.util.DisplayMetrics;
+import android.view.View;
+import javax.annotation.concurrent.ThreadSafe;
 
-class MyActivity extends Activity {
-
-}
+class MyActivity extends Activity {}
 
 class MyResources extends Resources {
 
   public MyResources(AssetManager assets, DisplayMetrics metrics, Configuration config) {
     super(assets, metrics, config);
   }
-
 }
 
 class MyView extends View {
@@ -38,7 +32,6 @@ class MyView extends View {
   public MyView(Context c) {
     super(c);
   }
-
 }
 
 @ThreadSafe
@@ -74,5 +67,4 @@ public class AndroidModels {
     MyView view = (MyView) activity.findViewById(-1);
     view.mField = true; // ok;
   }
-
 }

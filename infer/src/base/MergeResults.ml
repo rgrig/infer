@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 open! IStd
 module L = Logging
@@ -18,7 +16,7 @@ let merge_procedures_table ~db_file =
   Sqlite3.exec db
     {|
 INSERT OR REPLACE INTO procedures
-SELECT sub.proc_name, sub.attr_kind, sub.source_file, sub.proc_attributes
+SELECT sub.proc_name, sub.proc_name_hum, sub.attr_kind, sub.source_file, sub.proc_attributes, sub.cfg
 FROM (
   attached.procedures AS sub
   LEFT OUTER JOIN procedures AS main
@@ -28,7 +26,7 @@ WHERE
   OR main.attr_kind < sub.attr_kind
   OR (main.attr_kind = sub.attr_kind AND main.source_file < sub.source_file)
 |}
-  |> SqliteUtils.check_sqlite_error db
+  |> SqliteUtils.check_result_code db
        ~log:(Printf.sprintf "copying procedures of database '%s'" db_file)
 
 
@@ -37,22 +35,22 @@ let merge_source_files_table ~db_file =
   Sqlite3.exec db
     {|
     INSERT OR REPLACE INTO source_files
-    SELECT source_file, cfgs, procedure_names, 1
+    SELECT source_file, type_environment, integer_type_widths, procedure_names, 1
     FROM attached.source_files
 |}
-  |> SqliteUtils.check_sqlite_error db
+  |> SqliteUtils.check_result_code db
        ~log:(Printf.sprintf "copying source_files of database '%s'" db_file)
 
 
 let merge ~db_file =
   let main_db = ResultsDatabase.get_database () in
   Sqlite3.exec main_db (Printf.sprintf "ATTACH '%s' AS attached" db_file)
-  |> SqliteUtils.check_sqlite_error ~fatal:true main_db
+  |> SqliteUtils.check_result_code ~fatal:true main_db
        ~log:(Printf.sprintf "attaching database '%s'" db_file) ;
   merge_procedures_table ~db_file ;
   merge_source_files_table ~db_file ;
   Sqlite3.exec main_db "DETACH attached"
-  |> SqliteUtils.check_sqlite_error ~fatal:true main_db
+  |> SqliteUtils.check_result_code ~fatal:true main_db
        ~log:(Printf.sprintf "detaching database '%s'" db_file) ;
   ()
 

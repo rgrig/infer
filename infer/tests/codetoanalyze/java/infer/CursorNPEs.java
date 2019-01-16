@@ -1,14 +1,11 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.infer;
-
 
 import android.app.DownloadManager;
 import android.content.ContentProviderClient;
@@ -23,9 +20,7 @@ import android.provider.MediaStore;
 public class CursorNPEs {
 
   public int cursorNPEfromQuery(SQLiteDatabase sqLiteDatabase) {
-    Cursor cursor = sqLiteDatabase.query(
-        "events", null,
-        null, null, null, null, null);
+    Cursor cursor = sqLiteDatabase.query("events", null, null, null, null, null, null);
     try {
       return cursor.getCount();
     } finally {
@@ -41,20 +36,14 @@ public class CursorNPEs {
 
     String selectionClause = selectionClause = customClause;
 
-    Cursor cursor = mContext.getContentResolver().query(
-        null,
-        projection,
-        selectionClause,
-        null,
-        null);
+    Cursor cursor =
+        mContext.getContentResolver().query(null, projection, selectionClause, null, null);
 
     cursor.close();
   }
 
-
   public void cursorFromMediaNPE() {
-    Cursor cursor = MediaStore.Images.Media.query(
-        mContentResolver, null, null, null, null, null);
+    Cursor cursor = MediaStore.Images.Media.query(mContentResolver, null, null, null, null, null);
     cursor.close();
   }
 
@@ -77,8 +66,7 @@ public class CursorNPEs {
   }
 
   private void cursorFromContentProviderClient() {
-    ContentProviderClient contentProviderClient =
-        mContentResolver.acquireContentProviderClient("");
+    ContentProviderClient contentProviderClient = mContentResolver.acquireContentProviderClient("");
     if (contentProviderClient != null) {
       Cursor cursor = null;
       try {
@@ -94,5 +82,4 @@ public class CursorNPEs {
       }
     }
   }
-
 }

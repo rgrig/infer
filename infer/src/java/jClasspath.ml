@@ -1,15 +1,13 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-open! PVariant
+open PolyVariantEqual
 open Javalib_pack
 module L = Logging
 
@@ -29,8 +27,8 @@ let collect_specs_filenames jar_filename =
       let proc_filename = Filename.chop_extension (Filename.basename filename) in
       String.Set.add set proc_filename
   in
-  models_specs_filenames
-  := List.fold ~f:collect ~init:!models_specs_filenames (Zip.entries zip_channel) ;
+  models_specs_filenames :=
+    List.fold ~f:collect ~init:!models_specs_filenames (Zip.entries zip_channel) ;
   Zip.close_in zip_channel
 
 
@@ -45,11 +43,12 @@ let is_model procname = String.Set.mem !models_specs_filenames (Typ.Procname.to_
 let split_classpath cp = Str.split (Str.regexp JFile.sep) cp
 
 let append_path classpath path =
-  if Sys.file_exists path = `Yes then
-    let root = Unix.getcwd () in
-    let full_path = Utils.filename_to_absolute ~root path in
+  let full_path = Utils.filename_to_absolute ~root:Config.project_root path in
+  if Sys.file_exists full_path = `Yes then
     if Int.equal (String.length classpath) 0 then full_path else classpath ^ JFile.sep ^ full_path
-  else classpath
+  else (
+    L.debug Capture Medium "Path %s not found" full_path ;
+    classpath )
 
 
 type file_entry = Singleton of SourceFile.t | Duplicate of (string * SourceFile.t) list
@@ -101,9 +100,10 @@ let add_source_file path map =
           (* Two or more source file with the same base name have been found *)
           let current_package = read_package_declaration current_source_file in
           Duplicate ((current_package, current_source_file) :: previous_source_files)
-    with Not_found ->
-      (* Most common case: there is no conflict with the base name of the source file *)
-      Singleton current_source_file
+    with
+    | Not_found_s _ | Caml.Not_found ->
+        (* Most common case: there is no conflict with the base name of the source file *)
+        Singleton current_source_file
   in
   String.Map.set ~key:basename ~data:entry map
 
@@ -119,7 +119,8 @@ let load_from_verbose_output javac_verbose_out =
             1. [wrote DirectoryFileObject[/path/to/classes_out:path/to/File.java]], leaves `path/to/File.java` in match group 2
             2. [wrote RegularFileObject[path/to/File.java]], leaves `path/to/File.java` in match group 5
             3. [wrote SimpleFileObject[path/to/File.java]], also leaves `path/to/File.java` in match group 5 *)
-         "\\[wrote \\(DirectoryFileObject\\[%s:\\(.*\\)\\|\\(\\(Regular\\|Simple\\)FileObject\\[\\(.*\\)\\)\\)\\]\\]"
+         "\\[wrote \
+          \\(DirectoryFileObject\\[%s:\\(.*\\)\\|\\(\\(Regular\\|Simple\\)FileObject\\[\\(.*\\)\\)\\)\\]\\]"
          Config.javac_classes_out)
   in
   let source_filename_re =
@@ -131,7 +132,7 @@ let load_from_verbose_output javac_verbose_out =
       let line = In_channel.input_line_exn file_in in
       if Str.string_match class_filename_re line 0 then
         let path =
-          try Str.matched_group 5 line with Not_found ->
+          try Str.matched_group 5 line with Caml.Not_found ->
             (* either matched group 5 is found, or matched group 2 is found, see doc for [class_filename_re] above *)
             Config.javac_classes_out ^/ Str.matched_group 2 line
         in
@@ -197,7 +198,8 @@ let search_classes path =
       else if Filename.check_suffix p "jar" then
         (add_root_path p paths, collect_classnames classes p)
       else accu )
-    (String.Set.empty, JBasics.ClassSet.empty) path
+    (String.Set.empty, JBasics.ClassSet.empty)
+    path
 
 
 let search_sources () =
@@ -220,7 +222,8 @@ let load_from_arguments classes_out_path =
     List.fold ~f:append_path ~init:classpath (List.rev path_list)
   in
   let classpath =
-    combine (split Config.classpath) "" |> combine (String.Set.elements roots)
+    combine (split Config.classpath) ""
+    |> combine (String.Set.elements roots)
     |> combine (split Config.bootclasspath)
   in
   (classpath, search_sources (), classes)
@@ -230,15 +233,17 @@ type callee_status = Translated | Missing of JBasics.class_name * JBasics.method
 
 type classmap = JCode.jcode Javalib.interface_or_class JBasics.ClassMap.t
 
+type classpath = {path: string; channel: Javalib.class_path}
+
 type program =
-  { classpath: Javalib.class_path
+  { classpath: classpath
   ; models: classmap
   ; mutable classmap: classmap
   ; callees: callee_status Typ.Procname.Hash.t }
 
 let get_classmap program = program.classmap
 
-let get_classpath program = program.classpath
+let get_classpath_channel program = program.classpath.channel
 
 let get_models program = program.models
 
@@ -260,16 +265,20 @@ let iter_missing_callees program ~f =
   Typ.Procname.Hash.iter select program.callees
 
 
-let cleanup program = Javalib.close_class_path program.classpath
+let cleanup program = Javalib.close_class_path program.classpath.channel
 
 let lookup_node cn program =
-  try Some (JBasics.ClassMap.find cn (get_classmap program)) with Not_found ->
+  try Some (JBasics.ClassMap.find cn (get_classmap program)) with Caml.Not_found -> (
     try
-      let jclass = javalib_get_class (get_classpath program) cn in
+      let jclass = javalib_get_class (get_classpath_channel program) cn in
       add_class cn jclass program ; Some jclass
     with
-    | JBasics.No_class_found _ | JBasics.Class_structure_error _ | Invalid_argument _ ->
+    | JBasics.No_class_found _ ->
+        (* TODO T28155039 Figure out when and what to log *)
         None
+    | (JBasics.Class_structure_error _ | Invalid_argument _) as exn ->
+        L.internal_error "ERROR: %s@." (Exn.to_string exn) ;
+        None )
 
 
 let collect_classes start_classmap jar_filename =
@@ -290,7 +299,7 @@ let load_program classpath classes =
     else collect_classes JBasics.ClassMap.empty !models_jar
   in
   let program =
-    { classpath= Javalib.class_path classpath
+    { classpath= {path= classpath; channel= Javalib.class_path classpath}
     ; models
     ; classmap= JBasics.ClassMap.empty
     ; callees= Typ.Procname.Hash.create 128 }

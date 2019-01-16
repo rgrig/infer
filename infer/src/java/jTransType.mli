@@ -1,24 +1,31 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 open Javalib_pack
 open Sawja_pack
 
+val create_fieldname : JBasics.class_name -> JBasics.field_signature -> Typ.Fieldname.t
+(** translate the name of the field *)
+
 val get_method_kind : JCode.jcode Javalib.jmethod -> Typ.Procname.Java.kind
 
 val get_method_procname :
-  JBasics.class_name -> JBasics.method_signature -> Typ.Procname.Java.kind -> Typ.Procname.t
-(** returns a procedure name based on the class name and the method's signature. *)
+     JClasspath.program
+  -> Tenv.t
+  -> JBasics.class_name
+  -> JBasics.method_signature
+  -> Typ.Procname.Java.kind
+  -> Typ.Procname.t
+(** returns a procedure name based on the class name and the method's signature *)
 
-val translate_method_name : JCode.jcode Javalib.jmethod -> Typ.Procname.t
+val translate_method_name :
+  JClasspath.program -> Tenv.t -> JCode.jcode Javalib.jmethod -> Typ.Procname.t
 (** translate the SIL procedure name of the Java method *)
 
 val get_class_struct_typ : JClasspath.program -> Tenv.t -> JBasics.class_name -> Typ.Struct.t

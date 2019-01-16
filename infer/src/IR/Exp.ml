@@ -1,18 +1,15 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** The Smallfoot Intermediate Language: Expressions *)
 
 open! IStd
 module Hashtbl = Caml.Hashtbl
-module L = Logging
 module F = Format
 
 (* reverse the natural order on Var *)
@@ -48,9 +45,9 @@ and t =
       (** A field offset, the type is the surrounding struct type *)
   | Lindex of t * t  (** An array index offset: [exp1\[exp2\]] *)
   | Sizeof of sizeof_data
-  [@@deriving compare]
+[@@deriving compare]
 
-let equal = [%compare.equal : t]
+let equal = [%compare.equal: t]
 
 let hash = Hashtbl.hash
 
@@ -74,11 +71,11 @@ module Hash = Hashtbl.Make (struct
   let hash = hash
 end)
 
-let is_null_literal = function Const Cint n -> IntLit.isnull n | _ -> false
+let is_null_literal = function Const (Cint n) -> IntLit.isnull n | _ -> false
 
 let is_this = function Lvar pvar -> Pvar.is_this pvar | _ -> false
 
-let is_zero = function Const Cint n -> IntLit.iszero n | _ -> false
+let is_zero = function Const (Cint n) -> IntLit.iszero n | _ -> false
 
 (** {2 Utility Functions for Expressions} *)
 
@@ -113,7 +110,7 @@ let rec root_of_lexp lexp =
 
 
 (** Checks whether an expression denotes a location by pointer arithmetic.
-    Currently, catches array - indexing expressions such as a[i] only. *)
+    Currently, catches array-indexing expressions such as a[i] only. *)
 let rec pointer_arith = function
   | Lfield (e, _, _) ->
       pointer_arith e
@@ -161,10 +158,10 @@ let minus_one = int IntLit.minus_one
 (** Create integer constant corresponding to the boolean value *)
 let bool b = if b then one else zero
 
-(** Create expresstion [e1 == e2] *)
+(** Create expression [e1 == e2] *)
 let eq e1 e2 = BinOp (Eq, e1, e2)
 
-(** Create expresstion [e1 != e2] *)
+(** Create expression [e1 != e2] *)
 let ne e1 e2 = BinOp (Ne, e1, e2)
 
 (** Create expression [e1 <= e2] *)
@@ -173,28 +170,21 @@ let le e1 e2 = BinOp (Le, e1, e2)
 (** Create expression [e1 < e2] *)
 let lt e1 e2 = BinOp (Lt, e1, e2)
 
-(** Extract the ids and pvars from an expression *)
-let get_vars exp =
-  let rec get_vars_ exp vars =
+let fold_captured ~f exp acc =
+  let rec fold_captured_ exp captured_acc =
     match exp with
-    | Lvar pvar ->
-        (fst vars, pvar :: snd vars)
-    | Var id ->
-        (id :: fst vars, snd vars)
     | Cast (_, e) | UnOp (_, e, _) | Lfield (e, _, _) | Exn e | Sizeof {dynamic_length= Some e} ->
-        get_vars_ e vars
+        fold_captured_ e captured_acc
     | BinOp (_, e1, e2) | Lindex (e1, e2) ->
-        get_vars_ e1 vars |> get_vars_ e2
+        fold_captured_ e1 captured_acc |> fold_captured_ e2
     | Closure {captured_vars} ->
-        List.fold
-          ~f:(fun vars_acc (captured_exp, _, _) -> get_vars_ captured_exp vars_acc)
-          ~init:vars captured_vars
-    | Const (Cint _ | Cfun _ | Cstr _ | Cfloat _ | Cclass _) ->
-        vars
-    | Sizeof _ ->
-        vars
+        List.fold captured_vars
+          ~f:(fun acc (captured_exp, _, _) -> f acc captured_exp)
+          ~init:captured_acc
+    | Const _ | Lvar _ | Var _ | Sizeof _ ->
+        captured_acc
   in
-  get_vars_ exp ([], [])
+  fold_captured_ exp acc
 
 
 (** Pretty print an expression. *)
@@ -202,7 +192,7 @@ let rec pp_ pe pp_t f e =
   let pp_exp = pp_ pe pp_t in
   let print_binop_stm_output e1 op e2 =
     match (op : Binop.t) with
-    | Eq | Ne | PlusA | Mult ->
+    | Eq | Ne | PlusA _ | Mult _ ->
         F.fprintf f "(%a %s %a)" pp_exp e2 (Binop.str pe op) pp_exp e1
     | Lt ->
         F.fprintf f "(%a %s %a)" pp_exp e2 (Binop.str pe Gt) pp_exp e1
@@ -219,11 +209,11 @@ let rec pp_ pe pp_t f e =
   | Var id ->
       Ident.pp f id
   | Const c ->
-      F.fprintf f "%a" (Const.pp pe) c
+      (Const.pp pe) f c
   | Cast (typ, e) ->
       F.fprintf f "(%a)%a" pp_t typ pp_exp e
   | UnOp (op, e, _) ->
-      F.fprintf f "%s%a" (Unop.str op) pp_exp e
+      F.fprintf f "%s%a" (Unop.to_string op) pp_exp e
   | BinOp (op, Const c, e2) when Config.smt_output ->
       print_binop_stm_output (Const c) op e2
   | BinOp (op, e1, e2) ->
@@ -257,14 +247,17 @@ let rec pp_ pe pp_t f e =
 and pp_captured_var pe pp_t f (exp, var, typ) =
   match exp with
   | Lvar evar when Pvar.equal var evar ->
-      F.fprintf f "%a" (Pvar.pp pe) var
+      (Pvar.pp pe) f var
   | _ ->
       F.fprintf f "(%a %a:%a)" (pp_ pe pp_t) exp (Pvar.pp pe) var (Typ.pp pe) typ
 
 
-let pp_printenv pe pp_typ f e = pp_ pe (pp_typ pe) f e
+let pp_printenv ~print_types pe f e =
+  let pp_typ = if print_types then Typ.pp_full else Typ.pp in
+  pp_ pe (pp_typ pe) f e
 
-let pp f e = pp_printenv Pp.text Typ.pp f e
+
+let pp f e = pp_printenv ~print_types:false Pp.text f e
 
 let to_string e = F.asprintf "%a" pp e
 
@@ -273,3 +266,60 @@ let is_objc_block_closure = function
       Typ.Procname.is_objc_block name
   | _ ->
       false
+
+
+let rec gen_free_vars =
+  let open Sequence.Generator in
+  function
+  | Var id ->
+      yield id
+  | Cast (_, e) | Exn e | Lfield (e, _, _) | Sizeof {dynamic_length= Some e} | UnOp (_, e, _) ->
+      gen_free_vars e
+  | Closure {captured_vars} ->
+      ISequence.gen_sequence_list captured_vars ~f:(fun (e, _, _) -> gen_free_vars e)
+  | Const (Cint _ | Cfun _ | Cstr _ | Cfloat _ | Cclass _) | Lvar _ | Sizeof {dynamic_length= None}
+    ->
+      return ()
+  | BinOp (_, e1, e2) | Lindex (e1, e2) ->
+      gen_free_vars e1 >>= fun () -> gen_free_vars e2
+
+
+let free_vars e = Sequence.Generator.run (gen_free_vars e)
+
+let ident_mem e id = free_vars e |> Sequence.exists ~f:(Ident.equal id)
+
+let rec gen_program_vars =
+  let open Sequence.Generator in
+  function
+  | Lvar name ->
+      yield name
+  | Const _ | Var _ | Sizeof {dynamic_length= None} ->
+      return ()
+  | Cast (_, e) | Exn e | Lfield (e, _, _) | Sizeof {dynamic_length= Some e} | UnOp (_, e, _) ->
+      gen_program_vars e
+  | BinOp (_, e1, e2) | Lindex (e1, e2) ->
+      gen_program_vars e1 >>= fun () -> gen_program_vars e2
+  | Closure {captured_vars} ->
+      ISequence.gen_sequence_list captured_vars ~f:(fun (e, _, _) -> gen_program_vars e)
+
+
+let program_vars e = Sequence.Generator.run (gen_program_vars e)
+
+let zero_of_type typ =
+  match typ.Typ.desc with
+  | Typ.Tint _ ->
+      Some (Const (Cint IntLit.zero))
+  | Typ.Tfloat _ ->
+      Some (Const (Cfloat 0.0))
+  | Typ.Tptr _ ->
+      Some (Const (Cint IntLit.null))
+  | _ ->
+      None
+
+
+let zero_of_type_exn typ = Option.value_exn (zero_of_type typ)
+
+let rec ignore_cast e = match e with Cast (_, e) -> ignore_cast e | _ -> e
+
+let rec ignore_integer_cast e =
+  match e with Cast (t, e) when Typ.is_int t -> ignore_integer_cast e | _ -> e

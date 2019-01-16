@@ -1,23 +1,32 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
+
 open! IStd
-module L = Logging
+module F = Format
 
 type attributes_kind = ProcUndefined | ProcObjCAccessor | ProcDefined [@@deriving compare]
 
-let int64_of_attributes_kind =
-  (* only allocate this once *)
-  let int64_two = Int64.of_int 2 in
-  function ProcUndefined -> Int64.zero | ProcObjCAccessor -> Int64.one | ProcDefined -> int64_two
+let equal_attributes_kind = [%compare.equal: attributes_kind]
+
+let attributes_kind_to_int64 =
+  [(ProcUndefined, Int64.zero); (ProcObjCAccessor, Int64.one); (ProcDefined, Int64.of_int 2)]
 
 
-let proc_kind_of_attr (proc_attributes: ProcAttributes.t) =
+let int64_of_attributes_kind a =
+  List.Assoc.find_exn ~equal:equal_attributes_kind attributes_kind_to_int64 a
+
+
+let deserialize_attributes_kind =
+  let int64_to_attributes_kind = List.Assoc.inverse attributes_kind_to_int64 in
+  function[@warning "-8"]
+  | Sqlite3.Data.INT n -> List.Assoc.find_exn ~equal:Int64.equal int64_to_attributes_kind n
+
+
+let proc_kind_of_attr (proc_attributes : ProcAttributes.t) =
   if proc_attributes.is_defined then ProcDefined
   else if Option.is_some proc_attributes.objc_accessor then ProcObjCAccessor
   else ProcUndefined
@@ -43,7 +52,7 @@ let replace_statement =
   ResultsDatabase.register_statement
     {|
 INSERT OR REPLACE INTO procedures
-SELECT :pname, :akind, :sfile, :pattr
+SELECT :pname, :proc_name_hum, :akind, :sfile, :pattr, :cfg
 FROM (
   SELECT NULL
   FROM (
@@ -52,20 +61,25 @@ FROM (
     FROM procedures
     WHERE proc_name = :pname )
   WHERE attr_kind < :akind
-        OR (attr_kind = :akind AND source_file < :sfile) )|}
+        OR (attr_kind = :akind AND source_file <= :sfile) )|}
 
 
-let replace pname_blob akind loc_file attr_blob =
+let replace pname pname_blob akind loc_file attr_blob proc_desc =
   ResultsDatabase.with_registered_statement replace_statement ~f:(fun db replace_stmt ->
       Sqlite3.bind replace_stmt 1 (* :pname *) pname_blob
-      |> SqliteUtils.check_sqlite_error db ~log:"replace bind pname" ;
-      Sqlite3.bind replace_stmt 2 (* :akind *) (Sqlite3.Data.INT (int64_of_attributes_kind akind))
-      |> SqliteUtils.check_sqlite_error db ~log:"replace bind attribute kind" ;
-      Sqlite3.bind replace_stmt 3 (* :sfile *) loc_file
-      |> SqliteUtils.check_sqlite_error db ~log:"replace bind source file" ;
-      Sqlite3.bind replace_stmt 4 (* :pattr *) attr_blob
-      |> SqliteUtils.check_sqlite_error db ~log:"replace bind proc attributes" ;
-      SqliteUtils.sqlite_unit_step db ~finalize:false ~log:"Attributes.replace" replace_stmt )
+      |> SqliteUtils.check_result_code db ~log:"replace bind pname" ;
+      Sqlite3.bind replace_stmt 2
+        (* :proc_name_hum *) (Sqlite3.Data.TEXT (Typ.Procname.to_string pname))
+      |> SqliteUtils.check_result_code db ~log:"replace bind proc_name_hum" ;
+      Sqlite3.bind replace_stmt 3 (* :akind *) (Sqlite3.Data.INT (int64_of_attributes_kind akind))
+      |> SqliteUtils.check_result_code db ~log:"replace bind attribute kind" ;
+      Sqlite3.bind replace_stmt 4 (* :sfile *) loc_file
+      |> SqliteUtils.check_result_code db ~log:"replace bind source file" ;
+      Sqlite3.bind replace_stmt 5 (* :pattr *) attr_blob
+      |> SqliteUtils.check_result_code db ~log:"replace bind proc attributes" ;
+      Sqlite3.bind replace_stmt 6 (* :cfg *) (Procdesc.SQLite.serialize proc_desc)
+      |> SqliteUtils.check_result_code db ~log:"replace bind cfg" ;
+      SqliteUtils.result_unit db ~finalize:false ~log:"Attributes.replace" replace_stmt )
 
 
 let find_more_defined_statement =
@@ -81,10 +95,11 @@ WHERE proc_name = :pname
 let should_try_to_update pname_blob akind =
   ResultsDatabase.with_registered_statement find_more_defined_statement ~f:(fun db find_stmt ->
       Sqlite3.bind find_stmt 1 (* :pname *) pname_blob
-      |> SqliteUtils.check_sqlite_error db ~log:"replace bind pname" ;
+      |> SqliteUtils.check_result_code db ~log:"replace bind pname" ;
       Sqlite3.bind find_stmt 2 (* :akind *) (Sqlite3.Data.INT (int64_of_attributes_kind akind))
-      |> SqliteUtils.check_sqlite_error db ~log:"replace bind attribute kind" ;
-      SqliteUtils.sqlite_result_step ~finalize:false ~log:"Attributes.replace" db find_stmt
+      |> SqliteUtils.check_result_code db ~log:"replace bind attribute kind" ;
+      SqliteUtils.result_single_column_option ~finalize:false ~log:"Attributes.replace" db
+        find_stmt
       |> (* there is no entry with a strictly larger "definedness" for that proc name *)
          Option.is_none )
 
@@ -103,27 +118,29 @@ let find ~defined pname_blob =
   (if defined then select_defined_statement else select_statement)
   |> ResultsDatabase.with_registered_statement ~f:(fun db select_stmt ->
          Sqlite3.bind select_stmt 1 pname_blob
-         |> SqliteUtils.check_sqlite_error db ~log:"find bind proc name" ;
-         SqliteUtils.sqlite_result_step ~finalize:false ~log:"Attributes.find" db select_stmt
+         |> SqliteUtils.check_result_code db ~log:"find bind proc name" ;
+         SqliteUtils.result_single_column_option ~finalize:false ~log:"Attributes.find" db
+           select_stmt
          |> Option.map ~f:ProcAttributes.SQLite.deserialize )
 
 
 let load pname = Typ.Procname.SQLite.serialize pname |> find ~defined:false
 
-let store (attr: ProcAttributes.t) =
+let store ~proc_desc (attr : ProcAttributes.t) =
   let pkind = proc_kind_of_attr attr in
   let key = Typ.Procname.SQLite.serialize attr.proc_name in
   if should_try_to_update key pkind then
-    replace key pkind
+    replace attr.proc_name key pkind
       (SourceFile.SQLite.serialize attr.loc.Location.file)
       (ProcAttributes.SQLite.serialize attr)
+      proc_desc
 
 
 let load_defined pname = Typ.Procname.SQLite.serialize pname |> find ~defined:true
 
 let find_file_capturing_procedure pname =
   Option.map (load pname) ~f:(fun proc_attributes ->
-      let source_file = proc_attributes.ProcAttributes.source_file_captured in
+      let source_file = proc_attributes.ProcAttributes.translation_unit in
       let origin =
         (* Procedure coming from include files if it has different location than the file where it
            was captured. *)
@@ -134,3 +151,12 @@ let find_file_capturing_procedure pname =
             `Source
       in
       (source_file, origin) )
+
+
+let pp_attributes_kind f = function
+  | ProcUndefined ->
+      F.pp_print_string f "<undefined>"
+  | ProcObjCAccessor ->
+      F.pp_print_string f "<ObjC accessor>"
+  | ProcDefined ->
+      F.pp_print_string f "<defined>"

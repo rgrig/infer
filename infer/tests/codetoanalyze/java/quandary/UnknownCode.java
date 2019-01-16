@@ -1,24 +1,20 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.quandary;
 
-import com.facebook.infer.builtins.InferTaint;
-
 import android.content.Intent;
 import android.os.Parcel;
+import com.facebook.infer.builtins.InferTaint;
 
 /** testing how the analysis handles missing/unknown code */
-
 public abstract class UnknownCode {
 
-  native static Object nativeMethod(Object o);
+  static native Object nativeMethod(Object o);
 
   abstract Object abstractMethod(Object o);
 
@@ -90,5 +86,4 @@ public abstract class UnknownCode {
     Object launderedSource = nativeMethod(source);
     InferTaint.inferSensitiveSink(launderedSource);
   }
-
 }

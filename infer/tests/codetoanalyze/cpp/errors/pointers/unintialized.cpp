@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 void initialized_no_dangling_ok() {
   int* p = new int(42);
@@ -39,4 +37,14 @@ int unknown_ctor_assume_no_dangling_ok() {
       *(t1->p); // TestDangling(0) is not known so p may have been initialized
   delete t1;
   return ret;
+}
+
+short union_ok(int* param) {
+  union {
+    int* a;
+    short* b;
+  } u;
+  u.a = param;
+  short* p = u.b;
+  return *p;
 }

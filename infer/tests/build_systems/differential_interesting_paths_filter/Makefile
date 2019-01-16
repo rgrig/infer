@@ -1,9 +1,7 @@
-# Copyright (c) 2017 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2017-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 # E2E test involving the interesting_paths_filter function
 
@@ -12,10 +10,14 @@ TESTS_DIR = ../..
 MODIFIED_FILES_FILE = filter_files.test.txt
 DIFFERENTIAL_ARGS = --differential-filter-files $(MODIFIED_FILES_FILE) \
 	--differential-filter-set "fixed,preexisting"
+SOURCES = $(wildcard src/com/example/*.java.current src/com/example/*.java.previous \
+	 src/com/example/*.java.unchanged)
 SRC_OBJECT_FILES = src/com/example/*.java src/com/example/*.class com/
 CLEAN_EXTRA = $(SRC_OBJECT_FILES) $(MODIFIED_FILES_FILE)
 
-include ../../differential.make
+include $(TESTS_DIR)/differential.make
+
+$(CURRENT_REPORT) $(PREVIOUS_REPORT): $(JAVA_DEPS)
 
 .PHONY: compare_reports replace_reports
 compare_reports: current.exp.test previous.exp.test

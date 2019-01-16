@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -18,7 +16,12 @@ let all_formals_untainted pdesc =
 module type Kind = sig
   include TraceElem.Kind
 
-  val get : Typ.Procname.t -> HilExp.t list -> Tenv.t -> (t * int option) option
+  val get :
+       caller_pname:Typ.Procname.t
+    -> Typ.Procname.t
+    -> HilExp.t list
+    -> Tenv.t
+    -> (t * int option) list
 
   val get_tainted_formals : Procdesc.t -> Tenv.t -> (Mangled.t * Typ.t * t option) list
 end
@@ -28,7 +31,7 @@ module type S = sig
 
   type spec = {source: t; index: int option}
 
-  val get : CallSite.t -> HilExp.t list -> Tenv.t -> spec option
+  val get : caller_pname:Typ.Procname.t -> CallSite.t -> HilExp.t list -> Tenv.t -> spec list
 
   val get_tainted_formals : Procdesc.t -> Tenv.t -> (Mangled.t * Typ.t * t option) list
 end
@@ -46,13 +49,11 @@ module Make (Kind : Kind) = struct
 
   let make ?indexes:_ kind site = {site; kind}
 
-  let get site actuals tenv =
-    match Kind.get (CallSite.pname site) actuals tenv with
-    | Some (kind, index) ->
-        let source = make kind site in
-        Some {source; index}
-    | None ->
-        None
+  let get ~caller_pname site actuals tenv =
+    Kind.get ~caller_pname (CallSite.pname site) actuals tenv
+    |> List.rev_map ~f:(fun (kind, index) ->
+           let source = make kind site in
+           {source; index} )
 
 
   let get_tainted_formals pdesc tenv =
@@ -89,7 +90,7 @@ module Dummy = struct
 
   let pp _ () = ()
 
-  let get _ _ _ = None
+  let get ~caller_pname:_ _ _ _ = []
 
   let get_tainted_formals pdesc _ =
     List.map ~f:(fun (name, typ) -> (name, typ, None)) (Procdesc.get_formals pdesc)

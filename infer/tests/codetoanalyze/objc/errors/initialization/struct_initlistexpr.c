@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 typedef struct Point {
@@ -12,9 +10,9 @@ typedef struct Point {
   int y;
 } Point;
 
-int foo() { return 5; }
+int return_5() { return 5; }
 
-int main() { struct Point p = {1, foo() + 3}; }
+void init_Point() { struct Point p = {1, return_5() + 3}; }
 
 int point_coords_set_correctly(Point* p) {
   *p = (Point){4, 5};

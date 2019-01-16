@@ -1,13 +1,10 @@
 /*
- * Copyright (c) 2016 - present
+ * Copyright (c) 2016-present, Programming Research Laboratory (ROPAS)
+ *                             Seoul National University, Korea
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * Programming Research Laboratory (ROPAS)
- * Seoul National University, Korea
- * All rights reserved.
- *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 void goto_loop() {
@@ -22,4 +19,23 @@ loop_start:
   goto loop_start;
 loop_end:
   a[i] = 'a'; /* BUG */
+}
+
+void goto_infinite_loop() {
+  int i = 0;
+L1:
+  i++;
+  if (i >= 0) { // Always true
+    goto L2;
+  } else {
+    goto L2;
+  }
+L2:
+  i++;
+  if (i >= 0) { // Always true
+    goto L1;
+  } else {
+    goto L1;
+  }
+  // Exit node not reachable
 }

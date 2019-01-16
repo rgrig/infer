@@ -1,22 +1,18 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.eradicate;
 
 import android.text.TextUtils;
-
-import javax.annotation.Nullable;
-import com.facebook.infer.annotation.Assertions;
 import com.facebook.infer.annotation.FalseOnNull;
 import com.facebook.infer.annotation.PropagatesNullable;
 import com.facebook.infer.annotation.TrueOnNull;
-
+import com.google.common.base.Strings;
+import javax.annotation.Nullable;
 
 public class CustomAnnotations {
 
@@ -57,6 +53,7 @@ public class CustomAnnotations {
         s.toString(); // BAD
       }
     }
+
     void myTextUtilsIsNotEmpty(@Nullable CharSequence s) {
       if (MyTextUtils.isNotEmpty(s)) {
         s.toString(); // OK
@@ -69,7 +66,6 @@ public class CustomAnnotations {
       }
     }
   }
-
 
   // Tests for the annotation @PropagatesNullable
   class TestPropagatesNullable {
@@ -124,6 +120,21 @@ public class CustomAnnotations {
 
     void m12Good() {
       m12("", "").length();
+    }
+  }
+
+  class TestModeledTrueOnNull {
+
+    void testIsEmptyOrNullOk(@Nullable String string) {
+      if (!Strings.isNullOrEmpty(string)) {
+        string.contains("Infer");
+      }
+    }
+
+    void testIsEmptyOrNullBad(@Nullable String string) {
+      if (Strings.isNullOrEmpty(string)) {
+        string.contains("Infer");
+      }
     }
   }
 }

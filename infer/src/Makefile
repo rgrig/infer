@@ -1,9 +1,7 @@
-# Copyright (c) 2013 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2013-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 ROOT_DIR = ../..
 include $(ROOT_DIR)/Makefile.config
@@ -11,7 +9,7 @@ include $(ROOT_DIR)/Makefile.config
 #### Global declarations ####
 
 ETC_DIR = $(INFER_DIR)/etc
-# paths to BUILD_DIR are relative because that's how jbuilder likes it
+# paths to BUILD_DIR are relative because that's how dune likes it
 # can be overriden to specify another build mode (eg opt)
 INFER_BUILD_DIR = _build/default
 
@@ -21,7 +19,7 @@ INFER_MAIN = infer
 
 #### Checkers declarations ####
 
-INFER_ATDGEN_STUB_BASES = atd/jsonbug atd/runstate atd/stacktree
+INFER_ATDGEN_STUB_BASES = atd/jsonbug atd/runstate atd/stacktree atd/java_method_decl atd/perf_profiler atd/java_profiler_samples
 INFER_ATDGEN_TYPES = j t
 INFER_ATDGEN_STUB_ATDS = $(INFER_ATDGEN_STUB_BASES:.atd)
 INFER_ATDGEN_SUFFIXES = $(foreach atd_t,$(INFER_ATDGEN_TYPES),_$(atd_t).ml _$(atd_t).mli)
@@ -87,17 +85,17 @@ OCAML_GENERATED_SOURCES += $(CLANG_ATDGEN_STUBS) $(CLANG_PLUGIN_MIRRORED_FILES)
 endif
 
 OCAML_SOURCES = \
-  $(wildcard */[a-zA-Z]*.ml */[a-zA-Z]*.ml[ily]) \
+  $(wildcard */[a-zA-Z]*.ml */[a-zA-Z]*.ml[ily] *.ml *.ml[ily]) \
   $(OCAML_GENERATED_SOURCES)
 
 .PHONY: all
 all: infer
 
-GENERATED_FROM_AUTOCONF = jbuild.common jbuild-workspace base/Version.ml
+GENERATED_FROM_AUTOCONF = dune.common dune-workspace base/Version.ml
 
-GENERATED_JBUILDS += jbuild atd/jbuild istd/jbuild scripts/jbuild
+GENERATED_DUNES += dune atd/dune base/dune IR/dune istd/dune scripts/dune
 
-SRC_BUILD_COMMON = $(GENERATED_FROM_AUTOCONF) $(GENERATED_JBUILDS) $(OCAML_SOURCES)
+SRC_BUILD_COMMON = $(GENERATED_FROM_AUTOCONF) $(GENERATED_DUNES) $(OCAML_SOURCES)
 ifeq ($(BUILD_C_ANALYZERS),yes)
 SRC_BUILD_COMMON += $(CLANG_BINIOU_DICT)
 endif
@@ -108,15 +106,19 @@ src_build_common: $(SRC_BUILD_COMMON)
 # single out infer.exe as the source of truth for make, knowing that in fact several targets are
 # produced by the build
 $(INFER_BUILD_DIR)/$(INFER_MAIN).exe: $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
-	$(QUIET)jbuilder build $(INFER_CONFIG_TARGETS)
+	$(QUIET)dune build $(INFER_CONFIG_TARGETS)
 #	let make know that the target is up-to-date even if ocamlbuild cached it
 	$(QUIET)touch $@
 
 .PHONY: test
 test: $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
-	$(QUIET)jbuilder build \
+	$(QUIET)dune build \
 	  $(patsubst $(INFER_BUILD_DIR)/%.exe,_build/test/%.bc,$(INFER_CONFIG_TARGETS)) \
 	  _build/test/scripts/checkCopyright.bc _build/test/$(INFERUNIT_MAIN).bc _build/test/infertop.bc
+
+.PHONY: doc
+doc: $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
+	$(QUIET)dune build @$(INFER_BUILD_DIR)/doc
 
 INFER_BIN_ALIASES = $(foreach alias,$(INFER_COMMANDS),$(BIN_DIR)/$(alias))
 
@@ -139,7 +141,7 @@ endif
 infer: $(INFER_BIN).exe
 
 $(INFER_BUILD_DIR)/$(INFER_MAIN).bc: $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
-	jbuilder build $(INFER_CONFIG_TARGETS:.exe=.bc)
+	dune build $(INFER_CONFIG_TARGETS:.exe=.bc)
 	$(QUIET)touch $@
 
 $(INFER_BIN).bc: $(INFER_BUILD_DIR)/$(INFER_MAIN).bc $(INFER_BIN_ALIASES)
@@ -160,7 +162,7 @@ endif
 clusters:=base clang java IR
 
 ml_src_files:=$(shell find . -not -path "./*stubs*" -regex '\./[a-zA-Z].*\.ml\(i\)*')
-inc_flags:=$(foreach dir,$(shell find . -type d),-I $(dir))
+inc_flags:=$(foreach dir,$(shell find . -not -path './_build*' -type d),-I $(dir))
 root_flags:=$(foreach root,$(roots),-r $(root))
 cluster_flags:=$(foreach cluster,$(clusters),-c $(cluster))
 
@@ -179,17 +181,21 @@ dsort:
 	$(QUIET)ocamldep.opt -sort $(inc_flags) $(ml_src_files)
 
 $(INFER_BUILD_DIR)/infertop.bc: $(SRC_DIR)/infertop.ml $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
-	jbuilder build $@
+	dune build $@
+	$(QUIET)touch $@
+
+$(INFERTOP_BIN): $(INFER_BUILD_DIR)/infertop.bc
+	$(QUIET)$(INSTALL_PROGRAM) $< $@
 	$(QUIET)touch $@
 
 .PHONY: toplevel
-toplevel: $(INFER_BUILD_DIR)/infertop.bc
+toplevel: $(INFERTOP_BIN)
 
 .PHONY: checkCopyright
 checkCopyright: $(CHECKCOPYRIGHT_BIN)
 
 $(CHECKCOPYRIGHT_BIN): $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
-	jbuilder build $(INFER_BUILD_DIR)/scripts/$(CHECKCOPYRIGHT_MAIN).exe
+	dune build $(INFER_BUILD_DIR)/scripts/$(CHECKCOPYRIGHT_MAIN).exe
 	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/scripts/$(CHECKCOPYRIGHT_MAIN).exe $(CHECKCOPYRIGHT_BIN)
 
 define gen_atdgen_rules
@@ -249,25 +255,26 @@ $(GENERATED_FROM_AUTOCONF): $(MAKEFILE_LIST)
 	  -e "s|@INFER_GIT_BRANCH[@]|$$INFER_GIT_BRANCH|g" \
 	  -e "s|@BUILD_C_ANALYZERS[@]|$(BUILD_C_ANALYZERS)|g" \
 	  -e "s|@BUILD_JAVA_ANALYZERS[@]|$(BUILD_JAVA_ANALYZERS)|g" \
-	  -e "s|@BUILD_PYTHON_ANALYZERS[@]|$(BUILD_PYTHON_ANALYZERS)|g" \
 	  -e "s|@OPAMSWITCH[@]|$(OPAMSWITCH)|g" \
 	  -e "s|@XCODE_SELECT[@]|$(XCODE_SELECT)|g" \
 	  -e "s|@INFER_MAN_LAST_MODIFIED[@]|$(INFER_MAN_LAST_MODIFIED)|g" \
 	  $@.in > "$$TMPFILE"; \
 	cat "$$TMPFILE" > $@; \
 	$(REMOVE) "$$TMPFILE"
-jbuild.common: jbuild.common.in
-jbuild-workspace: jbuild-workspace.in
+dune.common: dune.common.in
+dune-workspace: dune-workspace.in
 base/Version.ml: base/Version.ml.in
 
-$(GENERATED_JBUILDS): jbuild.common
+$(GENERATED_DUNES): dune.common
 	$(QUIET)cat $+ > $@
 
-jbuild: jbuild.in
-atd/jbuild: atd/jbuild.in
-deadcode/jbuild: deadcode/jbuild.in
-istd/jbuild: istd/jbuild.in
-scripts/jbuild: scripts/jbuild.in
+dune: dune.in
+atd/dune: atd/dune.in
+base/dune: base/dune.in
+deadcode/dune: deadcode/dune.in
+IR/dune: IR/dune.in
+istd/dune: istd/dune.in
+scripts/dune: scripts/dune.in
 
 .PHONY: clean
 clean:
@@ -277,12 +284,13 @@ clean:
 	$(REMOVE_DIR) $(BUILD_DIR)
 	$(REMOVE) $(ETC_DIR)/clang_ast.dict
 	$(REMOVE) $(GENERATED_FROM_AUTOCONF)
-	$(REMOVE) $(GENERATED_JBUILDS)
-	$(REMOVE) base/Version.ml.tmp.* jbuild.tmp.* jbuild-workspace.tmp.*
+	$(REMOVE) $(GENERATED_DUNES)
+	$(REMOVE) base/Version.ml.tmp.* dune.tmp.* dune-workspace.tmp.*
 #	be a bit more aggressive than needed with what we remove here so that stale binaries that
 #	only existed in previous versions get removed as well
 	$(REMOVE) $(BIN_DIR)/Infer* $(BIN_DIR)/infer-* $(INFER_BIN){,.bc,.exe} $(INFER_BIN_ALIASES) \
 	  $(INFERUNIT_BIN) $(CHECKCOPYRIGHT_BIN)
+	$(REMOVE) $(BIN_DIR)/llvm_sil
 	$(REMOVE) $(INFER_CREATE_TRACEVIEW_LINKS_BIN)
 	$(REMOVE) atd/*_{j,t,v}.ml{,i} atd/clang_*
 	$(REMOVE) mod_dep.dot

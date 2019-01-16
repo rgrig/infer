@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 open! IStd
 module F = Format
@@ -19,14 +17,21 @@ exception InferUserError of string
 
 exception InferExit of int
 
-let raise_error error ~msg =
+let raise_error ?backtrace error ~msg =
+  let do_raise exn =
+    match backtrace with
+    | None ->
+        raise exn
+    | Some backtrace ->
+        Caml.Printexc.raise_with_backtrace exn backtrace
+  in
   match error with
   | ExternalError ->
-      raise (InferExternalError msg)
+      do_raise (InferExternalError msg)
   | InternalError ->
-      raise (InferInternalError msg)
+      do_raise (InferInternalError msg)
   | UserError ->
-      raise (InferUserError msg)
+      do_raise (InferUserError msg)
 
 
 let log_uncaught_exception_callback_ref = ref (fun _ ~exitcode:_ -> ())
@@ -50,3 +55,16 @@ let exit_code_of_exception = function
       exitcode
   | _ ->
       (* exit code 2 is used by the OCaml runtime in cases of uncaught exceptions *) 2
+
+
+type style = Error | Fatal | Normal | Warning
+
+let term_styles_of_style = function
+  | Error ->
+      ANSITerminal.[Foreground Red]
+  | Fatal ->
+      ANSITerminal.[Bold; Foreground Red]
+  | Normal ->
+      [ANSITerminal.default]
+  | Warning ->
+      ANSITerminal.[Foreground Yellow]

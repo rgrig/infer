@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -16,8 +14,7 @@ module Html : sig
   val close : Unix.File_descr.t * Format.formatter -> unit
   (** Close an Html file *)
 
-  val create :
-    DB.Results_dir.path_kind -> DB.Results_dir.path -> Unix.File_descr.t * Format.formatter
+  val create : SourceFile.t -> DB.Results_dir.path -> Unix.File_descr.t * Format.formatter
   (** Create a new html file *)
 
   val modified_during_analysis : SourceFile.t -> DB.Results_dir.path -> bool
@@ -30,19 +27,29 @@ module Html : sig
   (** Open an Html file to append data *)
 
   val pp_line_link :
-    ?with_name:bool -> ?text:string option -> SourceFile.t -> DB.Results_dir.path
-    -> Format.formatter -> int -> unit
+       ?with_name:bool
+    -> ?text:string option
+    -> SourceFile.t
+    -> DB.Results_dir.path
+    -> Format.formatter
+    -> int
+    -> unit
   (** Print an html link to the given line number of the current source file *)
 
   val pp_hline : Format.formatter -> unit -> unit
   (** Print a horizontal line *)
 
-  val pp_end_color : Format.formatter -> unit -> unit
-  (** Print end color *)
-
   val pp_node_link :
-    DB.Results_dir.path -> Typ.Procname.t -> description:string -> preds:int list -> succs:int list
-    -> exn:int list -> isvisited:bool -> isproof:bool -> Format.formatter -> int -> unit
+       DB.Results_dir.path
+    -> Typ.Procname.t
+    -> description:string
+    -> preds:int list
+    -> succs:int list
+    -> exn:int list
+    -> isvisited:bool
+    -> Format.formatter
+    -> int
+    -> unit
   (** Print an html link to the given node.
       Usage: [pp_node_link path_to_root ... fmt id].
       [path_to_root] is the path to the dir for the procedure in the spec db.
@@ -52,12 +59,17 @@ module Html : sig
   (** Print an html link to the given proc *)
 
   val pp_session_link :
-    ?with_name:bool -> ?proc_name:Typ.Procname.t -> SourceFile.t -> string list -> Format.formatter
-    -> int * int * int -> unit
+       ?with_name:bool
+    -> ?proc_name:Typ.Procname.t
+    -> SourceFile.t
+    -> string list
+    -> Format.formatter
+    -> int * int * int
+    -> unit
   (** Print an html link given node id and session *)
 
-  val pp_start_color : Format.formatter -> Pp.color -> unit
-  (** Print start color *)
+  val with_color : Pp.color -> (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a -> unit
+  (** Print using color *)
 end
 
 (** Create and print xml trees *)

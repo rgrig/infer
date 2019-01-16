@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -48,8 +46,11 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
               astate_acc
         in
         List.fold ~f:add_actual_by_ref ~init:astate actuals
-    | Sil.Store _ | Load _ | Prune _ | Nullify _ | Abstract _ | Remove_temps _ | Declare_locals _ ->
+    | Sil.Store _ | Load _ | Prune _ | Nullify _ | Abstract _ | ExitScope _ ->
         astate
+
+
+  let pp_session_name _node fmt = Format.pp_print_string fmt "address taken"
 end
 
-module Analyzer = AbstractInterpreter.Make (ProcCfg.Exceptional) (TransferFunctions)
+module Analyzer = AbstractInterpreter.MakeRPO (TransferFunctions (ProcCfg.Exceptional))

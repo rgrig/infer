@@ -1,18 +1,13 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 
 (** General utility functions such as functions on lists *)
-
-module L = Logging
-module F = Format
 
 type var_info = Clang_ast_t.decl_info * Clang_ast_t.qual_type * Clang_ast_t.var_decl_info * bool
 
@@ -26,11 +21,15 @@ let rec swap_elements_list l =
       assert false
 
 
-let append_no_duplicates_annotations list1 list2 =
-  let equal (annot1, _) (annot2, _) =
-    String.equal annot1.Annot.class_name annot2.Annot.class_name
+let append_no_duplicates_annotations =
+  let cmp (annot1, _) (annot2, _) =
+    String.compare annot1.Annot.class_name annot2.Annot.class_name
   in
-  IList.append_no_duplicates equal list1 list2
+  Staged.unstage (IList.append_no_duplicates ~cmp)
+
+
+let append_no_duplicates_methods =
+  Staged.unstage (IList.append_no_duplicates ~cmp:Typ.Procname.compare)
 
 
 let add_no_duplicates_fields field_tuple l =
@@ -106,7 +105,7 @@ let get_var_name_mangled decl_info name_info var_decl_info =
   (name_string, mangled)
 
 
-let mk_sil_global_var {CFrontend_config.source_file} ?(mk_name= fun _ x -> x) decl_info
+let mk_sil_global_var {CFrontend_config.source_file} ?(mk_name = fun _ x -> x) decl_info
     named_decl_info var_decl_info qt =
   let name_string, simple_name = get_var_name_mangled decl_info named_decl_info var_decl_info in
   let translation_unit =
@@ -122,6 +121,7 @@ let mk_sil_global_var {CFrontend_config.source_file} ?(mk_name= fun _ x -> x) de
         Some source_file
   in
   let is_constexpr = var_decl_info.Clang_ast_t.vdi_is_const_expr in
+  let is_ice = var_decl_info.Clang_ast_t.vdi_is_init_ice in
   let is_pod =
     CAst_utils.get_desugared_type qt.Clang_ast_t.qt_type_ptr
     |> Option.bind ~f:(function
@@ -131,7 +131,8 @@ let mk_sil_global_var {CFrontend_config.source_file} ?(mk_name= fun _ x -> x) de
              None )
     |> Option.value_map ~default:true ~f:(function
          | Clang_ast_t.CXXRecordDecl (_, _, _, _, _, _, _, {xrdi_is_pod})
-         | Clang_ast_t.ClassTemplateSpecializationDecl (_, _, _, _, _, _, _, {xrdi_is_pod}, _, _) ->
+         | Clang_ast_t.ClassTemplateSpecializationDecl (_, _, _, _, _, _, _, {xrdi_is_pod}, _, _)
+           ->
              xrdi_is_pod
          | _ ->
              true )
@@ -139,10 +140,10 @@ let mk_sil_global_var {CFrontend_config.source_file} ?(mk_name= fun _ x -> x) de
   let is_static_global =
     var_decl_info.Clang_ast_t.vdi_is_global
     (* only top level declarations are really have file scope, static field members have a global scope *)
-    && not var_decl_info.Clang_ast_t.vdi_is_static_data_member
+    && (not var_decl_info.Clang_ast_t.vdi_is_static_data_member)
     && match var_decl_info.Clang_ast_t.vdi_storage_class with Some "static" -> true | _ -> false
   in
-  Pvar.mk_global ~is_constexpr ~is_pod
+  Pvar.mk_global ~is_constexpr ~is_ice ~is_pod
     ~is_static_local:var_decl_info.Clang_ast_t.vdi_is_static_local ~is_static_global
     ?translation_unit (mk_name name_string simple_name)
 
@@ -158,7 +159,7 @@ let mk_sil_var trans_unit_ctx named_decl_info decl_info_qual_type_opt procname o
           if var_decl_info.Clang_ast_t.vdi_is_static_local then
             Some
               (fun name_string _ ->
-                Mangled.from_string (Typ.Procname.to_string outer_procname ^ "_" ^ name_string) )
+                Mangled.from_string (Typ.Procname.to_string outer_procname ^ "." ^ name_string) )
           else None
         in
         mk_sil_global_var trans_unit_ctx ?mk_name decl_info named_decl_info var_decl_info qt

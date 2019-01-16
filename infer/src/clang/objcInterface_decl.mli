@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -13,7 +11,15 @@ open! IStd
     struct with the corresponding fields, potential superclass and list of defined methods *)
 
 val interface_declaration :
-  CAst_utils.qual_type_to_sil_type -> Tenv.t -> Clang_ast_t.decl -> Typ.desc
+     CAst_utils.qual_type_to_sil_type
+  -> CAst_utils.procname_from_decl
+  -> Tenv.t
+  -> Clang_ast_t.decl
+  -> Typ.desc
 
 val interface_impl_declaration :
-  CAst_utils.qual_type_to_sil_type -> Tenv.t -> Clang_ast_t.decl -> Typ.desc
+     CAst_utils.qual_type_to_sil_type
+  -> CAst_utils.procname_from_decl
+  -> Tenv.t
+  -> Clang_ast_t.decl
+  -> Typ.desc

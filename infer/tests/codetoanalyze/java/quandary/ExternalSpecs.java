@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.quandary;
@@ -12,11 +10,9 @@ package codetoanalyze.java.quandary;
 import android.app.Activity;
 import android.content.Intent;
 import android.util.Log;
-
 import com.facebook.infer.builtins.InferTaint;
 
 /** Testing that sources and sinks specified in external JSON work correctly */
-
 public class ExternalSpecs {
 
   // we specify this as a source with kind PrivateData in .inferconfig
@@ -102,12 +98,37 @@ public class ExternalSpecs {
     return sanitized;
   }
 
+  void FN_sanitizeOneBranchBad(boolean b) {
+    Object source = InferTaint.inferSecretSource();
+    Object o;
+    if (b) {
+      o = sanitizer(source);
+    } else {
+      o = source;
+    }
+    InferTaint.inferSensitiveSink(o);
+  }
+
+  Object sanitizeOneBranchInCallee(Object o, boolean b) {
+    if (b) {
+      return sanitizer(o);
+    } else {
+      return o;
+    }
+  }
+
+  void FN_sanitizerWeakUpdateBad(boolean b) {
+    Object source = InferTaint.inferSecretSource();
+    Object o = sanitizeOneBranchInCallee(source, b);
+    InferTaint.inferSensitiveSink(o);
+  }
+
   // if theres' a procedure with the same name defined in .inferconfig as a sink on parameter 1,
   // we shouldn't crash
   public static void loggingSink1() {}
 
   // we shouldn't fail when calling this either
-  public static void loggingSink1(Object notASink) { }
+  public static void loggingSink1(Object notASink) {}
 
   void callLoggingSink1sOk(Object o) {
     loggingSink1();
@@ -123,5 +144,39 @@ public class ExternalSpecs {
     Object sourceAgain = sinkThatPropagates(source); // should report
     loggingSink1(null, sourceAgain); // should report here too
   }
+}
 
+interface InterfaceSpec {
+
+  // marked as source in .inferconfig
+  public Object source();
+
+  // marked as sink in .inferconfig
+  public void sink(Object o);
+}
+
+class InterfaceSpecImpl implements InterfaceSpec {
+
+  @Override
+  public Object source() {
+    return null;
+  }
+
+  @Override
+  public void sink(Object o) {}
+
+  public void externalSpecBad() {
+    sink(source());
+  }
+}
+
+class ConstructorSink {
+
+  // specified as a source in .inferconfig
+  public ConstructorSink(Object o) {}
+
+  public static ConstructorSink constructorSinkBad() {
+    Object source = InferTaint.inferSecretSource();
+    return new ConstructorSink(source);
+  }
 }

@@ -1,9 +1,7 @@
-# Copyright (c) 2013 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2013-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 from __future__ import absolute_import
 from __future__ import division
@@ -36,18 +34,20 @@ MAGENTA = terminal_only('\033[35m')
 MAGENTA_BG = terminal_only('\033[45m')
 BRIGHT = terminal_only('\033[1m')
 DIM = terminal_only('\033[2m')
+GREEN = terminal_only('\033[32m')
 RED = terminal_only('\033[31m')
 RESET = terminal_only('\033[0m')
 WHITE = terminal_only('\033[37m')
 WHITE_BG = terminal_only('\033[47m')
-YELLOW = terminal_only('\033[35m')
+YELLOW = terminal_only('\033[33m')
 
-ERROR = RED
 HEADER = BRIGHT
 SUCCESS = BLUE_BG + WHITE + BRIGHT
-WARNING = ''
-ADVICE = ''
-LIKE = ''
+
+ERROR = RED
+WARNING = YELLOW
+ADVICE = BLUE
+LIKE = GREEN
 
 
 class Invalid_mode(Exception):

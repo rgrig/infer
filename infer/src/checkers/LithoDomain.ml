@@ -1,20 +1,17 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 module F = Format
-module L = Logging
 
 module LocalAccessPath = struct
   type t = {access_path: AccessPath.t; parent: Typ.Procname.t} [@@deriving compare]
 
-  let equal = [%compare.equal : t]
+  let equal = [%compare.equal: t]
 
   let make access_path parent = {access_path; parent}
 
@@ -41,7 +38,7 @@ end
 module CallSet = AbstractDomain.FiniteSet (MethodCall)
 include AbstractDomain.Map (LocalAccessPath) (CallSet)
 
-let substitute ~(f_sub: LocalAccessPath.t -> LocalAccessPath.t option) astate =
+let substitute ~(f_sub : LocalAccessPath.t -> LocalAccessPath.t option) astate =
   fold
     (fun original_access_path call_set acc ->
       let access_path' =
@@ -68,8 +65,8 @@ let substitute ~(f_sub: LocalAccessPath.t -> LocalAccessPath.t option) astate =
     maximal chain. For example, if the domain encodes the chains foo().bar().goo() and foo().baz(),
     [f] will be called once on foo().bar().goo() and once on foo().baz() *)
 let iter_call_chains_with_suffix ~f call_suffix astate =
-  let rec unroll_call_ ({receiver; procname}: MethodCall.t) (acc, visited) =
-    let is_cycle (call: MethodCall.t) =
+  let rec unroll_call_ ({receiver; procname} : MethodCall.t) (acc, visited) =
+    let is_cycle (call : MethodCall.t) =
       (* detect direct cycles and cycles due to mutual recursion *)
       LocalAccessPath.equal call.receiver receiver || Typ.Procname.Set.mem call.procname visited
     in
@@ -82,7 +79,7 @@ let iter_call_chains_with_suffix ~f call_suffix astate =
           if not (is_cycle call) then unroll_call_ call (acc', visited')
           else f receiver.access_path acc' )
         calls'
-    with Not_found -> f receiver.access_path acc'
+    with Caml.Not_found -> f receiver.access_path acc'
   in
   unroll_call_ call_suffix ([], Typ.Procname.Set.empty)
 

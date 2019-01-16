@@ -1,19 +1,17 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-module F = Format
-module L = Logging
 
 (** Annotations. *)
 
 let any_thread = "AnyThread"
+
+let auto_cleanup = "AutoCleanup"
 
 let bind = "Bind"
 
@@ -47,6 +45,8 @@ let initializer_ = "Initializer"
 
 let inject = "Inject"
 
+let inject_prop = "InjectProp"
+
 let inject_view = "InjectView"
 
 let mutable_ = "Mutable"
@@ -67,6 +67,10 @@ let on_unbind = "OnUnbind"
 
 let on_unmount = "OnUnmount"
 
+let mainthread = "MainThread"
+
+let nonblocking = "NonBlocking"
+
 let notnull = "NotNull"
 
 let not_thread_safe = "NotThreadSafe"
@@ -83,7 +87,7 @@ let returns_ownership = "ReturnsOwnership"
 
 let synchronized_collection = "SynchronizedCollection"
 
-let strict = "com.facebook.infer.annotation.Strict"
+let generated_graphql = "GeneratedGraphQL"
 
 let suppress_lint = "SuppressLint"
 
@@ -105,13 +109,16 @@ let visibleForTesting = "VisibleForTesting"
 
 let volatile = "volatile"
 
-let ia_has_annotation_with (ia: Annot.Item.t) (predicate: Annot.t -> bool) : bool =
+let worker_thread = "WorkerThread"
+
+let ia_has_annotation_with (ia : Annot.Item.t) (predicate : Annot.t -> bool) : bool =
   List.exists ~f:(fun (a, _) -> predicate a) ia
 
 
-let ma_has_annotation_with ((ia, ial): Annot.Method.t) (predicate: Annot.t -> bool) : bool =
+let ma_has_annotation_with ({return; params} : Annot.Method.t) (predicate : Annot.t -> bool) : bool
+    =
   let has_annot a = ia_has_annotation_with a predicate in
-  has_annot ia || List.exists ~f:has_annot ial
+  has_annot return || List.exists ~f:has_annot params
 
 
 (** [annot_ends_with annot ann_name] returns true if the class name of [annot], without the package,
@@ -124,16 +131,14 @@ let annot_ends_with annot ann_name =
       String.equal annot_class_name ann_name
 
 
-let class_name_matches s ((annot: Annot.t), _) = String.equal s annot.class_name
+let class_name_matches s ((annot : Annot.t), _) = String.equal s annot.class_name
 
 let ia_ends_with ia ann_name = List.exists ~f:(fun (a, _) -> annot_ends_with a ann_name) ia
 
 let ia_contains ia ann_name = List.exists ~f:(class_name_matches ann_name) ia
 
-let ia_get ia ann_name = List.find ~f:(class_name_matches ann_name) ia |> Option.map ~f:fst
-
 let pdesc_get_return_annot pdesc =
-  fst (Procdesc.get_attributes pdesc).ProcAttributes.method_annotation
+  (Procdesc.get_attributes pdesc).ProcAttributes.method_annotation.return
 
 
 let pdesc_has_return_annot pdesc predicate = predicate (pdesc_get_return_annot pdesc)
@@ -142,17 +147,17 @@ let pdesc_return_annot_ends_with pdesc annot =
   pdesc_has_return_annot pdesc (fun ia -> ia_ends_with ia annot)
 
 
-(* note: we would use Specs.proc_resolve_attributes directly instead of requiring [attrs_of_pname],
+(* note: we would use Summary.proc_resolve_attributes directly instead of requiring [attrs_of_pname],
    but doing so creates a circular dependency *)
 let pname_has_return_annot pname ~attrs_of_pname predicate =
   match attrs_of_pname pname with
   | Some attributes ->
-      predicate (fst attributes.ProcAttributes.method_annotation)
+      predicate attributes.ProcAttributes.method_annotation.return
   | None ->
       false
 
 
-let field_has_annot fieldname (struct_typ: Typ.Struct.t) predicate =
+let field_has_annot fieldname (struct_typ : Typ.Struct.t) predicate =
   let fld_has_taint_annot (fname, _, annot) =
     Typ.Fieldname.equal fieldname fname && predicate annot
   in
@@ -160,7 +165,7 @@ let field_has_annot fieldname (struct_typ: Typ.Struct.t) predicate =
   || List.exists ~f:fld_has_taint_annot struct_typ.statics
 
 
-let struct_typ_has_annot (struct_typ: Typ.Struct.t) predicate = predicate struct_typ.annots
+let struct_typ_has_annot (struct_typ : Typ.Struct.t) predicate = predicate struct_typ.annots
 
 let ia_is_not_thread_safe ia = ia_ends_with ia not_thread_safe
 
@@ -183,6 +188,8 @@ let ia_is_thread_safe ia = ia_ends_with ia thread_safe
 let ia_is_thrift_service ia = ia_ends_with ia thrift_service
 
 let ia_is_true_on_null ia = ia_ends_with ia true_on_null
+
+let ia_is_nonblocking ia = ia_ends_with ia nonblocking
 
 let ia_is_initializer ia = ia_ends_with ia initializer_
 
@@ -215,8 +222,6 @@ let ia_is_field_injector_readwrite ia =
 
 let ia_is_mutable ia = ia_ends_with ia mutable_
 
-let ia_get_strict ia = ia_get ia strict
-
 let ia_is_verify ia = ia_contains ia verify_annotation
 
 let ia_is_expensive ia = ia_ends_with ia expensive
@@ -241,4 +246,8 @@ let ia_is_on_unmount ia = ia_ends_with ia on_unmount
 
 let ia_is_ui_thread ia = ia_ends_with ia ui_thread
 
+let ia_is_mainthread ia = ia_ends_with ia mainthread
+
 let ia_is_thread_confined ia = ia_ends_with ia thread_confined
+
+let ia_is_worker_thread ia = ia_ends_with ia worker_thread

@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -33,6 +31,7 @@ let dup_formatter fmt1 fmt2 =
   let f = copy_formatter fmt1 in
   F.pp_set_formatter_out_functions f
     { F.out_string= (fun s p n -> out_funs1.out_string s p n ; out_funs2.out_string s p n)
+    ; out_indent= (fun n -> out_funs1.out_indent n ; out_funs2.out_indent n)
     ; out_flush= (fun () -> out_funs1.out_flush () ; out_funs2.out_flush ())
     ; out_newline= (fun () -> out_funs1.out_newline () ; out_funs2.out_newline ())
     ; out_spaces= (fun n -> out_funs1.out_spaces n ; out_funs2.out_spaces n) } ;
@@ -63,7 +62,7 @@ let mk_file_formatter file_fmt category0 =
       not (phys_equal !prev_category prefix)
     in
     if !is_newline || category_has_changed then (
-      if not !is_newline && category_has_changed then
+      if (not !is_newline) && category_has_changed then
         (* category change but previous line has not ended: print newline *)
         out_functions_orig.out_newline () ;
       is_newline := false ;
@@ -74,6 +73,7 @@ let mk_file_formatter file_fmt category0 =
     print_prefix_if_newline () ;
     out_functions_orig.out_string s p n
   in
+  let out_indent n = print_prefix_if_newline () ; out_functions_orig.out_indent n in
   let out_newline () =
     print_prefix_if_newline () ;
     out_functions_orig.out_newline () ;
@@ -81,13 +81,36 @@ let mk_file_formatter file_fmt category0 =
   in
   let out_spaces n = print_prefix_if_newline () ; out_functions_orig.out_spaces n in
   F.pp_set_formatter_out_functions f
-    {F.out_string; out_flush= out_functions_orig.out_flush; out_newline; out_spaces} ;
+    {F.out_string; out_flush= out_functions_orig.out_flush; out_indent; out_newline; out_spaces} ;
   f
+
+
+let color_console ?(use_stdout = false) scheme =
+  let scheme = Option.value scheme ~default:Normal in
+  let formatter = if use_stdout then F.std_formatter else F.err_formatter in
+  let can_colorize = Unix.(isatty (if use_stdout then stdout else stderr)) in
+  if can_colorize then (
+    let styles = term_styles_of_style scheme in
+    let orig_out_functions = F.pp_get_formatter_out_functions formatter () in
+    let out_string s p n =
+      let s = ANSITerminal.sprintf styles "%s" (String.slice s p n) in
+      orig_out_functions.F.out_string s 0 (String.length s)
+    in
+    let out_newline () =
+      (* erase to end-of-line to avoid garbage, in particular when writing over the taskbar *)
+      let erase_eol = "\027[0K" in
+      orig_out_functions.F.out_string erase_eol 0 (String.length erase_eol) ;
+      orig_out_functions.F.out_newline ()
+    in
+    F.pp_set_formatter_out_functions formatter
+      {(F.pp_get_formatter_out_functions formatter ()) with F.out_string; out_newline} ;
+    formatter )
+  else formatter
 
 
 let register_formatter =
   let all_prefixes = ref [] in
-  fun ?(use_stdout= false) prefix ->
+  fun ?use_stdout ?color_scheme prefix ->
     all_prefixes := prefix :: !all_prefixes ;
     (* lazy so that we get a chance to register all prefixes before computing their max length for
        alignment purposes *)
@@ -99,7 +122,7 @@ let register_formatter =
        in
        let justified_prefix = fill ^ prefix in
        let mk_formatters () =
-         let console = if use_stdout then F.std_formatter else F.err_formatter in
+         let console = color_console ?use_stdout color_scheme in
          match !log_file with
          | Some (file_fmt, _) ->
              let file = mk_file_formatter file_fmt justified_prefix in
@@ -143,9 +166,9 @@ let close_logs () =
       F.pp_print_flush file_fmt () ; Out_channel.close chan )
 
 
-let () = Epilogues.register ~f:close_logs "flushing logs and closing log file"
+let () = Epilogues.register ~f:close_logs ~description:"flushing logs and closing log file"
 
-let log ~to_console ?(to_file= true) (lazy formatters) =
+let log ~to_console ?(to_file = true) (lazy formatters) =
   match (to_console, to_file) with
   | false, false ->
       F.ifprintf F.std_formatter
@@ -161,13 +184,15 @@ let log ~to_console ?(to_file= true) (lazy formatters) =
 
 let debug_file_fmts = register_formatter "debug"
 
+let debug_dev_file_fmts = register_formatter "local debug"
+
 let environment_info_file_fmts = register_formatter "environment"
 
-let external_warning_file_fmts = register_formatter "extern warn"
+let external_warning_file_fmts = register_formatter ~color_scheme:Warning "extern warn"
 
-let external_error_file_fmts = register_formatter "extern err"
+let external_error_file_fmts = register_formatter ~color_scheme:Error "extern err"
 
-let internal_error_file_fmts = register_formatter "intern err"
+let internal_error_file_fmts = register_formatter ~color_scheme:Error "intern err"
 
 let phase_file_fmts = register_formatter "phase"
 
@@ -175,35 +200,21 @@ let progress_file_fmts = register_formatter "progress"
 
 let result_file_fmts = register_formatter ~use_stdout:true "result"
 
-let user_warning_file_fmts = register_formatter "user warn"
+let user_warning_file_fmts = register_formatter ~color_scheme:Warning "user warn"
 
-let user_error_file_fmts = register_formatter "user err"
+let user_error_file_fmts = register_formatter ~color_scheme:Fatal "user err"
 
 let phase fmt = log ~to_console:false phase_file_fmts fmt
 
 let progress fmt = log ~to_console:(not Config.quiet) progress_file_fmts fmt
 
-let progress_bar text =
-  log
-    ~to_console:(Config.show_progress_bar && not Config.quiet)
-    ~to_file:true progress_file_fmts "%s@?" text
-
-
-let progressbar_file () = progress_bar Config.log_analysis_file
-
-let progressbar_procedure () = progress_bar Config.log_analysis_procedure
-
-let progressbar_timeout_event failure_kind =
-  if Config.debug_mode then
-    match failure_kind with
-    | SymOp.FKtimeout ->
-        progress_bar Config.log_analysis_wallclock_timeout
-    | SymOp.FKsymops_timeout _ ->
-        progress_bar Config.log_analysis_symops_timeout
-    | SymOp.FKrecursion_timeout _ ->
-        progress_bar Config.log_analysis_recursion_timeout
-    | SymOp.FKcrash msg ->
-        progress_bar (Printf.sprintf "%s(%s)" Config.log_analysis_crash msg)
+let task_progress ~f pp x =
+  let to_console =
+    match Config.progress_bar with `Plain -> true | `Quiet | `MultiLine -> false
+  in
+  log ~to_console progress_file_fmts "%a starting@." pp x ;
+  f () ;
+  log ~to_console progress_file_fmts "%a DONE@." pp x
 
 
 let user_warning fmt = log ~to_console:(not Config.quiet) user_warning_file_fmts fmt
@@ -216,6 +227,8 @@ let debug_level_of_int n =
   if n <= 0 then Quiet else if Int.equal n 1 then Medium else (* >= 2 *) Verbose
 
 
+let debug_dev fmt = log ~to_console:true debug_dev_file_fmts fmt
+
 let analysis_debug_level = debug_level_of_int Config.debug_level_analysis
 
 let bufferoverrun_debug_level = debug_level_of_int Config.bo_debug
@@ -226,7 +239,9 @@ let linters_debug_level = debug_level_of_int Config.debug_level_linters
 
 let mergecapture_debug_level = Quiet
 
-type debug_kind = Analysis | BufferOverrun | Capture | Linters | MergeCapture
+let test_determinator_debug_level = debug_level_of_int Config.debug_level_test_determinator
+
+type debug_kind = Analysis | BufferOverrun | Capture | Linters | MergeCapture | TestDeterminator
 
 let debug kind level fmt =
   let base_level =
@@ -241,6 +256,8 @@ let debug kind level fmt =
         linters_debug_level
     | MergeCapture ->
         mergecapture_debug_level
+    | TestDeterminator ->
+        test_determinator_debug_level
   in
   let to_file = compare_debug_level level base_level <= 0 in
   log ~to_console:false ~to_file debug_file_fmts fmt
@@ -257,17 +274,23 @@ let external_error fmt = log ~to_console:true external_error_file_fmts fmt
 let internal_error fmt = log ~to_console:true internal_error_file_fmts fmt
 
 (** Type of location in ml source: __POS__ *)
-type ml_loc = string * int * int * int
+type ocaml_pos = string * int * int * int
 
 (** Convert a ml location to a string *)
-let ml_loc_to_string (file, lnum, cnum, enum) = Printf.sprintf "%s:%d:%d-%d:" file lnum cnum enum
+let ocaml_pos_to_string (file, lnum, cnum, enum) =
+  Printf.sprintf "%s:%d:%d-%d:" file lnum cnum enum
+
 
 (** Pretty print a location of ml source *)
-let pp_ml_loc fmt ml_loc = F.fprintf fmt "%s" (ml_loc_to_string ml_loc)
+let pp_ocaml_pos fmt ocaml_pos = F.pp_print_string fmt (ocaml_pos_to_string ocaml_pos)
 
-let pp_ml_loc_opt fmt ml_loc_opt =
+let pp_ocaml_pos_opt fmt ocaml_pos_opt =
   if Config.developer_mode then
-    match ml_loc_opt with None -> () | Some ml_loc -> F.fprintf fmt "(%a)" pp_ml_loc ml_loc
+    match ocaml_pos_opt with
+    | None ->
+        ()
+    | Some ocaml_pos ->
+        F.fprintf fmt "(%a)" pp_ocaml_pos ocaml_pos
 
 
 let log_of_kind error fmt =
@@ -281,7 +304,12 @@ let log_of_kind error fmt =
 
 
 let die error msg =
-  F.kasprintf (fun msg -> log_of_kind error "%s@\n" msg ; raise_error error ~msg) msg
+  let backtrace = Caml.Printexc.get_raw_backtrace () in
+  F.kasprintf
+    (fun msg ->
+      log_of_kind error "%s@\n%s@." msg (Caml.Printexc.raw_backtrace_to_string backtrace) ;
+      raise_error ~backtrace error ~msg )
+    msg
 
 
 (* create new channel from the log file, and dumps the contents of the temporary log buffer there *)
@@ -300,7 +328,7 @@ let setup_log_file () =
         in
         (* assumes the results dir exists already *)
         let logfile_path = results_dir ^/ Config.log_file in
-        let preexisting_logfile = PVariant.( = ) (Sys.file_exists logfile_path) `Yes in
+        let preexisting_logfile = PolyVariantEqual.( = ) (Sys.file_exists logfile_path) `Yes in
         let chan = Pervasives.open_out_gen [Open_append; Open_creat] 0o666 logfile_path in
         let file_fmt =
           let f = F.formatter_of_out_channel chan in
@@ -313,107 +341,108 @@ let setup_log_file () =
       reset_formatters () ;
       if CLOpt.is_originator && preexisting_logfile then
         phase
-          "============================================================@\n= New infer execution begins@\n============================================================"
+          "============================================================@\n\
+           = New infer execution begins@\n\
+           ============================================================"
 
 
-(** type of printable elements *)
-type print_type =
-  | PTatom
-  | PTattribute
-  | PTdecrease_indent
-  | PTexp
-  | PTexp_list
-  | PThpred
-  | PTincrease_indent
-  | PTinstr
-  | PTinstr_list
-  | PTjprop_list
-  | PTjprop_short
-  | PTloc
-  | PTnode_instrs
-  | PToff
-  | PToff_list
-  | PTpath
-  | PTprop
-  | PTproplist
-  | PTprop_list_with_typ
-  | PTprop_with_typ
-  | PTpvar
-  | PTspec
-  | PTstr
-  | PTstr_color
-  | PTstrln
-  | PTstrln_color
-  | PTpathset
-  | PTpi
-  | PTsexp
-  | PTsexp_list
-  | PTsigma
-  | PTtexp_full
-  | PTsub
-  | PTtyp_full
-  | PTtyp_list
-  | PTwarning
-  | PTerror
-  | PTinfo
+type delayed_prints = Buffer.t * F.formatter
 
-(** delayable print action *)
-type print_action = print_type * Obj.t  (** data to be printed *)
-
-let delayed_actions = ref []
-
-(** hook for the current printer of delayed print actions *)
-let printer_hook = ref (fun _ -> Die.(die InternalError) "uninitialized printer hook")
-
-(** extend the current print log *)
-let add_print_action pact =
-  if Config.write_html then delayed_actions := pact :: !delayed_actions
-  else if not Config.only_cheap_debug then
-    Option.iter !log_file ~f:(function file_fmt, _ -> !printer_hook file_fmt pact)
+let new_delayed_prints () =
+  let b = Buffer.create 16 in
+  let f = F.formatter_of_buffer b in
+  (b, f)
 
 
-(** reset the delayed print actions *)
-let reset_delayed_prints () = delayed_actions := []
+let delayed_prints = ref (new_delayed_prints ())
 
-(** return the delayed print actions *)
-let get_delayed_prints () = !delayed_actions
+(** reset the delayed prints *)
+let reset_delayed_prints () = delayed_prints := new_delayed_prints ()
 
-(** set the delayed print actions *)
-let set_delayed_prints new_delayed_actions = delayed_actions := new_delayed_actions
+(** return the delayed prints *)
+let get_and_reset_delayed_prints () =
+  let res = !delayed_prints in
+  reset_delayed_prints () ; res
+
+
+let force_and_reset_delayed_prints f =
+  let delayed_prints_buffer, delayed_prints_formatter = get_and_reset_delayed_prints () in
+  F.pp_print_flush delayed_prints_formatter () ;
+  F.pp_print_string f (Buffer.contents delayed_prints_buffer)
+
+
+(** set the delayed prints *)
+let set_delayed_prints new_delayed_prints = delayed_prints := new_delayed_prints
+
+let get_f () =
+  if Config.write_html then Some (snd !delayed_prints)
+  else if not Config.only_cheap_debug then Option.map ~f:fst !log_file
+  else None
+
+
+let d_kfprintf ?color k f fmt =
+  match color with
+  | Some color when Config.write_html ->
+      F.fprintf f "<span class='%s'>" (Pp.color_string color) ;
+      F.kfprintf (fun f -> F.pp_print_string f "</span>" ; k f) f fmt
+  | _ ->
+      F.kfprintf k f fmt
+
+
+let d_iprintf fmt = Format.ikfprintf ignore Format.err_formatter fmt
+
+let d_kprintf ?color k fmt =
+  match get_f () with Some f -> d_kfprintf ?color k f fmt | None -> d_iprintf fmt
+
+
+let d_kasprintf k fmt =
+  match get_f () with Some f -> F.kasprintf (fun s -> k f s) fmt | None -> d_iprintf fmt
+
+
+let d_printf ?color fmt = d_kprintf ?color ignore fmt
+
+let k_force_newline f = F.pp_force_newline f ()
+
+let d_printfln ?color fmt = d_kprintf ?color k_force_newline fmt
+
+let d_pp pp x = d_printf "%a" pp x
+
+let d_pp_with_pe ?color pp x =
+  let pe = if Config.write_html then Pp.html (Option.value ~default:Pp.Black color) else Pp.text in
+  d_printf ?color "%a" (pp pe) x
+
 
 (** dump a string *)
-let d_str (s: string) = add_print_action (PTstr, Obj.repr s)
-
-(** dump a string with the given color *)
-let d_str_color (c: Pp.color) (s: string) = add_print_action (PTstr_color, Obj.repr (s, c))
+let d_str ?color s = d_printf ?color "%s" s
 
 (** dump an error string *)
-let d_error (s: string) = add_print_action (PTerror, Obj.repr s)
+let d_error s = d_printf ~color:Pp.Red "ERROR: %s" s
 
 (** dump a warning string *)
-let d_warning (s: string) = add_print_action (PTwarning, Obj.repr s)
+let d_warning s = d_printf ~color:Pp.Orange "WARNING: %s" s
 
 (** dump an info string *)
-let d_info (s: string) = add_print_action (PTinfo, Obj.repr s)
-
-(** dump a string plus newline *)
-let d_strln (s: string) = add_print_action (PTstrln, Obj.repr s)
-
-(** dump a string plus newline with the given color *)
-let d_strln_color (c: Pp.color) (s: string) = add_print_action (PTstrln_color, Obj.repr (s, c))
+let d_info s = d_printf ~color:Pp.Blue "INFO: %s" s
 
 (** dump a newline *)
-let d_ln () = add_print_action (PTstrln, Obj.repr "")
+let d_ln () = d_printf "@\n"
+
+(** dump a string plus newline *)
+let d_strln ?color s = d_kprintf ?color k_force_newline "%s" s
+
+let d_printfln_escaped ?color fmt =
+  d_kasprintf (fun f s -> d_kfprintf ?color k_force_newline f "%s" (Escape.escape_xml s)) fmt
+
 
 (** dump an indentation *)
 let d_indent indent =
-  let s = ref "" in
-  for _ = 1 to indent do s := "  " ^ !s done ;
-  if indent <> 0 then add_print_action (PTstr, Obj.repr !s)
+  if indent <> 0 then
+    let s = String.make (2 * indent) ' ' in
+    d_str s
 
 
 (** dump command to increase the indentation level *)
-let d_increase_indent (indent: int) = add_print_action (PTincrease_indent, Obj.repr indent)
+let d_increase_indent () = d_printf "  @["
 
 (** dump command to decrease the indentation level *)
-let d_decrease_indent (indent: int) = add_print_action (PTdecrease_indent, Obj.repr indent)
+let d_decrease_indent () = d_printf "@]"

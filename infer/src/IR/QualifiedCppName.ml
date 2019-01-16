@@ -1,14 +1,14 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-module L = Logging
+module F = Format
+
+exception ParseError of string
 
 (* internally it uses reversed list to store qualified name, for example: ["get", "shared_ptr<int>", "std"]*)
 type t = string list [@@deriving compare]
@@ -27,13 +27,15 @@ let strip_template_args quals =
 let append_template_args_to_last quals ~args =
   match quals with
   | [last; _] when String.contains last '<' ->
-      L.(die InternalError)
-        "expected qualified name without template args, but got %s, the last qualifier of %s" last
-        (String.concat ~sep:", " quals)
+      raise
+        (ParseError
+           (F.sprintf
+              "expected qualified name without template args, but got %s, the last qualifier of %s"
+              last (String.concat ~sep:", " quals)))
   | last :: rest ->
       (last ^ args) :: rest
   | [] ->
-      L.(die InternalError) "expected non-empty qualified name"
+      raise (ParseError "expected non-empty qualified name")
 
 
 let to_list = List.rev
@@ -45,6 +47,14 @@ let of_list = List.rev
 let of_rev_list = ident
 
 let cpp_separator = "::"
+
+let from_field_qualified_name qual_name =
+  match qual_name with
+  | _ :: rest ->
+      rest
+  | _ ->
+      raise (ParseError "expected non-empty qualified name")
+
 
 (* define [cpp_separator_regex] here to compute it once *)
 let cpp_separator_regex = Str.regexp_string cpp_separator
@@ -58,14 +68,14 @@ let to_separated_string quals ~sep = List.rev quals |> String.concat ~sep
 
 let to_qual_string = to_separated_string ~sep:cpp_separator
 
-let pp fmt quals = Format.fprintf fmt "%s" (to_qual_string quals)
+let pp fmt quals = Format.pp_print_string fmt (to_qual_string quals)
 
 module Match = struct
   type quals_matcher = Str.regexp
 
   let matching_separator = "#"
 
-  let regexp_string_of_qualifiers ?(prefix= false) quals =
+  let regexp_string_of_qualifiers ?(prefix = false) quals =
     Str.quote (to_separated_string ~sep:matching_separator quals) ^ if prefix then "" else "$"
 
 
@@ -84,8 +94,8 @@ module Match = struct
     let colon_splits = String.split qual_name ~on:':' in
     List.iter colon_splits ~f:(fun s ->
         (* Filter out the '<' in operator< and operator<= *)
-        if not (String.is_prefix s ~prefix:"operator<") && String.contains s '<' then
-          L.(die InternalError) "Unexpected template in fuzzy qualified name %s." qual_name ) ;
+        if (not (String.is_prefix s ~prefix:"operator<")) && String.contains s '<' then
+          raise (ParseError ("Unexpected template in fuzzy qualified name %s." ^ qual_name)) ) ;
     of_qual_string qual_name
 
 

@@ -1,22 +1,21 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** The Smallfoot Intermediate Language: Predicate Symbols *)
 
 open! IStd
-module L = Logging
 module F = Format
 
 (** {2 Programs and Types} *)
 
 type func_attribute = FA_sentinel of int * int [@@deriving compare]
+
+val pp_func_attribute : F.formatter -> func_attribute -> unit
 
 val get_sentinel_func_attribute_value : func_attribute list -> (int * int) option
 (** Return the value of the FA_sentinel attribute in [attr_list] if it is found *)
@@ -26,12 +25,14 @@ type access = Default | Public | Private | Protected [@@deriving compare]
 
 val equal_access : access -> access -> bool
 
+val string_of_access : access -> string
+
 type mem_kind =
   | Mmalloc  (** memory allocated with malloc *)
   | Mnew  (** memory allocated with new *)
   | Mnew_array  (** memory allocated with new[] *)
   | Mobjc  (** memory allocated with objective-c alloc *)
-  [@@deriving compare]
+[@@deriving compare]
 
 (** resource that can be allocated *)
 type resource = Rmemory of mem_kind | Rfile | Rignore | Rlock [@@deriving compare]
@@ -85,7 +86,7 @@ type t =
   | Aunsubscribed_observer
       (** denotes an object unsubscribed from observers of a notification center *)
   | Awont_leak  (** value do not participate in memory leak analysis *)
-  [@@deriving compare]
+[@@deriving compare]
 
 val equal : t -> t -> bool
 
@@ -106,7 +107,7 @@ type category =
   | ACretval
   | ACobserver
   | ACwontleak
-  [@@deriving compare]
+[@@deriving compare]
 
 val equal_category : category -> category -> bool
 

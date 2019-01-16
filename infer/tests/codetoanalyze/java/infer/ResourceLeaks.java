@@ -1,20 +1,21 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.infer;
 
+import android.app.Activity;
+import android.content.Context;
+import android.content.res.Resources;
+import android.content.res.TypedArray;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.json.UTF8StreamJsonParser;
 import com.google.common.base.Preconditions;
 import com.google.common.io.Closeables;
-
 import java.io.BufferedInputStream;
 import java.io.Closeable;
 import java.io.DataOutputStream;
@@ -47,17 +48,11 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import java.util.zip.Inflater;
 import java.util.zip.ZipFile;
-
 import javax.net.ssl.HttpsURLConnection;
-
-import android.app.Activity;
-import android.content.Context;
-import android.content.res.Resources;
-import android.content.res.TypedArray;
 
 public class ResourceLeaks {
 
-  //FileOutputStream tests
+  // FileOutputStream tests
 
   public void fileOutputStreamNotClosed() throws IOException {
     FileOutputStream fis = new FileOutputStream("file.txt");
@@ -73,7 +68,6 @@ public class ResourceLeaks {
     } catch (IOException e) {
     }
   }
-
 
   public void fileOutputStreamClosed() throws IOException {
     FileOutputStream fis = new FileOutputStream("file.txt");
@@ -106,7 +100,7 @@ public class ResourceLeaks {
     fis = new FileOutputStream("x");
   }
 
-  //TwoResources tests
+  // TwoResources tests
 
   public static void twoResources() throws IOException {
     FileInputStream fis = null;
@@ -137,7 +131,6 @@ public class ResourceLeaks {
     }
   }
 
-
   public static void twoResourcesCommonFix() throws IOException {
     FileInputStream fis = null;
     FileOutputStream fos = null;
@@ -157,7 +150,6 @@ public class ResourceLeaks {
     }
   }
 
-
   public static void twoResourcesServerSocket() throws IOException {
     ServerSocket a = null;
     ServerSocket b = null;
@@ -169,7 +161,6 @@ public class ResourceLeaks {
       if (b != null) b.close();
     }
   }
-
 
   public static void twoResourcesRandomAccessFile() throws IOException {
     RandomAccessFile a = null;
@@ -201,8 +192,7 @@ public class ResourceLeaks {
     }
   }
 
-
-  //NestedResource tests
+  // NestedResource tests
 
   // BufferedInputStream does not throw exception, and its close
   // closes the FileInputStream as well
@@ -218,12 +208,10 @@ public class ResourceLeaks {
     g.close();
   }
 
-
   public void nestedBad2() throws IOException {
     GZIPOutputStream g = new GZIPOutputStream(new FileOutputStream("file.txt"));
     g.close();
   }
-
 
   /* Fixed versions of this are below with ObjectInputStream tests */
   public void objectInputStreamClosedNestedBad() throws IOException {
@@ -249,8 +237,7 @@ public class ResourceLeaks {
     }
   }
 
-
-  //ZipFile tests      (Jarfile Tests also test Zipfiles)
+  // ZipFile tests      (Jarfile Tests also test Zipfiles)
 
   public static void zipFileLeakExceptionalBranch() throws IOException {
     ZipFile j = null;
@@ -258,7 +245,7 @@ public class ResourceLeaks {
       j = new ZipFile("");
     } catch (IOException e) {
       FileOutputStream fis = new FileOutputStream("file.txt");
-      //The purpose of this is to cause a leak, from when ZipFile constructor throws
+      // The purpose of this is to cause a leak, from when ZipFile constructor throws
     } finally {
       if (j != null) j.close();
     }
@@ -273,7 +260,7 @@ public class ResourceLeaks {
     }
   }
 
-  //JarFile tests
+  // JarFile tests
 
   public boolean jarFileClosed() {
     JarFile jarFile = null;
@@ -300,7 +287,7 @@ public class ResourceLeaks {
     return false;
   }
 
-  //FileInputStream tests
+  // FileInputStream tests
 
   public void fileInputStreamNotClosedAfterRead() {
     FileInputStream fis;
@@ -311,7 +298,6 @@ public class ResourceLeaks {
     } catch (IOException e) {
     }
   }
-
 
   public void fileInputStreamClosed() throws IOException {
     FileInputStream fis = null;
@@ -324,7 +310,7 @@ public class ResourceLeaks {
     }
   }
 
-  //PipedInputStream tests
+  // PipedInputStream tests
 
   public void pipedInputStreamNotClosedAfterRead(PipedOutputStream pout) {
     PipedInputStream pin;
@@ -335,7 +321,6 @@ public class ResourceLeaks {
     } catch (IOException e) {
     }
   }
-
 
   public void pipedInputStreamClosed(PipedOutputStream pout) throws IOException {
     PipedInputStream pin = null;
@@ -348,7 +333,7 @@ public class ResourceLeaks {
     }
   }
 
-  //PipedOutputStream tests
+  // PipedOutputStream tests
 
   public void pipedOutputStreamNotClosedAfterWrite() {
     byte[] arr = {1, 2, 3, 4, 5};
@@ -361,7 +346,6 @@ public class ResourceLeaks {
     }
   }
 
-
   public void pipedOutputStreamClosed(PipedInputStream pin) throws IOException {
     PipedOutputStream pout = null;
     try {
@@ -373,7 +357,7 @@ public class ResourceLeaks {
     }
   }
 
-  //ObjectOutputStream tests
+  // ObjectOutputStream tests
 
   public void objectOutputStreamNotClosedAfterWrite() {
     byte[] arr = {1, 2, 3, 4, 5};
@@ -385,7 +369,6 @@ public class ResourceLeaks {
     } catch (IOException e) {
     }
   }
-
 
   public void objectOutputStreamClosed() throws IOException {
     ObjectOutputStream oout = null;
@@ -399,8 +382,7 @@ public class ResourceLeaks {
     }
   }
 
-
-  //ObjectInputStream tests
+  // ObjectInputStream tests
 
   public void objectInputStreamNotClosedAfterRead() {
     ObjectInputStream oin;
@@ -411,7 +393,6 @@ public class ResourceLeaks {
     } catch (IOException e) {
     }
   }
-
 
   public void objectInputStreamClosed() throws IOException {
     ObjectInputStream oin = null;
@@ -441,8 +422,7 @@ public class ResourceLeaks {
     }
   }
 
-
-  //JarInputStream tests
+  // JarInputStream tests
 
   public static void jarInputStreamNoLeak() throws IOException {
     FileInputStream fos = new FileInputStream("");
@@ -469,8 +449,7 @@ public class ResourceLeaks {
     g.close();
   }
 
-
-  //JarOutputStream tests
+  // JarOutputStream tests
 
   public static void jarOutputStreamNoLeak() throws IOException {
     FileOutputStream fos = new FileOutputStream("");
@@ -481,7 +460,6 @@ public class ResourceLeaks {
       fos.close();
     }
   }
-
 
   public static void jarOutputStreamLeak() throws IOException {
     FileOutputStream fos = new FileOutputStream("");
@@ -498,8 +476,7 @@ public class ResourceLeaks {
     g.close();
   }
 
-
-  //Socket tests
+  // Socket tests
 
   public void socketNotClosed() {
     Socket socket = new Socket();
@@ -510,8 +487,7 @@ public class ResourceLeaks {
     socket.close();
   }
 
-
-  //Socket InputStream tests
+  // Socket InputStream tests
 
   public int socketInputStreamNotClosed(Socket socket) throws IOException {
     InputStream stream = socket.getInputStream();
@@ -528,7 +504,7 @@ public class ResourceLeaks {
     socket.close();
   }
 
-  //Socket OutputStream tests
+  // Socket OutputStream tests
 
   public void socketOutputStreamNotClosed(Socket socket) throws IOException {
     OutputStream stream = socket.getOutputStream();
@@ -545,15 +521,14 @@ public class ResourceLeaks {
     socket.close();
   }
 
-  //ServerSocket tests
+  // ServerSocket tests
 
   public void serverSocketNotClosed() throws IOException {
     ServerSocket listener = new ServerSocket(9090);
     while (true) {
       Socket socket = listener.accept();
       try {
-        PrintWriter out =
-            new PrintWriter(socket.getOutputStream(), true);
+        PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
         out.println("");
       } finally {
         socket.close();
@@ -573,8 +548,7 @@ public class ResourceLeaks {
       while (true) {
         Socket socket = listener.accept();
         try {
-          PrintWriter out =
-              new PrintWriter(socket.getOutputStream(), true);
+          PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
           out.println("");
         } finally {
           socket.close();
@@ -585,7 +559,7 @@ public class ResourceLeaks {
     }
   }
 
-  //HttpURLConnection
+  // HttpURLConnection
 
   public void openHttpURLConnectionDisconnected() throws IOException {
     String content = "TEXT";
@@ -679,7 +653,7 @@ public class ResourceLeaks {
   public void closeWithCloseablesNestedAlloc() throws IOException {
     BufferedInputStream b = null;
     try {
-     b = new BufferedInputStream(new FileInputStream("file.txt"));
+      b = new BufferedInputStream(new FileInputStream("file.txt"));
     } finally {
       myClose(b, false);
     }
@@ -728,17 +702,13 @@ public class ResourceLeaks {
     // parser does not own a resource which is leaked
   }
 
-  private void ignore(Object o) {
-  }
-
+  private void ignore(Object o) {}
 
   // Installation.java examples. Even the fix was a fp for a while
   // for several reasons, so this test is just to make sure it remains
   // banished forever
 
-
-  private String readInstallationFileGood(File installation)
-      throws IOException {
+  private String readInstallationFileGood(File installation) throws IOException {
     RandomAccessFile f = new RandomAccessFile(installation, "r");
     try {
       byte[] bytes = new byte[(int) f.length()];
@@ -749,8 +719,7 @@ public class ResourceLeaks {
     }
   }
 
-  private String readInstallationFileBad(File installation)
-      throws IOException {
+  private String readInstallationFileBad(File installation) throws IOException {
     RandomAccessFile f = new RandomAccessFile(installation, "r");
     byte[] bytes = new byte[(int) f.length()];
     f.readFully(bytes);
@@ -796,35 +765,35 @@ public class ResourceLeaks {
   // TypedArray
 
   public void themeObtainTypedArrayAndRecycle(Resources.Theme theme) {
-    TypedArray array = theme.obtainStyledAttributes(new int[]{});
+    TypedArray array = theme.obtainStyledAttributes(new int[] {});
     ignore(array);
     array.recycle();
   }
 
   public void themeObtainTypedArrayAndLeak(Resources.Theme theme) {
-    TypedArray array = theme.obtainStyledAttributes(new int[]{});
+    TypedArray array = theme.obtainStyledAttributes(new int[] {});
     ignore(array);
   }
 
   public void activityObtainTypedArrayAndRecycle(Activity activity) {
-    TypedArray array = activity.obtainStyledAttributes(new int[]{});
+    TypedArray array = activity.obtainStyledAttributes(new int[] {});
     ignore(array);
     array.recycle();
   }
 
   public void activityObtainTypedArrayAndLeak(Activity activity) {
-    TypedArray array = activity.obtainStyledAttributes(new int[]{});
+    TypedArray array = activity.obtainStyledAttributes(new int[] {});
     ignore(array);
   }
 
   public void contextObtainTypedArrayAndRecycle(Context context) {
-    TypedArray array = context.obtainStyledAttributes(new int[]{});
+    TypedArray array = context.obtainStyledAttributes(new int[] {});
     ignore(array);
     array.recycle();
   }
 
   public void contextObtainTypedArrayAndLeak(Context context) {
-    TypedArray array = context.obtainStyledAttributes(new int[]{});
+    TypedArray array = context.obtainStyledAttributes(new int[] {});
     ignore(array);
   }
 
@@ -836,10 +805,8 @@ public class ResourceLeaks {
     try {
       inChannel.transferTo(0, inChannel.size(), outChannel);
     } finally {
-      if (inChannel != null)
-        inChannel.close();
-      if (outChannel != null)
-        outChannel.close();
+      if (inChannel != null) inChannel.close();
+      if (outChannel != null) outChannel.close();
     }
   }
 
@@ -935,9 +902,7 @@ public class ResourceLeaks {
   public InputStreamReader withCharset(URLConnection urlConnection) {
     InputStreamReader reader = null;
     try {
-      reader = new InputStreamReader(
-          urlConnection.getInputStream(),
-          "iso-8859-1");
+      reader = new InputStreamReader(urlConnection.getInputStream(), "iso-8859-1");
     } catch (Exception e) {
       return null;
     } finally {
@@ -982,5 +947,4 @@ public class ResourceLeaks {
     Preconditions.checkState(x > 0);
     stream.close();
   }
-
 }

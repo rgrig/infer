@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 {
@@ -43,6 +41,9 @@ rule token = parse
   | "HOLDS-EVERYWHERE-ALWAYS" { AG }
   | "HOLDS-IN-SOME-SUPERCLASS-OF" { EH }
   | "IN-NODE" { ET }
+  | "HOLDS-IN-OBJC-CLASS" { HOLDS_IN_OBJCCLASS }
+  | "INTERFACE" { INTERFACE }
+  | "IMPLEMENTATION" { IMPLEMENTATION }
   | "WHEN" { WHEN }
   | "HOLDS-IN-NODE" { HOLDS_IN_NODE }
   | "WITH-TRANSITION" {WITH_TRANSITION}
@@ -63,6 +64,8 @@ rule token = parse
   | "=" { ASSIGNMENT }
   | ";" { SEMICOLON }
   | "," { COMMA }
+  | "[" { LEFT_SQBRACE }
+  | "]" { RIGHT_SQBRACE }
   | "AND" { AND }
   | "OR" { OR }
   | "NOT" { NOT }

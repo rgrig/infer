@@ -1,20 +1,17 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.checkers;
-
-import javax.annotation.concurrent.ThreadSafe;
 
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import javax.annotation.concurrent.ThreadSafe;
 
 @ThreadSafe
 public class Locks {
@@ -214,7 +211,6 @@ public class Locks {
     f = 32;
   }
 
-
   void useLock() {
     synchronized (this) {
     }
@@ -245,7 +241,7 @@ public class Locks {
   void lockInLoopLexicalBad(int i) {
     while (i > 0) {
       i++;
-      synchronized(this) {
+      synchronized (this) {
       }
     }
     f = 32;
@@ -254,14 +250,14 @@ public class Locks {
   void lockInLoopLexicalOk(int i) {
     while (i > 0) {
       i++;
-      synchronized(this) {
+      synchronized (this) {
         f = 32;
       }
     }
   }
 
   void loopInLockLexicalBad(int i) {
-    synchronized(this) {
+    synchronized (this) {
       while (i > 0) {
         i++;
       }
@@ -365,6 +361,4 @@ public class Locks {
   public Object unownedReadBad() {
     return this.mField3;
   }
-
-
 }

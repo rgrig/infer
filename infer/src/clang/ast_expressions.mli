@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -12,19 +10,11 @@ open Clang_ast_t
 
 (** This module creates extra ast constructs that are needed for the translation *)
 
-val create_class_qual_type : ?quals:Typ.type_quals -> Typ.Name.t -> qual_type
-
 val create_pointer_qual_type : ?quals:Typ.type_quals -> qual_type -> qual_type
 
 val create_reference_qual_type : ?quals:Typ.type_quals -> qual_type -> qual_type
 
 val create_char_star_type : ?quals:Typ.type_quals -> unit -> qual_type
-
-val create_id_type : qual_type
-
-val create_void_type : qual_type
-
-val create_BOOL_type : qual_type
 
 val make_next_object_exp :
   stmt_info -> stmt -> Clang_ast_t.stmt -> Clang_ast_t.stmt * Clang_ast_t.stmt

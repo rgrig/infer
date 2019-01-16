@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 #import <Foundation/Foundation.h>
 #import "Library.h"
@@ -20,6 +18,7 @@ typedef struct s_ {
 - (T* _Nullable)nullableT;
 @property(nonatomic) S structProperty;
 @property(nonatomic) S* pointerProperty;
+@property(nonatomic, nullable) NSObject* nullableProperty;
 @end
 
 @implementation T {
@@ -128,6 +127,10 @@ typedef struct s_ {
   NSObject* nullableObject = [self nullableMethod];
   NSArray* array = @[ nullableObject ]; // reports here
   return array;
+}
+
+- (NSArray*)nullablePropertyInNSArrayBad {
+  return @[ self.nullableMethod ]; // reports here
 }
 
 - (NSArray*)nullableMethodCheckedForNullAndReturnOkay {

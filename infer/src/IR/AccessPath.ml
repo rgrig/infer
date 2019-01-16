@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -19,29 +17,32 @@ module Raw = struct
    consistent, and the variable names should already be enough to distinguish the bases. *)
   type base = Var.t * typ_ [@@deriving compare]
 
-  let equal_base = [%compare.equal : base]
+  let equal_base = [%compare.equal: base]
 
-  type access = ArrayAccess of Typ.t * t list | FieldAccess of Typ.Fieldname.t
+  type access = ArrayAccess of typ_ * t list | FieldAccess of Typ.Fieldname.t
 
-  and t = (base * access list) [@@deriving compare]
+  and t = base * access list [@@deriving compare]
 
-  let equal_access = [%compare.equal : access]
+  let equal_access = [%compare.equal: access]
 
-  let equal_access_list l1 l2 = Int.equal (List.compare compare_access l1 l2) 0
+  let may_pp_typ fmt typ =
+    if Config.debug_level_analysis >= 3 then F.fprintf fmt ":%a" (Typ.pp Pp.text) typ
 
-  let pp_base fmt (pvar, _) = Var.pp fmt pvar
+
+  let pp_base fmt (pvar, typ) = Var.pp fmt pvar ; may_pp_typ fmt typ
 
   let rec pp_access fmt = function
     | FieldAccess field_name ->
-        Typ.Fieldname.pp fmt field_name
-    | ArrayAccess (_, []) ->
-        F.fprintf fmt "[_]"
-    | ArrayAccess (_, index_aps) ->
-        F.fprintf fmt "[%a]" (PrettyPrintable.pp_collection ~pp_item:pp) index_aps
+        F.pp_print_string fmt (Typ.Fieldname.to_flat_string field_name)
+    | ArrayAccess (typ, []) ->
+        F.pp_print_string fmt "[_]" ; may_pp_typ fmt typ
+    | ArrayAccess (typ, index_aps) ->
+        F.fprintf fmt "[%a]" (PrettyPrintable.pp_collection ~pp_item:pp) index_aps ;
+        may_pp_typ fmt typ
 
 
   and pp_access_list fmt accesses =
-    let pp_sep _ _ = F.fprintf fmt "." in
+    let pp_sep fmt () = F.pp_print_char fmt '.' in
     F.pp_print_list ~pp_sep pp_access fmt accesses
 
 
@@ -52,13 +53,14 @@ module Raw = struct
         F.fprintf fmt "%a.%a" pp_base base pp_access_list accesses
 
 
-  let equal = [%compare.equal : t]
+  let equal = [%compare.equal: t]
 
-  let truncate = function
-    | base, [] | base, [_] ->
-        (base, [])
-    | base, accesses ->
-        (base, List.rev (List.tl_exn (List.rev accesses)))
+  let truncate ((base, accesses) as t) =
+    match List.rev accesses with
+    | [] ->
+        (t, None)
+    | last_access :: accesses ->
+        ((base, List.rev accesses), Some last_access)
 
 
   let lookup_field_type_annot tenv base_typ field_name =
@@ -97,12 +99,12 @@ module Raw = struct
           (Some base_typ, None)
       | [last_access] ->
           (Some base_typ, Some last_access)
-      | curr_access :: rest ->
+      | curr_access :: rest -> (
         match get_access_type tenv base_typ curr_access with
         | Some access_typ ->
             last_access_info_impl tenv access_typ rest
         | None ->
-            (None, None)
+            (None, None) )
     in
     last_access_info_impl tenv base_typ accesses
 
@@ -135,7 +137,7 @@ module Raw = struct
 
   let of_id id typ = (base_of_id id typ, [])
 
-  let of_exp ~include_array_indexes exp0 typ0 ~(f_resolve_id: Var.t -> t option) =
+  let of_exp ~include_array_indexes exp0 typ0 ~(f_resolve_id : Var.t -> t option) =
     (* [typ] is the type of the last element of the access path (e.g., typeof(g) for x.f.g) *)
     let rec of_exp_ exp typ accesses acc =
       match exp with
@@ -161,7 +163,7 @@ module Raw = struct
             if include_array_indexes then of_exp_ index_exp typ [] [] else []
           in
           let array_access = ArrayAccess (typ, index_access_paths) in
-          let array_typ = Typ.mk (Tarray (typ, None, None)) in
+          let array_typ = Typ.mk_array typ in
           of_exp_ root_exp array_typ (array_access :: accesses) acc
       | Exp.Cast (cast_typ, cast_exp) ->
           of_exp_ cast_exp cast_typ [] acc
@@ -178,7 +180,7 @@ module Raw = struct
     of_exp_ exp0 typ0 [] []
 
 
-  let of_lhs_exp ~include_array_indexes lhs_exp typ ~(f_resolve_id: Var.t -> t option) =
+  let of_lhs_exp ~include_array_indexes lhs_exp typ ~(f_resolve_id : Var.t -> t option) =
     match of_exp ~include_array_indexes lhs_exp typ ~f_resolve_id with
     | [lhs_ap] ->
         Some lhs_ap
@@ -209,7 +211,7 @@ module Abs = struct
 
   type t = Abstracted of Raw.t | Exact of Raw.t [@@deriving compare]
 
-  let equal = [%compare.equal : t]
+  let equal = [%compare.equal: t]
 
   let extract = function Exact ap | Abstracted ap -> ap
 
@@ -261,3 +263,47 @@ module BaseMap = PrettyPrintable.MakePPMap (struct
 
   let pp = pp_base
 end)
+
+(* transform an access path that starts on "this" of an inner class but which breaks out to
+   access outer class fields to the outermost one *)
+let inner_class_normalize p =
+  let open Typ in
+  let is_synthetic_this pvar = Pvar.get_simplified_name pvar |> String.is_prefix ~prefix:"this$" in
+  let mk_pvar_as name pvar = Pvar.get_declaring_function pvar |> Option.map ~f:(Pvar.mk name) in
+  let aux = function
+    (* (this:InnerClass* ).(this$n:OuterClassAccessor).f. ... -> (this:OuterClass* ).f . ... *)
+    | Some
+        ( ( (Var.ProgramVar pvar as root)
+          , ({desc= Tptr (({desc= Tstruct name} as cls), pkind)} as ptr) )
+        , FieldAccess first :: accesses )
+      when Pvar.is_this pvar && Fieldname.Java.is_outer_instance first ->
+        Name.Java.get_outer_class name
+        |> Option.map ~f:(fun outer_name ->
+               let outer_class = mk ~default:cls (Tstruct outer_name) in
+               let outer_ptr = mk ~default:ptr (Tptr (outer_class, pkind)) in
+               ((root, outer_ptr), accesses) )
+    (* this$n.(this$m:OuterClassAccessor).f ... -> (this$m:OuterClass* ).f . ... *)
+    (* happens in ctrs only *)
+    | Some
+        ( (Var.ProgramVar pvar, ({desc= Tptr (({desc= Tstruct name} as cls), pkind)} as ptr))
+        , FieldAccess first :: accesses )
+      when is_synthetic_this pvar && Fieldname.Java.is_outer_instance first ->
+        Name.Java.get_outer_class name
+        |> Option.bind ~f:(fun outer_name ->
+               let outer_class = mk ~default:cls (Tstruct outer_name) in
+               let outer_ptr = mk ~default:ptr (Tptr (outer_class, pkind)) in
+               let varname = Fieldname.to_flat_string first |> Mangled.from_string in
+               mk_pvar_as varname pvar
+               |> Option.map ~f:(fun new_pvar ->
+                      let base = base_of_pvar new_pvar outer_ptr in
+                      (base, accesses) ) )
+    (* this$n.f ... -> this.f . ... *)
+    (* happens in ctrs only *)
+    | Some ((Var.ProgramVar pvar, typ), all_accesses) when is_synthetic_this pvar ->
+        mk_pvar_as Mangled.this pvar
+        |> Option.map ~f:(fun new_pvar -> (base_of_pvar new_pvar typ, all_accesses))
+    | _ ->
+        None
+  in
+  let rec loop path_opt = match aux path_opt with None -> path_opt | res -> loop res in
+  loop (Some p) |> Option.value ~default:p

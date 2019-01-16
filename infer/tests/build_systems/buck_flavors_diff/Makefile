@@ -1,20 +1,19 @@
-# Copyright (c) 2017 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2017-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 TESTS_DIR = ../..
 INFER_OUT = infer-out
-include $(TESTS_DIR)/differential.make
-
+SOURCES = $(SRC_DIR)/some_bugs.c $(SRC_DIR)/some_different_bugs.c
 DIFFERENTIAL_ARGS = --differential-filter-files changed_files.txt
 
-include ../../differential.make
+include $(TESTS_DIR)/differential.make
+
+$(CURRENT_REPORT) $(PREVIOUS_REPORT): $(CLANG_DEPS)
 
 BUCK_TARGET = //src:hello
-INFER_OPTIONS = $(DIFFERENTIAL_ARGS) --flavors --reactive --debug-exceptions
+INFER_OPTIONS = $(DIFFERENTIAL_ARGS) --flavors --reactive --debug-exceptions --no-linters
 SRC_DIR = $(CURDIR)/../codetoanalyze
 
 .PHONY: compare_reports

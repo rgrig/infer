@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -46,7 +44,13 @@ val explain_array_access :
 (** Produce a description of the array access performed in the current instruction, if any. *)
 
 val explain_class_cast_exception :
-  Tenv.t -> Typ.Procname.t option -> Exp.t -> Exp.t -> Exp.t -> Procdesc.Node.t -> Location.t
+     Tenv.t
+  -> Typ.Procname.t option
+  -> Exp.t
+  -> Exp.t
+  -> Exp.t
+  -> Procdesc.Node.t
+  -> Location.t
   -> Localise.error_desc
 (** explain a class cast exception *)
 
@@ -57,13 +61,29 @@ val explain_deallocate_constant_string : string -> PredSymb.res_action -> Locali
 (** Explain a deallocate constant string error *)
 
 val explain_dereference :
-  Typ.Procname.t -> Tenv.t -> ?use_buckets:bool -> ?is_nullable:bool -> ?is_premature_nil:bool
-  -> Localise.deref_str -> 'a Prop.t -> Location.t -> Localise.error_desc
+     Typ.Procname.t
+  -> Tenv.t
+  -> ?use_buckets:bool
+  -> ?is_nullable:bool
+  -> ?is_premature_nil:bool
+  -> Localise.deref_str
+  -> 'a Prop.t
+  -> Location.t
+  -> Localise.error_desc
 (** Produce a description of which expression is dereferenced in the current instruction, if any. *)
 
 val explain_dereference_as_caller_expression :
-  Typ.Procname.t -> Tenv.t -> ?use_buckets:bool -> Localise.deref_str -> 'a Prop.t -> 'b Prop.t
-  -> Exp.t -> Procdesc.Node.t -> Location.t -> Pvar.t list -> Localise.error_desc
+     Typ.Procname.t
+  -> Tenv.t
+  -> ?use_buckets:bool
+  -> Localise.deref_str
+  -> 'a Prop.t
+  -> 'b Prop.t
+  -> Exp.t
+  -> Procdesc.Node.t
+  -> Location.t
+  -> Pvar.t list
+  -> Localise.error_desc
 (** return a description explaining value [exp] in [prop] in terms of a source expression
     using the formal parameters of the call *)
 
@@ -74,8 +94,6 @@ val explain_divide_by_zero :
 val explain_condition_always_true_false :
   Tenv.t -> IntLit.t -> Exp.t -> Procdesc.Node.t -> Location.t -> Localise.error_desc
 (** explain a condition which is always true or false *)
-
-val explain_unreachable_code_after : Location.t -> Localise.error_desc
 
 val explain_stack_variable_address_escape :
   Location.t -> Pvar.t -> DecompiledExp.t option -> Localise.error_desc
@@ -89,7 +107,11 @@ val explain_unary_minus_applied_to_unsigned_expression :
 (** explain unary minus applied to unsigned expression *)
 
 val explain_leak :
-  Tenv.t -> Sil.hpred -> 'a Prop.t -> PredSymb.t option -> string option
+     Tenv.t
+  -> Sil.hpred
+  -> 'a Prop.t
+  -> PredSymb.t option
+  -> string option
   -> Exceptions.visibility * Localise.error_desc
 (** Produce a description of a leak by looking at the current state.
     If the current instruction is a variable nullify, blame the variable.

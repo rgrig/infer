@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.tracing;
@@ -18,7 +16,6 @@ class A implements I {
   public T2 get() {
     return new T2();
   }
-
 }
 
 class B extends A {
@@ -26,7 +23,6 @@ class B extends A {
   public T2 get() {
     return null;
   }
-
 }
 
 public class LazyDynamicDispatchExample {
@@ -53,5 +49,4 @@ public class LazyDynamicDispatchExample {
     B b = new B();
     fromInterface(b).f();
   }
-
 }

@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 #include <string>
@@ -67,7 +65,27 @@ void FP_reuse_pointer_as_local_ok(std::string* pointer) {
   __infer_taint_sink(*pointer);
 }
 
+void funptr_bad0() {
+  auto f = __infer_taint_sink;
+  f(*(__infer_taint_source()));
+}
+
+void funptr_helper_bad1(void (*sink)(std::string)) {
+  sink(*(__infer_taint_source()));
+}
+
+void funptr_bad1_FN() {
+  auto f = __infer_taint_sink;
+  funptr_helper_bad1(f);
+}
+
+void funptr_helper_bad2(std::string* (*source)()) {
+  __infer_taint_sink(*(source()));
+}
+
+void funptr_bad2() { funptr_helper_bad2(__infer_taint_source); }
+
 void pointer_arithmetic_ok1(int* i) { *(i + 1) = 7; }
 
 void pointer_arithmetic_ok2(int* i) { *(2 + 7 + 5 + i + 1) = 7; }
-}
+} // namespace pointers

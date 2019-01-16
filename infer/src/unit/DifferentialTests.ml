@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -25,14 +23,19 @@ let previous_report =
   ; create_fake_jsonbug ~hash:"1" () ]
 
 
-let diff = Differential.of_reports ~current_report ~previous_report
+let current_costs = []
+
+let previous_costs = []
+
+let diff = Differential.of_reports ~current_report ~previous_report ~current_costs ~previous_costs
 
 (* Sets operations should keep duplicated issues with identical hashes *)
 let test_diff_keeps_duplicated_hashes =
   let hashes_expected = 3 in
   let hashes_found =
     List.fold ~init:0
-      ~f:(fun acc i -> if String.equal i.Jsonbug_t.hash "2" then acc + 1 else acc)
+      ~f:(fun acc (i : Jsonbug_t.jsonbug) ->
+        if String.equal i.Jsonbug_t.hash "2" then acc + 1 else acc )
       diff.introduced
   in
   let pp_diff fmt (expected, actual) =

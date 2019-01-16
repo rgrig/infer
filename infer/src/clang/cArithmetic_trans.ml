@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** Utility module for translating unary and binary operations and compound assignments *)
@@ -16,74 +14,69 @@ module L = Logging
 (* CompoundAssignment. "binary_expression" is returned when we are calculating an expression*)
 (* "instructions" is not empty when the binary operator is actually a statement like an *)
 (* assignment. *)
-let compound_assignment_binary_operation_instruction boi e1 typ e2 loc =
-  let id = Ident.create_fresh Ident.knormal in
-  let instr1 = Sil.Load (id, e1, typ, loc) in
-  let e_res, instr_op =
-    match boi.Clang_ast_t.boi_kind with
-    | `AddAssign ->
-        let e1_plus_e2 = Exp.BinOp (Binop.PlusA, Exp.Var id, e2) in
-        (e1, [Sil.Store (e1, typ, e1_plus_e2, loc)])
-    | `SubAssign ->
-        let e1_sub_e2 = Exp.BinOp (Binop.MinusA, Exp.Var id, e2) in
-        (e1, [Sil.Store (e1, typ, e1_sub_e2, loc)])
-    | `MulAssign ->
-        let e1_mul_e2 = Exp.BinOp (Binop.Mult, Exp.Var id, e2) in
-        (e1, [Sil.Store (e1, typ, e1_mul_e2, loc)])
-    | `DivAssign ->
-        let e1_div_e2 = Exp.BinOp (Binop.Div, Exp.Var id, e2) in
-        (e1, [Sil.Store (e1, typ, e1_div_e2, loc)])
-    | `ShlAssign ->
-        let e1_shl_e2 = Exp.BinOp (Binop.Shiftlt, Exp.Var id, e2) in
-        (e1, [Sil.Store (e1, typ, e1_shl_e2, loc)])
-    | `ShrAssign ->
-        let e1_shr_e2 = Exp.BinOp (Binop.Shiftrt, Exp.Var id, e2) in
-        (e1, [Sil.Store (e1, typ, e1_shr_e2, loc)])
-    | `RemAssign ->
-        let e1_mod_e2 = Exp.BinOp (Binop.Mod, Exp.Var id, e2) in
-        (e1, [Sil.Store (e1, typ, e1_mod_e2, loc)])
-    | `AndAssign ->
-        let e1_and_e2 = Exp.BinOp (Binop.BAnd, Exp.Var id, e2) in
-        (e1, [Sil.Store (e1, typ, e1_and_e2, loc)])
-    | `OrAssign ->
-        let e1_or_e2 = Exp.BinOp (Binop.BOr, Exp.Var id, e2) in
-        (e1, [Sil.Store (e1, typ, e1_or_e2, loc)])
-    | `XorAssign ->
-        let e1_xor_e2 = Exp.BinOp (Binop.BXor, Exp.Var id, e2) in
-        (e1, [Sil.Store (e1, typ, e1_xor_e2, loc)])
-    | _ ->
-        assert false
+let compound_assignment_binary_operation_instruction boi_kind (e1, t1) typ e2 loc =
+  let instrs =
+    let bop =
+      match boi_kind with
+      | `AddAssign ->
+          if Typ.is_pointer t1 then Binop.PlusPI else Binop.PlusA (Typ.get_ikind_opt typ)
+      | `SubAssign ->
+          if Typ.is_pointer t1 then Binop.MinusPI else Binop.MinusA (Typ.get_ikind_opt typ)
+      | `MulAssign ->
+          Binop.Mult (Typ.get_ikind_opt typ)
+      | `DivAssign ->
+          Binop.Div
+      | `ShlAssign ->
+          Binop.Shiftlt
+      | `ShrAssign ->
+          Binop.Shiftrt
+      | `RemAssign ->
+          Binop.Mod
+      | `AndAssign ->
+          Binop.BAnd
+      | `OrAssign ->
+          Binop.BOr
+      | `XorAssign ->
+          Binop.BXor
+    in
+    let id = Ident.create_fresh Ident.knormal in
+    [Sil.Load (id, e1, typ, loc); Sil.Store (e1, typ, Exp.BinOp (bop, Exp.Var id, e2), loc)]
   in
-  (e_res, instr1 :: instr_op)
+  (e1, instrs)
 
 
-(* Returns a pair ([binary_expression], instructions). "binary_expression" *)
-(* is returned when we are calculating an expression "instructions" is not *)
-(* empty when the binary operator is actually a statement like an          *)
-(* assignment.                                                             *)
-let binary_operation_instruction boi e1 typ e2 loc =
-  let binop_exp op = Exp.BinOp (op, e1, e2) in
+(** Returns a pair ([binary_expression], instructions). "binary_expression" is returned when we are
+   calculating an expression "instructions" is not empty when the binary operator is actually a
+   statement like an assignment. *)
+let binary_operation_instruction source_range boi ((e1, t1) as e1_with_typ) typ (e2, t2) loc =
+  let binop_exp ?(change_order = false) op =
+    if change_order then Exp.BinOp (op, e2, e1) else Exp.BinOp (op, e1, e2)
+  in
   match boi.Clang_ast_t.boi_kind with
   (* Note: Pointers to members that are not statically known are not
      expressible in Sil. The translation of the PtrMem ops treats the field as
      an integer offset, which is itself semantically ok though too low-level,
      but the translation of the argument expressions does not compute such
      offsets and instead passes the member pointer at type 'void'. *)
-  | `PtrMemD ->
-      (binop_exp Binop.PlusPI, [])
-  | `PtrMemI ->
-      let id = Ident.create_fresh Ident.knormal in
-      (Exp.BinOp (PlusPI, Exp.Var id, e2), [Sil.Load (id, e1, typ, loc)])
+  | `PtrMemD | `PtrMemI ->
+      CFrontend_config.unimplemented __POS__ source_range
+        "Pointer-to-member constructs are unsupported. Got '%a'."
+        (Pp.to_string ~f:Clang_ast_j.string_of_binary_operator_info)
+        boi
   | `Add ->
-      (binop_exp Binop.PlusA, [])
+      if Typ.is_pointer t1 then (binop_exp Binop.PlusPI, [])
+      else if Typ.is_pointer t2 then (binop_exp ~change_order:true Binop.PlusPI, [])
+      else (binop_exp (Binop.PlusA (Typ.get_ikind_opt typ)), [])
   | `Mul ->
-      (binop_exp Binop.Mult, [])
+      (binop_exp (Binop.Mult (Typ.get_ikind_opt typ)), [])
   | `Div ->
       (binop_exp Binop.Div, [])
   | `Rem ->
       (binop_exp Binop.Mod, [])
   | `Sub ->
-      (binop_exp Binop.MinusA, [])
+      if Typ.is_pointer t1 then
+        if Typ.is_pointer t2 then (binop_exp Binop.MinusPP, []) else (binop_exp Binop.MinusPI, [])
+      else (binop_exp (Binop.MinusA (Typ.get_ikind_opt typ)), [])
   | `Shl ->
       (binop_exp Binop.Shiftlt, [])
   | `Shr ->
@@ -112,19 +105,22 @@ let binary_operation_instruction boi e1 typ e2 loc =
       (binop_exp Binop.LOr, [])
   | `Assign ->
       (e1, [Sil.Store (e1, typ, e2, loc)])
+  | `Cmp ->
+      CFrontend_config.unimplemented __POS__ source_range "C++20 spaceship operator <=>"
+      (* C++20 spaceship operator <=>, TODO *)
   | `Comma ->
       (e2, []) (* C99 6.5.17-2 *)
-  | `MulAssign
-  | `DivAssign
-  | `RemAssign
-  | `AddAssign
-  | `SubAssign
-  | `ShlAssign
-  | `ShrAssign
-  | `AndAssign
-  | `XorAssign
-  | `OrAssign ->
-      compound_assignment_binary_operation_instruction boi e1 typ e2 loc
+  | ( `MulAssign
+    | `DivAssign
+    | `RemAssign
+    | `AddAssign
+    | `SubAssign
+    | `ShlAssign
+    | `ShrAssign
+    | `AndAssign
+    | `XorAssign
+    | `OrAssign ) as boi_kind ->
+      compound_assignment_binary_operation_instruction boi_kind e1_with_typ typ e2 loc
 
 
 let unary_operation_instruction translation_unit_context uoi e typ loc =
@@ -133,12 +129,14 @@ let unary_operation_instruction translation_unit_context uoi e typ loc =
   | `PostInc ->
       let id = Ident.create_fresh Ident.knormal in
       let instr1 = Sil.Load (id, e, typ, loc) in
-      let e_plus_1 = Exp.BinOp (Binop.PlusA, Exp.Var id, Exp.Const (Const.Cint IntLit.one)) in
+      let bop = if Typ.is_pointer typ then Binop.PlusPI else Binop.PlusA (Typ.get_ikind_opt typ) in
+      let e_plus_1 = Exp.BinOp (bop, Exp.Var id, Exp.Const (Const.Cint IntLit.one)) in
       (Exp.Var id, [instr1; Sil.Store (e, typ, e_plus_1, loc)])
   | `PreInc ->
       let id = Ident.create_fresh Ident.knormal in
       let instr1 = Sil.Load (id, e, typ, loc) in
-      let e_plus_1 = Exp.BinOp (Binop.PlusA, Exp.Var id, Exp.Const (Const.Cint IntLit.one)) in
+      let bop = if Typ.is_pointer typ then Binop.PlusPI else Binop.PlusA (Typ.get_ikind_opt typ) in
+      let e_plus_1 = Exp.BinOp (bop, Exp.Var id, Exp.Const (Const.Cint IntLit.one)) in
       let exp =
         if CGeneral_utils.is_cpp_translation translation_unit_context then e else e_plus_1
       in
@@ -146,12 +144,18 @@ let unary_operation_instruction translation_unit_context uoi e typ loc =
   | `PostDec ->
       let id = Ident.create_fresh Ident.knormal in
       let instr1 = Sil.Load (id, e, typ, loc) in
-      let e_minus_1 = Exp.BinOp (Binop.MinusA, Exp.Var id, Exp.Const (Const.Cint IntLit.one)) in
+      let bop =
+        if Typ.is_pointer typ then Binop.MinusPI else Binop.MinusA (Typ.get_ikind_opt typ)
+      in
+      let e_minus_1 = Exp.BinOp (bop, Exp.Var id, Exp.Const (Const.Cint IntLit.one)) in
       (Exp.Var id, [instr1; Sil.Store (e, typ, e_minus_1, loc)])
   | `PreDec ->
       let id = Ident.create_fresh Ident.knormal in
       let instr1 = Sil.Load (id, e, typ, loc) in
-      let e_minus_1 = Exp.BinOp (Binop.MinusA, Exp.Var id, Exp.Const (Const.Cint IntLit.one)) in
+      let bop =
+        if Typ.is_pointer typ then Binop.MinusPI else Binop.MinusA (Typ.get_ikind_opt typ)
+      in
+      let e_minus_1 = Exp.BinOp (bop, Exp.Var id, Exp.Const (Const.Cint IntLit.one)) in
       let exp =
         if CGeneral_utils.is_cpp_translation translation_unit_context then e else e_minus_1
       in
@@ -172,7 +176,9 @@ let unary_operation_instruction translation_unit_context uoi e typ loc =
   | `Real | `Imag | `Extension | `Coawait ->
       let uok = Clang_ast_j.string_of_unary_operator_kind uoi.Clang_ast_t.uoi_kind in
       L.(debug Capture Medium)
-        "@\nWARNING: Missing translation for Unary Operator Kind %s. The construct has been ignored...@\n"
+        "@\n\
+         WARNING: Missing translation for Unary Operator Kind %s. The construct has been \
+         ignored...@\n"
         uok ;
       (e, [])
 
@@ -241,13 +247,15 @@ let bin_op_to_string boi =
       "XorAssign"
   | `OrAssign ->
       "OrAssign"
+  | `Cmp ->
+      "Cmp"
   | `Comma ->
       "Comma"
 
 
 let sil_const_plus_one const =
   match const with
-  | Exp.Const Const.Cint n ->
+  | Exp.Const (Const.Cint n) ->
       Exp.Const (Const.Cint (IntLit.add n IntLit.one))
   | _ ->
-      Exp.BinOp (Binop.PlusA, const, Exp.Const (Const.Cint IntLit.one))
+      Exp.BinOp (Binop.PlusA None, const, Exp.Const (Const.Cint IntLit.one))

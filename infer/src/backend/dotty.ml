@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -35,7 +33,7 @@ type kind_of_links =
   | LinkToSSL
   | LinkToDLL
   | LinkRetainCycle
-  [@@deriving compare]
+[@@deriving compare]
 
 (* coordinate identifies a node using two dimension: id is an numerical identifier of the node,*)
 (* lambda identifies in which hpred parameter id lays in*)
@@ -45,9 +43,9 @@ type coordinate = {id: int; lambda: int} [@@deriving compare]
 (* useful for having nodes from within a struct and/or to inside a struct *)
 type link =
   {kind: kind_of_links; src: coordinate; src_fld: string; trg: coordinate; trg_fld: string}
-  [@@deriving compare]
+[@@deriving compare]
 
-let equal_link = [%compare.equal : link]
+let equal_link = [%compare.equal: link]
 
 (* type of the visualized boxes/nodes in the graph*)
 type dotty_node =
@@ -112,11 +110,11 @@ let print_stack_info = ref false
 let strip_special_chars b =
   let b = Bytes.of_string b in
   let replace st c c' =
-    if Bytes.contains st c then
+    if Bytes.contains st c then (
       let idx = String.index_exn (Bytes.to_string st) c in
       try Bytes.set st idx c' ; st with Invalid_argument _ ->
         L.internal_error "@\n@\nstrip_special_chars: Invalid argument!@\n@." ;
-        assert false
+        assert false )
     else st
   in
   let s0 = replace b '(' 'B' in
@@ -133,11 +131,11 @@ let strip_special_chars b =
 let rec strexp_to_string pe coo f se =
   match se with
   | Sil.Eexp (Exp.Lvar pvar, _) ->
-      F.fprintf f "%a" (Pvar.pp pe) pvar
+      (Pvar.pp pe) f pvar
   | Sil.Eexp (Exp.Var id, _) ->
-      if !print_full_prop then F.fprintf f "%a" Ident.pp id else ()
+      if !print_full_prop then Ident.pp f id else ()
   | Sil.Eexp (e, _) ->
-      if !print_full_prop then F.fprintf f "%a" (Sil.pp_exp_printenv pe) e else F.fprintf f "_"
+      if !print_full_prop then (Sil.pp_exp_printenv pe) f e else F.pp_print_char f '_'
   | Sil.Estruct (ls, _) ->
       F.fprintf f " STRUCT | { %a } " (struct_to_dotty_str pe coo) ls
   | Sil.Earray (e, idx, _) ->
@@ -159,7 +157,7 @@ and struct_to_dotty_str pe coo f ls : unit =
 and get_contents_sexp pe coo f se =
   match se with
   | Sil.Eexp (e', _) ->
-      F.fprintf f "%a" (Sil.pp_exp_printenv pe) e'
+      (Sil.pp_exp_printenv pe) f e'
   | Sil.Estruct (se', _) ->
       F.fprintf f "| { %a }" (struct_to_dotty_str pe coo) se'
   | Sil.Earray (e', [], _) ->
@@ -179,12 +177,12 @@ and get_contents pe coo f = function
   | [] ->
       ()
   | [idx_se] ->
-      F.fprintf f "%a" (get_contents_single pe coo) idx_se
+      (get_contents_single pe coo) f idx_se
   | idx_se :: l ->
       F.fprintf f "%a | %a" (get_contents_single pe coo) idx_se (get_contents pe coo) l
 
 
-(* true if node is the sorce node of the expression e*)
+(* true if node is the source node of the expression e*)
 let is_source_node_of_exp e node =
   match node with Dotpointsto (_, e', _) -> Exp.equal e e' | _ -> false
 
@@ -218,7 +216,7 @@ let rec look_up_for_back_pointer e dotnodes lambda =
   match dotnodes with
   | [] ->
       []
-  | (Dotdllseg (coo, _, _, _, e4, _, _, _)) :: dotnodes' ->
+  | Dotdllseg (coo, _, _, _, e4, _, _, _) :: dotnodes' ->
       if Exp.equal e e4 && Int.equal lambda coo.lambda then [coo.id + 1]
       else look_up_for_back_pointer e dotnodes' lambda
   | _ :: dotnodes' ->
@@ -249,7 +247,7 @@ let reset_proposition_counter () = proposition_counter := 0
 
 let reset_dotty_spec_counter () = spec_counter := 0
 
-let color_to_str (c: Pp.color) =
+let color_to_str (c : Pp.color) =
   match c with
   | Black ->
       "black"
@@ -263,8 +261,8 @@ let color_to_str (c: Pp.color) =
       "red"
 
 
-let make_dangling_boxes pe allocated_nodes (sigma_lambda: (Sil.hpred * int) list) =
-  let exp_color hpred (exp: Exp.t) =
+let make_dangling_boxes pe allocated_nodes (sigma_lambda : (Sil.hpred * int) list) =
+  let exp_color hpred (exp : Exp.t) =
     if Pp.equal_color (pe.Pp.cmap_norm (Obj.repr hpred)) Pp.Red then Pp.Red
     else pe.Pp.cmap_norm (Obj.repr exp)
   in
@@ -273,7 +271,8 @@ let make_dangling_boxes pe allocated_nodes (sigma_lambda: (Sil.hpred * int) list
     incr dotty_state_count ;
     let coo = mk_coordinate n lambda in
     match hpred with
-    | Sil.Hpointsto (_, Sil.Eexp (e, _), _) when not (Exp.equal e Exp.zero) && !print_full_prop ->
+    | Sil.Hpointsto (_, Sil.Eexp (e, _), _) when (not (Exp.equal e Exp.zero)) && !print_full_prop
+      ->
         let e_color_str = color_to_str (exp_color hpred e) in
         [Dotdangling (coo, e, e_color_str)]
     | Sil.Hlseg (_, _, _, e2, _) when not (Exp.equal e2 Exp.zero) ->
@@ -312,7 +311,7 @@ let make_dangling_boxes pe allocated_nodes (sigma_lambda: (Sil.hpred * int) list
     match l with
     | [] ->
         []
-    | (Dotdangling (coo, e, color)) :: l' ->
+    | Dotdangling (coo, e, color) :: l' ->
         if List.exists ~f:(Exp.equal e) seen_exp then filter_duplicate l' seen_exp
         else Dotdangling (coo, e, color) :: filter_duplicate l' (e :: seen_exp)
     | box :: l' ->
@@ -337,7 +336,7 @@ let rec dotty_mk_node pe sigma =
   let n = !dotty_state_count in
   incr dotty_state_count ;
   let do_hpred_lambda exp_color = function
-    | ( Sil.Hpointsto (e, Sil.Earray (e', l, _), Exp.Sizeof {typ= {Typ.desc= Tarray (t, _, _)}})
+    | ( Sil.Hpointsto (e, Sil.Earray (e', l, _), Exp.Sizeof {typ= {Typ.desc= Tarray {elt= t}}})
       , lambda ) ->
         incr dotty_state_count ;
         (* increment once more n+1 is the box for the array *)
@@ -372,7 +371,7 @@ let rec dotty_mk_node pe sigma =
   | [] ->
       []
   | (hpred, lambda) :: sigma' ->
-      let exp_color (exp: Exp.t) =
+      let exp_color (exp : Exp.t) =
         if Pp.equal_color (pe.Pp.cmap_norm (Obj.repr hpred)) Pp.Red then Pp.Red
         else pe.Pp.cmap_norm (Obj.repr exp)
       in
@@ -381,7 +380,7 @@ let rec dotty_mk_node pe sigma =
 
 let set_exps_neq_zero pi =
   let f = function
-    | Sil.Aneq (e, Exp.Const Const.Cint i) when IntLit.iszero i ->
+    | Sil.Aneq (e, Exp.Const (Const.Cint i)) when IntLit.iszero i ->
         exps_neq_zero := e :: !exps_neq_zero
     | _ ->
         ()
@@ -396,7 +395,7 @@ let box_dangling e =
       ~f:(fun b -> match b with Dotdangling (_, e', _) -> Exp.equal e e' | _ -> false)
       !dangling_dotboxes
   in
-  match entry_e with [] -> None | (Dotdangling (coo, _, _)) :: _ -> Some coo.id | _ -> None
+  match entry_e with [] -> None | Dotdangling (coo, _, _) :: _ -> Some coo.id | _ -> None
 
 
 (* NOTE: this cannot be possible since entry_e can be composed only by Dotdangling, see def of entry_e*)
@@ -423,7 +422,7 @@ let compute_fields_struct sigma =
     match s with
     | [] ->
         ()
-    | (Sil.Hpointsto (_, se, _)) :: s' ->
+    | Sil.Hpointsto (_, se, _) :: s' ->
         do_strexp se false ; fs s'
     | _ :: s' ->
         fs s'
@@ -437,7 +436,7 @@ let compute_struct_exp_nodes sigma =
     match s with
     | [] ->
         ()
-    | (Sil.Hpointsto (e, Sil.Estruct _, _)) :: s' ->
+    | Sil.Hpointsto (e, Sil.Estruct _, _) :: s' ->
         struct_exp_nodes := e :: !struct_exp_nodes ;
         sen s'
     | _ :: s' ->
@@ -476,8 +475,7 @@ let node_in_cycle cycle node =
 let rec compute_target_struct_fields dotnodes list_fld p f lambda cycle =
   let find_target_one_fld (fn, se) =
     match se with
-    | Sil.Eexp (e, _)
-      -> (
+    | Sil.Eexp (e, _) -> (
         if is_nil e p then
           let n' = make_nil_node lambda in
           if !print_full_prop then [(LinkStructToExp, Typ.Fieldname.to_string fn, n', "")] else []
@@ -490,7 +488,7 @@ let rec compute_target_struct_fields dotnodes list_fld p f lambda cycle =
                 []
             | Some n' ->
                 [(LinkStructToExp, Typ.Fieldname.to_string fn, n', "")] )
-          | [node] | [(Dotpointsto _); node] | [node; (Dotpointsto _)] ->
+          | [node] | [Dotpointsto _; node] | [node; Dotpointsto _] ->
               let n = get_coordinate_id node in
               if List.mem ~equal:Exp.equal !struct_exp_nodes e then
                 let e_no_special_char = strip_special_chars (Exp.to_string e) in
@@ -522,8 +520,7 @@ let rec compute_target_struct_fields dotnodes list_fld p f lambda cycle =
 let rec compute_target_array_elements dotnodes list_elements p f lambda =
   let find_target_one_element (idx, se) =
     match se with
-    | Sil.Eexp (e, _)
-      -> (
+    | Sil.Eexp (e, _) -> (
         if is_nil e p then
           let n' = make_nil_node lambda in
           [(LinkArrayToExp, Exp.to_string idx, n', "")]
@@ -536,7 +533,7 @@ let rec compute_target_array_elements dotnodes list_elements p f lambda =
                 []
             | Some n' ->
                 [(LinkArrayToExp, Exp.to_string idx, n', "")] )
-          | [node] | [(Dotpointsto _); node] | [node; (Dotpointsto _)] ->
+          | [node] | [Dotpointsto _; node] | [node; Dotpointsto _] ->
               let n = get_coordinate_id node in
               if List.mem ~equal:Exp.equal !struct_exp_nodes e then
                 let e_no_special_char = strip_special_chars (Exp.to_string e) in
@@ -600,15 +597,14 @@ let rec dotty_mk_set_links dotnodes sigma p f cycle =
         let lnk =
           mk_link LinkToArray (mk_coordinate n lambda) "" (mk_coordinate (n + 1) lambda) trg_label
         in
-        lnk :: links_from_elements @ dotty_mk_set_links dotnodes sigma' p f cycle
+        (lnk :: links_from_elements) @ dotty_mk_set_links dotnodes sigma' p f cycle
   in
   match sigma with
   | [] ->
       []
   | (Sil.Hpointsto (e, Sil.Earray (_, lie, _), _), lambda) :: sigma' ->
       make_links_for_arrays e lie lambda sigma'
-  | (Sil.Hpointsto (e, Sil.Estruct (lfld, _), _), lambda) :: sigma'
-    -> (
+  | (Sil.Hpointsto (e, Sil.Estruct (lfld, _), _), lambda) :: sigma' -> (
       let src = look_up dotnodes e lambda in
       match src with
       | [] ->
@@ -626,7 +622,7 @@ let rec dotty_mk_set_links dotnodes sigma p f cycle =
           let address_struct_id =
             get_coordinate_id (List.hd_exn (List.filter ~f:(is_source_node_of_exp e) nodes_e))
           in
-          (* we need to exclude the address node from the sorce of fields. no fields should start from there*)
+          (* we need to exclude the address node from the source of fields. no fields should start from there*)
           let nl' = List.filter ~f:(fun id -> address_struct_id <> id) nl in
           let links_from_fields = List.concat_map ~f:ff nl' in
           let lnk_from_address_struct =
@@ -641,8 +637,7 @@ let rec dotty_mk_set_links dotnodes sigma p f cycle =
           in
           lnk_from_address_struct @ links_from_fields
           @ dotty_mk_set_links dotnodes sigma' p f cycle )
-  | (Sil.Hpointsto (e, Sil.Eexp (e', _), _), lambda) :: sigma'
-    -> (
+  | (Sil.Hpointsto (e, Sil.Eexp (e', _), _), lambda) :: sigma' -> (
       let src = look_up dotnodes e lambda in
       match src with
       | [] ->
@@ -660,8 +655,7 @@ let rec dotty_mk_set_links dotnodes sigma p f cycle =
             let ll = List.concat_map ~f:ff nl in
             ll @ dotty_mk_set_links dotnodes sigma' p f cycle
           else dotty_mk_set_links dotnodes sigma' p f cycle )
-  | (Sil.Hlseg (_, _, e1, e2, _), lambda) :: sigma'
-    -> (
+  | (Sil.Hlseg (_, _, e1, e2, _), lambda) :: sigma' -> (
       let src = look_up dotnodes e1 lambda in
       match src with
       | [] ->
@@ -672,7 +666,7 @@ let rec dotty_mk_set_links dotnodes sigma p f cycle =
             mk_link LinkToSSL (mk_coordinate (n + 1) lambda) "" (mk_coordinate m lambda) lab
           in
           lnk :: dotty_mk_set_links dotnodes sigma' p f cycle )
-  | (Sil.Hdllseg (_, _, e1, e2, e3, _, _), lambda) :: sigma' ->
+  | (Sil.Hdllseg (_, _, e1, e2, e3, _, _), lambda) :: sigma' -> (
       let src = look_up dotnodes e1 lambda in
       match src with
       | [] ->
@@ -695,7 +689,7 @@ let rec dotty_mk_set_links dotnodes sigma p f cycle =
             | m :: _ ->
                 [mk_link LinkToDLL (mk_coordinate n lambda) "" (mk_coordinate m lambda) ""]
           in
-          target_Blink @ target_Flink @ dotty_mk_set_links dotnodes sigma' p f cycle
+          target_Blink @ target_Flink @ dotty_mk_set_links dotnodes sigma' p f cycle )
 
 
 let print_kind f kind =
@@ -711,7 +705,7 @@ let print_kind f kind =
       F.fprintf f "@\n POST%iL0 [label=\"POST %i \",  style=filled, color= yellow]@\n"
         !dotty_state_count !post_counter ;
       print_stack_info := true
-  | Lambda_pred (no, lev, array) ->
+  | Lambda_pred (no, lev, array) -> (
     match array with
     | false ->
         F.fprintf f "%s @\n state%iL%i [label=\"INTERNAL STRUCTURE %i \",  %s]@\n"
@@ -725,7 +719,7 @@ let print_kind f kind =
           "style=filled, color= lightblue" ;
         (* F.fprintf f "state%iL%i -> struct%iL%i:%s [color=\"lightblue \"  arrowhead=none] @\n"
              !dotty_state_count !lambda_counter no lev lab;*)
-        incr dotty_state_count
+        incr dotty_state_count )
 
 
 (* print a link between two nodes in the graph *)
@@ -766,7 +760,7 @@ let dotty_pp_link f link =
 
 
 (* given the list of nodes and links get rid of spec nodes that are not pointed to by anybody*)
-let filter_useless_spec_dollar_box (nodes: dotty_node list) (links: link list) =
+let filter_useless_spec_dollar_box (nodes : dotty_node list) (links : link list) =
   let tmp_nodes = ref nodes in
   let tmp_links = ref links in
   let remove_links_from ln =
@@ -827,8 +821,7 @@ let filter_useless_spec_dollar_box (nodes: dotty_node list) (links: link list) =
 let rec print_struct f pe e te l coo c =
   let print_type =
     match te with
-    | Exp.Sizeof {typ}
-      -> (
+    | Exp.Sizeof {typ} -> (
         let str_t = Typ.to_string typ in
         match Str.split_delim (Str.regexp_string Config.anonymous_block_prefix) str_t with
         | [_; _] ->
@@ -889,7 +882,8 @@ and print_sll f pe nesting k e1 coo =
   F.fprintf f "state%iL%i [label=\" \"] @\n" (n + 1) lambda ;
   F.fprintf f "state%iL%i -> state%iL%i [label=\" \"] }" n' lambda (n + 1) lambda ;
   incr lambda_counter ;
-  pp_dotty f (Lambda_pred (n + 1, lambda, false))
+  pp_dotty f
+    (Lambda_pred (n + 1, lambda, false))
     (Prop.normalize (Tenv.create ()) (Prop.from_sigma nesting))
     None
 
@@ -916,7 +910,8 @@ and print_dll f pe nesting k e1 e4 coo =
   F.fprintf f "state%iL%i -> state%iL%i [label=\" \"]@\n" (n + 1) lambda n' lambda ;
   F.fprintf f "state%iL%i -> state%iL%i [label=\" \"]}@\n" n' lambda (n + 1) lambda ;
   incr lambda_counter ;
-  pp_dotty f (Lambda_pred (n', lambda, false))
+  pp_dotty f
+    (Lambda_pred (n', lambda, false))
     (Prop.normalize (Tenv.create ()) (Prop.from_sigma nesting))
     None
 
@@ -999,7 +994,7 @@ and display_pure_info f pe prop =
 
 
 (** Pretty print a proposition in dotty format. *)
-and pp_dotty f kind (prop_: Prop.normal Prop.t) cycle =
+and pp_dotty f kind (prop_ : Prop.normal Prop.t) cycle =
   incr proposition_counter ;
   let pe, prop =
     match kind with
@@ -1070,19 +1065,15 @@ let pp_dotty_one_spec f pre posts =
 (********** Print control flow graph (in dot form) for fundec to channel. You have to compute an
             interprocedural cfg first. *)
 
-let pp_cfgnodename pname fmt (n: Procdesc.Node.t) =
+let pp_cfgnodename pname fmt (n : Procdesc.Node.t) =
   F.fprintf fmt "\"%s_%d\""
     (Escape.escape_dotty (Typ.Procname.to_filename pname))
     (Procdesc.Node.get_id n :> int)
 
 
-let pp_etlist byvals fmt etl =
-  List.iteri
-    ~f:(fun index (id, typ) ->
-      let byval_mark =
-        if Typ.is_pointer typ && List.mem byvals index ~equal:Int.equal then "(byval)" else ""
-      in
-      Format.fprintf fmt " %a:%a%s" Mangled.pp id (Typ.pp_full Pp.text) typ byval_mark )
+let pp_etlist fmt etl =
+  List.iter
+    ~f:(fun (id, typ) -> Format.fprintf fmt " %a:%a" Mangled.pp id (Typ.pp_full Pp.text) typ)
     etl
 
 
@@ -1094,47 +1085,48 @@ let pp_var_list fmt etl =
 
 let pp_local_list fmt etl = List.iter ~f:(Procdesc.pp_local fmt) etl
 
-let pp_cfgnodelabel pdesc fmt (n: Procdesc.Node.t) =
+let pp_cfgnodelabel pdesc fmt (n : Procdesc.Node.t) =
   let pp_label fmt n =
     match Procdesc.Node.get_kind n with
-    | Procdesc.Node.Start_node pname ->
+    | Procdesc.Node.Start_node ->
+        let pname = Procdesc.Node.get_proc_name n in
         let pname_string = Escape.escape_dotty (Typ.Procname.to_string pname) in
         let attributes = Procdesc.get_attributes pdesc in
-        let byvals = attributes.ProcAttributes.by_vals in
-        Format.fprintf fmt "Start %s\\nFormals: %a\\nLocals: %a" pname_string (pp_etlist byvals)
+        Format.fprintf fmt "Start %s\\nFormals: %a\\nLocals: %a" pname_string pp_etlist
           (Procdesc.get_formals pdesc) pp_local_list (Procdesc.get_locals pdesc) ;
-        if List.length (Procdesc.get_captured pdesc) <> 0 then
+        if not (List.is_empty (Procdesc.get_captured pdesc)) then
           Format.fprintf fmt "\\nCaptured: %a" pp_var_list (Procdesc.get_captured pdesc) ;
         let method_annotation = attributes.ProcAttributes.method_annotation in
         if not (Annot.Method.is_empty method_annotation) then
           Format.fprintf fmt "\\nAnnotation: %a" (Annot.Method.pp pname_string) method_annotation
-    | Procdesc.Node.Exit_node pname ->
+    | Procdesc.Node.Exit_node ->
+        let pname = Procdesc.Node.get_proc_name n in
         Format.fprintf fmt "Exit %s" (Escape.escape_dotty (Typ.Procname.to_string pname))
     | Procdesc.Node.Join_node ->
-        Format.fprintf fmt "+"
-    | Procdesc.Node.Prune_node (is_true_branch, _, _) ->
-        Format.fprintf fmt "Prune (%b branch)" is_true_branch
+        Format.pp_print_char fmt '+'
+    | Procdesc.Node.Prune_node (is_true_branch, if_kind, _) ->
+        Format.fprintf fmt "Prune (%b branch, %s)" is_true_branch (Sil.if_kind_to_string if_kind)
     | Procdesc.Node.Stmt_node s ->
-        Format.fprintf fmt " %s" s
+        Format.fprintf fmt " %a" Procdesc.Node.pp_stmt s
     | Procdesc.Node.Skip_node s ->
         Format.fprintf fmt "Skip %s" s
   in
   let instr_string i =
-    let pp f = Sil.pp_instr Pp.text f i in
+    let pp f = Sil.pp_instr ~print_types:false Pp.text f i in
     let str = F.asprintf "%t" pp in
     Escape.escape_dotty str
   in
   let pp_instrs fmt instrs =
-    List.iter ~f:(fun i -> F.fprintf fmt " %s\\n " (instr_string i)) instrs
+    Instrs.iter ~f:(fun i -> F.fprintf fmt " %s\\n " (instr_string i)) instrs
   in
   let instrs = Procdesc.Node.get_instrs n in
   F.fprintf fmt "%d: %a \\n  %a" (Procdesc.Node.get_id n :> int) pp_label n pp_instrs instrs
 
 
-let pp_cfgnodeshape fmt (n: Procdesc.Node.t) =
+let pp_cfgnodeshape fmt (n : Procdesc.Node.t) =
   match Procdesc.Node.get_kind n with
-  | Procdesc.Node.Start_node _ | Procdesc.Node.Exit_node _ ->
-      F.fprintf fmt "color=yellow style=filled"
+  | Procdesc.Node.Start_node | Procdesc.Node.Exit_node ->
+      F.pp_print_string fmt "color=yellow style=filled"
   | Procdesc.Node.Prune_node _ ->
       F.fprintf fmt "shape=\"invhouse\""
   | Procdesc.Node.Skip_node _ ->
@@ -1145,14 +1137,14 @@ let pp_cfgnodeshape fmt (n: Procdesc.Node.t) =
       ()
 
 
-let pp_cfgnode pdesc fmt (n: Procdesc.Node.t) =
+let pp_cfgnode pdesc fmt (n : Procdesc.Node.t) =
   let pname = Procdesc.get_proc_name pdesc in
   F.fprintf fmt "%a [label=\"%a\" %a]@\n\t@\n" (pp_cfgnodename pname) n (pp_cfgnodelabel pdesc) n
     pp_cfgnodeshape n ;
   let print_edge n1 n2 is_exn =
     let color = if is_exn then "[color=\"red\" ]" else "" in
     match Procdesc.Node.get_kind n2 with
-    | Procdesc.Node.Exit_node _ when is_exn ->
+    | Procdesc.Node.Exit_node when is_exn ->
         (* don't print exception edges to the exit node *)
         ()
     | _ ->
@@ -1178,7 +1170,14 @@ let print_icfg source fmt cfg =
     if Config.dotty_cfg_libs || SourceFile.equal loc.Location.file source then
       F.fprintf fmt "%a@\n" (pp_cfgnode pdesc) node
   in
-  Cfg.iter_all_nodes ~sorted:true print_node cfg
+  let print_pdesc tenv_opt pdesc =
+    Option.iter tenv_opt ~f:(fun tenv -> Preanal.do_preanalysis pdesc tenv) ;
+    Procdesc.get_nodes pdesc
+    |> List.sort ~compare:Procdesc.Node.compare
+    |> List.iter ~f:(fun node -> print_node pdesc node)
+  in
+  let tenv = Tenv.load source in
+  Cfg.iter_sorted cfg ~f:(fun pdesc -> print_pdesc tenv pdesc)
 
 
 let write_icfg_dotty_to_file source cfg fname =
@@ -1209,30 +1208,27 @@ let print_icfg_dotty source cfg =
 (********** END of Printing dotty files ***********)
 
 (** Dotty printing for specs *)
-let pp_speclist_dotty f (splist: Prop.normal Specs.spec list) =
-  let pp_simple_saved = !Config.pp_simple in
-  Config.pp_simple := true ;
+let pp_speclist_dotty f (splist : Prop.normal BiabductionSummary.spec list) =
   reset_proposition_counter () ;
   reset_dotty_spec_counter () ;
   F.fprintf f "@\n@\n@\ndigraph main { @\nnode [shape=box]; @\n" ;
   F.fprintf f "@\n compound = true; @\n" ;
   (*  F.fprintf f "@\n size=\"12,7\"; ratio=fill; @\n"; *)
   List.iter
-    ~f:(fun s -> pp_dotty_one_spec f (Specs.Jprop.to_prop s.Specs.pre) s.Specs.posts)
+    ~f:(fun s ->
+      pp_dotty_one_spec f
+        (BiabductionSummary.Jprop.to_prop s.BiabductionSummary.pre)
+        s.BiabductionSummary.posts )
     splist ;
-  F.fprintf f "@\n}" ;
-  Config.pp_simple := pp_simple_saved
+  F.fprintf f "@\n}"
 
 
-let pp_speclist_to_file (filename: DB.filename) spec_list =
-  let pp_simple_saved = !Config.pp_simple in
-  Config.pp_simple := true ;
+let pp_speclist_to_file (filename : DB.filename) spec_list =
   let outc = Out_channel.create (DB.filename_to_string (DB.filename_add_suffix filename ".dot")) in
   let fmt = F.formatter_of_out_channel outc in
   let () = F.fprintf fmt "#### Dotty version:  ####@\n%a@\n@\n" pp_speclist_dotty spec_list in
-  Out_channel.close outc ;
-  Config.pp_simple := pp_simple_saved
+  Out_channel.close outc
 
 
-let pp_speclist_dotty_file (filename: DB.filename) spec_list =
+let pp_speclist_dotty_file (filename : DB.filename) spec_list =
   try pp_speclist_to_file filename spec_list with exn when SymOp.exn_not_failure exn -> ()

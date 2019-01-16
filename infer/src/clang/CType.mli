@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -22,3 +20,5 @@ val return_type_of_function_type : Clang_ast_t.qual_type -> Clang_ast_t.qual_typ
 val is_block_type : Clang_ast_t.qual_type -> bool
 
 val is_reference_type : Clang_ast_t.qual_type -> bool
+
+val is_pointer_to_const : Clang_ast_t.qual_type -> bool

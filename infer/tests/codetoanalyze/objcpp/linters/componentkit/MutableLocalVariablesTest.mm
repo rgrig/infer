@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 #import <Foundation/Foundation.h>
@@ -85,7 +83,7 @@ class BarClass {
 @interface BarComponent : CKCompositeComponent
 @end
 @implementation BarComponent
-+ (instancetype) new {
++ (instancetype)new {
   // C++ classes
   BarClass s1; // error
   const BarClass& s2 = s1; // no error
@@ -126,4 +124,11 @@ class BarClass {
 
   return nil;
 }
+
+- (void)no_mutable_local_variable_in_self_aliases {
+  __weak auto weakSelf = self; // no error
+  __strong auto strongSelf = self; // no error
+  auto comp = [BarComponent new]; // error
+}
+
 @end

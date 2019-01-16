@@ -1,35 +1,26 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-open! PVariant
+open PolyVariantEqual
 open Javalib_pack
 module L = Logging
 
-let register_perf_stats_report source_file =
-  let stats_dir = Filename.concat Config.results_dir Config.frontend_stats_dir_name in
-  let abbrev_source_file = DB.source_file_encoding source_file in
-  let stats_file = Config.perf_stats_prefix ^ "_" ^ abbrev_source_file ^ ".json" in
-  PerfStats.register_report_at_exit (Filename.concat stats_dir stats_file)
-
-
 let init_global_state source_file =
-  if Config.developer_mode then register_perf_stats_report source_file ;
   Language.curr_language := Language.Java ;
+  PerfStats.register_report_at_exit (PerfStats.JavaFrontend source_file) ;
   DB.Results_dir.init source_file ;
   Ident.NameGenerator.reset () ;
   JContext.reset_exn_node_table ()
 
 
 let store_icfg source_file cfg =
-  Cfg.store source_file cfg ;
+  SourceFiles.add source_file cfg Tenv.Global None ;
   if Config.debug_mode || Config.frontend_tests then Dotty.print_icfg_dotty source_file cfg ;
   ()
 
@@ -38,6 +29,7 @@ let store_icfg source_file cfg =
 (* environment are obtained and saved. *)
 let do_source_file linereader classes program tenv source_basename package_opt source_file =
   L.(debug Capture Medium) "@\nfilename: %a (%s)@." SourceFile.pp source_file source_basename ;
+  init_global_state source_file ;
   let cfg =
     JFrontend.compute_source_icfg linereader classes program tenv source_basename package_opt
       source_file
@@ -81,7 +73,9 @@ let save_tenv tenv =
 
 let store_callee_attributes tenv program =
   let f proc_name cn ms =
-    Option.iter ~f:Attributes.store (JTrans.create_callee_attributes tenv program cn ms proc_name)
+    Option.iter
+      ~f:(Attributes.store ~proc_desc:None)
+      (JTrans.create_callee_attributes tenv program cn ms proc_name)
   in
   JClasspath.iter_missing_callees program ~f
 
@@ -104,7 +98,6 @@ let do_all_files classpath sources classes =
     || Inferconfig.skip_translation_matcher source_file Typ.Procname.empty_block
   in
   let translate_source_file basename (package_opt, _) source_file =
-    init_global_state source_file ;
     if not (skip source_file) then
       do_source_file linereader classes program tenv basename package_opt source_file
   in
@@ -145,8 +138,8 @@ let main load_sources_and_classes =
     | `FromArguments path ->
         JClasspath.load_from_arguments path
   in
-  if String.Map.is_empty sources then L.(die UserError) "Failed to load any Java source code"
-  else do_all_files classpath sources classes
+  if String.Map.is_empty sources then L.(die InternalError) "Failed to load any Java source code" ;
+  do_all_files classpath sources classes
 
 
 let from_arguments path = main (`FromArguments path)

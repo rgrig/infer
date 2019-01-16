@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -43,7 +41,7 @@ val load_program : string -> JBasics.ClassSet.t -> program
 (** load a java program *)
 
 val lookup_node : JBasics.class_name -> program -> JCode.jcode Javalib.interface_or_class option
-(** retrive a Java node from the classname *)
+(** retrieve a Java node from the classname *)
 
 val add_missing_callee :
   program -> Typ.Procname.t -> JBasics.class_name -> JBasics.method_signature -> unit

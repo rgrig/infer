@@ -1,13 +1,10 @@
 /*
- * Copyright (c) 2016 - present
+ * Copyright (c) 2016-present, Programming Research Laboratory (ROPAS)
+ *                             Seoul National University, Korea
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * Programming Research Laboratory (ROPAS)
- * Seoul National University, Korea
- * All rights reserved.
- *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 #include <stdlib.h>
@@ -29,9 +26,7 @@ void function_call() {
   arr_access(arr, p, 20);
 }
 
-void ptr_set_to_zero(int* x) {
-  *x = 0;
-}
+void ptr_set_to_zero(int* x) { *x = 0; }
 
 void struct_ptr_set_to_zero(struct S* s) { s->field = 0; }
 
@@ -75,4 +70,74 @@ void call_by_struct_ptr_bad() {
   sp->field = 5;
   struct_ptr_set_to_zero(sp);
   arr[sp->field - 1] = 123;
+}
+
+int ret_zero() { return 0; }
+
+void call_function_ptr_good() {
+  int (*func_ptr)(void) = &ret_zero;
+  int arr[10];
+  if ((*func_ptr)() != 0) {
+    // unreacheable
+    arr[10] = 1;
+  }
+}
+
+void call_function_ptr_bad1() {
+  int (*func_ptr)(void) = &ret_zero;
+  int arr[10];
+  if ((*func_ptr)() == 0) {
+    arr[10] = 1;
+  }
+}
+
+void access_index_1(int* arr) { arr[1] = 0; }
+void access_index_4(int* arr) { arr[4] = 0; }
+
+void call_access_index_1_on_local_array_Good() {
+  int arr[4];
+  access_index_1(arr);
+}
+
+void call_access_index_4_on_local_array_Bad() {
+  int arr[4];
+  access_index_4(arr);
+}
+
+void call_access_index_1_on_malloced_array_Good() {
+  int* ptr = malloc(sizeof(int) * 4);
+  access_index_1(ptr);
+}
+
+void call_access_index_4_on_malloced_array_Bad() {
+  int* ptr = malloc(sizeof(int) * 4);
+  access_index_4(ptr);
+}
+
+struct S2 {
+  int arr[4];
+};
+
+void call_access_index_1_on_S2_Good(struct S2* s) { access_index_1(s->arr); }
+
+void FN_call_access_index_4_on_S2_Bad(struct S2* s) { access_index_4(s->arr); }
+
+struct S3 {
+  int* ptr;
+};
+
+void call_access_index_1_on_S3(struct S3* s) { access_index_1(s->ptr); }
+
+void call_access_index_4_on_S3(struct S3* s) { access_index_4(s->ptr); }
+
+void call_call_access_index_1_on_S3_Good() {
+  struct S3 s;
+  s.ptr = malloc(sizeof(int) * 4);
+  call_access_index_1_on_S3(&s);
+}
+
+void call_call_access_index_4_on_S3_Bad() {
+  struct S3 s;
+  s.ptr = malloc(sizeof(int) * 4);
+  call_access_index_4_on_S3(&s);
 }

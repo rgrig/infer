@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -35,9 +33,11 @@ val of_int32 : int32 -> t
 
 val of_int64 : int64 -> t
 
+val of_string : string -> t
+
 val geq : t -> t -> bool
 
-val gt : t -> t -> bool  [@@warning "-32"]
+val gt : t -> t -> bool [@@warning "-32"]
 
 val isminusone : t -> bool
 
@@ -89,7 +89,13 @@ val shift_right : t -> t -> t
 
 val sub : t -> t -> t
 
-val to_int : t -> int
+val to_int : t -> int option
+
+val to_int_exn : t -> int
+
+val to_big_int : t -> Z.t
+
+val to_float : t -> float
 
 val to_signed : t -> t option
 

@@ -1,9 +1,7 @@
-dnl Copyright (c) 2016 - present Facebook, Inc.
-dnl All rights reserved.
+dnl Copyright (c) 2016-present, Facebook, Inc.
 dnl
-dnl This source code is licensed under the BSD style license found in the
-dnl LICENSE file in the root directory of this source tree. An additional grant
-dnl of patent rights can be found in the PATENTS file in the same directory.
+dnl This source code is licensed under the MIT license found in the
+dnl LICENSE file in the root directory of this source tree.
 
 AC_DEFUN([AC_ASSERT_OCAML_MIN_VERSION],
 [dnl
@@ -17,6 +15,6 @@ AC_DEFUN([AC_ASSERT_OCAML_MIN_VERSION],
       m4_newline([  Please upgrade to OCaml >= $1. If you are using opam, you can run])
       m4_newline([dnl
     opam switch $1
-    eval \$(opam config env)])
+    eval \$(opam env)])
 ])])])
 ])

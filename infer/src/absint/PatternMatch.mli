@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -32,6 +30,49 @@ val is_subtype : Tenv.t -> Typ.Name.t -> Typ.Name.t -> bool
 val is_subtype_of_str : Tenv.t -> Typ.Name.t -> string -> bool
 (** Resolve [typ_str] in [tenv], then check [typ] <: [typ_str] *)
 
+val implements_iterator : Tenv.t -> string -> bool
+(** Check whether class implements Java's Iterator *)
+
+val implements_collection : Tenv.t -> string -> bool
+(** Check whether class implements a Java's Collection *)
+
+val implements_pseudo_collection : Tenv.t -> string -> bool
+(** Check whether class implements a pseudo Collection with support
+   for get() and size() methods *)
+
+val implements_enumeration : Tenv.t -> string -> bool
+(** Check whether class implements a Java's Enumeration *)
+
+val implements_jackson : string -> Tenv.t -> string -> bool
+(** Check whether class implements a class from Jackson *)
+
+val implements_inject : string -> Tenv.t -> string -> bool
+(** Check whether class implements a Javax Inject *)
+
+val implements_io : string -> Tenv.t -> string -> bool
+(** Check whether class implements a Java IO *)
+
+val implements_map : Tenv.t -> string -> bool
+(** Check whether class implements a Java's Map *)
+
+val implements_map_entry : Tenv.t -> string -> bool
+(** Check whether class implements a Java's Map$Entry *)
+
+val implements_queue : Tenv.t -> string -> bool
+(** Check whether class implements a Java's Queue *)
+
+val implements_lang : string -> Tenv.t -> string -> bool
+(** Check whether class implements a Java's lang *)
+
+val implements_list : Tenv.t -> string -> bool
+(** Check whether class implements a Java's list *)
+
+val implements_google : string -> Tenv.t -> string -> bool
+(** Check whether class implements a class of Google  *)
+
+val implements_android : string -> Tenv.t -> string -> bool
+(** Check whether class implements a class of Android  *)
+
 val supertype_exists : Tenv.t -> (Typ.Name.t -> Typ.Struct.t -> bool) -> Typ.Name.t -> bool
 (** Holds iff the predicate holds on a supertype of the named type, including the type itself *)
 
@@ -39,24 +80,33 @@ val supertype_find_map_opt : Tenv.t -> (Typ.Name.t -> 'a option) -> Typ.Name.t -
 (** Return the first non-None result found when applying the given function to supertypes of the
     named type, including the type itself *)
 
-val java_get_const_type_name : Const.t -> string
-(** Get the name of the type of a constant *)
-
 val java_get_vararg_values : Procdesc.Node.t -> Pvar.t -> Idenv.t -> Exp.t list
 (** Get the values of a vararg parameter given the pvar used to assign the elements. *)
 
 val proc_calls :
-  (Typ.Procname.t -> ProcAttributes.t option) -> Procdesc.t
-  -> (Typ.Procname.t -> ProcAttributes.t -> bool) -> (Typ.Procname.t * ProcAttributes.t) list
+     (Typ.Procname.t -> ProcAttributes.t option)
+  -> Procdesc.t
+  -> (Typ.Procname.t -> ProcAttributes.t -> bool)
+  -> (Typ.Procname.t * ProcAttributes.t) list
 (** Return the callees that satisfy [filter]. *)
 
-val override_exists : (Typ.Procname.t -> bool) -> Tenv.t -> Typ.Procname.t -> bool
-(** Return true if applying the given predicate to an override of [procname] or [procname] itself
-    returns true. For the moment, this only works for Java *)
+val override_find :
+     ?check_current_type:bool
+  -> (Typ.Procname.t -> bool)
+  -> Tenv.t
+  -> Typ.Procname.t
+  -> Typ.Procname.t option
+(** Return a method which overrides [procname] and satisfies [f] (including [procname] itself when [check_current_type] is true, which it is by default). *)
+
+val override_exists :
+  ?check_current_type:bool -> (Typ.Procname.t -> bool) -> Tenv.t -> Typ.Procname.t -> bool
+(** Return true if applying the given predicate to an override of [procname] (including [procname] itself when [check_current_type] is true, which it is by default) returns true. *)
 
 val override_iter : (Typ.Procname.t -> unit) -> Tenv.t -> Typ.Procname.t -> unit
 (** Apply the given predicate to procname and each override of [procname]. For the moment, this only
     works for Java *)
+
+val lookup_attributes : Tenv.t -> Typ.Procname.t -> ProcAttributes.t option
 
 val type_get_annotation : Tenv.t -> Typ.t -> Annot.Item.t option
 

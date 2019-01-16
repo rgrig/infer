@@ -1,14 +1,12 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 open! IStd
-open! PVariant
+open PolyVariantEqual
 module F = Format
 module Hashtbl = Caml.Hashtbl
 module L = Die
@@ -97,11 +95,14 @@ let filename_to_absolute ~root fname =
 
 
 (** Convert an absolute filename to one relative to the given directory. *)
-let filename_to_relative ~root fname =
+let filename_to_relative ?(force_full_backtrack = false) ?(backtrack = 0) ~root fname =
   let rec relativize_if_under origin target =
     match (origin, target) with
     | x :: xs, y :: ys when String.equal x y ->
         relativize_if_under xs ys
+    | _ :: _, _ when force_full_backtrack || backtrack >= List.length origin ->
+        let parent_dir = List.init (List.length origin) ~f:(fun _ -> Filename.parent_dir_name) in
+        Some (Filename.of_parts (parent_dir @ target))
     | [], [] ->
         Some "."
     | [], ys ->
@@ -163,7 +164,7 @@ let read_json_file path =
 let do_finally_swallow_timeout ~f ~finally =
   let res =
     try f () with exc ->
-      reraise_after exc ~f:(fun () ->
+      IExn.reraise_after exc ~f:(fun () ->
           try finally () |> ignore with _ -> (* swallow in favor of the original exception *) () )
   in
   let res' = finally () in
@@ -189,12 +190,28 @@ let with_file_out file ~f =
   try_finally_swallow_timeout ~f ~finally
 
 
+let with_intermediate_temp_file_out file ~f =
+  let temp_filename, temp_oc =
+    Filename.open_temp_file ~in_dir:(Filename.dirname file) "infer" ""
+  in
+  let f () = f temp_oc in
+  let finally () =
+    Out_channel.close temp_oc ;
+    Unix.rename ~src:temp_filename ~dst:file
+  in
+  try_finally_swallow_timeout ~f ~finally
+
+
 let write_json_to_file destfile json =
   with_file_out destfile ~f:(fun oc -> Yojson.Basic.pretty_to_channel oc json)
 
 
 let with_channel_in ~f chan_in =
-  try while true do f @@ In_channel.input_line_exn chan_in done with End_of_file -> ()
+  try
+    while true do
+      f @@ In_channel.input_line_exn chan_in
+    done
+  with End_of_file -> ()
 
 
 let consume_in chan_in = with_channel_in ~f:ignore chan_in
@@ -208,29 +225,8 @@ let with_process_in command read =
   do_finally_swallow_timeout ~f ~finally
 
 
-let shell_escape_command =
-  let no_quote_needed = Str.regexp "^[A-Za-z0-9-_%/:,.]+$" in
-  let easy_single_quotable = Str.regexp "^[^']+$" in
-  let easy_double_quotable = Str.regexp "^[^$`\\!]+$" in
-  let escape = function
-    | "" ->
-        "''"
-    | arg ->
-        if Str.string_match no_quote_needed arg 0 then arg
-        else if Str.string_match easy_single_quotable arg 0 then F.sprintf "'%s'" arg
-        else if Str.string_match easy_double_quotable arg 0 then
-          arg |> Escape.escape_double_quotes |> F.sprintf "\"%s\""
-        else
-          (* ends on-going single quote, output single quote inside double quotes, then open a new single
-       quote *)
-          arg |> Escape.escape_map (function '\'' -> Some "'\"'\"'" | _ -> None)
-          |> F.sprintf "'%s'"
-  in
-  fun cmd -> List.map ~f:escape cmd |> String.concat ~sep:" "
-
-
-let with_process_lines ~(debug: ('a, F.formatter, unit) format -> 'a) ~cmd ~tmp_prefix ~f =
-  let shell_cmd = shell_escape_command cmd in
+let with_process_lines ~(debug : ('a, F.formatter, unit) format -> 'a) ~cmd ~tmp_prefix ~f =
+  let shell_cmd = List.map ~f:Escape.escape_shell cmd |> String.concat ~sep:" " in
   let verbose_err_file = Filename.temp_file tmp_prefix ".err" in
   let shell_cmd_redirected = Printf.sprintf "%s 2>'%s'" shell_cmd verbose_err_file in
   debug "Trying to execute: %s@\n%!" shell_cmd_redirected ;
@@ -255,27 +251,27 @@ let create_dir dir =
   try
     if (Unix.stat dir).Unix.st_kind <> Unix.S_DIR then
       L.(die ExternalError) "file '%s' already exists and is not a directory" dir
-  with Unix.Unix_error _ ->
+  with Unix.Unix_error _ -> (
     try Unix.mkdir dir ~perm:0o700 with Unix.Unix_error _ ->
       let created_concurrently =
         (* check if another process created it meanwhile *)
         try Polymorphic_compare.( = ) (Unix.stat dir).Unix.st_kind Unix.S_DIR
         with Unix.Unix_error _ -> false
       in
-      if not created_concurrently then L.(die ExternalError) "cannot create directory '%s'" dir
+      if not created_concurrently then L.(die ExternalError) "cannot create directory '%s'" dir )
 
 
 let realpath_cache = Hashtbl.create 1023
 
-let realpath ?(warn_on_error= true) path =
+let realpath ?(warn_on_error = true) path =
   match Hashtbl.find realpath_cache path with
-  | exception Not_found -> (
+  | exception Caml.Not_found -> (
     match Filename.realpath path with
     | realpath ->
         Hashtbl.add realpath_cache path (Ok realpath) ;
         realpath
     | exception (Unix.Unix_error (code, _, arg) as exn) ->
-        reraise_after exn ~f:(fun () ->
+        IExn.reraise_after exn ~f:(fun () ->
             if warn_on_error then
               F.eprintf "WARNING: Failed to resolve file %s with \"%s\" @\n@." arg
                 (Unix.Error.message code) ;
@@ -301,18 +297,18 @@ let suppress_stderr2 f2 x1 x2 =
 
 let compare_versions v1 v2 =
   let int_list_of_version v =
-    let lv = String.split ~on:'.' v in
+    let lv = match String.split ~on:'.' v with [v] -> [v; "0"] | v -> v in
     let int_of_string_or_zero v = try int_of_string v with Failure _ -> 0 in
     List.map ~f:int_of_string_or_zero lv
   in
   let lv1 = int_list_of_version v1 in
   let lv2 = int_list_of_version v2 in
-  [%compare : int list] lv1 lv2
+  [%compare: int list] lv1 lv2
 
 
-let write_file_with_locking ?(delete= false) ~f:do_write fname =
+let write_file_with_locking ?(delete = false) ~f:do_write fname =
   Unix.with_file
-    ~mode:Unix.([O_WRONLY; O_CREAT])
+    ~mode:Unix.[O_WRONLY; O_CREAT]
     fname
     ~f:(fun file_descr ->
       if Unix.flock file_descr Unix.Flock_command.lock_exclusive then (
@@ -335,9 +331,10 @@ let rec rmtree name =
       let rec rmdir dir =
         match Unix.readdir_opt dir with
         | Some entry ->
-            if not
-                 ( String.equal entry Filename.current_dir_name
-                 || String.equal entry Filename.parent_dir_name )
+            if
+              not
+                ( String.equal entry Filename.current_dir_name
+                || String.equal entry Filename.parent_dir_name )
             then rmtree (name ^/ entry) ;
             rmdir dir
         | None ->
@@ -350,15 +347,11 @@ let rec rmtree name =
       ()
 
 
-let yield () =
-  Unix.select ~read:[] ~write:[] ~except:[] ~timeout:(`After Time_ns.Span.min_value) |> ignore
-
-
 let better_hash x = Marshal.to_string x [Marshal.No_sharing] |> Caml.Digest.string
 
 let unlink_file_on_exit temp_file =
-  "Cleaning temporary file " ^ temp_file
-  |> Epilogues.register ~f:(fun () -> try Unix.unlink temp_file with _ -> ())
+  let description = "Cleaning temporary file " ^ temp_file in
+  Epilogues.register ~description ~f:(fun () -> try Unix.unlink temp_file with _ -> ())
 
 
 (** drop at most one layer of well-balanced first and last characters satisfying [drop] from the

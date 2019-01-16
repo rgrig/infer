@@ -1,39 +1,67 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 
+(** The functions in this module tend to raise more often than their counterparts in [Sqlite3]. In
+    particular, they may raise if the [Sqlite3.Rc.t] result of certain operations is unexpected. *)
 exception Error of string
-    (** The functions in this module tend to raise more often than their counterparts in [Sqlite3]. In particular, they may raise if the [Sqlite3.Rc.t] result of certain operations is unexpected. *)
 
-val check_sqlite_error : ?fatal:bool -> Sqlite3.db -> log:string -> Sqlite3.Rc.t -> unit
-(** Assert that the result is either [Sqlite3.Rc.OK]. If [row_is_ok] then [Sqlite3.Rc.ROW] is also accepted. If the result is not valid, then if [fatal] is set raise [Error], otherwise log the error and proceed. *)
+val check_result_code : ?fatal:bool -> Sqlite3.db -> log:string -> Sqlite3.Rc.t -> unit
+(** Assert that the result is either [Sqlite3.Rc.OK] or [Sqlite3.Rc.ROW]. If the result is not
+    valid, then if [fatal] is set raise {!Error}, otherwise log the error and proceed. *)
 
 val exec : Sqlite3.db -> log:string -> stmt:string -> unit
-(** Execute the given Sqlite [stmt] and asserts that it resulted in [Sqlite3.Rc.OK]. Otherwise, fail similarly to [check_sqlite_error ~fatal:true]. *)
+(** Execute the given Sqlite [stmt] and check the result with {!check_result_code ~fatal:true}. *)
 
 val finalize : Sqlite3.db -> log:string -> Sqlite3.stmt -> unit
-(** Finalize the given [stmt]. Raises [Error] on failure. *)
+(** Finalize the given [stmt]. Raises {!Error} on failure. *)
 
-val sqlite_result_rev_list_step :
-  ?finalize:bool -> Sqlite3.db -> log:string -> Sqlite3.stmt -> Sqlite3.Data.t option list
-(** Return a reversed list of results obtained by repeatedly stepping through [stmt] and saving only column 0 of each returned row (all that's been needed so far). *)
+val result_fold_rows :
+     ?finalize:bool
+  -> Sqlite3.db
+  -> log:string
+  -> Sqlite3.stmt
+  -> init:'a
+  -> f:('a -> Sqlite3.stmt -> 'a)
+  -> 'a
+(** Fold [f] over each row of the result. [f] must not access the database. *)
 
-val sqlite_result_step :
+val result_fold_single_column_rows :
+     ?finalize:bool
+  -> Sqlite3.db
+  -> log:string
+  -> Sqlite3.stmt
+  -> init:'b
+  -> f:('b -> Sqlite3.Data.t -> 'b)
+  -> 'b
+(** Like {!result_fold_rows} but pass column 0 of each row in the results to [f]. *)
+
+val result_option :
+     ?finalize:bool
+  -> Sqlite3.db
+  -> log:string
+  -> read_row:(Sqlite3.stmt -> 'a)
+  -> Sqlite3.stmt
+  -> 'a option
+(** Same as {!result_fold_rows} but asserts that at most one row is returned. *)
+
+val result_single_column_option :
   ?finalize:bool -> Sqlite3.db -> log:string -> Sqlite3.stmt -> Sqlite3.Data.t option
-(** Same as [sqlite_result_rev_list_step] but asserts that at most one result is returned. *)
+(** Same as {!result_fold_single_column_rows} but asserts that at most one row is returned. *)
 
-val sqlite_unit_step : ?finalize:bool -> Sqlite3.db -> log:string -> Sqlite3.stmt -> unit
-(** Same as [sqlite_result_rev_list_step] but asserts that no result is returned. *)
+val result_unit : ?finalize:bool -> Sqlite3.db -> log:string -> Sqlite3.stmt -> unit
+(** Same as {!result_fold_rows} but asserts that no row is returned. *)
 
 val db_close : Sqlite3.db -> unit
-(** Close the given database and asserts that it was effective. Raises [Error] if not. *)
+(** Close the given database and asserts that it was effective. Raises {!Error} if not. *)
+
+val with_transaction : Sqlite3.db -> f:(unit -> unit) -> unit
+(** Execute [f] within an explicit sqlite transaction. *)
 
 (** An API commonly needed to store and retrieve objects from the database *)
 module type Data = sig
@@ -47,5 +75,9 @@ end
 (** A default implementation of the Data API that encodes every objects as marshalled blobs *)
 module MarshalledData (D : sig
   type t
-end) :
-  Data with type t = D.t
+end) : Data with type t = D.t
+
+(** A default implementation of the Data API that encodes None as a NULL SQLite value *)
+module MarshalledNullableData (D : sig
+  type t
+end) : Data with type t = D.t option

@@ -1,18 +1,20 @@
 /*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 #import <Foundation/NSArray.h>
+#import <Foundation/NSObject.h>
+#import <Foundation/NSEnumerator.h>
 
 @interface A : NSObject
 @end
 
-@implementation A
+@implementation A {
+  NSEnumerator* reverseObjectEnumerator;
+}
 
 - (int)fast_loop:(NSArray*)items {
   int size = 0;
@@ -29,6 +31,13 @@
     size += [item count];
   }
   return size;
+}
+
+- (void)fast_loop_no_crash {
+  id obj = nil;
+  for (obj in reverseObjectEnumerator) {
+    [obj copy];
+  }
 }
 
 @end

@@ -1,17 +1,14 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** The Smallfoot Intermediate Language: Expressions *)
 
 open! IStd
-module L = Logging
 module F = Format
 
 type closure = {name: Typ.Procname.t; captured_vars: (t * Pvar.t * Typ.t) list}
@@ -42,7 +39,7 @@ and t =
       (** A field offset, the type is the surrounding struct type *)
   | Lindex of t * t  (** An array index offset: [exp1\[exp2\]] *)
   | Sizeof of sizeof_data
-  [@@deriving compare]
+[@@deriving compare]
 
 val equal : t -> t -> bool
 (** Equality for expressions. *)
@@ -105,24 +102,44 @@ val bool : bool -> t
 (** Create integer constant corresponding to the boolean value *)
 
 val eq : t -> t -> t
-(** Create expresstion [e1 == e2] *)
+(** Create expression [e1 == e2] *)
 
 val ne : t -> t -> t
-(** Create expresstion [e1 != e2] *)
+(** Create expression [e1 != e2] *)
 
 val le : t -> t -> t
-(** Create expresstion [e1 <= e2] *)
+(** Create expression [e1 <= e2] *)
 
 val lt : t -> t -> t
 (** Create expression [e1 < e2] *)
 
-val get_vars : t -> Ident.t list * Pvar.t list
-(** Extract the ids and pvars from an expression *)
+val free_vars : t -> Ident.t Sequence.t
+(** all the idents appearing in the expression *)
 
-val pp_printenv : Pp.env -> (Pp.env -> F.formatter -> Typ.t -> unit) -> F.formatter -> t -> unit
+val gen_free_vars : t -> (unit, Ident.t) Sequence.Generator.t
+
+val ident_mem : t -> Ident.t -> bool
+(** true if the identifier appears in the expression *)
+
+val program_vars : t -> Pvar.t Sequence.t
+(** all the program variables appearing in the expression *)
+
+val fold_captured : f:('a -> t -> 'a) -> t -> 'a -> 'a
+(** Fold over the expressions captured by this expression. *)
+
+val pp_printenv : print_types:bool -> Pp.env -> F.formatter -> t -> unit
 
 val pp : F.formatter -> t -> unit
 
 val to_string : t -> string
 
 val is_objc_block_closure : t -> bool
+
+val zero_of_type : Typ.t -> t option
+(** Returns the zero value of a type, for int, float and ptr types *)
+
+val zero_of_type_exn : Typ.t -> t
+
+val ignore_cast : t -> t
+
+val ignore_integer_cast : t -> t

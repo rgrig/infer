@@ -1,14 +1,11 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-module L = Logging
 module F = Format
 
 module MockTraceElem = struct
@@ -22,7 +19,12 @@ module MockTraceElem = struct
 
   let make ?indexes:_ kind _ = kind
 
-  let pp fmt = function Kind1 -> F.fprintf fmt "Kind1" | Kind2 -> F.fprintf fmt "Kind2"
+  let pp fmt = function
+    | Kind1 ->
+        F.pp_print_string fmt "Kind1"
+    | Kind2 ->
+        F.pp_print_string fmt "Kind2"
+
 
   module Kind = struct
     type nonrec t = t
@@ -43,18 +45,20 @@ module MockTraceElem = struct
   end)
 
   let with_callsite t _ = t
+
+  let with_indexes t _ = t
 end
 
 module MockSource = struct
   include Source.Make (struct
     include MockTraceElem
 
-    let get _ _ = assert false
+    let get ~caller_pname:_ _ _ = assert false
 
     let get_tainted_formals _ = assert false
   end)
 
-  let equal = [%compare.equal : t]
+  let equal = [%compare.equal: t]
 end
 
 module MockSink = struct
@@ -64,7 +68,7 @@ module MockSink = struct
 
   let indexes _ = IntSet.empty
 
-  let equal = [%compare.equal : t]
+  let equal = [%compare.equal: t]
 end
 
 module MockTrace = Trace.Make (struct
@@ -73,7 +77,7 @@ module MockTrace = Trace.Make (struct
   module Sanitizer = Sanitizer.Dummy
 
   let get_report source sink _ =
-    if [%compare.equal : MockTraceElem.t] (Source.kind source) (Sink.kind sink) then
+    if [%compare.equal: MockTraceElem.t] (Source.kind source) (Sink.kind sink) then
       Some IssueType.quandary_taint_error
     else None
 end)

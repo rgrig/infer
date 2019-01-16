@@ -1,9 +1,7 @@
-# Copyright (c) 2017 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2017-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 TESTS_DIR = ../..
 include $(TESTS_DIR)/base.make
@@ -23,7 +21,7 @@ $(REPORT): $(JAVA_DEPS) $(MAKEFILE_LIST) SimpleLeak.java
 
 $(EXPECTED_TEST_OUTPUT): $(REPORT)
 	$(QUIET)$(INFER_BIN) report -o $(<D) \
-		--issues-fields "qualifier_contains_potential_exception_note,bug_type,file,procedure,line_offset" \
+		--issues-fields "qualifier_contains_potential_exception_note,bug_type,bucket,file,procedure,line_offset" \
 		--from-json-report $(REPORT) \
 		--issues-tests $(EXPECTED_TEST_OUTPUT)
 

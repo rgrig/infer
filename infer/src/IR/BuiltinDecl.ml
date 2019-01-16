@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -20,13 +18,12 @@ let create_procname name =
   register pname ; pname
 
 
-let create_objc_class_method class_name method_name =
+let create_objc_class_method class_name method_name parameters =
   let method_kind = Typ.Procname.ObjC_Cpp.ObjCClassMethod in
   let tname = Typ.Name.Objc.from_string class_name in
   let pname =
     Typ.Procname.ObjC_Cpp
-      (Typ.Procname.ObjC_Cpp.make tname method_name method_kind Typ.NoTemplate
-         ~is_generic_model:false)
+      (Typ.Procname.ObjC_Cpp.make tname method_name method_kind Typ.NoTemplate parameters)
   in
   register pname ; pname
 
@@ -71,6 +68,8 @@ let __infer_assume = create_procname "__infer_assume"
 
 let __infer_fail = create_procname "__infer_fail"
 
+let __infer_skip = create_procname "__infer_skip"
+
 let __instanceof = create_procname "__instanceof"
 
 let __method_set_ignore_attribute = create_procname "__method_set_ignore_attribute"
@@ -86,7 +85,7 @@ let __objc_alloc_no_fail = create_procname "__objc_alloc_no_fail"
 let __objc_cast = create_procname "__objc_cast"
 
 let __objc_dictionary_literal =
-  create_objc_class_method "NSDictionary" "dictionaryWithObjects:forKeys:count:"
+  create_objc_class_method "NSDictionary" "dictionaryWithObjects:forKeys:count:" [None; None; None]
 
 
 let __placement_delete = create_procname "__placement_delete"
@@ -121,6 +120,8 @@ let __throw = create_procname "__throw"
 
 let __unwrap_exception = create_procname "__unwrap_exception"
 
+let __variable_initialization = create_procname "__variable_initialization"
+
 let abort = create_procname "abort"
 
 let exit = create_procname "exit"
@@ -135,9 +136,14 @@ let malloc = create_procname "malloc"
 
 let malloc_no_fail = create_procname "malloc_no_fail"
 
-let nsArray_arrayWithObjects = create_objc_class_method "NSArray" "arrayWithObjects:"
+let nsArray_arrayWithObjects =
+  let objc_object = Typ.Name.C.from_string "objc_object" in
+  create_objc_class_method "NSArray" "arrayWithObjects:" [Some objc_object]
 
-let nsArray_arrayWithObjectsCount = create_objc_class_method "NSArray" "arrayWithObjects:count:"
+
+let nsArray_arrayWithObjectsCount =
+  create_objc_class_method "NSArray" "arrayWithObjects:count:" [None; None]
+
 
 let objc_cpp_throw = create_procname "__infer_objc_cpp_throw"
 

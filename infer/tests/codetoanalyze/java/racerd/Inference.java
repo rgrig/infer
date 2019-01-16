@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.checkers;
@@ -42,8 +40,7 @@ public class Inference {
   int mField3;
 
   // empty call that uses a lock
-  synchronized private void useLock() {
-  }
+  private synchronized void useLock() {}
 
   int useLockInCalleeThenReadBad() {
     useLock();
@@ -71,5 +68,4 @@ public class Inference {
   void write5OutsideSyncOk() {
     mField5 = 5; // don't report
   }
-
 }

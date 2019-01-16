@@ -1,15 +1,12 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 module F = Format
-module L = Logging
 
 module type Spec = sig
   module Source : Source.S
@@ -24,11 +21,7 @@ end
 module type S = sig
   include Spec
 
-  type t
-
-  type astate = t
-
-  include AbstractDomain.WithBottom with type astate := astate
+  include AbstractDomain.WithBottom
 
   module Sources : sig
     module Known : module type of AbstractDomain.FiniteSet (Source)
@@ -39,9 +32,7 @@ module type S = sig
 
     module Sanitizers : module type of AbstractDomain.FiniteSet (Sanitizer)
 
-    type astate = {known: Known.astate; footprint: Footprint.astate; sanitizers: Sanitizers.astate}
-
-    type t = astate
+    type t = {known: Known.t; footprint: Footprint.t; sanitizers: Sanitizers.t}
 
     val empty : t
 
@@ -88,8 +79,11 @@ module type S = sig
       [cur_site] restricts the reported paths to ones introduced by the call at [cur_site] *)
 
   val to_loc_trace :
-    ?desc_of_source:(Source.t -> string) -> ?source_should_nest:(Source.t -> bool)
-    -> ?desc_of_sink:(Sink.t -> string) -> ?sink_should_nest:(Sink.t -> bool) -> path
+       ?desc_of_source:(Source.t -> string)
+    -> ?source_should_nest:(Source.t -> bool)
+    -> ?desc_of_sink:(Sink.t -> string)
+    -> ?sink_should_nest:(Sink.t -> bool)
+    -> path
     -> Errlog.loc_trace
   (** create a loc_trace from a path; [source_should_nest s] should be true when we are going one
       deeper into a call-chain, ie when lt_level should be bumper in the next loc_trace_elem, and
@@ -171,9 +165,7 @@ module Make (Spec : Spec) = struct
     module Footprint = AccessTree.PathSet (FootprintConfig)
     module Sanitizers = AbstractDomain.FiniteSet (Sanitizer)
 
-    type astate = {known: Known.astate; footprint: Footprint.astate; sanitizers: Sanitizers.astate}
-
-    type t = astate
+    type t = {known: Known.t; footprint: Footprint.t; sanitizers: Sanitizers.t}
 
     let ( <= ) ~lhs ~rhs =
       if phys_equal lhs rhs then true
@@ -207,7 +199,7 @@ module Make (Spec : Spec) = struct
           F.fprintf fmt " + Sanitizers(%a)" Sanitizers.pp sanitizers
       in
       if Known.is_empty known then
-        if Footprint.is_empty footprint then F.fprintf fmt "{}"
+        if Footprint.is_empty footprint then F.pp_print_string fmt "{}"
         else F.fprintf fmt "Footprint(%a)%a" Footprint.pp footprint pp_sanitizers sanitizers
       else
         F.fprintf fmt "%a + Footprint(%a)%a" Known.pp known Footprint.pp footprint pp_sanitizers
@@ -256,8 +248,6 @@ module Make (Spec : Spec) = struct
           (** last callees in the trace that transitively called a tainted function (if any) *)
     ; passthroughs: Passthrough.Set.t  (** calls that occurred between source and sink *) }
 
-  type astate = t
-
   type path = Passthroughs.t * (Source.t * Passthroughs.t) list * (Sink.t * Passthroughs.t) list
 
   type report =
@@ -272,7 +262,7 @@ module Make (Spec : Spec) = struct
         F.fprintf fmt " via %a" Passthroughs.pp passthroughs
     in
     let pp_sinks fmt sinks =
-      if Sinks.is_empty sinks then F.fprintf fmt "?" else Sinks.pp fmt sinks
+      if Sinks.is_empty sinks then F.pp_print_char fmt '?' else Sinks.pp fmt sinks
     in
     (* empty sources implies empty sinks and passthroughs *)
     F.fprintf fmt "%a ~> %a%a" Sources.pp sources pp_sinks sinks pp_passthroughs passthroughs
@@ -403,14 +393,16 @@ module Make (Spec : Spec) = struct
 
 
   let to_loc_trace
-      ?(desc_of_source= fun source ->
-                          let callsite = Source.call_site source in
-                          Format.asprintf "return from %a" Typ.Procname.pp
-                            (CallSite.pname callsite)) ?(source_should_nest= fun _ -> true)
-      ?(desc_of_sink= fun sink ->
-                        let callsite = Sink.call_site sink in
-                        Format.asprintf "call to %a" Typ.Procname.pp (CallSite.pname callsite))
-      ?(sink_should_nest= fun _ -> true) (passthroughs, sources, sinks) =
+      ?(desc_of_source =
+        fun source ->
+          let callsite = Source.call_site source in
+          Format.asprintf "return from %a" Typ.Procname.pp (CallSite.pname callsite))
+      ?(source_should_nest = fun _ -> true)
+      ?(desc_of_sink =
+        fun sink ->
+          let callsite = Sink.call_site sink in
+          Format.asprintf "call to %a" Typ.Procname.pp (CallSite.pname callsite))
+      ?(sink_should_nest = fun _ -> true) (passthroughs, sources, sinks) =
     let trace_elems_of_passthroughs lt_level passthroughs acc0 =
       let trace_elem_of_passthrough passthrough acc =
         let passthrough_site = Passthrough.site passthrough in
@@ -422,7 +414,7 @@ module Make (Spec : Spec) = struct
       (* sort passthroughs by ascending line number to create a coherent trace *)
       let sorted_passthroughs =
         List.sort
-          ~cmp:(fun passthrough1 passthrough2 ->
+          ~compare:(fun passthrough1 passthrough2 ->
             let loc1 = CallSite.loc (Passthrough.site passthrough1) in
             let loc2 = CallSite.loc (Passthrough.site passthrough2) in
             Int.compare loc1.Location.line loc2.Location.line )
@@ -518,17 +510,26 @@ module Make (Spec : Spec) = struct
         else
           let known =
             List.map
-              ~f:(fun sink -> Source.with_callsite sink callee_site)
+              ~f:(fun source -> Source.with_callsite source callee_site)
               (Sources.Known.elements non_footprint_callee_sources)
-            |> Sources.Known.of_list |> Sources.Known.union caller_trace.sources.known
+            |> Sources.Known.of_list
+            |> Sources.Known.union caller_trace.sources.known
           in
           {caller_trace.sources with Sources.known; sanitizers}
       in
       let sinks =
         if Sinks.subset callee_trace.sinks caller_trace.sinks then caller_trace.sinks
         else
+          let footprint_indices =
+            Sources.Footprint.BaseMap.fold
+              (fun (vname, _) _ s ->
+                match Var.get_footprint_index vname with Some ind -> IntSet.add ind s | None -> s
+                )
+              callee_trace.sources.footprint IntSet.empty
+          in
           List.map
-            ~f:(fun sink -> Sink.with_callsite sink callee_site)
+            ~f:(fun sink ->
+              Sink.with_indexes (Sink.with_callsite sink callee_site) footprint_indices )
             (Sinks.elements callee_trace.sinks)
           |> Sinks.of_list |> Sinks.union caller_trace.sinks
       in
@@ -552,7 +553,8 @@ module Make (Spec : Spec) = struct
 
   let ( <= ) ~lhs ~rhs =
     phys_equal lhs rhs
-    || Sources.( <= ) ~lhs:lhs.sources ~rhs:rhs.sources && Sinks.subset lhs.sinks rhs.sinks
+    || Sources.( <= ) ~lhs:lhs.sources ~rhs:rhs.sources
+       && Sinks.subset lhs.sinks rhs.sinks
        && Passthroughs.subset lhs.passthroughs rhs.passthroughs
 
 

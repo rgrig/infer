@@ -1,17 +1,14 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** The Smallfoot Intermediate Language: Decompiled Expressions *)
 
 open! IStd
-module L = Logging
 module F = Format
 
 (** expression representing the result of decompilation *)
@@ -33,6 +30,8 @@ type t =
 (** Value paths: identify an occurrence of a value in a symbolic heap
     each expression represents a path, with Dpvar being the simplest one *)
 type vpath = t option
+
+val pp : F.formatter -> t -> unit
 
 val to_string : t -> string
 (** convert to a string *)

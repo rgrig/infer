@@ -1,3 +1,10 @@
+(*
+ * Copyright (c) 2018-present, Facebook, Inc.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ *)
+
 type infer_version = {
   major: int;
   minor: int;
@@ -20,4 +27,5 @@ type run_info = {
 type t = {
   run_sequence: run_info list; (** successive runs that re-used the same results directory *)
   results_dir_format: string; (** to check if the versions of the results dir are compatible *)
+  should_merge_capture: bool; (** add --merge to 'infer analyze' if last command was a capture that needs --merge *)
 }

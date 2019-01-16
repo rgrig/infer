@@ -1,16 +1,14 @@
 (*
- * Copyright (c) 2016 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2016-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 module L = Logging
 
-type compilation_data = {dir: string; command: string; args: string}
+type compilation_data = {directory: string; executable: string; escaped_arguments: string list}
 
 type t = compilation_data SourceFile.Map.t ref
 
@@ -19,7 +17,7 @@ let empty () = ref SourceFile.Map.empty
 let get_size database = SourceFile.Map.cardinal !database
 
 let filter_compilation_data database ~f =
-  SourceFile.Map.filter (fun s _ -> f s) !database |> SourceFile.Map.bindings |> List.map ~f:snd
+  SourceFile.Map.filter (fun s _ -> f s) !database |> SourceFile.Map.bindings
 
 
 let parse_command_and_arguments command_and_arguments =
@@ -27,7 +25,7 @@ let parse_command_and_arguments command_and_arguments =
   let index = Str.search_forward regexp command_and_arguments 0 in
   let command = Str.string_before command_and_arguments (index + 1) in
   let arguments = Str.string_after command_and_arguments (index + 1) in
-  (command, arguments)
+  (command, [arguments])
 
 
 (** Parse the compilation database json file into the compilationDatabase
@@ -35,7 +33,7 @@ let parse_command_and_arguments command_and_arguments =
     to be compiled, the directory to be compiled in, and the compilation command as a list
     and as a string. We pack this information into the compilationDatabase map, and remove the
     clang invocation part, because we will use a clang wrapper. *)
-let decode_json_file (database: t) json_format =
+let decode_json_file (database : t) json_format =
   let json_path = match json_format with `Raw x | `Escaped x -> x in
   let unescape_path s =
     match json_format with
@@ -74,8 +72,7 @@ let decode_json_file (database: t) json_format =
           exit_format_error
             "the value of the \"command\" field is not a string; found '%s' instead"
             (Yojson.Basic.to_string json)
-      | "arguments", `List args
-        -> (
+      | "arguments", `List args -> (
           let args =
             List.map args ~f:(function
               | `String argument ->
@@ -91,7 +88,7 @@ let decode_json_file (database: t) json_format =
                 "the value of the \"arguments\" field is an empty list in command %s"
                 (Yojson.Basic.to_string json)
           | cmd :: args ->
-              command := Some (cmd, Utils.shell_escape_command args) )
+              command := Some (cmd, List.map ~f:Escape.escape_shell args) )
       | "arguments", json ->
           exit_format_error
             "the value of the \"arguments\" field is not a list; found '%s' instead"
@@ -104,7 +101,7 @@ let decode_json_file (database: t) json_format =
     match json with
     | `Assoc fields ->
         List.iter ~f:one_field fields ;
-        let dir =
+        let directory =
           match !directory with
           | Some directory ->
               directory
@@ -120,7 +117,7 @@ let decode_json_file (database: t) json_format =
               exit_format_error "no \"file\" entry found in command %s"
                 (Yojson.Basic.to_string json)
         in
-        let command, args =
+        let executable, escaped_arguments =
           match !command with
           | Some x ->
               x
@@ -128,8 +125,8 @@ let decode_json_file (database: t) json_format =
               exit_format_error "no \"command\" or \"arguments\" entry found in command %s"
                 (Yojson.Basic.to_string json)
         in
-        let compilation_data = {dir; command; args} in
-        let abs_file = if Filename.is_relative file then dir ^/ file else file in
+        let compilation_data = {directory; executable; escaped_arguments} in
+        let abs_file = if Filename.is_relative file then directory ^/ file else file in
         let source_file = SourceFile.from_abs_path abs_file in
         database := SourceFile.Map.add source_file compilation_data !database
     | _ ->

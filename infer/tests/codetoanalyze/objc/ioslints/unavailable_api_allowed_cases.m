@@ -1,13 +1,14 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
-#import <UIKit/UIKit.h>
 #import <AVFoundation/AVPlayer.h>
+#import <Foundation/NSDictionary.h>
+#import <Photos/PHAssetResource.h>
+#import <UIKit/UIImagePickerController.h>
+#import <UIKit/UIKit.h>
 
 @interface Unavailable_api_allowed_cases : NSObject
 
@@ -123,9 +124,8 @@
   NSDictionary* destinationPixelBufferAttributes;
   if (kCFCoreFoundationVersionNumber >=
       kCFCoreFoundationVersionNumber_iOS_9_0) {
-    destinationPixelBufferAttributes = @{
-      (NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES
-    };
+    destinationPixelBufferAttributes =
+        @{(NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES};
   }
 }
 
@@ -133,16 +133,15 @@
 - (void)m2 {
   NSDictionary* destinationPixelBufferAttributes;
   destinationPixelBufferAttributes =
-      @{(NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES };
+      @{(NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES};
 }
 
 // bug
 - (void)m3:(BOOL)ok {
   NSDictionary* destinationPixelBufferAttributes;
   if (ok) {
-    destinationPixelBufferAttributes = @{
-      (NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES
-    };
+    destinationPixelBufferAttributes =
+        @{(NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES};
   }
 }
 
@@ -152,9 +151,8 @@
   if (kCFCoreFoundationVersionNumber >=
           kCFCoreFoundationVersionNumber_iOS_9_0 &&
       ok) {
-    destinationPixelBufferAttributes = @{
-      (NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES
-    };
+    destinationPixelBufferAttributes =
+        @{(NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES};
   }
 }
 
@@ -165,9 +163,8 @@
           kCFCoreFoundationVersionNumber_iOS_9_0 &&
       kCFCoreFoundationVersionNumber >=
           kCFCoreFoundationVersionNumber_iOS_7_0) {
-    destinationPixelBufferAttributes = @{
-      (NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES
-    };
+    destinationPixelBufferAttributes =
+        @{(NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES};
   }
 }
 
@@ -175,9 +172,8 @@
 - (void)m6 {
   NSDictionary* destinationPixelBufferAttributes;
   if (AT_LEAST_IOS9) {
-    destinationPixelBufferAttributes = @{
-      (NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES
-    };
+    destinationPixelBufferAttributes =
+        @{(NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES};
   }
 }
 
@@ -185,9 +181,8 @@
 - (void)m7 {
   NSDictionary* destinationPixelBufferAttributes;
   if (CK_AT_LEAST_IOS9) {
-    destinationPixelBufferAttributes = @{
-      (NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES
-    };
+    destinationPixelBufferAttributes =
+        @{(NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES};
   }
 }
 
@@ -195,9 +190,8 @@
 - (void)m8 {
   NSDictionary* destinationPixelBufferAttributes;
   if (AT_LEAST_IOS10) {
-    destinationPixelBufferAttributes = @{
-      (NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES
-    };
+    destinationPixelBufferAttributes =
+        @{(NSString*)kCVPixelBufferOpenGLESTextureCacheCompatibilityKey : @YES};
   }
 }
 
@@ -206,6 +200,16 @@
   if ([self.player respondsToSelector:@selector(playImmediatelyAtRate:)]) {
     [self.player playImmediatelyAtRate:-1.0];
   }
+}
+
+// no bug
+- (PHAsset*)improper_ios_version_good:(NSDictionary*)info {
+  PHAsset* videoAsset = NULL;
+  if (@available(iOS 11, *)) { // not strictly correct version number, should be
+                               // "11.0" We should handle this case anyway.
+    videoAsset = [info objectForKey:UIImagePickerControllerPHAsset];
+  }
+  return videoAsset;
 }
 
 @end

@@ -1,24 +1,26 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 open! IStd
 
-let reportdiff ~current_report:current_report_fname ~previous_report:previous_report_fname =
-  let load_report filename_opt : Jsonbug_t.report =
-    let empty_report = [] in
-    Option.value_map
-      ~f:(fun filename -> Jsonbug_j.report_of_string (In_channel.read_all filename))
-      ~default:empty_report filename_opt
+let reportdiff ~current_report:current_report_fname ~previous_report:previous_report_fname
+    ~current_costs:current_costs_fname ~previous_costs:previous_costs_fname =
+  let load_aux ~f filename_opt =
+    Option.value_map ~f:(fun filename -> f (In_channel.read_all filename)) ~default:[] filename_opt
   in
+  let load_report = load_aux ~f:Jsonbug_j.report_of_string in
+  let load_costs = load_aux ~f:Jsonbug_j.costs_report_of_string in
   let current_report = load_report current_report_fname in
   let previous_report = load_report previous_report_fname in
+  let current_costs = load_costs current_costs_fname in
+  let previous_costs = load_costs previous_costs_fname in
   let diff =
-    let unfiltered_diff = Differential.of_reports ~current_report ~previous_report in
+    let unfiltered_diff =
+      Differential.of_reports ~current_report ~previous_report ~current_costs ~previous_costs
+    in
     if Config.filtering then
       let file_renamings =
         match Config.file_renamings with

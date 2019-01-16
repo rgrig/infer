@@ -1,25 +1,20 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 module F = Format
-module L = Logging
 module Domain = LithoDomain
 
-module Summary = Summary.Make (struct
-  type payload = Domain.astate
+module Payload = SummaryPayload.Make (struct
+  type t = Domain.t
 
-  let update_payload astate (summary: Specs.summary) =
-    {summary with payload= {summary.payload with litho= Some astate}}
+  let update_payloads astate (payloads : Payloads.t) = {payloads with litho= Some astate}
 
-
-  let read_payload (summary: Specs.summary) = summary.payload.litho
+  let of_payloads (payloads : Payloads.t) = payloads.litho
 end)
 
 module LithoFramework = struct
@@ -67,8 +62,7 @@ module GraphQLGetters = struct
     (* we skip analysis of all GraphQL procs *)
     &&
     match procname with
-    | Typ.Procname.Java java_procname
-      -> (
+    | Typ.Procname.Java java_procname -> (
         PatternMatch.is_getter java_procname
         &&
         match Typ.Procname.Java.get_package java_procname with
@@ -91,12 +85,9 @@ module GraphQLGetters = struct
       in
       let call_string = String.concat ~sep:"." call_strings in
       let message = F.asprintf "%a.%s" AccessPath.pp access_path call_string in
-      let exn =
-        Exceptions.Checkers (IssueType.graphql_field_access, Localise.verbatim_desc message)
-      in
-      let loc = Specs.get_loc summary in
+      let loc = Summary.get_loc summary in
       let ltr = [Errlog.make_trace_element 0 loc message []] in
-      Reporting.log_error summary ~loc ~ltr exn
+      Reporting.log_error summary ~loc ~ltr IssueType.graphql_field_access message
     in
     Domain.iter_call_chains ~f:report_graphql_getter astate
 end
@@ -127,11 +118,8 @@ module RequiredProps = struct
       F.asprintf "@Prop %s is required for component %s, but is not set before the call to build()"
         prop_string (Typ.Name.name parent_typename)
     in
-    let exn =
-      Exceptions.Checkers (IssueType.missing_required_prop, Localise.verbatim_desc message)
-    in
     let ltr = [Errlog.make_trace_element 0 loc message []] in
-    Reporting.log_error summary ~loc ~ltr exn
+    Reporting.log_error summary ~loc ~ltr IssueType.missing_required_prop message
 
 
   (* walk backward through [call_chain] and return the first type T <: Component that is not part of
@@ -149,8 +137,8 @@ module RequiredProps = struct
 
   let should_report proc_desc tenv =
     let pname = Procdesc.get_proc_name proc_desc in
-    not (LithoFramework.is_function pname)
-    && not (LithoFramework.is_component_build_method pname tenv)
+    (not (LithoFramework.is_function pname))
+    && (not (LithoFramework.is_component_build_method pname tenv))
     && Procdesc.get_access proc_desc <> PredSymb.Private
 
 
@@ -159,7 +147,8 @@ module RequiredProps = struct
     (* @Prop(resType = ...) myProp can also be set via myProp(), myPropAttr(), or myPropRes().
        Our annotation parameter parsing is too primitive to identify resType, so just assume
        that all @Prop's can be set any of these 3 ways. *)
-    || String.Set.mem prop_set (prop ^ "Attr") || String.Set.mem prop_set (prop ^ "Res")
+    || String.Set.mem prop_set (prop ^ "Attr")
+    || String.Set.mem prop_set (prop ^ "Res")
 
 
   let report astate tenv summary =
@@ -167,12 +156,10 @@ module RequiredProps = struct
       let rev_chain = List.rev call_chain in
       match rev_chain with
       | pname :: _ when LithoFramework.is_component_build_method pname tenv -> (
-        match
-          (* Here, we'll have a type name like MyComponent$Builder in hand. Truncate the $Builder
+        (* Here, we'll have a type name like MyComponent$Builder in hand. Truncate the $Builder
                part from the typename, then look at the fields of MyComponent to figure out which
                ones are annotated with @Prop *)
-          find_client_component_type call_chain
-        with
+        match find_client_component_type call_chain with
         | Some parent_typename ->
             let required_props = get_required_props parent_typename tenv in
             let prop_set = List.map ~f:Typ.Procname.get_method call_chain |> String.Set.of_list in
@@ -180,7 +167,7 @@ module RequiredProps = struct
               ~f:(fun required_prop ->
                 if not (has_prop prop_set required_prop) then
                   report_missing_required_prop summary required_prop parent_typename
-                    (Specs.get_loc summary) )
+                    (Summary.get_loc summary) )
               required_props
         | _ ->
             () )
@@ -196,7 +183,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
   type extras = ProcData.no_extras
 
-  let apply_callee_summary summary_opt caller_pname ret_opt actuals astate =
+  let apply_callee_summary summary_opt caller_pname ret_id_typ actuals astate =
     match summary_opt with
     | Some summary ->
         (* TODO: append paths if the footprint access path is an actual path instead of a var *)
@@ -204,20 +191,16 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           match Var.get_footprint_index var with
           | Some footprint_index -> (
             match List.nth actuals footprint_index with
-            | Some HilExp.AccessExpression actual_access_expr ->
+            | Some (HilExp.AccessExpression actual_access_expr) ->
                 Some
                   (Domain.LocalAccessPath.make
-                     (AccessExpression.to_access_path actual_access_expr)
+                     (HilExp.AccessExpression.to_access_path actual_access_expr)
                      caller_pname)
             | _ ->
                 None )
           | None ->
               if Var.is_return var then
-                match ret_opt with
-                | Some ret ->
-                    Some (Domain.LocalAccessPath.make (ret, []) caller_pname)
-                | None ->
-                    assert false
+                Some (Domain.LocalAccessPath.make (ret_id_typ, []) caller_pname)
               else None
         in
         Domain.substitute ~f_sub summary |> Domain.join astate
@@ -225,63 +208,69 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         astate
 
 
-  let exec_instr astate (proc_data: extras ProcData.t) _ (instr: HilInstr.t) : Domain.astate =
+  let exec_instr astate (proc_data : extras ProcData.t) _ (instr : HilInstr.t) : Domain.t =
     let caller_pname = Procdesc.get_proc_name proc_data.pdesc in
     match instr with
     | Call
-        ( (Some return_base as ret_opt)
+        ( return_base
         , Direct (Typ.Procname.Java java_callee_procname as callee_procname)
-        , ((HilExp.AccessExpression receiver_ae) :: _ as actuals)
+        , (HilExp.AccessExpression receiver_ae :: _ as actuals)
         , _
         , _ ) ->
-        let summary = Summary.read_summary proc_data.pdesc callee_procname in
+        let summary = Payload.read proc_data.pdesc callee_procname in
         let receiver =
-          Domain.LocalAccessPath.make (AccessExpression.to_access_path receiver_ae) caller_pname
+          Domain.LocalAccessPath.make
+            (HilExp.AccessExpression.to_access_path receiver_ae)
+            caller_pname
         in
-        if ( LithoFramework.is_component_builder callee_procname proc_data.tenv
-           (* track Builder's in order to check required prop's *)
-           || GraphQLGetters.is_function callee_procname summary
-           || (* track GraphQL getters in order to report graphql field accesses *)
-              Domain.mem receiver astate
-              (* track anything called on a receiver we're already tracking *) )
-           && not (Typ.Procname.Java.is_static java_callee_procname)
-           && not
-                ( LithoFramework.is_function callee_procname
-                && not (LithoFramework.is_function caller_pname) )
-           (* don't track Litho client -> Litho framework calls; we want to use the summaries *)
+        if
+          ( LithoFramework.is_component_builder callee_procname proc_data.tenv
+          (* track Builder's in order to check required prop's *)
+          || GraphQLGetters.is_function callee_procname summary
+          || (* track GraphQL getters in order to report graphql field accesses *)
+             Domain.mem receiver astate
+             (* track anything called on a receiver we're already tracking *) )
+          && (not (Typ.Procname.Java.is_static java_callee_procname))
+          && not
+               ( LithoFramework.is_function callee_procname
+               && not (LithoFramework.is_function caller_pname) )
+          (* don't track Litho client -> Litho framework calls; we want to use the summaries *)
         then
           let return_access_path = Domain.LocalAccessPath.make (return_base, []) caller_pname in
           let return_calls =
-            (try Domain.find return_access_path astate with Not_found -> Domain.CallSet.empty)
+            ( try Domain.find return_access_path astate with Caml.Not_found -> Domain.CallSet.empty
+            )
             |> Domain.CallSet.add (Domain.MethodCall.make receiver callee_procname)
           in
           Domain.add return_access_path return_calls astate
         else
           (* treat it like a normal call *)
-          apply_callee_summary summary caller_pname ret_opt actuals astate
-    | Call (ret_opt, Direct callee_procname, actuals, _, _) ->
-        let summary = Summary.read_summary proc_data.pdesc callee_procname in
-        apply_callee_summary summary caller_pname ret_opt actuals astate
-    | Assign (lhs_ae, HilExp.AccessExpression rhs_ae, _)
-      -> (
+          apply_callee_summary summary caller_pname return_base actuals astate
+    | Call (ret_id_typ, Direct callee_procname, actuals, _, _) ->
+        let summary = Payload.read proc_data.pdesc callee_procname in
+        apply_callee_summary summary caller_pname ret_id_typ actuals astate
+    | Assign (lhs_ae, HilExp.AccessExpression rhs_ae, _) -> (
         (* creating an alias for the rhs binding; assume all reads will now occur through the
            alias. this helps us keep track of chains in cases like tmp = getFoo(); x = tmp;
            tmp.getBar() *)
         let lhs_access_path =
-          Domain.LocalAccessPath.make (AccessExpression.to_access_path lhs_ae) caller_pname
+          Domain.LocalAccessPath.make (HilExp.AccessExpression.to_access_path lhs_ae) caller_pname
         in
         let rhs_access_path =
-          Domain.LocalAccessPath.make (AccessExpression.to_access_path rhs_ae) caller_pname
+          Domain.LocalAccessPath.make (HilExp.AccessExpression.to_access_path rhs_ae) caller_pname
         in
         try
           let call_set = Domain.find rhs_access_path astate in
           Domain.remove rhs_access_path astate |> Domain.add lhs_access_path call_set
-        with Not_found -> astate )
+        with Caml.Not_found -> astate )
     | _ ->
         astate
+
+
+  let pp_session_name _node fmt = F.pp_print_string fmt "litho"
 end
 
-module Analyzer = LowerHil.MakeAbstractInterpreter (ProcCfg.Exceptional) (TransferFunctions)
+module Analyzer = LowerHil.MakeAbstractInterpreter (TransferFunctions (ProcCfg.Exceptional))
 
 let checker {Callbacks.summary; proc_desc; tenv} =
   let proc_data = ProcData.make_default proc_desc tenv in
@@ -289,11 +278,11 @@ let checker {Callbacks.summary; proc_desc; tenv} =
   | Some post ->
       if RequiredProps.should_report proc_desc tenv then RequiredProps.report post tenv summary ;
       if GraphQLGetters.should_report proc_desc then GraphQLGetters.report post summary ;
-      let postprocess astate formal_map : Domain.astate =
+      let postprocess astate formal_map : Domain.t =
         let f_sub access_path = Domain.LocalAccessPath.to_formal_option access_path formal_map in
         Domain.substitute ~f_sub astate
       in
       let payload = postprocess post (FormalMap.make proc_desc) in
-      Summary.update_summary payload summary
+      Payload.update_summary payload summary
   | None ->
       summary

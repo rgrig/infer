@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -13,7 +11,11 @@ open! IStd
 
 val any_thread : string
 
+val auto_cleanup : string
+
 val expensive : string
+
+val inject_prop : string
 
 val no_allocation : string
 
@@ -43,6 +45,8 @@ val ui_thread : string
 
 val visibleForTesting : string
 
+val generated_graphql : string
+
 val annot_ends_with : Annot.t -> string -> bool
 (** [annot_ends_with annot ann_name] returns true if the class name of [annot], without the package,
     is equal to [ann_name] *)
@@ -51,8 +55,6 @@ val ia_ends_with : Annot.Item.t -> string -> bool
 (** Check if there is an annotation in [ia] which ends with the given name *)
 
 val ia_has_annotation_with : Annot.Item.t -> (Annot.t -> bool) -> bool
-
-val ia_get_strict : Annot.Item.t -> Annot.t option
 
 val ia_is_false_on_null : Annot.Item.t -> bool
 
@@ -100,7 +102,11 @@ val ia_is_on_unbind : Annot.Item.t -> bool
 
 val ia_is_on_unmount : Annot.Item.t -> bool
 
+val ia_is_mainthread : Annot.Item.t -> bool
+
 val ia_is_not_thread_safe : Annot.Item.t -> bool
+
+val ia_is_nonblocking : Annot.Item.t -> bool
 
 val ia_is_returns_ownership : Annot.Item.t -> bool
 
@@ -116,6 +122,8 @@ val ia_is_ui_thread : Annot.Item.t -> bool
 
 val ia_is_volatile : Annot.Item.t -> bool
 
+val ia_is_worker_thread : Annot.Item.t -> bool
+
 val pdesc_get_return_annot : Procdesc.t -> Annot.Item.t
 (** get the list of annotations on the return value of [pdesc] *)
 
@@ -124,8 +132,10 @@ val pdesc_has_return_annot : Procdesc.t -> (Annot.Item.t -> bool) -> bool
     value *)
 
 val pname_has_return_annot :
-  Typ.Procname.t -> attrs_of_pname:(Typ.Procname.t -> ProcAttributes.t option)
-  -> (Annot.Item.t -> bool) -> bool
+     Typ.Procname.t
+  -> attrs_of_pname:(Typ.Procname.t -> ProcAttributes.t option)
+  -> (Annot.Item.t -> bool)
+  -> bool
 (** return true if the given predicate evaluates to true on the annotation of [pname]'s return
     value. the function [attrs_of_pname] should resolve the proc attributes of [pname].
     Specs.proc_resolve_attributes is a good choice for this resolution function. *)

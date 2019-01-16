@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -18,35 +16,29 @@ module MF = MarkupFormatter
 module Tags = struct
   type t = (string * string) list [@@deriving compare]
 
-  (* line where value was last assigned *)
   let bucket = "bucket"
 
-  (* name of the procedure called *)
   let call_line = "call_line"
 
-  (* line where value was dereferenced *)
+  (** expression where a value escapes to *)
   let escape_to = "escape_to"
 
-  (* expression wher a value escapes to *)
   let line = "line"
 
-  (* 2nd Java type *)
+  (** string describing a C value, e.g. "x.date" *)
   let value = "value"
 
-  (* string describing a C value, e.g. "x.date" *)
+  (** describes a NPE that comes from parameter not nullable *)
   let parameter_not_null_checked = "parameter_not_null_checked"
 
-  (* describes a NPE that comes from parameter not nullable *)
+  (** describes a NPE that comes from field not nullable *)
   let field_not_null_checked = "field_not_null_checked"
 
-  (* describes a NPE that comes from field not nullable *)
+  (** @Nullable-annoted field/param/retval that causes a warning *)
   let nullable_src = "nullable_src"
 
-  (* @Nullable-annoted field/param/retval that causes a warning *)
+  (** Weak variable captured in a block that causes a warning *)
   let weak_captured_var_src = "weak_captured_var_src"
-
-  (* Weak variable captured in a block that causes a warning *)
-  let double_lock = "double_lock"
 
   let empty_vector_access = "empty_vector_access"
 
@@ -59,25 +51,17 @@ module Tags = struct
   let get tags tag = List.Assoc.find ~equal:String.equal tags tag
 end
 
-type error_desc =
-  {descriptions: string list; advice: string option; tags: Tags.t; dotty: string option}
-  [@@deriving compare]
+type error_desc = {descriptions: string list; tags: Tags.t; dotty: string option}
+[@@deriving compare]
 
 (** empty error description *)
-let no_desc : error_desc = {descriptions= []; advice= None; tags= []; dotty= None}
+let no_desc : error_desc = {descriptions= []; tags= []; dotty= None}
 
 (** verbatim desc from a string, not to be used for user-visible descs *)
 let verbatim_desc s = {no_desc with descriptions= [s]}
 
-let custom_desc_with_advice description advice tags =
-  {no_desc with descriptions= [description]; advice= Some advice; tags}
-
-
 (** pretty print an error description *)
-let pp_error_desc fmt err_desc =
-  let pp_item fmt s = F.fprintf fmt "%s" s in
-  Pp.seq pp_item fmt err_desc.descriptions
-
+let pp_error_desc fmt err_desc = Pp.seq F.pp_print_string fmt err_desc.descriptions
 
 let error_desc_get_dotty err_desc = err_desc.dotty
 
@@ -95,13 +79,6 @@ module BucketLevel = struct
   let b5 = "B5"
 end
 
-(** takes in input a tag to extract from the given error_desc
-    and returns its value *)
-let error_desc_extract_tag_value err_desc tag_to_extract =
-  let find_value tag v = match v with t, _ when String.equal t tag -> true | _ -> false in
-  match List.find ~f:(find_value tag_to_extract) err_desc.tags with Some (_, s) -> s | None -> ""
-
-
 (** get the bucket value of an error_desc, if any *)
 let error_desc_get_bucket err_desc = Tags.get err_desc.tags Tags.bucket
 
@@ -117,7 +94,7 @@ let error_desc_set_bucket err_desc bucket =
 
 let error_desc_is_reportable_bucket err_desc =
   let issue_bucket = error_desc_get_bucket err_desc in
-  let high_buckets = BucketLevel.([b1; b2]) in
+  let high_buckets = BucketLevel.[b1; b2] in
   Option.value_map issue_bucket ~default:false ~f:(fun b ->
       List.mem ~equal:String.equal high_buckets b )
 
@@ -128,7 +105,9 @@ let get_value_line_tag tags =
     let value = snd (List.find_exn ~f:(fun (tag, _) -> String.equal tag Tags.value) tags) in
     let line = snd (List.find_exn ~f:(fun (tag, _) -> String.equal tag Tags.line) tags) in
     Some [value; line]
-  with Not_found -> None
+  with
+  | Not_found_s _ | Caml.Not_found ->
+      None
 
 
 (** extract from desc a value on which to apply polymorphic hash and equality *)
@@ -141,7 +120,7 @@ let error_desc_hash desc = Hashtbl.hash (desc_get_comparable desc)
 
 (** equality for error_desc *)
 let error_desc_equal desc1 desc2 =
-  [%compare.equal : string list] (desc_get_comparable desc1) (desc_get_comparable desc2)
+  [%compare.equal: string list] (desc_get_comparable desc1) (desc_get_comparable desc2)
 
 
 let line_tag_ tags tag loc =
@@ -179,29 +158,6 @@ let add_by_call_to_opt problem_str proc_name_opt =
       problem_str ^ " " ^ by_call_to proc_name
   | None ->
       problem_str
-
-
-let rec format_typ typ =
-  match typ.Typ.desc with
-  | Typ.Tptr (t, _) when Language.curr_language_is Java ->
-      format_typ t
-  | Typ.Tstruct name ->
-      Typ.Name.name name
-  | _ ->
-      Typ.to_string typ
-
-
-let format_field f =
-  if Language.curr_language_is Java then Typ.Fieldname.Java.get_field f
-  else Typ.Fieldname.to_string f
-
-
-let format_method pname =
-  match pname with
-  | Typ.Procname.Java pname_java ->
-      Typ.Procname.Java.get_method pname_java
-  | _ ->
-      Typ.Procname.to_string pname
 
 
 let mem_dyn_allocated = "memory dynamically allocated"
@@ -261,7 +217,8 @@ let deref_str_nil_argument_in_variadic_method pn total_args arg_number =
   in
   let problem_str =
     Printf.sprintf
-      "could be %s which results in a call to %s with %d arguments instead of %d (%s indicates that the last argument of this variadic %s has been reached)"
+      "could be %s which results in a call to %s with %d arguments instead of %d (%s indicates \
+       that the last argument of this variadic %s has been reached)"
       nil_null
       (Typ.Procname.to_simplified_string pn)
       arg_number (total_args - 1) nil_null function_method
@@ -278,7 +235,8 @@ let deref_str_undef (proc_name, loc) =
   ; value_post= None
   ; problem_str=
       "could be assigned by a call to skip function " ^ proc_name_str
-      ^ at_line_tag tags Tags.call_line loc ^ " and is dereferenced or freed" }
+      ^ at_line_tag tags Tags.call_line loc
+      ^ " and is dereferenced or freed" }
 
 
 (** dereference strings for a freed pointer dereference *)
@@ -370,16 +328,6 @@ let java_unchecked_exn_desc proc_name exn_name pre_str : error_desc =
       ; "whenever " ^ pre_str ] }
 
 
-let desc_double_lock pname_opt object_str loc =
-  let mutex_str = Format.sprintf "Mutex %s" object_str in
-  let tags = Tags.create () in
-  let msg = "could be locked and is locked again" in
-  let msg = add_by_call_to_opt msg pname_opt in
-  Tags.update tags Tags.double_lock object_str ;
-  let descriptions = [mutex_str; msg; at_line tags loc] in
-  {no_desc with descriptions; tags= !tags}
-
-
 let desc_unsafe_guarded_by_access accessed_fld guarded_by_str loc =
   let line_info = at_line (Tags.create ()) loc in
   let accessed_fld_str = Typ.Fieldname.to_string accessed_fld in
@@ -389,26 +337,14 @@ let desc_unsafe_guarded_by_access accessed_fld guarded_by_str loc =
   in
   let msg =
     Format.asprintf
-      "The field %a is annotated with %a, but the lock %a is not held during the access to the field %s. Since the current method is non-private, it can be called from outside the current class without synchronization. Consider wrapping the access in a %s block or making the method private."
+      "The field %a is annotated with %a, but the lock %a is not held during the access to the \
+       field %s. Since the current method is non-private, it can be called from outside the \
+       current class without synchronization. Consider wrapping the access in a %s block or \
+       making the method private."
       MF.pp_monospaced accessed_fld_str MF.pp_monospaced annot_str MF.pp_monospaced guarded_by_str
       line_info syncronized_str
   in
   {no_desc with descriptions= [msg]}
-
-
-let desc_fragment_retains_view fragment_typ fieldname fld_typ pname : error_desc =
-  (* TODO: try advice *)
-  let problem =
-    Printf.sprintf "Fragment %s does not nullify View field %s (type %s) in %s."
-      (format_typ fragment_typ) (format_field fieldname) (format_typ fld_typ) (format_method pname)
-  in
-  let consequences =
-    "If this Fragment is placed on the back stack, a reference to this (probably dead) View will be retained."
-  in
-  let advice =
-    "In general, it is a good idea to initialize View's in onCreateView, then nullify them in onDestroyView."
-  in
-  {no_desc with descriptions= [problem; consequences; advice]}
 
 
 let desc_custom_error loc : error_desc =
@@ -438,13 +374,13 @@ let access_desc access_opt =
   match access_opt with
   | None ->
       []
-  | Some Last_accessed (n, _) ->
+  | Some (Last_accessed (n, _)) ->
       let line_str = string_of_int n in
       ["last accessed on line " ^ line_str]
-  | Some Last_assigned (n, _) ->
+  | Some (Last_assigned (n, _)) ->
       let line_str = string_of_int n in
       ["last assigned on line " ^ line_str]
-  | Some Returned_from_call _ ->
+  | Some (Returned_from_call _) ->
       []
   | Some Initialized_automatically ->
       ["initialized automatically"]
@@ -453,7 +389,7 @@ let access_desc access_opt =
 let dereference_string proc_name deref_str value_str access_opt loc =
   let tags = deref_str.tags in
   Tags.update tags Tags.value value_str ;
-  let is_call_access = match access_opt with Some Returned_from_call _ -> true | _ -> false in
+  let is_call_access = match access_opt with Some (Returned_from_call _) -> true | _ -> false in
   let value_desc =
     String.concat ~sep:""
       [ (match deref_str.value_pre with Some s -> s ^ " " | _ -> "")
@@ -470,12 +406,14 @@ let dereference_string proc_name deref_str value_str access_opt loc =
             "is annotated with " ^ annotation_name ^ " and is dereferenced without a null check"
           else
             "is indirectly marked " ^ annotation_name ^ " (source: "
-            ^ MF.monospaced_to_string nullable_src ^ ") and is dereferenced without a null check"
+            ^ MF.monospaced_to_string nullable_src
+            ^ ") and is dereferenced without a null check"
       | None, Some weak_var_str ->
           if String.equal weak_var_str value_str then
             "is a weak pointer captured in the block and is dereferenced without a null check"
           else
-            "is equal to the variable " ^ MF.monospaced_to_string weak_var_str
+            "is equal to the variable "
+            ^ MF.monospaced_to_string weak_var_str
             ^ ", a weak pointer captured in the block, and is dereferenced without a null check"
       | None, None ->
           deref_str.problem_str
@@ -483,10 +421,10 @@ let dereference_string proc_name deref_str value_str access_opt loc =
     [problem_str ^ " " ^ at_line tags loc]
   in
   let access_desc = access_desc access_opt in
-  {no_desc with descriptions= value_desc :: access_desc @ problem_desc; tags= !tags}
+  {no_desc with descriptions= (value_desc :: access_desc) @ problem_desc; tags= !tags}
 
 
-let parameter_field_not_null_checked_desc (desc: error_desc) exp =
+let parameter_field_not_null_checked_desc (desc : error_desc) exp =
   let parameter_not_nullable_desc var =
     let var_s = Pvar.to_string var in
     let param_not_null_desc =
@@ -525,15 +463,13 @@ let parameter_field_not_null_checked_desc (desc: error_desc) exp =
       desc
 
 
-let has_tag (desc: error_desc) tag =
+let has_tag (desc : error_desc) tag =
   List.exists ~f:(fun (tag', _) -> String.equal tag tag') desc.tags
 
 
 let is_parameter_not_null_checked_desc desc = has_tag desc Tags.parameter_not_null_checked
 
 let is_field_not_null_checked_desc desc = has_tag desc Tags.field_not_null_checked
-
-let is_double_lock_desc desc = has_tag desc Tags.double_lock
 
 let desc_allocation_mismatch alloc dealloc =
   let tags = Tags.create () in
@@ -543,8 +479,10 @@ let desc_allocation_mismatch alloc dealloc =
       else
         " by call to " ^ MF.monospaced_to_string (Typ.Procname.to_simplified_string called_pname)
     in
-    "using " ^ MF.monospaced_to_string (Typ.Procname.to_simplified_string primitive_pname)
-    ^ by_call ^ " " ^ at_line (Tags.create ()) (* ignore the tag *) loc
+    "using "
+    ^ MF.monospaced_to_string (Typ.Procname.to_simplified_string primitive_pname)
+    ^ by_call ^ " "
+    ^ at_line (Tags.create ()) (* ignore the tag *) loc
   in
   let description =
     Format.sprintf "%s %s is deallocated %s" mem_dyn_allocated (using alloc) (using dealloc)
@@ -563,12 +501,6 @@ let desc_condition_always_true_false i cond_str_opt loc =
       tt_ff (at_line tags loc)
   in
   {no_desc with descriptions= [description]; tags= !tags}
-
-
-let desc_unreachable_code_after loc =
-  let tags = Tags.create () in
-  let description = "Unreachable code after statement " ^ at_line tags loc in
-  {no_desc with descriptions= [description]}
 
 
 let desc_deallocate_stack_variable var_str proc_name loc =
@@ -656,18 +588,19 @@ let desc_leak hpred_type_opt value_str_opt resource_opt resource_action_opt loc 
       | None ->
           ("", "", "")
       | Some s ->
-          Tags.update tags Tags.value s ; (MF.monospaced_to_string s, " to ", " on ")
+          Tags.update tags Tags.value s ;
+          (MF.monospaced_to_string s, " to ", " on ")
     in
     let typ_str =
       match hpred_type_opt with
-      | Some Exp.Sizeof {typ= {desc= Tstruct name}} when Typ.Name.is_class name ->
+      | Some (Exp.Sizeof {typ= {desc= Tstruct name}}) when Typ.Name.is_class name ->
           " of type " ^ MF.monospaced_to_string (Typ.Name.name name) ^ " "
       | _ ->
           " "
     in
     let desc_str =
       match resource_opt with
-      | Some PredSymb.Rmemory _ ->
+      | Some (PredSymb.Rmemory _) ->
           mem_dyn_allocated ^ to_ ^ value_str
       | Some PredSymb.Rfile ->
           "resource" ^ typ_str ^ "acquired" ^ to_ ^ value_str
@@ -684,7 +617,7 @@ let desc_leak hpred_type_opt value_str_opt resource_opt resource_action_opt loc 
   let is_not_rxxx_after =
     let rxxx =
       match resource_opt with
-      | Some PredSymb.Rmemory _ ->
+      | Some (PredSymb.Rmemory _) ->
           reachable
       | Some PredSymb.Rfile | Some PredSymb.Rlock ->
           released
@@ -697,10 +630,8 @@ let desc_leak hpred_type_opt value_str_opt resource_opt resource_action_opt loc 
     match bucket_opt with Some bucket when Config.show_buckets -> bucket | _ -> ""
   in
   { no_desc with
-    descriptions= bucket_str :: xxx_allocated_to @ by_call_to @ is_not_rxxx_after; tags= !tags }
+    descriptions= (bucket_str :: xxx_allocated_to) @ by_call_to @ is_not_rxxx_after; tags= !tags }
 
-
-let desc_buffer_overrun desc = verbatim_desc desc
 
 (** kind of precondition not met *)
 type pnm_kind = Pnm_bounds | Pnm_dangling
@@ -736,7 +667,7 @@ let desc_retain_cycle cycle_str loc cycle_dotty =
     Format.sprintf "Retain cycle %s involving the following objects:%s" (at_line tags loc)
       cycle_str
   in
-  {no_desc with descriptions= [desc]; tags= !tags; dotty= cycle_dotty}
+  {descriptions= [desc]; tags= !tags; dotty= cycle_dotty}
 
 
 let registered_observer_being_deallocated_str obj_str =
@@ -749,8 +680,8 @@ let desc_registered_observer_being_deallocated pvar loc =
   let obj_str = MF.monospaced_to_string (Pvar.to_string pvar) in
   { no_desc with
     descriptions=
-      [ registered_observer_being_deallocated_str obj_str ^ at_line tags loc
-        ^ ". Being still registered as observer of the notification "
+      [ registered_observer_being_deallocated_str obj_str
+        ^ at_line tags loc ^ ". Being still registered as observer of the notification "
         ^ "center, the deallocated object " ^ obj_str ^ " may be notified in the future." ]
   ; tags= !tags }
 

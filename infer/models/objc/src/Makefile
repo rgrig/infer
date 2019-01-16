@@ -1,9 +1,7 @@
-# Copyright (c) 2017 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2017-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 MODELS_DIR = ../..
 include $(MODELS_DIR)/models-config.make
@@ -13,9 +11,11 @@ C_SOURCES=$(shell find . -name "*.c")
 OBJECTS=$(M_SOURCES:.m=.o) $(C_SOURCES:.c=.o)
 # let infer override CC by letting the shell resolve its location according to PATH
 CC=clang
-XCODE_PATH=$(shell $(XCODE_SELECT) -p)
-IPHONE_SIMULATOR_PATH=$(XCODE_PATH)/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk
-CFLAGS += --target=x86_64-apple-darwin14 -x objective-c -c -mios-simulator-version-min=8.2 -isysroot $(IPHONE_SIMULATOR_PATH)
+
+IPHONESIMULATOR_ISYSROOT = $(XCODE_BASE)/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk
+OBJC_TARGET = x86_64-apple-darwin14
+
+CFLAGS += -Wno-deprecated-objc-isa-usage --target=$(OBJC_TARGET) -x objective-c -c -mios-simulator-version-min=8.2 -isysroot $(IPHONESIMULATOR_ISYSROOT)
 
 all: $(OBJECTS)
 

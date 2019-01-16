@@ -1,13 +1,13 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
+
+exception ParseError of string
 
 type t [@@deriving compare]
 
@@ -36,7 +36,7 @@ val append_template_args_to_last : t -> args:string -> t
     template args *)
 
 val to_list : t -> string list
-(** returns list of qualifers *)
+(** returns list of qualifiers *)
 
 val to_rev_list : t -> string list
 (** returns reversed list of qualifiers, ie innermost scope is the first element *)
@@ -46,6 +46,8 @@ val of_list : string list -> t
 
 val of_rev_list : string list -> t
 (** given reversed list of qualifiers, produce qualified name (ie. ["move", "std"] for std::move )*)
+
+val from_field_qualified_name : t -> t
 
 val pp : Format.formatter -> t -> unit
 

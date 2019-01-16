@@ -1,9 +1,7 @@
-# Copyright (c) 2015 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2015-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 from __future__ import absolute_import
 from __future__ import division
@@ -113,6 +111,8 @@ class BuckAnalyzer:
         )
         args = [
             '--config',
+            'client.id=infer.clang',
+            '--config',
             '*//infer.infer_bin={bin}'
             .format(bin=config.BIN_DIRECTORY),
             '--config',
@@ -121,6 +121,10 @@ class BuckAnalyzer:
             '*//infer.clang_plugin={plugin}'.format(plugin=plugin_path),
             '--config',
             '*//cxx.pch_enabled=false',
+            '--config',  # Infer doesn't support C++ modules yet (T35656509)
+            '*//cxx.modules_default=false',
+            '--config',
+            '*//cxx.modules=False',
         ] + self.args.Xbuck
 
         if self.args.xcode_developer_dir is not None:

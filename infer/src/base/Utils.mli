@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -25,9 +23,11 @@ val read_file : string -> (string list, string) Result.t
 val filename_to_absolute : root:string -> string -> string
 (** Convert a filename to an absolute one if it is relative, and normalize "." and ".." *)
 
-val filename_to_relative : root:string -> string -> string option
+val filename_to_relative :
+  ?force_full_backtrack:bool -> ?backtrack:int -> root:string -> string -> string option
 (** Convert an absolute filename to one relative to a root directory.  Returns [None] if filename is
-    not under root. *)
+    not under root. The backtrack level sets the maximum level of steps in the parent directories
+    to search for a common prefix *)
 
 (** type for files used for printing *)
 type outfile =
@@ -56,6 +56,9 @@ val with_file_in : string -> f:(In_channel.t -> 'a) -> 'a
 
 val with_file_out : string -> f:(Out_channel.t -> 'a) -> 'a
 
+val with_intermediate_temp_file_out : string -> f:(Out_channel.t -> 'a) -> 'a
+(** like [with_file_out] but uses a fresh intermediate temporary file and rename to avoid write-write races *)
+
 val write_json_to_file : string -> Yojson.Basic.json -> unit
 
 val consume_in : In_channel.t -> unit
@@ -66,11 +69,12 @@ val echo_in : In_channel.t -> unit
 
 val with_process_in : string -> (In_channel.t -> 'a) -> 'a * Unix.Exit_or_signal.t
 
-val shell_escape_command : string list -> string
-
 val with_process_lines :
-  debug:((string -> unit, Format.formatter, unit) format -> string -> unit) -> cmd:string list
-  -> tmp_prefix:string -> f:(string list -> 'res) -> 'res
+     debug:((string -> unit, Format.formatter, unit) format -> string -> unit)
+  -> cmd:string list
+  -> tmp_prefix:string
+  -> f:(string list -> 'res)
+  -> 'res
 (** Runs the command [cmd] and calls [f] on the output lines. Uses [debug] to print debug
    information, and [tmp_prefix] as a prefix for temporary files. *)
 
@@ -102,9 +106,6 @@ val rmtree : string -> unit
 val try_finally_swallow_timeout : f:(unit -> 'a) -> finally:(unit -> unit) -> 'a
 (** Calls [f] then [finally] even if [f] raised an exception. The original exception is reraised afterwards.
     Where possible use [SymOp.try_finally] to avoid swallowing timeouts. *)
-
-val yield : unit -> unit
-(** try to give the control back to the OS without sleeping too much *)
 
 val better_hash : 'a -> Caml.Digest.t
 (** Hashtbl.hash only hashes the first 10 meaningful values, [better_hash] uses everything. *)

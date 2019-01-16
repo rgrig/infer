@@ -1,24 +1,24 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 #include <string>
 
-class A {
+class SomeStructA {
 
  public:
+  int* ptr;
   std::string a_name;
+  std::string* p_a_name;
   int i;
 
-  A() {} // user defined default constructor.
-         // Does not initialize i so, it gets random value
+  SomeStructA() {} // user defined default constructor.
+  // Does not initialize i so, it gets random value
 };
 
-class B {
+class SomeStructB {
 
  public:
   std::string a_name;
@@ -29,7 +29,7 @@ class B {
 };
 
 int access_members_bad() {
-  A a;
+  SomeStructA a;
 
   std::string n = a.a_name;
   int i = a.i; // error
@@ -38,7 +38,7 @@ int access_members_bad() {
 };
 
 int access_members_bad2() {
-  A a{};
+  SomeStructA a{};
 
   std::string n = a.a_name;
   int i = a.i; // error
@@ -48,7 +48,7 @@ int access_members_bad2() {
 
 int access_members_ok() {
 
-  B b{}; // call default implicit constructor which initialize i.
+  SomeStructB b{}; // call default implicit constructor which initialize i.
   std::string n = b.a_name;
   int i = b.i;
 
@@ -57,9 +57,19 @@ int access_members_ok() {
 
 int access_members_bad3() {
 
-  B b; // no constructor is called
+  SomeStructB b; // no constructor is called
   std::string n = b.a_name;
   int i = b.i;
+
+  return 0;
+};
+
+int access_pointer_members_bad() {
+  SomeStructA a;
+
+  int* p = a.ptr;
+  int i = a.i;
+  std::string* pn = a.p_a_name;
 
   return 0;
 };

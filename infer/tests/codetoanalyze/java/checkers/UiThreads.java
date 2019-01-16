@@ -1,16 +1,13 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.checkers;
 
 import android.support.annotation.UiThread;
-
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -18,18 +15,15 @@ import java.lang.annotation.Target;
 
 @Target({ElementType.METHOD})
 @Retention(RetentionPolicy.CLASS)
-@interface AnyThread {
-}
+@interface AnyThread {}
 
 @Target({ElementType.METHOD})
 @Retention(RetentionPolicy.CLASS)
-@interface ForUiThread {
-}
+@interface ForUiThread {}
 
 @Target({ElementType.METHOD})
 @Retention(RetentionPolicy.CLASS)
-@interface ForNonUiThread {
-}
+@interface ForNonUiThread {}
 
 public class UiThreads {
 
@@ -94,5 +88,4 @@ public class UiThreads {
   void callForNonUiThreadOk() {
     forNonUiThread();
   }
-
 }

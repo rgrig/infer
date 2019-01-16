@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -14,7 +12,6 @@ module Hashtbl = Caml.Hashtbl
 
 (** and the cg, cfg, and tenv corresponding to the current file. *)
 
-module L = Logging
 module StmtMap = ClangPointers.Map
 
 type pointer = int [@@deriving compare]
@@ -30,57 +27,50 @@ type t =
   ; tenv: Tenv.t
   ; cfg: Cfg.t
   ; procdesc: Procdesc.t
-  ; is_objc_method: bool
-  ; curr_class: curr_class
+  ; immediate_curr_class: curr_class
   ; return_param_typ: Typ.t option
   ; outer_context: t option
-        (** in case of objc blocks, the context of the method containing the
-                                  block *)
   ; mutable blocks_static_vars: (Pvar.t * Typ.t) list Typ.Procname.Map.t
   ; label_map: str_node_map
   ; vars_to_destroy: Clang_ast_t.decl list StmtMap.t }
 
-let create_context translation_unit_context tenv cfg procdesc curr_class return_param_typ
-    is_objc_method outer_context vars_to_destroy =
+let create_context translation_unit_context tenv cfg procdesc immediate_curr_class return_param_typ
+    outer_context vars_to_destroy =
   { translation_unit_context
   ; tenv
   ; cfg
   ; procdesc
-  ; curr_class
+  ; immediate_curr_class
   ; return_param_typ
-  ; is_objc_method
   ; outer_context
   ; blocks_static_vars= Typ.Procname.Map.empty
   ; label_map= Hashtbl.create 17
   ; vars_to_destroy }
 
 
-let get_procdesc context = context.procdesc
-
 let rec is_objc_method context =
   match context.outer_context with
   | Some outer_context ->
       is_objc_method outer_context
   | None ->
-      context.is_objc_method
+      context.procdesc |> Procdesc.get_proc_name |> Typ.Procname.is_objc_method
 
 
-let rec is_objc_instance context =
+let rec is_objc_class_method context =
   match context.outer_context with
   | Some outer_context ->
-      is_objc_instance outer_context
+      is_objc_class_method outer_context
   | None ->
       let attrs = Procdesc.get_attributes context.procdesc in
-      ProcAttributes.clang_method_kind_equal attrs.ProcAttributes.clang_method_kind
-        ProcAttributes.OBJC_INSTANCE
+      ClangMethodKind.equal attrs.ProcAttributes.clang_method_kind ClangMethodKind.OBJC_CLASS
 
 
 let rec get_curr_class context =
-  match (context.curr_class, context.outer_context) with
+  match (context.immediate_curr_class, context.outer_context) with
   | ContextNoCls, Some outer_context ->
       get_curr_class outer_context
   | _ ->
-      context.curr_class
+      context.immediate_curr_class
 
 
 let get_curr_class_decl_ptr stmt_info curr_class =
@@ -102,9 +92,9 @@ let get_curr_class_ptr stmt_info curr_class =
   in
   (* Resolve categories to their class names *)
   match CAst_utils.get_decl decl_ptr with
-  | Some ObjCCategoryDecl (_, _, _, _, ocdi) ->
+  | Some (ObjCCategoryDecl (_, _, _, _, ocdi)) ->
       get_ptr_from_decl_ref ocdi.odi_class_interface
-  | Some ObjCCategoryImplDecl (_, _, _, _, ocidi) ->
+  | Some (ObjCCategoryImplDecl (_, _, _, _, ocidi)) ->
       get_ptr_from_decl_ref ocidi.ocidi_class_interface
   | _ ->
       decl_ptr
@@ -126,12 +116,13 @@ let add_block_static_var context block_name static_var_typ =
       let new_static_vars, duplicate =
         try
           let static_vars = Typ.Procname.Map.find block_name outer_context.blocks_static_vars in
-          if List.mem
-               ~equal:(fun (var1, _) (var2, _) -> Pvar.equal var1 var2)
-               static_vars static_var_typ
+          if
+            List.mem
+              ~equal:(fun (var1, _) (var2, _) -> Pvar.equal var1 var2)
+              static_vars static_var_typ
           then (static_vars, true)
           else (static_var_typ :: static_vars, false)
-        with Not_found -> ([static_var_typ], false)
+        with Caml.Not_found -> ([static_var_typ], false)
       in
       if not duplicate then
         let blocks_static_vars =

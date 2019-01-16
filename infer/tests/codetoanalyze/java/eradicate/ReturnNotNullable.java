@@ -1,22 +1,18 @@
 /*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.eradicate;
 
 import com.google.common.base.Optional;
-
-import java.net.URL;
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
+import java.net.URL;
 import java.util.stream.Stream;
-
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
@@ -101,8 +97,7 @@ public class ReturnNotNullable {
     return os.orNull();
   }
 
-  class E extends Exception {
-  }
+  class E extends Exception {}
 
   String return_null_in_catch() {
     try {
@@ -130,7 +125,7 @@ public class ReturnNotNullable {
 
   @DefinitelyNotNullable
   Object definitelyDoesNotReturnNull() {
-      return new Object();
+    return new Object();
   }
 
   void callsnotnullableMethod() {
@@ -139,12 +134,13 @@ public class ReturnNotNullable {
 
   static class ConditionalAssignment {
     @Nullable Object f1;
+
     static Object test(boolean b) {
-        ConditionalAssignment x = new ConditionalAssignment();
-        if (b) {
-            x.f1 = new Object();
-        }
-        return x.f1; // can be null
+      ConditionalAssignment x = new ConditionalAssignment();
+      if (b) {
+        x.f1 = new Object();
+      }
+      return x.f1; // can be null
     }
   }
 
@@ -154,5 +150,12 @@ public class ReturnNotNullable {
 
   Object $generatedReturnsNullOk() {
     return null;
+  }
+
+  int field;
+
+  int returnsZero() {
+    field = 0;
+    return field;
   }
 }

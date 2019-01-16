@@ -1,19 +1,20 @@
 /*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 #import "NSString.h"
 #import <stdlib.h>
+#import <string.h>
 
 size_t __get_array_length(const void* arr);
 
 void __infer_assume(bool cond);
 void __set_wont_leak_attribute(const void* ptr);
+
+typedef NSUInteger NSStringEncoding;
 
 @implementation NSString
 
@@ -25,7 +26,7 @@ void __set_wont_leak_attribute(const void* ptr);
   s->value = (const char*)malloc(len);
   // The newly allocated string will be autoreleased by the runtime
   __set_wont_leak_attribute(s->value);
-  memcpy(s->value, bytes, len);
+  memcpy((void*)s->value, bytes, len);
   return s;
 }
 
@@ -36,7 +37,7 @@ void __set_wont_leak_attribute(const void* ptr);
   s->value = (const char*)malloc(len);
   // The newly allocated string will be autoreleased by the runtime
   __set_wont_leak_attribute(s->value);
-  memcpy(s->value, aString->value, len);
+  memcpy((void*)s->value, aString->value, len);
   return s;
 }
 
@@ -50,7 +51,7 @@ void __set_wont_leak_attribute(const void* ptr);
 
 - (instancetype)initWithBytesNoCopy:(char*)bytes
                              length:(NSUInteger)length
-                           encoding:(id)encoding
+                           encoding:(NSStringEncoding)encoding
                        freeWhenDone:(BOOL)flag {
   if (flag == YES) {
     if (bytes) {
@@ -81,9 +82,14 @@ void __set_wont_leak_attribute(const void* ptr);
   }
 }
 
+- (instancetype)stringByAppendingString:(NSString*)aString {
+  const char* v = aString->value;
+  return self;
+}
+
 - (void)dealloc {
   if (self != nil && self->value != 0) {
-    free(self->value);
+    free((void*)self->value);
   }
   [super dealloc];
 }

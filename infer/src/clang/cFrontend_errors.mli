@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -12,7 +10,6 @@ open! IStd
 type linter =
   { condition: CTL.t
   ; issue_desc: CIssue.issue_desc
-  ; def_file: string option
   ; whitelist_paths: ALVar.t list
   ; blacklist_paths: ALVar.t list }
 
@@ -27,18 +24,14 @@ val pp_linters : Format.formatter -> linter list -> unit
 
 type macros_map = (bool * ALVar.t list * CTL.t) ALVar.FormulaIdMap.t
 
-(* Map a path name to a list of paths.  *)
-
+(** Map a path name to a list of paths.  *)
 type paths_map = ALVar.t list ALVar.VarMap.t
 
-(* List of checkers that will be filled after parsing them from a file *)
-
-val parsed_linters : linter list ref
-
 (* Module for warnings detected at translation time by the frontend *)
-(* Run frontend checkers on an AST node *)
 
-val invoke_set_of_checkers_on_node : CLintersContext.context -> Ctl_parser_types.ast_node -> unit
+val invoke_set_of_checkers_on_node :
+  linter list -> CLintersContext.context -> Ctl_parser_types.ast_node -> unit
+(** Run frontend checkers on an AST node *)
 
 val build_macros_map : CTL.clause list -> macros_map
 
@@ -51,5 +44,9 @@ val create_parsed_linters : string -> CTL.ctl_checker list -> linter list
 val remove_new_lines_and_whitespace : string -> string
 
 val fill_issue_desc_info_and_log :
-  CLintersContext.context -> Ctl_parser_types.ast_node -> CIssue.issue_desc -> string option
-  -> Location.t -> unit
+     CLintersContext.context
+  -> witness:Ctl_parser_types.ast_node
+  -> current_node:Ctl_parser_types.ast_node
+  -> CIssue.issue_desc
+  -> Location.t
+  -> unit

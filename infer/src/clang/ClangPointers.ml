@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -22,8 +20,8 @@ let pointer_type_table = Int.Table.create ~size:256 ()
 let empty_v = Clang_ast_visit.empty_visitor
 
 (* This function is not thread-safe *)
-let visit_ast ?(visit_decl= empty_v) ?(visit_stmt= empty_v) ?(visit_type= empty_v)
-    ?(visit_src_loc= empty_v) top_decl =
+let visit_ast ?(visit_decl = empty_v) ?(visit_stmt = empty_v) ?(visit_type = empty_v)
+    ?(visit_src_loc = empty_v) top_decl =
   Clang_ast_visit.decl_visitor := visit_decl ;
   Clang_ast_visit.stmt_visitor := visit_stmt ;
   Clang_ast_visit.type_visitor := visit_type ;
@@ -34,7 +32,7 @@ let visit_ast ?(visit_decl= empty_v) ?(visit_stmt= empty_v) ?(visit_type= empty_
   | Some error ->
       L.(die InternalError)
         "visiting the clang AST failed with error %s"
-        (Ag_util.Validation.string_of_error error)
+        (Atdgen_runtime.Util.Validation.string_of_error error)
 
 
 let get_ptr_from_node node =

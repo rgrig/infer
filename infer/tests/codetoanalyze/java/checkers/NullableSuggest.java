@@ -1,13 +1,13 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.checkers;
+
+import external.library.SomeExternalClass;
 import javax.annotation.Nullable;
 
 public class NullableSuggest {
@@ -19,8 +19,7 @@ public class NullableSuggest {
     @Nullable private Object obj3;
   }
 
-  public void noAssignNullOk() {
-  }
+  public void noAssignNullOk() {}
 
   public void assignNotNullOk() {
     obj0 = new Object();
@@ -93,8 +92,7 @@ public class NullableSuggest {
     OtherClass oc = new OtherClass();
     if (obj0 == null) {
       // Pretend that we did something here...
-    }
-    else {
+    } else {
       // The analysis should not suggest @Nullable on OtherClass.obj2 here
       oc.obj2 = obj0;
     }
@@ -107,23 +105,33 @@ public class NullableSuggest {
   }
 
   void methodWithCapturedNullableParameterOk(@Nullable Object parameter) {
-    Object object = new Object() {
-        void foo() {
-          if (parameter != null) {
-            parameter.toString();
+    Object object =
+        new Object() {
+          void foo() {
+            if (parameter != null) {
+              parameter.toString();
+            }
           }
-        }
-      };
+        };
   }
 
   void methodWithCapturednonNullableParameterBad_FN(Object parameter) {
-    Object object = new Object() {
-        void foo() {
-          if (parameter != null) {
-            parameter.toString();
+    Object object =
+        new Object() {
+          void foo() {
+            if (parameter != null) {
+              parameter.toString();
+            }
           }
-        }
-      };
+        };
   }
 
+  boolean checkExternalFieldForNullOk(SomeExternalClass parameter) {
+    if (parameter.field == null) {
+      // Does not report here. The field belongs to an external library so the
+      // warning would not be actionable.
+      return true;
+    }
+    return false;
+  }
 }

@@ -1,23 +1,20 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** This module creates extra ast constructs that are needed for the translation *)
 
 open! IStd
-module L = Logging
 
 let stmt_info_with_fresh_pointer stmt_info =
   { Clang_ast_t.si_pointer= CAst_utils.get_fresh_pointer ()
   ; si_source_range= stmt_info.Clang_ast_t.si_source_range }
 
 
-let create_qual_type ?(quals= Typ.mk_type_quals ()) qt_type_ptr =
+let create_qual_type ?(quals = Typ.mk_type_quals ()) qt_type_ptr =
   { Clang_ast_t.qt_type_ptr
   ; qt_is_const= Typ.is_const quals
   ; qt_is_volatile= Typ.is_volatile quals
@@ -43,8 +40,6 @@ let create_id_type = create_pointer_qual_type (builtin_to_qual_type `ObjCId)
 let create_char_type = builtin_to_qual_type `Char_S
 
 let create_char_star_type ?quals () = create_pointer_qual_type ?quals create_char_type
-
-let create_BOOL_type = builtin_to_qual_type `SChar
 
 let create_class_qual_type ?quals typename =
   create_qual_type ?quals (Clang_ast_extend.ClassType typename)
@@ -150,9 +145,9 @@ let make_binary_stmt stmt1 stmt2 stmt_info expr_info boi =
 
 
 let make_next_object_exp stmt_info item items =
-  let var_decl_ref, var_type =
+  let rec get_decl_ref item =
     match item with
-    | Clang_ast_t.DeclStmt (_, _, [(Clang_ast_t.VarDecl (di, name_info, var_qual_type, _))]) ->
+    | Clang_ast_t.DeclStmt (_, _, [Clang_ast_t.VarDecl (di, name_info, var_qual_type, _)]) ->
         let decl_ptr = di.Clang_ast_t.di_pointer in
         let decl_ref = make_decl_ref_qt `Var decl_ptr name_info false var_qual_type in
         let stmt_info_var =
@@ -162,12 +157,20 @@ let make_next_object_exp stmt_info item items =
         let expr_info = make_expr_info_with_objc_kind var_qual_type `ObjCProperty in
         let decl_ref_expr_info = make_decl_ref_expr_info decl_ref in
         (Clang_ast_t.DeclRefExpr (stmt_info_var, [], expr_info, decl_ref_expr_info), var_qual_type)
-    | _ ->
-        CFrontend_config.incorrect_assumption __POS__ stmt_info.Clang_ast_t.si_source_range
-          "unexpected item %a"
-          (Pp.to_string ~f:Clang_ast_j.string_of_stmt)
-          item
+    | Clang_ast_t.DeclRefExpr (_, _, expr_info, _) ->
+        (item, expr_info.Clang_ast_t.ei_qual_type)
+    | stmt -> (
+        let _, stmts = Clang_ast_proj.get_stmt_tuple stmt in
+        match stmts with
+        | [stmt] ->
+            get_decl_ref stmt
+        | _ ->
+            CFrontend_config.incorrect_assumption __POS__ stmt_info.Clang_ast_t.si_source_range
+              "unexpected item %a"
+              (Pp.to_string ~f:Clang_ast_j.string_of_stmt)
+              item )
   in
+  let var_decl_ref, var_type = get_decl_ref item in
   let message_call =
     make_message_expr create_id_type CFrontend_config.next_object items stmt_info false
   in

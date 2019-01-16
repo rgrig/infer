@@ -1,14 +1,12 @@
 (*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-open! PVariant
+open PolyVariantEqual
 module F = Format
 module L = Logging
 
@@ -50,7 +48,9 @@ let write multilinks ~dir =
 
 
 let lookup ~dir =
-  try Some (String.Table.find_exn multilink_files_cache dir) with Not_found -> read ~dir
+  try Some (String.Table.find_exn multilink_files_cache dir) with
+  | Not_found_s _ | Caml.Not_found ->
+      read ~dir
 
 
 let resolve fname =
@@ -62,5 +62,7 @@ let resolve fname =
     match lookup ~dir with
     | None ->
         fname
-    | Some links ->
-      try DB.filename_from_string (String.Table.find_exn links base) with Not_found -> fname
+    | Some links -> (
+      try DB.filename_from_string (String.Table.find_exn links base) with
+      | Not_found_s _ | Caml.Not_found ->
+          fname )

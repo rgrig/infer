@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2015 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2015-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -20,7 +18,7 @@ type proc_filter = Typ.Procname.t -> bool
 
 type filters = {path_filter: path_filter; error_filter: error_filter; proc_filter: proc_filter}
 
-val create_filters : Config.analyzer -> filters
+val create_filters : unit -> filters
 (** Create filters based on the config file *)
 
 val never_return_null_matcher : SourceFile.t -> Typ.Procname.t -> bool

@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -15,7 +13,9 @@ type 'a outcome = Return of 'a | Raise of exn
 
 let test_file_renamings_from_json =
   let create_test test_input expected_output _ =
-    let test_output input = DifferentialFilters.FileRenamings.from_json input in
+    let test_output input =
+      DifferentialFilters.FileRenamings.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.from_json input
+    in
     let pp_diff fmt (expected, actual) =
       let pp = DifferentialFilters.FileRenamings.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.pp in
       Format.fprintf fmt "Expected %a but got %a" pp expected pp actual
@@ -33,15 +33,15 @@ let test_file_renamings_from_json =
       ^ "{\"current\": \"ccc.java\", \"previous\": \"DDD.java\"},"
       ^ "{\"current\": \"eee.java\", \"previous\": \"FFF.java\"}" ^ "]"
     , Return
-        (DifferentialFilters.FileRenamings.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.from_renamings
-           [ {DifferentialFilters.FileRenamings.current= "aaa.java"; previous= "BBB.java"}
-           ; {DifferentialFilters.FileRenamings.current= "ccc.java"; previous= "DDD.java"}
-           ; {DifferentialFilters.FileRenamings.current= "eee.java"; previous= "FFF.java"} ]) )
+        DifferentialFilters.FileRenamings.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.(
+          of_list
+            [ {current= "aaa.java"; previous= "BBB.java"}
+            ; {current= "ccc.java"; previous= "DDD.java"}
+            ; {current= "eee.java"; previous= "FFF.java"} ]) )
   ; ( "test_file_renamings_from_json_with_good_empty_input"
     , "[]"
-    , Return
-        (DifferentialFilters.FileRenamings.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.from_renamings
-           []) )
+    , Return (DifferentialFilters.FileRenamings.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.of_list [])
+    )
   ; ( "test_file_renamings_from_json_with_well_formed_but_unexpected_input"
     , "{}"
     , Raise (Logging.InferUserError "Expected JSON list but got '{}'") )
@@ -62,37 +62,35 @@ let test_file_renamings_from_json =
 
 let test_file_renamings_find_previous =
   let renamings =
-    DifferentialFilters.FileRenamings.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.from_renamings
-      [ {DifferentialFilters.FileRenamings.current= "aaa.java"; previous= "BBB.java"}
-      ; {DifferentialFilters.FileRenamings.current= "ccc.java"; previous= "DDD.java"}
-      ; {DifferentialFilters.FileRenamings.current= "eee.java"; previous= "FFF.java"} ]
+    DifferentialFilters.FileRenamings.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.(
+      of_list
+        [ {current= "aaa.java"; previous= "BBB.java"}
+        ; {current= "ccc.java"; previous= "DDD.java"}
+        ; {current= "eee.java"; previous= "FFF.java"} ])
   in
-  let cmp s1 s2 = [%compare.equal : string option] s1 s2 in
-  let find_previous = DifferentialFilters.FileRenamings.find_previous in
+  let find_previous =
+    DifferentialFilters.FileRenamings.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.find_previous
+  in
   let pp_diff fmt (expected, actual) =
-    let pp_str_opt fmt str_opt =
-      let out = match str_opt with Some str -> "Some " ^ str | None -> "None" in
-      Format.fprintf fmt "%s" out
-    in
-    Format.fprintf fmt "Expected '%a' but got '%a'" pp_str_opt expected pp_str_opt actual
+    Format.fprintf fmt "Expected '%s' but got '%s'" expected actual
   in
   let create_test input expected_previous _ =
-    assert_equal ~cmp ~pp_diff expected_previous (find_previous renamings input)
+    assert_equal ~cmp:String.equal ~pp_diff expected_previous (find_previous renamings input)
   in
-  [ ("test_file_renamings_find_previous_with_existing_value", "ccc.java", Some "DDD.java")
-  ; ("test_file_renamings_find_previous_with_existing_value", "abc.java", None) ]
+  [ ("test_file_renamings_find_previous_with_existing_value", "ccc.java", "DDD.java")
+  ; ("test_file_renamings_find_previous_with_existing_value", "abc.java", "abc.java") ]
   |> List.map ~f:(fun (name, test_input, expected_output) ->
          name >:: create_test test_input expected_output )
 
 
 let test_relative_complements =
   let create_test pred (l1, l2) (expected_l1, expected_l2, expected_l3) _ =
-    let cmp = Int.compare in
+    let compare = Int.compare in
     let output_l1, output_l2, output_l3 =
-      DifferentialFilters.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.relative_complements ~cmp ~pred
-        l1 l2
+      DifferentialFilters.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.relative_complements ~compare
+        ~pred l1 l2
     in
-    let list_equal l1 l2 = List.equal ~equal:(fun v1 v2 -> Int.equal (cmp v1 v2) 0) l1 l2 in
+    let list_equal l1 l2 = List.equal ~equal:(fun v1 v2 -> Int.equal (compare v1 v2) 0) l1 l2 in
     assert_equal ~pp_diff:(pp_diff_of_int_list "First list") ~cmp:list_equal expected_l1 output_l1 ;
     assert_equal ~pp_diff:(pp_diff_of_int_list "Second list") ~cmp:list_equal expected_l2 output_l2 ;
     assert_equal ~pp_diff:(pp_diff_of_int_list "Third list") ~cmp:list_equal expected_l3 output_l3
@@ -164,11 +162,16 @@ let test_skip_duplicated_types_on_filenames =
     ; create_fake_jsonbug ~bug_type:"bug_type_1" ~file:"file_2.java" ~hash:"2" () ]
   in
   let renamings =
-    DifferentialFilters.FileRenamings.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.from_renamings
-      [ {DifferentialFilters.FileRenamings.current= "file_2'.java"; previous= "file_2.java"}
-      ; {DifferentialFilters.FileRenamings.current= "file_1'.java"; previous= "file_1.java"} ]
+    DifferentialFilters.FileRenamings.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.(
+      of_list
+        [ {current= "file_2'.java"; previous= "file_2.java"}
+        ; {current= "file_1'.java"; previous= "file_1.java"} ])
   in
-  let diff = Differential.of_reports ~current_report ~previous_report in
+  let current_costs = [] in
+  let previous_costs = [] in
+  let diff =
+    Differential.of_reports ~current_report ~previous_report ~current_costs ~previous_costs
+  in
   let diff' =
     DifferentialFilters.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.skip_duplicated_types_on_filenames
       renamings diff
@@ -188,121 +191,6 @@ let test_skip_duplicated_types_on_filenames =
       (sorted_hashes_of_issues diff'.preexisting)
   in
   "test_skip_duplicated_types_on_filenames" >:: do_assert
-
-
-let test_skip_anonymous_class_renamings =
-  let create_test input_diff (exp_introduced, exp_fixed, exp_preexisting) _ =
-    let diff' =
-      DifferentialFilters.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY.skip_anonymous_class_renamings
-        input_diff
-    in
-    assert_equal
-      ~pp_diff:(pp_diff_of_string_list "Hashes of introduced")
-      exp_introduced
-      (sorted_hashes_of_issues diff'.introduced) ;
-    assert_equal
-      ~pp_diff:(pp_diff_of_string_list "Hashes of fixed")
-      exp_fixed
-      (sorted_hashes_of_issues diff'.fixed) ;
-    assert_equal
-      ~pp_diff:(pp_diff_of_string_list "Hashes of preexisting")
-      exp_preexisting
-      (sorted_hashes_of_issues diff'.preexisting)
-  in
-  (* [(test_name, diff, expected hashes); ...] *)
-  [ ( "test_skip_anonymous_class_renamings_with_long_procedure_ids"
-    , Differential.of_reports
-        ~current_report:
-          [ create_fake_jsonbug ~bug_type:"bug_type_1"
-              ~procedure_id:
-                ( "com.whatever.package00.abcd."
-                ^ "ABasicExampleFragment$83.onMenuItemActionExpand(android.view.MenuItem):b."
-                ^ "5ab5e18cae498c35d887ce88f3d5fa82" )
-              ~file:"a.java" ~key:"1" ~hash:"3" ()
-          ; create_fake_jsonbug ~bug_type:"bug_type_1"
-              ~procedure_id:
-                ( "com.whatever.package00.abcd."
-                ^ "ABasicExampleFragment$83$7.onMenuItemActionExpand(android.view.MenuItem)."
-                ^ "522cc747174466169781c9d2fc980dbc" )
-              ~file:"a.java" ~key:"1" ~hash:"4" ()
-          ; create_fake_jsonbug ~bug_type:"bug_type_2"
-              ~procedure_id:"procid5.c854fd4a98113d9ab5b82deb3545de89" ~file:"b.java" ~key:"5"
-              ~hash:"5" () ]
-        ~previous_report:
-          [ create_fake_jsonbug ~bug_type:"bug_type_1"
-              ~procedure_id:
-                ( "com.whatever.package00.abcd."
-                ^ "ABasicExampleFragment$9.onMenuItemActionExpand(android.view.MenuItem):bo."
-                ^ "ba1776155fba2899542401da5bc779a5" )
-              ~file:"a.java" ~key:"1" ~hash:"1" ()
-          ; create_fake_jsonbug ~bug_type:"bug_type_2"
-              ~procedure_id:"procid2.92095aee3f1884c37e96feae031f4931" ~file:"b.java" ~key:"2"
-              ~hash:"2" () ]
-    , (["4"; "5"], ["2"], ["3"]) )
-  ; ( "test_skip_anonymous_class_renamings_with_empty_qualifier_tags"
-    , Differential.of_reports
-        ~current_report:
-          [ create_fake_jsonbug ~bug_type:"bug_type_1"
-              ~procedure_id:
-                "com.whatever.package.Class$1.foo():bool.bf13089cf4c47ff8ff089a1a4767324f"
-              ~file:"a.java" ~key:"1" ~hash:"1" ()
-          ; create_fake_jsonbug ~bug_type:"bug_type_2"
-              ~procedure_id:
-                "com.whatever.package.Class$1.foo():bool.bf13089cf4c47ff8ff089a1a4767324f"
-              ~file:"a.java" ~key:"1" ~hash:"3" () ]
-        ~previous_report:
-          [ create_fake_jsonbug ~bug_type:"bug_type_1"
-              ~procedure_id:
-                "com.whatever.package.Class$21$1.foo():bool.db89561ad9dab28587c8c04833f09b03"
-              ~file:"a.java" ~key:"1" ~hash:"2" ()
-          ; create_fake_jsonbug ~bug_type:"bug_type_2"
-              ~procedure_id:
-                "com.whatever.package.Class$8.foo():bool.cffd4e941668063eb802183dbd3e856d"
-              ~file:"a.java" ~key:"1" ~hash:"4" () ]
-    , (["1"], ["2"], ["3"]) )
-  ; ( "test_skip_anonymous_class_renamings_with_matching_non_anonymous_procedure_ids"
-    , Differential.of_reports
-        ~current_report:
-          [ create_fake_jsonbug ~bug_type:"bug_type_1"
-              ~procedure_id:
-                "com.whatever.package.Class.foo():bool.919f37fd0993058a01f438210ba8a247"
-              ~file:"a.java" ~key:"1" ~hash:"1" ()
-          ; create_fake_jsonbug ~bug_type:"bug_type_1"
-              ~procedure_id:
-                "com.whatever.package.Class.foo():bool.919f37fd0993058a01f438210ba8a247"
-              ~file:"a.java" ~key:"1" ~hash:"3" () ]
-        ~previous_report:
-          [ create_fake_jsonbug ~bug_type:"bug_type_1"
-              ~procedure_id:
-                "com.whatever.package.Class.foo():bool.919f37fd0993058a01f438210ba8a247"
-              ~file:"a.java" ~key:"1" ~hash:"2" ()
-          ; create_fake_jsonbug ~bug_type:"bug_type_1"
-              ~procedure_id:
-                "com.whatever.package.Class.foo():bool.919f37fd0993058a01f438210ba8a247"
-              ~file:"a.java" ~key:"1" ~hash:"4" () ]
-    , (["1"; "3"], ["2"; "4"], []) )
-  ; ( "test_skip_anonymous_class_renamings_with_non_java_files"
-    , Differential.of_reports
-        ~current_report:
-          [ create_fake_jsonbug ~bug_type:"bug_type_1"
-              ~procedure_id:
-                "com.whatever.package.Class$3$1.foo():bool.9ff39eb5c53c81da9f6a7ade324345b6"
-              ~file:"a.java" ~key:"1" ~hash:"1" ()
-          ; create_fake_jsonbug ~bug_type:"bug_type_2"
-              ~procedure_id:
-                "com.whatever.package.Class$1.foo():bool.bf13089cf4c47ff8ff089a1a4767324f"
-              ~file:"a.mm" ~key:"1" ~hash:"3" () ]
-        ~previous_report:
-          [ create_fake_jsonbug ~bug_type:"bug_type_1"
-              ~procedure_id:
-                "com.whatever.package.Class$21$1.foo():bool.db89561ad9dab28587c8c04833f09b03"
-              ~file:"a.java" ~key:"1" ~hash:"2" ()
-          ; create_fake_jsonbug ~bug_type:"bug_type_2"
-              ~procedure_id:
-                "com.whatever.package.Class$8.foo():bool.cffd4e941668063eb802183dbd3e856d"
-              ~file:"a.mm" ~key:"1" ~hash:"4" () ]
-    , (["3"], ["4"], ["1"]) ) ]
-  |> List.map ~f:(fun (name, diff, expected_output) -> name >:: create_test diff expected_output)
 
 
 let test_interesting_paths_filter =
@@ -341,5 +229,5 @@ let test_interesting_paths_filter =
 let tests =
   "differential_filters_suite"
   >::: test_file_renamings_from_json @ test_file_renamings_find_previous
-       @ test_relative_complements @ test_skip_anonymous_class_renamings
-       @ test_interesting_paths_filter @ [test_skip_duplicated_types_on_filenames]
+       @ test_relative_complements @ test_interesting_paths_filter
+       @ [test_skip_duplicated_types_on_filenames]

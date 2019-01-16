@@ -1,18 +1,15 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** Module for Names and Identifiers *)
 
 open! IStd
 module Hashtbl = Caml.Hashtbl
-module L = Logging
 module F = Format
 
 module Name = struct
@@ -45,7 +42,7 @@ type name = Name.t [@@deriving compare]
 
 let name_spec = Name.Spec
 
-let equal_name = [%compare.equal : name]
+let equal_name = [%compare.equal: name]
 
 type kind =
   | KNone
@@ -54,7 +51,7 @@ type kind =
   | KFootprint
   | KNormal
   | KPrimed
-  [@@deriving compare]
+[@@deriving compare]
 
 let kfootprint = KFootprint
 
@@ -62,7 +59,7 @@ let knormal = KNormal
 
 let kprimed = KPrimed
 
-let equal_kind = [%compare.equal : kind]
+let equal_kind = [%compare.equal: kind]
 
 (* timestamp for a path identifier *)
 let path_ident_stamp = -3
@@ -75,27 +72,27 @@ let equal i1 i2 =
 
 
 (** {2 Set for identifiers} *)
-module IdentSet = Caml.Set.Make (struct
+module Set = Caml.Set.Make (struct
   type nonrec t = t
 
   let compare = compare
 end)
 
-module IdentMap = Caml.Map.Make (struct
+module Map = Caml.Map.Make (struct
   type nonrec t = t
 
   let compare = compare
 end)
 
-module IdentHash = Hashtbl.Make (struct
+module Hash = Hashtbl.Make (struct
   type nonrec t = t
 
   let equal = equal
 
-  let hash (id: t) = Hashtbl.hash id
+  let hash (id : t) = Hashtbl.hash id
 end)
 
-let idlist_to_idset ids = List.fold ~f:(fun set id -> IdentSet.add id set) ~init:IdentSet.empty ids
+let idlist_to_idset ids = List.fold ~f:(fun set id -> Set.add id set) ~init:Set.empty ids
 
 (** {2 Conversion between Names and Strings} *)
 module NameHash = Hashtbl.Make (struct
@@ -142,9 +139,7 @@ module NameGenerator = struct
         let stamp = NameHash.find !name_map name in
         NameHash.replace !name_map name (stamp + 1) ;
         stamp + 1
-      with Not_found ->
-        NameHash.add !name_map name 0 ;
-        0
+      with Caml.Not_found -> NameHash.add !name_map name 0 ; 0
     in
     {kind; name; stamp}
 
@@ -155,7 +150,7 @@ module NameGenerator = struct
       let curr_stamp = NameHash.find !name_map name in
       let new_stamp = max curr_stamp stamp in
       NameHash.replace !name_map name new_stamp
-    with Not_found -> NameHash.add !name_map name stamp
+    with Caml.Not_found -> NameHash.add !name_map name stamp
 end
 
 (** Name used for the return variable *)
@@ -183,6 +178,13 @@ let create_normal name stamp = create_with_stamp KNormal name stamp
 (** Create a fresh identifier with default name for the given kind. *)
 let create_fresh kind = NameGenerator.create_fresh_ident kind (standard_name kind)
 
+let create_fresh_specialized_with_blocks kind =
+  let fid = create_fresh kind in
+  (* The stamps are per-procedure unique, add a big enough number to effectively create
+     a namespace for vars in objc blocks *)
+  {fid with stamp= fid.stamp + 10000}
+
+
 let create_none () = create_fresh KNone
 
 (** Generate a footprint identifier with the given name and stamp *)
@@ -195,15 +197,15 @@ let get_name id = id.name
 
 let has_kind id kind = equal_kind id.kind kind
 
-let is_primed (id: t) = has_kind id KPrimed
+let is_primed (id : t) = has_kind id KPrimed
 
-let is_normal (id: t) = has_kind id KNormal || has_kind id KNone
+let is_normal (id : t) = has_kind id KNormal || has_kind id KNone
 
-let is_footprint (id: t) = has_kind id KFootprint
+let is_footprint (id : t) = has_kind id KFootprint
 
-let is_none (id: t) = has_kind id KNone
+let is_none (id : t) = has_kind id KNone
 
-let is_path (id: t) = has_kind id KNormal && Int.equal id.stamp path_ident_stamp
+let is_path (id : t) = has_kind id KNormal && Int.equal id.stamp path_ident_stamp
 
 (** Update the name generator so that the given id's are not generated again *)
 let update_name_generator ids =
@@ -218,21 +220,37 @@ let create_path pathstring =
 
 (** {2 Pretty Printing} *)
 
-(** Convert an identifier to a string. *)
-let to_string id =
-  if has_kind id KNone then "_"
+(** Pretty print an identifier. *)
+let pp f id =
+  if has_kind id KNone then F.pp_print_char f '_'
   else
     let base_name = name_to_string id.name in
     let prefix = if has_kind id KFootprint then "@" else if has_kind id KNormal then "" else "_" in
-    let suffix = "$" ^ string_of_int id.stamp in
-    prefix ^ base_name ^ suffix
+    F.fprintf f "%s%s$%d" prefix base_name id.stamp
 
+
+(** Convert an identifier to a string. *)
+let to_string id = F.asprintf "%a" pp id
 
 (** Pretty print a name. *)
-let pp_name f name = F.fprintf f "%s" (name_to_string name)
+let pp_name f name = F.pp_print_string f (name_to_string name)
 
-(** Pretty print an identifier. *)
-let pp f id = F.fprintf f "%s" (to_string id)
+module HashQueue = Hash_queue.Make (struct
+  type nonrec t = t
 
-(** pretty printer for lists of identifiers *)
-let pp_list = Pp.comma_seq pp
+  let compare = compare
+
+  let hash = Hashtbl.hash
+
+  let sexp_of_t id = Sexp.of_string (to_string id)
+end)
+
+let hashqueue_of_sequence ?init s =
+  let q = match init with None -> HashQueue.create () | Some q0 -> q0 in
+  Sequence.iter s ~f:(fun id ->
+      let _ : [`Key_already_present | `Ok] = HashQueue.enqueue q id () in
+      () ) ;
+  q
+
+
+let set_of_sequence ?(init = Set.empty) s = Sequence.fold s ~init ~f:(fun ids id -> Set.add id ids)

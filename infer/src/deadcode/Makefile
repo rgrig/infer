@@ -1,9 +1,7 @@
-# Copyright (c) 2018 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2018-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 # Dead code detection: type `make` in this directory.
 #
@@ -20,7 +18,7 @@
 # 4. Kill detected dead code; repeat until dry.
 #
 # Infer is first compiled so that atdgen, ocamllex, and menhir generate the appropriate files. The
-# ocamllex and menhir files are generated inside ../_build by jbuilder, and copied here by this
+# ocamllex and menhir files are generated inside ../_build by dune, and copied here by this
 # Makefile.
 #
 # ocamldepend is used to `cat` the source files in the right order into all_infer_in_one_file.ml.
@@ -40,18 +38,19 @@ ml_src_files_from_mlly:=$(shell find .. -not -path "../*stubs*" -regex '\.\./[a-
 
 ml_src_files:=$(shell cd .. && find . -not -path "./*stubs*" -regex '\./[a-zA-Z].*\.mli*')
 
-ml_src_files_without_mli:=$(shell cd .. && for i in */*.ml */*/*.ml; do [ -f $${i}i ] || echo $$i; done)
+ml_src_files_without_mli:=$(shell cd .. && for i in $$(find . -not -path "./*stubs*" -regex '\./[a-zA-Z].*\.ml'); do [ -f $${i}i ] || echo $$i; done)
 
 .PHONY: depend
 depend:
 	cd .. && \
 	ocamldep -native \
-	  -I IR -I absint -I atd -I backend -I base -I bufferoverrun -I checkers \
-	  -I clang -I concurrency -I eradicate -I facebook -I integration -I istd \
-	  -I java -I labs -I python -I quandary -I unit -I unit/clang -I deadcode \
+	  -I IR -I absint -I atd -I backend -I base -I biabduction -I bufferoverrun -I checkers \
+	  -I clang -I concurrency -I facebook -I integration -I istd -I java \
+	  -I labs -I nullsafe -I quandary -I unit -I unit/clang -I deadcode \
 	   $(ml_src_files) > deadcode/.depend
 
-%.cmi:
+# circular dependency... not sure how to fix properly
+%.cmi: %.cmx
 #	deal with the .ml *and* the .mli at the same time: when all the modules are inlined in one
 #	file, you need the module value to be defined before you can refer to it, even in
 #	signatures. Because of this, the order given by ocamldep is not enough to avoid "Unbound
@@ -59,7 +58,7 @@ depend:
 	$(QUIET)echo "(* START OF SIGNATURE $*.mli *)" >> $(ALL_INFER_IN_ONE_FILE_ML)
 #	put too many spaces in general but you never know what the contents of the file is;
 #	sometimes spaces will be needed
-	$(QUIET)echo "  module type " >> $(ALL_INFER_IN_ONE_FILE_ML)
+	$(QUIET)echo "include struct  module type " >> $(ALL_INFER_IN_ONE_FILE_ML)
 #	suppress some warnings for generated code
 	$(QUIET)if [[ $@ =~ (atd|deadcode)/ ]]; then echo '  [@warning "-27-32-34-35-39"] ' >> $(ALL_INFER_IN_ONE_FILE_ML); fi
 #	compute module name from file name: capitalize first letter
@@ -68,12 +67,19 @@ depend:
 #	pre-processor directive to get errors in the original files and not in all_infer_in_one_file.ml
 	$(QUIET)echo '# 1 "$*.mli"' >> $(ALL_INFER_IN_ONE_FILE_ML)
 	cat ../$*.mli >> $(ALL_INFER_IN_ONE_FILE_ML)
-	$(QUIET)echo "  end " >> $(ALL_INFER_IN_ONE_FILE_ML)
+	$(QUIET)echo "  end end " >> $(ALL_INFER_IN_ONE_FILE_ML)
+#	silence "unused module" warnings for executables
+	$(QUIET)if [ $@ = "infer.cmi" ] \
+	        || [ $@ = "unit/inferunit.cmi" ] \
+	        || [ $@ = "facebook/InferCreateTraceViewLinks.cmi" ] \
+	        ; then \
+	  echo '[@warning "-60"] ' >> $(ALL_INFER_IN_ONE_FILE_ML); \
+	fi
 	$(QUIET)echo "(* END OF SIGNATURE $*.mli *)" >> $(ALL_INFER_IN_ONE_FILE_ML)
 	$(QUIET)echo >> $(ALL_INFER_IN_ONE_FILE_ML)
 #	lots of duplication from above, sorry
 	$(QUIET)echo "(* START OF MODULE $*.ml *)" >> $(ALL_INFER_IN_ONE_FILE_ML)
-	$(QUIET)echo "  module " >> $(ALL_INFER_IN_ONE_FILE_ML)
+	$(QUIET)echo "include struct  module " >> $(ALL_INFER_IN_ONE_FILE_ML)
 	$(QUIET)if [[ $@ =~ (atd|deadcode)/ ]]; then echo '  [@warning "-27-32-34-35-39"] ' >> $(ALL_INFER_IN_ONE_FILE_ML); fi
 	$(QUIET)echo $(shell basename $*) | $(GNU_SED) -e "s/\b\(.\)/  \u\1/g" >> $(ALL_INFER_IN_ONE_FILE_ML)
 	$(QUIET)echo "  : " >> $(ALL_INFER_IN_ONE_FILE_ML)
@@ -81,8 +87,15 @@ depend:
 	$(QUIET)echo "  = struct " >> $(ALL_INFER_IN_ONE_FILE_ML)
 	$(QUIET)echo '# 1 "$*.ml"' >> $(ALL_INFER_IN_ONE_FILE_ML)
 	cat ../$*.ml >> $(ALL_INFER_IN_ONE_FILE_ML)
-	$(QUIET)echo "  end " >> $(ALL_INFER_IN_ONE_FILE_ML)
+	$(QUIET)echo "  end end" >> $(ALL_INFER_IN_ONE_FILE_ML)
 	$(QUIET)echo "(* END OF MODULE $*.ml *)" >> $(ALL_INFER_IN_ONE_FILE_ML)
+#	silence "unused module" warnings for executables
+	$(QUIET)if [ $@ = "infer.cmi" ] \
+	        || [ $@ = "unit/inferunit.cmi" ] \
+	        || [ $@ = "facebook/InferCreateTraceViewLinks.cmi" ] \
+	        ; then \
+	  echo '[@warning "-60"] ' >> $(ALL_INFER_IN_ONE_FILE_ML);\
+	fi
 	$(QUIET)echo >> $(ALL_INFER_IN_ONE_FILE_ML)
 
 $(ml_src_files_without_mli:.ml=.cmx):
@@ -98,6 +111,9 @@ $(ml_src_files_without_mli:.ml=.cmx):
 	$(QUIET)echo "(* END OF MODULE $@ *)" >> $(ALL_INFER_IN_ONE_FILE_ML)
 	$(QUIET)echo >> $(ALL_INFER_IN_ONE_FILE_ML)
 
+%.cmx:
+	$(QUIET)echo skipping '$@'
+
 -include .depend
 
 # Concatenate all source files of infer into a single file. Assume that all source files are
@@ -105,17 +121,17 @@ $(ml_src_files_without_mli:.ml=.cmx):
 # root .cmx to include all the code. Any code not used in the construction of these "root .cmx" will
 # be considered dead.
 .PHONY: flatten_infer
-flatten_infer: backend/infer.cmx unit/inferunit.cmx facebook/InferCreateTraceViewLinks.cmx
+flatten_infer: infer.cmx unit/inferunit.cmx facebook/InferCreateTraceViewLinks.cmx
 	$(QUIET)echo "see results in $(ALL_INFER_IN_ONE_FILE_ML)"
 
 .PHONY: detect_dead_code
 detect_dead_code:
 	$(MAKE) clean
-#	create a dummy implementation file to keep jbuilder happy, as we are about to generate the
-#	jbuilder file for this directory
+#	create a dummy implementation file to keep dune happy, as we are about to generate the
+#	dune file for this directory
 	touch $(ALL_INFER_IN_ONE_FILE_ML) $(ALL_INFER_IN_ONE_FILE_ML:.ml=.mli)
-#	needed to get jbuild generated, and the generated code for the lexers and parsers in ../_build
-	$(MAKE) GENERATED_JBUILDS=deadcode/jbuild -C .. test
+#	needed to get dune generated, and the generated code for the lexers and parsers in ../_build
+	$(MAKE) GENERATED_DUNES=deadcode/dune -C .. test
 #	copy generated source files from ../_build
 	for file in $(ml_src_files_from_mlly); do \
 	  set +e; \
@@ -137,14 +153,14 @@ detect_dead_code:
 	$(MAKE) -j 1 ALL_INFER_IN_ONE_FILE_ML="$$tmp_file" flatten_infer; \
 	mv "$$tmp_file" $(ALL_INFER_IN_ONE_FILE_ML)
 #	build and get dead code warnings; clean in case of errors so as not to leave rubbish around
-	if ! jbuilder build $(INFER_BUILD_DIR)/deadcode/all_infer_in_one_file.bc; then \
+	if ! dune build $(INFER_BUILD_DIR)/deadcode/all_infer_in_one_file.bc; then \
 	  $(MAKE) clean; \
 	  exit 1; \
 	fi
 #	be paranoid about cleaning because we do not want to include infer_in_one_file into infer by
-#	accident and I don't know enough jbuilder to be positive that it won't happen
+#	accident and I don't know enough dune to be positive that it won't happen
 	$(MAKE) clean
 
 .PHONY: clean
 clean:
-	$(REMOVE) .depend *.ml *.mli jbuild
+	$(REMOVE) .depend *.ml *.mli dune

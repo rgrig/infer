@@ -1,11 +1,9 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 (** Identifiers: program variables and logical variables *)
@@ -31,13 +29,15 @@ val equal_kind : kind -> kind -> bool
 (** Equality for kind. *)
 
 (** Set for identifiers. *)
-module IdentSet : Caml.Set.S with type elt = t
+module Set : Caml.Set.S with type elt = t
 
 (** Hash table with ident as key. *)
-module IdentHash : Caml.Hashtbl.S with type key = t
+module Hash : Caml.Hashtbl.S with type key = t
 
 (** Map with ident as key. *)
-module IdentMap : Caml.Map.S with type key = t
+module Map : Caml.Map.S with type key = t
+
+module HashQueue : Hash_queue.S with type Key.t = t
 
 module NameGenerator : sig
   type t
@@ -52,17 +52,14 @@ module NameGenerator : sig
   (** Set the current name generator. *)
 end
 
-val idlist_to_idset : t list -> IdentSet.t
-(** Convert an identfier list to an identifier set *)
+val idlist_to_idset : t list -> Set.t
+(** Convert an identifier list to an identifier set *)
 
 val kprimed : kind
 
 val knormal : kind
 
 val kfootprint : kind
-
-(** hash table with names as keys *)
-module NameHash : Caml.Hashtbl.S with type key = name
 
 val name_spec : name
 (** Name used for spec variables *)
@@ -96,6 +93,9 @@ val update_name_generator : t list -> unit
 
 val create_fresh : kind -> t
 (** Create a fresh identifier with default name for the given kind. *)
+
+val create_fresh_specialized_with_blocks : kind -> t
+(** Create a fresh identifier with default name for the given kind, with a non-clashing id for objc block specialization *)
 
 val create_path : string -> t
 (** Generate a normal identifier whose name encodes a path given as a string. *)
@@ -132,5 +132,6 @@ val pp : Format.formatter -> t -> unit
 val to_string : t -> string
 (** Convert an identifier to a string. *)
 
-val pp_list : Format.formatter -> t list -> unit
-(** Pretty print a list of identifiers. *)
+val hashqueue_of_sequence : ?init:unit HashQueue.t -> t Sequence.t -> unit HashQueue.t
+
+val set_of_sequence : ?init:Set.t -> t Sequence.t -> Set.t

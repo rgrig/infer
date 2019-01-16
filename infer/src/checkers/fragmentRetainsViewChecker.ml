@@ -1,24 +1,48 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 
 (** Make sure callbacks are always unregistered. drive the point home by reporting possible NPE's *)
 
-module P = Printf
+let rec format_typ typ =
+  match typ.Typ.desc with
+  | Typ.Tptr (t, _) when Language.curr_language_is Java ->
+      format_typ t
+  | Typ.Tstruct name ->
+      Typ.Name.name name
+  | _ ->
+      Typ.to_string typ
+
+
+let format_field f =
+  if Language.curr_language_is Java then Typ.Fieldname.Java.get_field f
+  else Typ.Fieldname.to_string f
+
+
+let format_method pname =
+  match pname with
+  | Typ.Procname.Java pname_java ->
+      Typ.Procname.Java.get_method pname_java
+  | _ ->
+      Typ.Procname.to_string pname
+
 
 let report_error fragment_typ fld fld_typ summary pdesc =
   let pname = Procdesc.get_proc_name pdesc in
-  let description = Localise.desc_fragment_retains_view fragment_typ fld fld_typ pname in
-  let exn = Exceptions.Checkers (IssueType.checkers_fragment_retain_view, description) in
+  let description =
+    Printf.sprintf
+      "Fragment %s does not nullify View field %s (type %s) in %s. If this Fragment is placed on \
+       the back stack, a reference to this (probably dead) View will be retained. In general, it \
+       is a good idea to initialize View's in onCreateView, then nullify them in onDestroyView."
+      (format_typ fragment_typ) (format_field fld) (format_typ fld_typ) (format_method pname)
+  in
   let loc = Procdesc.get_loc pdesc in
-  Reporting.log_error summary ~loc exn
+  Reporting.log_error summary ~loc IssueType.checkers_fragment_retain_view description
 
 
 let callback_fragment_retains_view_java pname_java {Callbacks.proc_desc; summary; tenv} =
@@ -47,16 +71,19 @@ let callback_fragment_retains_view_java pname_java {Callbacks.proc_desc; summary
         let fields_nullified = PatternMatch.get_fields_nullified proc_desc in
         (* report if a field is declared by C, but not nulled out in C.onDestroyView *)
         List.iter
-          ~f:(fun (fname, fld_typ, _) ->
-            if not (Typ.Fieldname.Set.mem fname fields_nullified) then
-              report_error (Typ.mk (Tstruct class_typename)) fname fld_typ summary proc_desc )
+          ~f:(fun (fname, fld_typ, ia) ->
+            if
+              not
+                ( Annotations.ia_ends_with ia Annotations.auto_cleanup
+                || Typ.Fieldname.Set.mem fname fields_nullified )
+            then report_error (Typ.mk (Tstruct class_typename)) fname fld_typ summary proc_desc )
           declared_view_fields
     | _ ->
         ()
 
 
-let callback_fragment_retains_view ({Callbacks.summary} as args) : Specs.summary =
-  let proc_name = Specs.get_proc_name summary in
+let callback_fragment_retains_view ({Callbacks.summary} as args) : Summary.t =
+  let proc_name = Summary.get_proc_name summary in
   ( match proc_name with
   | Typ.Procname.Java pname_java ->
       callback_fragment_retains_view_java pname_java args

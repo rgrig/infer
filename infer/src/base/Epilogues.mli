@@ -1,18 +1,21 @@
 (*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
 
-val register : f:(unit -> unit) -> string -> unit
+val register : f:(unit -> unit) -> description:string -> unit
 (** Register a function to run when the program exits or is interrupted. Registered functions are
     run in the reverse order in which they were registered. *)
 
-val register_late : (unit -> unit) -> unit
+val register_late : f:(unit -> unit) -> description:string -> unit
+(** Register a function to run when the program exits or is interrupted. Registered functions are
+   run in the reverse order in which they were registered, but *after* the ones registered with
+   {!register}. *)
 
-val late : unit -> unit
+val run : unit -> unit
+
+val reset : unit -> unit

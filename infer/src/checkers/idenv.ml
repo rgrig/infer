@@ -1,10 +1,8 @@
 (*
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
@@ -12,11 +10,11 @@ open! IStd
 (** Environment for temporary identifiers used in instructions.
     Lazy implementation: only created when actually used. *)
 
-type t = Exp.t Ident.IdentHash.t Lazy.t
+type t = Exp.t Ident.Hash.t Lazy.t
 
 let create_ proc_desc =
-  let map = Ident.IdentHash.create 1 in
-  let do_instr _ = function Sil.Load (id, e, _, _) -> Ident.IdentHash.add map id e | _ -> () in
+  let map = Ident.Hash.create 1 in
+  let do_instr _ = function Sil.Load (id, e, _, _) -> Ident.Hash.add map id e | _ -> () in
   Procdesc.iter_instrs do_instr proc_desc ;
   map
 
@@ -29,7 +27,7 @@ let create proc_desc =
 
 let lookup map_ id =
   let map = Lazy.force map_ in
-  try Some (Ident.IdentHash.find map id) with Not_found -> None
+  Ident.Hash.find_opt map id
 
 
 let expand_expr idenv e =

@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 namespace init_list {
 struct X {
@@ -49,4 +47,7 @@ void list_init() {
   Y& yref = y;
   Y ty[3] = {{1, {2, nullptr}}, y, yref};
 }
+
+void init_in_binop(int x) { x = -x & ~int{0}; }
+
 } // namespace init_list

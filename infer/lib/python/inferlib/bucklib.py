@@ -1,11 +1,9 @@
 #!/usr/bin/env python2.7
 
-# Copyright (c) 2013 - present Facebook, Inc.
-# All rights reserved.
+# Copyright (c) 2013-present, Facebook, Inc.
 #
-# This source code is licensed under the BSD style license found in the
-# LICENSE file in the root directory of this source tree. An additional grant
-# of patent rights can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 from __future__ import absolute_import
 from __future__ import division
@@ -32,8 +30,10 @@ DEFAULT_BUCK_OUT_GEN = os.path.join(DEFAULT_BUCK_OUT, 'gen')
 INFER_JSON_REPORT = os.path.join(config.BUCK_INFER_OUT,
                                  config.JSON_REPORT_FILENAME)
 
-USE_INFER_CACHE = False
+INFER_JSON_COSTS_REPORT = os.path.join(config.BUCK_INFER_OUT,
+                                       config.JSON_COSTS_REPORT_FILENAME)
 
+INFER_SCRIPT_NAME = 'infer_wrapper.py'
 INFER_SCRIPT = """\
 #!/usr/bin/env {python_executable}
 import subprocess
@@ -49,7 +49,7 @@ def prepare_build(args):
     configuration that tells buck to use that script.
     """
 
-    infer_options = ['--buck']
+    infer_options = ['--buck', '--jobs', '1']
 
     if args.java_jar_compiler is not None:
         infer_options += [
@@ -58,13 +58,6 @@ def prepare_build(args):
         ]
 
     temp_files = []
-    if USE_INFER_CACHE:
-        # Create a temporary directory as a cache for jar files.
-        infer_cache_dir = os.path.join(args.infer_out, 'cache')
-        if not os.path.isdir(infer_cache_dir):
-            os.mkdir(infer_cache_dir)
-        infer_options += ['--infer-cache', infer_cache_dir]
-        temp_files += [infer_cache_dir]
 
     try:
         infer_command = [utils.get_cmd_in_bin_dir('infer')] + infer_options
@@ -72,47 +65,45 @@ def prepare_build(args):
         logging.error('Could not find infer')
         raise e
 
-    # disable the Buck daemon as changes in the Buck config
-    # may be missed otherwise
-    os.environ['NO_BUCKD'] = '1'
-
     # Create a script to be called by buck
-    infer_script = None
-    with tempfile.NamedTemporaryFile(delete=False,
-                                     prefix='infer_',
-                                     suffix='.py',
-                                     dir='.') as infer_script:
-        logging.info('Creating %s' % infer_script.name)
-        infer_script.file.write(
+    infer_script_path = os.path.join(os.getcwd(), INFER_SCRIPT_NAME)
+    if os.path.exists(infer_script_path):
+        raise Exception('{} already exists. Exiting'.format(infer_script_path))
+    with open(infer_script_path, 'w') as infer_script:
+        logging.info('Creating %s' % infer_script_path)
+        infer_script.write(
             utils.encode(INFER_SCRIPT.format(
                 python_executable=sys.executable,
                 infer_command=infer_command)))
 
-    st = os.stat(infer_script.name)
-    os.chmod(infer_script.name, st.st_mode | stat.S_IEXEC)
+    st = os.stat(infer_script_path)
+    os.chmod(infer_script_path, st.st_mode | stat.S_IEXEC)
 
-    temp_files += [infer_script.name]
-    return temp_files, infer_script.name
+    temp_files += [infer_script_path]
+    return temp_files, infer_script_path
 
 
-def get_normalized_targets(targets):
+def get_normalized_targets(buck_args):
     """ Use buck to convert a list of input targets/aliases
         into a set of the (transitive) target deps for all inputs"""
 
-    # this expands the targets passed on the command line, then filters away
-    # targets that are not Java/Android. you need to change this if you
-    # care about something other than Java/Android
-    TARGET_TYPES = "kind('^(android|java)_library$', deps('%s'))"
-    BUCK_GET_JAVA_TARGETS = ['buck', 'query', TARGET_TYPES]
-    buck_cmd = BUCK_GET_JAVA_TARGETS + targets
-
+    if buck_args.deep:
+        # this expands the targets passed on the command line, then filters
+        # away targets that are not Java/Android. You need to change this if
+        # you care about something other than Java/Android
+        TARGET_TYPES = "kind('^(android|java)_library$', deps('%s'))"
+        BUCK_GET_JAVA_TARGETS = ['buck', 'query', TARGET_TYPES]
+        buck_cmd = BUCK_GET_JAVA_TARGETS + buck_args.targets
+    else:
+        BUCK_RESOLVE_ALIASES = ['buck', 'targets', '--resolve-alias']
+        buck_cmd = BUCK_RESOLVE_ALIASES + buck_args.targets
     try:
         targets = filter(
             lambda line: len(line) > 0,
             subprocess.check_output(buck_cmd).decode().strip().split('\n'))
         return targets
     except subprocess.CalledProcessError as e:
-        logging.error('Error while expanding targets with {0}'.format(
+        logging.error('Error while resolving targets with {0}'.format(
             buck_cmd))
         raise e
 
@@ -121,21 +112,26 @@ class NotFoundInJar(Exception):
     pass
 
 
-def load_json_report(opened_jar):
+def load_json_report(opened_jar, path):
     try:
-        return json.loads(opened_jar.read(INFER_JSON_REPORT).decode())
+        return json.loads(opened_jar.read(path).decode('utf-8'))
     except KeyError:
         raise NotFoundInJar
 
 
-def get_output_jars(targets):
+def get_output_jars(buck_args, targets):
     if len(targets) == 0:
         return []
-    else:
+    elif buck_args.deep:
         audit_output = subprocess.check_output(
             ['buck', 'audit', 'classpath'] + targets)
-        classpath_jars = audit_output.strip().split('\n')
-        return filter(os.path.isfile, classpath_jars)
+        targets_jars = audit_output.strip().split('\n')
+    else:
+        targets_output = subprocess.check_output(
+            ['buck', 'targets', '--show-output'] + targets)
+        targets_jars = [entry.split()[1] for entry in
+                        targets_output.decode().strip().split('\n')]
+    return filter(os.path.isfile, targets_jars)
 
 
 def get_key(e):
@@ -143,6 +139,7 @@ def get_key(e):
             e[issues.JSON_INDEX_LINE], e[issues.JSON_INDEX_QUALIFIER])
 
 
+# removes duplicate reports when the some file belongs to several Buck targets
 def merge_reports(report, collected):
     for e in report:
         key = get_key(e)
@@ -150,31 +147,40 @@ def merge_reports(report, collected):
             collected[key] = e
 
 
-def collect_results(args, start_time, targets):
+def collect_results(buck_args, infer_args, start_time, targets):
     """Walks through buck-out/, collects results for the different buck targets
     and stores them in in args.infer_out/results.json.
     """
     collected_reports = {}
+    collected_costs_reports = []
 
-    for path in get_output_jars(targets):
+    for path in get_output_jars(buck_args, targets):
         try:
             with zipfile.ZipFile(path) as jar:
-                report = load_json_report(jar)
+                report = load_json_report(jar, INFER_JSON_REPORT)
+                costs_report = load_json_report(jar, INFER_JSON_COSTS_REPORT)
                 merge_reports(report, collected_reports)
+                # No need to de-duplicate elements in costs-report, merge all
+                collected_costs_reports += costs_report
         except NotFoundInJar:
             pass
         except zipfile.BadZipfile:
             logging.warn('Bad zip file %s', path)
 
-    json_report = os.path.join(args.infer_out, config.JSON_REPORT_FILENAME)
+    json_report = os.path.join(infer_args.infer_out,
+                               config.JSON_REPORT_FILENAME)
+    json_costs_report = os.path.join(infer_args.infer_out,
+                                     config.JSON_COSTS_REPORT_FILENAME)
 
-    with open(json_report, 'w') as file_out:
-        json.dump(collected_reports.values(), file_out)
+    with open(json_report, 'w') as report_out, \
+            open(json_costs_report, 'w') as costs_report_out:
+        json.dump(collected_reports.values(), report_out)
+        json.dump(collected_costs_reports, costs_report_out)
 
-    bugs_out = os.path.join(args.infer_out, config.BUGS_FILENAME)
-    issues.print_and_save_errors(args.infer_out, args.project_root,
-                                 json_report, bugs_out, args.pmd_xml,
-                                 console_out=not args.quiet)
+    bugs_out = os.path.join(infer_args.infer_out, config.BUGS_FILENAME)
+    issues.print_and_save_errors(infer_args.infer_out, infer_args.project_root,
+                                 json_report, bugs_out, infer_args.pmd_xml,
+                                 console_out=not infer_args.quiet)
 
 
 def cleanup(temp_files):
@@ -187,7 +193,7 @@ def cleanup(temp_files):
                 shutil.rmtree(file)
             else:
                 os.unlink(file)
-        except IOError:
+        except OSError:
             logging.error('Could not remove %s' % file)
 
 
@@ -218,8 +224,6 @@ def parse_buck_command(args):
         base_cmd_without_targets = [p for p in buck_args
                                     if p not in parsed_args.targets]
         buck_build_command = ['buck', build_keyword]
-        if not parsed_args.deep:
-            buck_build_command.append('--deep')
         base_cmd = buck_build_command + base_cmd_without_targets
         return base_cmd, parsed_args
 
@@ -231,17 +235,11 @@ class Wrapper:
 
     def __init__(self, infer_args, buck_cmd):
         self.timer = utils.Timer(logging.info)
-        # The reactive mode is not yet supported
-        if infer_args.reactive:
-            sys.stderr.write(
-                'Reactive is not supported for Java Buck project. Exiting.\n')
-            sys.exit(1)
         self.infer_args = infer_args
         self.timer.start('Computing library targets')
         base_cmd, buck_args = parse_buck_command(buck_cmd)
         self.buck_args = buck_args
-        self.normalized_targets = get_normalized_targets(
-            buck_args.targets)
+        self.normalized_targets = get_normalized_targets(buck_args)
         self.temp_files = []
         # write targets to file to avoid passing too many command line args
         with tempfile.NamedTemporaryFile(delete=False,
@@ -253,7 +251,8 @@ class Wrapper:
 
     def _collect_results(self, start_time):
         self.timer.start('Collecting results ...')
-        collect_results(self.infer_args, start_time, self.normalized_targets)
+        collect_results(self.buck_args, self.infer_args, start_time,
+                        self.normalized_targets)
         self.timer.stop('Done')
 
     def run(self):
@@ -274,10 +273,13 @@ class Wrapper:
             else:
                 self.timer.start('Running Buck ...')
                 buck_config = [
-                    '--config', 'tools.javac=' + infer_script,
                     '--config', 'client.id=infer.java',
                     '--config', 'java.abi_generation_mode=class',
                     '--config', 'infer.no_custom_javac=true',
+                    '--config', 'tools.javac=' + infer_script,
+                    # make sure the javac_jar option is disabled to
+                    # avoid conficts with the javac option
+                    '--config', 'tools.javac_jar=',
                 ]
                 buck_cmd = self.buck_cmd + buck_config
                 subprocess.check_call(buck_cmd)

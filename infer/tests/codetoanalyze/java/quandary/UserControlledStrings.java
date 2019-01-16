@@ -1,26 +1,20 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 package codetoanalyze.java.quandary;
 
-import android.app.Activity;
 import android.content.ClipboardManager;
 import android.text.Html;
 import android.text.Spanned;
 import android.widget.EditText;
+import com.facebook.infer.builtins.InferTaint;
 import java.io.IOException;
-import java.lang.ProcessBuilder;
-import java.lang.Runtime;
 import java.util.ArrayList;
 import java.util.List;
-
-import com.facebook.infer.builtins.InferTaint;
 
 public class UserControlledStrings {
   ClipboardManager clipboard;
@@ -39,6 +33,7 @@ public class UserControlledStrings {
   }
 
   EditText mEditText;
+
   Spanned editTextToHtmlBad() {
     return Html.fromHtml(mEditText.getText().toString());
   }
@@ -48,7 +43,7 @@ public class UserControlledStrings {
   }
 
   void clipboardToShellArrayBad() throws IOException {
-    String[] cmds = new String[] { "ls", clipboard.getText().toString() };
+    String[] cmds = new String[] {"ls", clipboard.getText().toString()};
     Runtime.getRuntime().exec(cmds);
   }
 
@@ -69,5 +64,4 @@ public class UserControlledStrings {
     cmds.add(clipboard.getText().toString());
     return builder.command(cmds);
   }
-
 }

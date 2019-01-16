@@ -1,10 +1,8 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
 
 #include <stdlib.h>
@@ -24,9 +22,9 @@ struct some_struct {
 
 void static_stride_bad() {
   struct some_struct a[10];
-  struct some_struct *x, *y;
-  x = &(a[5]);
-  y = &(a[4]);
+  char *x, *y;
+  x = (char*)&(a[5]);
+  y = (char*)&(a[4]);
   if (sizeof(struct some_struct) == x - y) {
     int a[0];
     a[1]; // report

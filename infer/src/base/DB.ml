@@ -1,26 +1,23 @@
 (*
- * Copyright (c) 2009 - 2013 Monoidics ltd.
- * Copyright (c) 2013 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2009-2013, Monoidics ltd.
+ * Copyright (c) 2013-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-open! PVariant
+open PolyVariantEqual
 
 (** Database of analysis results *)
 
-module F = Format
 module L = Logging
 
 let cutoff_length = 100
 
 let crc_token = '.'
 
-let append_crc_cutoff ?(key= "") ?(crc_only= false) name =
+let append_crc_cutoff ?(key = "") ?(crc_only = false) name =
   let name_up_to_cutoff =
     if String.length name <= cutoff_length then name else String.sub name ~pos:0 ~len:cutoff_length
   in
@@ -30,11 +27,6 @@ let append_crc_cutoff ?(key= "") ?(crc_only= false) name =
   in
   if crc_only then crc_str else Printf.sprintf "%s%c%s" name_up_to_cutoff crc_token crc_str
 
-
-(* Lengh of .crc part: 32 characters of digest, plus 1 character of crc_token *)
-let dot_crc_len = 1 + 32
-
-let strip_crc str = String.slice str 0 (-dot_crc_len)
 
 let curr_source_file_encoding = `Enc_crc
 
@@ -86,64 +78,12 @@ let filename_add_suffix fn s = fn ^ s
 
 let file_exists path = Sys.file_exists path = `Yes
 
-module FilenameSet = Caml.Set.Make (struct
-  type t = filename [@@deriving compare]
-end)
-
-module FilenameMap = Caml.Map.Make (struct
-  type t = filename [@@deriving compare]
-end)
-
 (** Return the time when a file was last modified. The file must exist. *)
-let file_modified_time ?(symlink= false) fname =
+let file_modified_time ?(symlink = false) fname =
   try
     let stat = (if symlink then Unix.lstat else Unix.stat) fname in
     stat.Unix.st_mtime
   with Unix.Unix_error _ -> L.(die InternalError) "File %s does not exist." fname
-
-
-let read_whole_file fd = In_channel.input_all (Unix.in_channel_of_descr fd)
-
-(** Update the file contents with the update function provided.
-    If the directory does not exist, it is created.
-    If the file does not exist, it is created, and update is given the empty string.
-    A lock is used to allow write attempts in parallel. *)
-let update_file_with_lock dir fname update =
-  let reset_file fd =
-    let n = Unix.lseek fd 0L ~mode:Unix.SEEK_SET in
-    if n <> 0L then (
-      L.internal_error "reset_file: lseek fail@." ;
-      assert false )
-  in
-  Utils.create_dir dir ;
-  let path = Filename.concat dir fname in
-  let fd = Unix.openfile path ~mode:Unix.([O_CREAT; O_SYNC; O_RDWR]) ~perm:0o640 in
-  Unix.lockf fd ~mode:Unix.F_LOCK ~len:0L ;
-  let buf = read_whole_file fd in
-  reset_file fd ;
-  let str = update buf in
-  let i = Unix.write fd ~buf:(Bytes.of_string str) ~pos:0 ~len:(String.length str) in
-  if Int.equal i (String.length str) then (
-    Unix.lockf fd ~mode:Unix.F_ULOCK ~len:0L ;
-    Unix.close fd )
-  else (
-    L.internal_error "@\nsave_with_lock: fail on path: %s@." path ;
-    assert false )
-
-
-(** Read a file using a lock to allow write attempts in parallel. *)
-let read_file_with_lock dir fname =
-  let path = Filename.concat dir fname in
-  try
-    let fd = Unix.openfile path ~mode:Unix.([O_RSYNC; O_RDONLY]) ~perm:0o646 in
-    try
-      Unix.lockf fd ~mode:Unix.F_RLOCK ~len:0L ;
-      let buf = read_whole_file fd in
-      Unix.lockf fd ~mode:Unix.F_ULOCK ~len:0L ;
-      Unix.close fd ;
-      Some buf
-    with Unix.Unix_error _ -> L.(die ExternalError) "read_file_with_lock: Unix error"
-  with Unix.Unix_error _ -> None
 
 
 (** {2 Results Directory} *)
@@ -191,10 +131,9 @@ module Results_dir = struct
   (** initialize the results directory *)
   let init source =
     if SourceFile.is_invalid source then L.(die InternalError) "Invalid source file passed" ;
-    Utils.create_dir Config.results_dir ;
-    Utils.create_dir specs_dir ;
-    Utils.create_dir (path_to_filename Abs_root [Config.captured_dir_name]) ;
-    Utils.create_dir (path_to_filename (Abs_source_dir source) [])
+    if Config.html || Config.debug_mode || Config.frontend_tests then (
+      Utils.create_dir (path_to_filename Abs_root [Config.captured_dir_name]) ;
+      Utils.create_dir (path_to_filename (Abs_source_dir source) []) )
 
 
   let clean_specs_dir () =
@@ -222,7 +161,7 @@ module Results_dir = struct
           L.(die InternalError) "create_path"
     in
     let full_fname = Filename.concat (create dir_path) filename in
-    Unix.openfile full_fname ~mode:Unix.([O_WRONLY; O_CREAT; O_TRUNC]) ~perm:0o777
+    Unix.openfile full_fname ~mode:Unix.[O_WRONLY; O_CREAT; O_TRUNC] ~perm:0o777
 end
 
 let is_source_file path =

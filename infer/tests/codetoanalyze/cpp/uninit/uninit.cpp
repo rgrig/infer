@@ -1,11 +1,11 @@
 /*
- * Copyright (c) 2017 - present Facebook, Inc.
- * All rights reserved.
+ * Copyright (c) 2017-present, Facebook, Inc.
  *
- * This source code is licensed under the BSD style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
  */
+
+#include <algorithm>
 
 void init(int* i) { *i = 10; }
 
@@ -66,9 +66,8 @@ void use_square_ok1() {
 int use_square_ok2() {
 
   int i;
-  i = square_no_init(
-      2, i); // OK only for intraprocedural case. When analysis extended
-             // to interprocedural, it should report.
+  i = square_no_init(2, i); // OK only for intraprocedural case. When analysis
+                            // extended to interprocedural, it should report.
   return i;
 }
 
@@ -133,21 +132,62 @@ void ok8() {
             // reference.
 }
 
+struct A {
+  int* ptr;
+  int value;
+};
+
+void ok9() {
+  int i;
+  A a;
+  a.ptr = &i; // no report since the variable could be initialized when passed
+              // by reference.
+  init(a.ptr);
+}
+
+int field_passed_by_ref_ok() {
+  A a;
+  init(&a.value);
+  return a.value;
+}
+
+void init_double_pointer(int**);
+
+int pointer_passed_by_ref_ok() {
+  int* i;
+  init_double_pointer(&i);
+  return *i;
+}
+
+int array_initialized_ok(int N, int index) {
+  int array[N];
+  std::fill_n(array, N, 0.0f);
+  int value = array[index];
+  return value;
+}
+
+int array_element_passed_by_ref_ok() {
+  int array[1];
+  init(&(array[0]));
+  int value = array[0];
+  return value;
+}
+
 int ret_undef_bad() {
   int* p;
   return *p; // report as p was not initialized
 }
 
-int ret_undef_FP() {
+int copy_pointer_bad() {
   int* p;
   int* q;
-  p = q; // no report as we copy an address
-  return *p; // NO report as we don't keep track of aliasing (for now)
+  p = q; // error
+  return *p;
 }
 
 void use_an_int2(int*);
 
-int ok9() {
+int ok10() {
   int buf[1024];
   use_an_int2(buf); // no report as we pass the pointer to buf
   return 1;
@@ -166,8 +206,7 @@ void init_capture_read_ok() {
   [x = 0]() {
     int y = x;
     return;
-  }
-  ();
+  }();
 }
 
 void init_capture_ok() {
@@ -181,9 +220,16 @@ void FN_capture_by_ref_reuseBad() {
   }(); // We don't report here as we only do intraprocedural analysis for now
 }
 
-int capture_by_ref_init_ok() {
+int capture_by_ref_init_FP() {
   int x;
   [&x]() { x = 1; }();
+  return x;
+}
+
+int capture_by_ref_init2_FP() {
+  int x;
+  auto lambda = [&x]() { x = 1; };
+  lambda();
   return x;
 }
 
@@ -219,4 +265,68 @@ int FP_no_warning_noreturn_callee_ok(bool t) {
     noreturn_function();
   }
   return x;
+}
+
+void some_f(void* p);
+
+int* FP_pointer_param_void_star_ok() {
+  A a;
+  int* res;
+  some_f(&a); // the type of a here is void*, hence no fields are found
+  return a.ptr; // false positive
+}
+
+short union_ok() {
+  union {
+    int* a;
+    short* b;
+  } u;
+  init(u.a);
+  short* p = u.b;
+  return *p;
+}
+
+int condition_no_init_bad() {
+  int x;
+  if (x) {
+    return 1;
+  }
+  return 0;
+}
+
+void call_to_fn_ptr_with_init_arg_good(void (*f)(int)) {
+  int a = 42;
+  f(a);
+}
+
+void FN_call_to_fn_ptr_with_uninit_arg_bad(void (*f)(int)) {
+  int a;
+  f(a);
+}
+
+void call_to_init_fn_ptr_good() {
+  void (*f)();
+  f = use_square_ok1;
+  f();
+}
+
+void call_to_init_fn_ptr2_good(bool nondet) {
+  void (*f)();
+  if (nondet)
+    f = use_square_ok1;
+  else
+    f = deref_magic_addr_ok;
+  f();
+}
+
+void FN_call_to_uninit_fn_ptr_bad() {
+  void (*f)();
+  f();
+}
+
+void FN_call_to_maybe_uninit_fn_ptr_bad(bool nondet) {
+  void (*f)();
+  if (nondet)
+    f = use_square_ok1;
+  f();
 }
