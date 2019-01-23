@@ -260,6 +260,8 @@ let void = mk Tvoid
 
 let void_star = mk (Tptr (mk Tvoid, Pk_pointer))
 
+let uint = mk (Tint IUInt)
+
 let get_ikind_opt {desc} = match desc with Tint ikind -> Some ikind | _ -> None
 
 (* TODO: size_t should be implementation-dependent. *)
@@ -569,6 +571,8 @@ let is_int typ = match typ.desc with Tint _ -> true | _ -> false
 
 let is_unsigned_int typ = match typ.desc with Tint ikind -> ikind_is_unsigned ikind | _ -> false
 
+let is_char typ = match typ.desc with Tint ikind -> ikind_is_char ikind | _ -> false
+
 let has_block_prefix s =
   match Str.split_delim (Str.regexp_string Config.anonymous_block_prefix) s with
   | _ :: _ :: _ ->
@@ -598,6 +602,8 @@ module Procname = struct
     (* TODO: use Mangled.t here *)
     type java_type = Name.Java.Split.t = {package: string option; type_name: string}
     [@@deriving compare]
+
+    let java_void = {package= None; type_name= "void"}
 
     (** Type of java procedure names. *)
     type t =
@@ -736,6 +742,14 @@ module Procname = struct
     let class_initializer_method_name = "<clinit>"
 
     let is_class_initializer {method_name} = String.equal method_name class_initializer_method_name
+
+    let get_class_initializer class_name =
+      { method_name= class_initializer_method_name
+      ; parameters= []
+      ; class_name
+      ; return_type= Some java_void
+      ; kind= Static }
+
 
     let is_anonymous_inner_class_constructor {class_name} =
       Name.Java.is_anonymous_inner_class_name class_name

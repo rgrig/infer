@@ -136,6 +136,9 @@ val mk_array : ?default:t -> ?quals:type_quals -> ?length:IntLit.t -> ?stride:In
 val void : t
 (** void type *)
 
+val uint : t
+(** unsigned int type *)
+
 val void_star : t
 (** void* type *)
 
@@ -297,6 +300,8 @@ val is_int : t -> bool
 
 val is_unsigned_int : t -> bool
 
+val is_char : t -> bool
+
 val has_block_prefix : string -> bool
 
 val unsome : string -> t option -> t
@@ -385,6 +390,9 @@ module Procname : sig
 
     val is_class_initializer : t -> bool
     (** Check if this is a class initializer. *)
+
+    val get_class_initializer : Name.t -> t
+    (** Given a java class, generate the procname of its static initializer.  *)
 
     val is_external : t -> bool
     (** Check if the method belongs to one of the specified external packages *)
@@ -607,11 +615,9 @@ module Fieldname : sig
   (** Equality for field names. *)
 
   (** Set for fieldnames *)
-
   module Set : Caml.Set.S with type elt = t
 
   (** Map for fieldnames *)
-
   module Map : Caml.Map.S with type key = t
 
   module Clang : sig

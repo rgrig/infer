@@ -5,10 +5,14 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-class Basic {
+class Unique {
   public static void main(String args[]) {
-    new BasicObj();
+    // two loads for the same class with distinct locations and traces should be merged into one
+    UniqueObj u = new UniqueObj();
+    u.foo();
   }
 }
 
-class BasicObj {}
+class UniqueObj {
+  void foo() {}
+}

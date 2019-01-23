@@ -64,6 +64,31 @@ let check_alloc_size size_exp {location; integer_type_widths} mem cond_set =
       PO.ConditionSet.add_alloc_size location ~length traces latest_prune cond_set
 
 
+let fgets str_exp num_exp =
+  let exec {integer_type_widths} ~ret:(id, _) mem =
+    let str_v = Sem.eval integer_type_widths str_exp mem in
+    let num_v = Sem.eval integer_type_widths num_exp mem in
+    let traces = Trace.Set.join (Dom.Val.get_traces str_v) (Dom.Val.get_traces num_v) in
+    let update_strlen1 allocsite arrinfo acc =
+      let strlen =
+        let offset = ArrayBlk.ArrInfo.offsetof arrinfo in
+        let num = Dom.Val.get_itv num_v in
+        Itv.plus offset (Itv.set_lb_zero (Itv.decr num))
+      in
+      Dom.Mem.set_first_idx_of_null (Loc.of_allocsite allocsite) (Dom.Val.of_itv ~traces strlen)
+        acc
+    in
+    mem
+    |> Dom.Mem.update_mem (Sem.eval_locs str_exp mem) Dom.Val.Itv.zero_255
+    |> ArrayBlk.fold update_strlen1 (Dom.Val.get_array_blk str_v)
+    |> Dom.Mem.add_stack (Loc.of_id id) {str_v with itv= Itv.zero}
+  and check {location; integer_type_widths} mem cond_set =
+    BoUtils.Check.lindex_byte integer_type_widths ~array_exp:str_exp ~byte_index_exp:num_exp
+      ~last_included:true mem location cond_set
+  in
+  {exec; check}
+
+
 let malloc size_exp =
   let exec ({pname; node_hash; location; tenv; integer_type_widths} as model_env) ~ret:(id, _) mem
       =
@@ -96,7 +121,10 @@ let calloc size_exp stride_exp =
 
 
 let memcpy dest_exp src_exp size_exp =
-  let exec _ ~ret:_ mem = mem
+  let exec _ ~ret:_ mem =
+    let dest_loc = Sem.eval_locs dest_exp mem in
+    let v = Dom.Mem.find_set (Sem.eval_locs src_exp mem) mem in
+    Dom.Mem.update_mem dest_loc v mem
   and check {location; integer_type_widths} mem cond_set =
     BoUtils.Check.lindex_byte integer_type_widths ~array_exp:dest_exp ~byte_index_exp:size_exp
       ~last_included:true mem location cond_set
@@ -113,6 +141,24 @@ let memset arr_exp size_exp =
       ~last_included:true mem location cond_set
   in
   {exec; check}
+
+
+let strlen arr_exp =
+  let exec _ ~ret:(id, _) mem =
+    let v = Dom.Mem.get_c_strlen (Sem.eval_locs arr_exp mem) mem in
+    Dom.Mem.add_stack (Loc.of_id id) v mem
+  in
+  {exec; check= no_check}
+
+
+let strncpy dest_exp src_exp size_exp =
+  let {exec= memcpy_exec; check= memcpy_check} = memcpy dest_exp src_exp size_exp in
+  let exec model_env ~ret mem =
+    let dest_strlen_loc = PowLoc.of_c_strlen (Sem.eval_locs dest_exp mem) in
+    let strlen = Dom.Mem.find_set (PowLoc.of_c_strlen (Sem.eval_locs src_exp mem)) mem in
+    mem |> memcpy_exec model_env ~ret |> Dom.Mem.update_mem dest_strlen_loc strlen
+  in
+  {exec; check= memcpy_check}
 
 
 let realloc src_exp size_exp =
@@ -196,9 +242,11 @@ let by_value =
   fun value -> {exec= exec ~value; check= no_check}
 
 
-let by_value_with_final_trace final_trace =
+let by_risky_value_from lib_fun =
   let exec ~value {location} ~ret mem =
-    let traces = Trace.(Set.singleton_final location final_trace) in
+    let traces =
+      Trace.(Set.add_elem location (through ~risky_fun:(Some lib_fun))) (Dom.Val.get_traces value)
+    in
     model_by_value {value with traces} ret mem
   in
   fun value -> {exec= exec ~value; check= no_check}
@@ -260,9 +308,9 @@ let set_array_length array length_exp =
   {exec; check}
 
 
-let snprintf = by_value_with_final_trace Trace.snprintf Dom.Val.Itv.nat
+let snprintf = by_risky_value_from Trace.snprintf Dom.Val.Itv.nat
 
-let vsnprintf = by_value_with_final_trace Trace.vsnprintf Dom.Val.Itv.nat
+let vsnprintf = by_risky_value_from Trace.vsnprintf Dom.Val.Itv.nat
 
 module Split = struct
   let std_vector ~adds_at_least_one (vector_exp, vector_typ) location mem =
@@ -270,7 +318,7 @@ module Split = struct
     let vector_type_name = Option.value_exn (vector_typ |> Typ.strip_ptr |> Typ.name) in
     let size_field = Typ.Fieldname.Clang.from_class_name vector_type_name "infer_size" in
     let vector_size_locs = Sem.eval_locs vector_exp mem |> PowLoc.append_field ~fn:size_field in
-    let f_trace _ traces = Trace.(Set.add_elem location Through) traces in
+    let f_trace _ traces = Trace.(Set.add_elem location (through ~risky_fun:None)) traces in
     Dom.Mem.transform_mem ~f:(Dom.Val.plus_a ~f_trace increment) vector_size_locs mem
 end
 
@@ -348,7 +396,7 @@ module StdBasicString = struct
       match src with
       | Exp.Const (Const.Cstr s) ->
           let locs = Sem.eval_locs tgt mem in
-          BoUtils.Exec.decl_string model_env locs s mem
+          BoUtils.Exec.decl_string model_env ~do_alloc:true locs s mem
       | _ ->
           let tgt_locs = Sem.eval_locs tgt mem in
           let v = Sem.eval integer_type_widths src mem in
@@ -536,6 +584,7 @@ module Call = struct
       ; -"__exit" <>--> bottom
       ; -"exit" <>--> bottom
       ; -"fgetc" <>--> by_value Dom.Val.Itv.m1_255
+      ; -"fgets" <>$ capt_exp $+ capt_exp $+...$--> fgets
       ; -"infer_print" <>$ capt_exp $!--> infer_print
       ; -"malloc" <>$ capt_exp $+...$--> malloc
       ; -"calloc" <>$ capt_exp $+ capt_exp $!--> calloc
@@ -548,11 +597,11 @@ module Call = struct
       ; -"realloc" <>$ capt_exp $+ capt_exp $+...$--> realloc
       ; -"__get_array_length" <>$ capt_exp $!--> get_array_length
       ; -"__set_array_length" <>$ capt_arg $+ capt_exp $!--> set_array_length
-      ; -"strlen" <>--> by_value Dom.Val.Itv.nat
+      ; -"strlen" <>$ capt_exp $!--> strlen
       ; -"memcpy" <>$ capt_exp $+ capt_exp $+ capt_exp $+...$--> memcpy
       ; -"memmove" <>$ capt_exp $+ capt_exp $+ capt_exp $+...$--> memcpy
       ; -"memset" <>$ capt_exp $+ any_arg $+ capt_exp $!--> memset
-      ; -"strncpy" <>$ capt_exp $+ capt_exp $+ capt_exp $+...$--> memcpy
+      ; -"strncpy" <>$ capt_exp $+ capt_exp $+ capt_exp $+...$--> strncpy
       ; -"snprintf" <>--> snprintf
       ; -"vsnprintf" <>--> vsnprintf
       ; -"boost" &:: "split"

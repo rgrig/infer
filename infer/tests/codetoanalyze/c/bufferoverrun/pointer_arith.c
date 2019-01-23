@@ -68,3 +68,12 @@ void FP_pointer_arith5_Ok() {
     (buf + len)[sizeof(buf) - len - 1] = '\0';
   }
 }
+
+void pointer_arith5_Bad() {
+  char buf[1024];
+  fgets(buf, 1024, stdin);
+  size_t len = strlen(buf);
+  if (len < sizeof(buf) - 3) {
+    (buf + len)[sizeof(buf) - len] = '\0';
+  }
+}
