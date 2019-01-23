@@ -186,7 +186,8 @@ let add_topl_warnings summary =
         if dbg then Format.printf "ASK if consistent: %a@\n" (Prop.pp_prop Pp.text) post;
         if not (Prover.check_inconsistency env post) then
           ((if dbg then Format.printf "YES adding TOPL_ERR@\n");
-          Reporting.log_error summary IssueType.topl_error ~loc:Location.dummy "XXX")
+          let loc = Summary.get_loc summary in
+          Reporting.log_error summary IssueType.topl_error ~loc "")
         else (if dbg then Format.printf "NOT adding TOPL_ERR@\n")
       with Caml.Not_found -> () in
     List.iter ~f:handle_post posts in
