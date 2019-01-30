@@ -94,7 +94,7 @@ let get_issue_to_report tenv Call.({pname; node; params}) integer_type_widths in
         let instr_node_id = InstrCFG.last_of_underlying_node node |> InstrCFG.Node.id in
         let inferbo_invariant_map = Lazy.force inferbo_invariant_map in
         let inferbo_mem =
-          Option.value_exn (BufferOverrunChecker.extract_pre instr_node_id inferbo_invariant_map)
+          Option.value_exn (BufferOverrunAnalysis.extract_pre instr_node_id inferbo_invariant_map)
         in
         (* get the cost of the function call *)
         Cost.instantiate_cost integer_type_widths ~inferbo_caller_mem:inferbo_mem
@@ -110,8 +110,7 @@ let get_issue_to_report tenv Call.({pname; node; params}) integer_type_widths in
   else None
 
 
-let checker ({Callbacks.tenv; summary; proc_desc; integer_type_widths} as callback_args) :
-    Summary.t =
+let checker Callbacks.({tenv; summary; proc_desc; integer_type_widths}) : Summary.t =
   let cfg = InstrCFG.from_pdesc proc_desc in
   let proc_data = ProcData.make_default proc_desc tenv in
   (* computes reaching defs: node -> (var -> node set) *)
@@ -119,9 +118,8 @@ let checker ({Callbacks.tenv; summary; proc_desc; integer_type_widths} as callba
     ReachingDefs.Analyzer.exec_cfg cfg proc_data
       ~initial:(ReachingDefs.init_reaching_defs_with_formals proc_desc)
   in
-  let pname = Procdesc.get_proc_name proc_desc in
   let inferbo_invariant_map =
-    lazy (BufferOverrunChecker.lookup_inv_map_cache callback_args pname)
+    lazy (BufferOverrunAnalysis.cached_compute_invariant_map proc_desc tenv integer_type_widths)
   in
   (* get dominators *)
   let idom = Dominators.get_idoms proc_desc in

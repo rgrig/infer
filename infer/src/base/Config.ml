@@ -42,7 +42,6 @@ let issues_fields_symbols =
   ; ("bucket", `Issue_field_bucket)
   ; ("qualifier", `Issue_field_qualifier)
   ; ("severity", `Issue_field_severity)
-  ; ("visibility", `Issue_field_visibility)
   ; ("line", `Issue_field_line)
   ; ("column", `Issue_field_column)
   ; ("procedure", `Issue_field_procedure)
@@ -1409,7 +1408,7 @@ and icfg_dotty_outfile =
 
 
 and ignore_trivial_traces =
-  CLOpt.mk_bool ~long:"ignore-trivial-traces" ~default:true
+  CLOpt.mk_bool ~long:"ignore-trivial-traces" ~default:false
     "Ignore traces whose length is at most 1"
 
 

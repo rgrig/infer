@@ -440,7 +440,7 @@ OPTIONS
            multiple times)           See also infer-capture(1).
 
        --issues-fields ,-separated sequence of { bug_type | bucket |
-       qualifier | severity | visibility | line | column | procedure |
+       qualifier | severity | line | column | procedure |
        procedure_start_line | file | bug_trace | key | hash | line_offset |
        qualifier_contains_potential_exception_note }
            Fields to emit with --issues-tests (default: file procedure
@@ -1182,9 +1182,9 @@ INTERNAL OPTIONS
        --icfg-dotty-outfile-reset
            Cancel the effect of --icfg-dotty-outfile.
 
-       --no-ignore-trivial-traces
-           Deactivates: Ignore traces whose length is at most 1 (Conversely:
-           --ignore-trivial-traces)
+       --ignore-trivial-traces
+           Activates: Ignore traces whose length is at most 1 (Conversely:
+           --no-ignore-trivial-traces)
 
        --invariant-by-default
            Activates: [Cost]Consider functions to be invariant by default

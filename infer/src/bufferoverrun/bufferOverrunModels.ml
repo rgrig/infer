@@ -151,6 +151,30 @@ let strlen arr_exp =
   {exec; check= no_check}
 
 
+let strcpy dest_exp src_exp =
+  let exec {integer_type_widths} ~ret:(id, _) mem =
+    let src_loc = Sem.eval_locs src_exp mem in
+    let dest_loc = Sem.eval_locs dest_exp mem in
+    mem
+    |> Dom.Mem.update_mem dest_loc (Dom.Mem.find_set src_loc mem)
+    |> Dom.Mem.update_mem (PowLoc.of_c_strlen dest_loc) (Dom.Mem.get_c_strlen src_loc mem)
+    |> Dom.Mem.add_stack (Loc.of_id id) (Sem.eval integer_type_widths dest_exp mem)
+  and check {integer_type_widths; location} mem cond_set =
+    let access_last_char =
+      let idx = Dom.Mem.get_c_strlen (Sem.eval_locs src_exp mem) mem in
+      let relation = Dom.Mem.get_relation mem in
+      let latest_prune = Dom.Mem.get_latest_prune mem in
+      fun arr cond_set ->
+        BoUtils.Check.array_access ~arr ~idx ~idx_sym_exp:None ~relation ~is_plus:true
+          ~last_included:false ~latest_prune location cond_set
+    in
+    cond_set
+    |> access_last_char (Sem.eval integer_type_widths dest_exp mem)
+    |> access_last_char (Sem.eval integer_type_widths src_exp mem)
+  in
+  {exec; check}
+
+
 let strncpy dest_exp src_exp size_exp =
   let {exec= memcpy_exec; check= memcpy_check} = memcpy dest_exp src_exp size_exp in
   let exec model_env ~ret mem =
@@ -202,6 +226,34 @@ let placement_new size_exp (src_exp1, t1) src_arg2_opt =
         Dom.Mem.add_stack (Loc.of_id id) v mem
       in
       {exec; check= no_check}
+
+
+let strndup src_exp length_exp =
+  let exec ({pname; node_hash; location; integer_type_widths} as model_env) ~ret:((id, _) as ret)
+      mem =
+    let v =
+      let src_strlen = Dom.Mem.get_c_strlen (Sem.eval_locs src_exp mem) mem in
+      let length = Sem.eval integer_type_widths length_exp mem in
+      let size = Itv.incr (Itv.min_sem (Dom.Val.get_itv src_strlen) (Dom.Val.get_itv length)) in
+      let allocsite =
+        let represents_multiple_values = not (Itv.is_one size) in
+        Allocsite.make pname ~node_hash ~inst_num:0 ~dimension:1 ~path:None
+          ~represents_multiple_values
+      in
+      let traces =
+        Trace.Set.join (Dom.Val.get_traces src_strlen) (Dom.Val.get_traces length)
+        |> Trace.Set.add_elem location (Trace.through ~risky_fun:(Some Trace.strndup))
+        |> Trace.Set.add_elem location ArrayDeclaration
+      in
+      Dom.Val.of_c_array_alloc allocsite
+        ~stride:(Some (integer_type_widths.char_width / 8))
+        ~offset:Itv.zero ~size ~traces
+    in
+    mem
+    |> Dom.Mem.add_stack (Loc.of_id id) v
+    |> (strncpy (Exp.Var id) src_exp length_exp).exec model_env ~ret
+  in
+  {exec; check= no_check}
 
 
 let inferbo_min e1 e2 =
@@ -360,12 +412,46 @@ module StdArray = struct
     (* TODO? use size *)
     let exec {integer_type_widths} ~ret:(id, _) mem =
       L.d_printfln_escaped "Using model std::array<_, %Ld>::at" _size ;
-      BoUtils.Exec.load_val id (Sem.eval_lindex integer_type_widths array_exp index_exp mem) mem
+      Dom.Mem.add_stack (Loc.of_id id)
+        (Sem.eval_lindex integer_type_widths array_exp index_exp mem)
+        mem
     and check {location; integer_type_widths} mem cond_set =
       BoUtils.Check.lindex integer_type_widths ~array_exp ~index_exp ~last_included:false mem
         location cond_set
     in
     {exec; check}
+
+
+  let begin_ _size (array_exp, _) =
+    let exec {location; integer_type_widths} ~ret:(id, _) mem =
+      let v =
+        Sem.eval integer_type_widths array_exp mem |> Dom.Val.set_array_offset location Itv.zero
+      in
+      Dom.Mem.add_stack (Loc.of_id id) v mem
+    in
+    {exec; check= no_check}
+
+
+  let end_ size (array_exp, _) =
+    let exec {location; integer_type_widths} ~ret:(id, _) mem =
+      let v =
+        let offset = Itv.of_int_lit (IntLit.of_int64 size) in
+        Sem.eval integer_type_widths array_exp mem |> Dom.Val.set_array_offset location offset
+      in
+      Dom.Mem.add_stack (Loc.of_id id) v mem
+    in
+    {exec; check= no_check}
+
+
+  let back size (array_exp, _) =
+    let exec {location; integer_type_widths} ~ret:(id, _) mem =
+      let v =
+        let offset = Itv.of_int_lit (IntLit.of_int64 Int64.(size - one)) in
+        Sem.eval integer_type_widths array_exp mem |> Dom.Val.set_array_offset location offset
+      in
+      Dom.Mem.add_stack (Loc.of_id id) v mem
+    in
+    {exec; check= no_check}
 end
 
 module StdBasicString = struct
@@ -575,6 +661,7 @@ module Call = struct
     let open ProcnameDispatcher.Call in
     let mk_std_array () = -"std" &:: "array" < any_typ &+ capt_int in
     let std_array0 = mk_std_array () in
+    let std_array1 = mk_std_array () in
     let std_array2 = mk_std_array () in
     let char_ptr = Typ.mk (Typ.Tptr (Typ.mk (Typ.Tint Typ.IChar), Pk_pointer)) in
     make_dispatcher
@@ -601,9 +688,11 @@ module Call = struct
       ; -"memcpy" <>$ capt_exp $+ capt_exp $+ capt_exp $+...$--> memcpy
       ; -"memmove" <>$ capt_exp $+ capt_exp $+ capt_exp $+...$--> memcpy
       ; -"memset" <>$ capt_exp $+ any_arg $+ capt_exp $!--> memset
+      ; -"strcpy" <>$ capt_exp $+ capt_exp $+...$--> strcpy
       ; -"strncpy" <>$ capt_exp $+ capt_exp $+ capt_exp $+...$--> strncpy
       ; -"snprintf" <>--> snprintf
       ; -"vsnprintf" <>--> vsnprintf
+      ; -"strndup" <>$ capt_exp $+ capt_exp $+...$--> strndup
       ; -"boost" &:: "split"
         $ capt_arg_of_typ (-"std" &:: "vector")
         $+ any_arg $+ any_arg $+? any_arg $--> Boost.Split.std_vector
@@ -611,6 +700,12 @@ module Call = struct
         $+ capt_arg_of_typ (-"std" &:: "vector")
         $+? capt_exp $--> Folly.Split.std_vector
       ; std_array0 >:: "array" &--> StdArray.constructor
+      ; std_array1 >:: "begin" $ capt_arg $!--> StdArray.begin_
+      ; std_array1 >:: "cbegin" $ capt_arg $!--> StdArray.begin_
+      ; std_array1 >:: "end" $ capt_arg $!--> StdArray.end_
+      ; std_array1 >:: "cend" $ capt_arg $!--> StdArray.end_
+      ; std_array1 >:: "front" $ capt_arg $!--> StdArray.begin_
+      ; std_array1 >:: "back" $ capt_arg $!--> StdArray.back
       ; std_array2 >:: "at" $ capt_arg $+ capt_arg $!--> StdArray.at
       ; std_array2 >:: "operator[]" $ capt_arg $+ capt_arg $!--> StdArray.at
       ; -"std" &:: "array" &::.*--> no_model

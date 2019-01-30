@@ -333,3 +333,122 @@ void strncpy_no_null_4_Bad() {
   int a[10];
   a[strlen(dst)] = 0;
 }
+
+void strndup_1_Good() {
+  char s1[] = "Hello Infer!";
+  int len = strlen(s1);
+  char* s2 = strndup(s1, len);
+  for (int i = 0; i < len; i++) {
+    s2[i] = 'a';
+  }
+}
+
+void strndup_1_Bad() {
+  char s1[] = "Hello Infer!";
+  int len = 100;
+  char* s2 = strndup(s1, len);
+  for (int i = 0; i < len; i++) {
+    s2[i] = 'a';
+  }
+}
+
+void strndup_2_Good() {
+  char s1[] = "Hello Infer!";
+  int len = strlen(s1);
+  s1[5] = '\0';
+  char* s2 = strndup(s1, len);
+  for (int i = 0; i < strlen(s2); i++) {
+    s2[i] = 'a';
+  }
+}
+
+void strndup_2_Bad() {
+  char s1[] = "Hello Infer!";
+  int len = strlen(s1);
+  s1[5] = '\0';
+  char* s2 = strndup(s1, len);
+  for (int i = 0; i < len; i++) {
+    s2[i] = 'a';
+  }
+}
+
+void strndup_3_Good() {
+  int size = unknown();
+  if (size >= 10) {
+    char* s1 = (char*)malloc(sizeof(char) * size);
+    s1[5] = '\0';
+    char* s2 = strndup(s1, size - 1);
+    for (int i = 0; i < strlen(s2); i++) {
+      s2[i] = 'a';
+    }
+  }
+}
+
+void strndup_3_Bad() {
+  int size = unknown();
+  if (size >= 10) {
+    char* s1 = (char*)malloc(sizeof(char) * size);
+    s1[5] = '\0';
+    char* s2 = strndup(s1, size - 1);
+    for (int i = 0; i < size - 1; i++) {
+      s2[i] = 'a';
+    }
+  }
+}
+
+void strcpy_Good() {
+  char src[5] = "test";
+  char dst[10];
+  strcpy(dst, src);
+}
+
+void strcpy_Bad() {
+  char src[5] = "test";
+  char dst[4];
+  strcpy(dst, src);
+}
+
+void strcpy_strlen_Good() {
+  char src[5] = "test";
+  char dst[10];
+  strcpy(dst, src);
+  int a[5];
+  a[strlen(dst)] = 0;
+}
+
+void strcpy_strlen_Bad() {
+  char src[5] = "test";
+  char dst[10];
+  strcpy(dst, src);
+  int a[4];
+  a[strlen(dst)] = 0;
+}
+
+void strcpy_contents_Good() {
+  char src[5] = "aaaa";
+  char dst[5];
+  strcpy(dst, src);
+  char c = dst[0];
+  if (c >= 'a') {
+    int a[5];
+    a[c - 'a' + 4] = 0;
+  }
+}
+
+void strcpy_contents_Bad() {
+  char src[5] = "aaaa";
+  char dst[5];
+  strcpy(dst, src);
+  char c = dst[0];
+  if (c >= 'a') {
+    int a[5];
+    a[c - 'a' + 5] = 0;
+  }
+}
+
+void strcpy_no_null_Bad() {
+  char src[5] = "test";
+  src[4] = 'a';
+  char dst[10];
+  strcpy(dst, src);
+}
