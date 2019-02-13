@@ -368,6 +368,8 @@ module Name = struct
         QualifiedCppName.empty
 
 
+  let get_template_spec_info = function CppClass (_, templ_args) -> Some templ_args | _ -> None
+
   let name n =
     match n with
     | CStruct _ | CUnion _ | CppClass _ | ObjcClass _ | ObjcProtocol _ ->
@@ -594,9 +596,8 @@ module Procname = struct
   module Java = struct
     type kind =
       | Non_Static
-      (* in Java, procedures called with invokevirtual, invokespecial, and invokeinterface *)
-      | Static
-      (* in Java, procedures called with invokestatic *)
+          (** in Java, procedures called with invokevirtual, invokespecial, and invokeinterface *)
+      | Static  (** in Java, procedures called with invokestatic *)
     [@@deriving compare]
 
     (* TODO: use Mangled.t here *)

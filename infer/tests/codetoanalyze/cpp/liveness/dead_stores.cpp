@@ -484,17 +484,16 @@ class Exceptions {
 
 void init_in_binop_bad(int x) { x = -x & ~int{0}; }
 
-void FN_unused_tmp_bad() {
-  // T32000971
-  int __tmp = 1;
-}
+void unused_tmp_bad() { int __tmp = 1; }
 
 #define UNUSED(a) __typeof__(&a) __attribute__((unused)) __tmp = &a;
 
-void unused_attribute_ok() {
+void unused_attribute_tmp_ok() {
   int x;
   UNUSED(x);
 }
+
+void unused_attribute_ok() { int __attribute__((unused)) x = 42; }
 
 struct ChainedCalls {
   ChainedCalls chained(int i);
@@ -503,6 +502,42 @@ struct ChainedCalls {
 ChainedCalls chain_method_calls_ok() {
   ChainedCalls x;
   return x.chained(5).chained(6);
+}
+
+struct A {
+  int f : 4;
+};
+
+int decltype_read_ok_FP(int x) {
+  A a; // reports here as frontend forgets the expression used in decltype below
+       // a solution would be to annotate with __unused__ (T26148700)
+  decltype(a.f) i;
+  return x + i;
+}
+
+// destructor blacklisted for liveness in .inferconfig
+struct BlacklistedStruct {
+  ~BlacklistedStruct(){};
+
+  BlacklistedStruct cloneAsValue() const { return BlacklistedStruct(); }
+
+  std::unique_ptr<BlacklistedStruct> clone() const {
+    return std::make_unique<BlacklistedStruct>(cloneAsValue());
+  }
+};
+
+void unused_blacklisted_constructed_bad() { auto x = BlacklistedStruct(); }
+
+void unused_blacklisted_clone_bad(BlacklistedStruct* something) {
+  auto x = something->clone();
+}
+
+void unused_blacklisted_unique_ptr_bad(BlacklistedStruct* something) {
+  auto x = std::make_unique<BlacklistedStruct>(*something);
+}
+
+void unused_unique_ptr_good(A* something) {
+  auto x = std::make_unique<A>(*something);
 }
 
 } // namespace dead_stores

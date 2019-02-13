@@ -1133,9 +1133,6 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
   and cxxConstructExpr_trans trans_state si params_stmt ei cxx_constr_info ~is_inherited_ctor =
     let context = trans_state.context in
     let trans_state_pri = PriorityNode.try_claim_priority_node trans_state si in
-    let sil_loc =
-      CLocation.location_of_stmt_info context.translation_unit_context.source_file si
-    in
     let decl_ref = cxx_constr_info.Clang_ast_t.xcei_decl_ref in
     let var_exp, class_type =
       match trans_state.var_exp_typ with
@@ -1156,33 +1153,14 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
       mk_trans_result (var_exp, this_type) {empty_control with initd_exps= [var_exp]}
     in
     let tmp_res_trans = mk_trans_result (var_exp, class_type) empty_control in
-    (* When class type is translated as pointer (std::shared_ptr for example), there needs
-       to be extra Load instruction before returning the trans_result of constructorExpr.
-       There is no LValueToRvalue cast in the AST afterwards since clang doesn't know
-       that class type is translated as pointer type. It gets added here instead. *)
-    let extra_res_trans =
-      let do_extra_deref =
-        match class_type.desc with
-        | Typ.Tptr _ ->
-            (* do not inject the extra dereference for procedures generated to record the
-                      initialization code of globals *)
-            Procdesc.get_proc_name trans_state.context.procdesc
-            |> Typ.Procname.get_global_name_of_initializer |> Option.is_none
-        | _ ->
-            false
-      in
-      if do_extra_deref then
-        dereference_value_from_result si.Clang_ast_t.si_source_range sil_loc tmp_res_trans
-      else tmp_res_trans
-    in
     let res_trans_callee =
       decl_ref_trans ~context:(MemberOrIvar this_res_trans) trans_state si decl_ref
     in
     let res_trans =
       cxx_method_construct_call_trans trans_state_pri res_trans_callee params_stmt si
-        (Typ.mk Tvoid) false (Some extra_res_trans) ~is_inherited_ctor
+        (Typ.mk Tvoid) false (Some tmp_res_trans) ~is_inherited_ctor
     in
-    {res_trans with return= extra_res_trans.return}
+    {res_trans with return= tmp_res_trans.return}
 
 
   and cxx_destructor_call_trans trans_state si this_res_trans class_type_ptr ~is_inner_destructor =
@@ -2220,7 +2198,8 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     |> mk_trans_result ret_exp_typ
 
 
-  and init_expr_trans trans_state var_exp_typ ?qual_type var_stmt_info init_expr_opt =
+  and init_expr_trans ?(is_var_unused = false) trans_state var_exp_typ ?qual_type var_stmt_info
+      init_expr_opt =
     match init_expr_opt with
     | None -> (
       match
@@ -2254,8 +2233,9 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
         in
         let assign_trans_control_opt =
           if
-            (* variable might be initialized already - do nothing in that case*)
-            List.exists ~f:(Exp.equal var_exp) res_trans_ie.control.initd_exps
+            is_var_unused
+            || (* variable might be initialized already - do nothing in that case*)
+               List.exists ~f:(Exp.equal var_exp) res_trans_ie.control.initd_exps
           then None
           else
             let sil_e1', ie_typ = res_trans_ie.return in
@@ -2292,18 +2272,21 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     let context = trans_state.context in
     let procdesc = context.CContext.procdesc in
     let procname = Procdesc.get_proc_name procdesc in
-    let do_var_dec var_decl qual_type vdi next_node =
+    let do_var_dec ~is_var_unused var_decl qual_type vdi next_node =
       let pvar = CVar_decl.sil_var_of_decl context var_decl procname in
       let typ = CType_decl.qual_type_to_sil_type context.CContext.tenv qual_type in
       CVar_decl.add_var_to_locals procdesc var_decl typ pvar ;
       let trans_state' = {trans_state with succ_nodes= next_node} in
-      init_expr_trans trans_state' (Exp.Lvar pvar, typ) ~qual_type stmt_info
+      init_expr_trans ~is_var_unused trans_state' (Exp.Lvar pvar, typ) ~qual_type stmt_info
         vdi.Clang_ast_t.vdi_init_expr
+    in
+    let has_unused_attr attributes =
+      List.exists attributes ~f:(function Clang_ast_t.UnusedAttr _ -> true | _ -> false)
     in
     let rec aux : decl list -> trans_result option = function
       | [] ->
           None
-      | (VarDecl (_, _, qt, vdi) as var_decl) :: var_decls' ->
+      | (VarDecl ({di_attributes}, _, qt, vdi) as var_decl) :: var_decls' ->
           (* Var are defined when procdesc is created, here we only take care of initialization *)
           let res_trans_tl = aux var_decls' in
           let root_nodes_tl, instrs_tl, initd_exps_tl =
@@ -2313,7 +2296,8 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
             | Some {control= {root_nodes; instrs; initd_exps}} ->
                 (root_nodes, instrs, initd_exps)
           in
-          let res_trans_tmp = do_var_dec var_decl qt vdi root_nodes_tl in
+          let is_var_unused = has_unused_attr di_attributes in
+          let res_trans_tmp = do_var_dec ~is_var_unused var_decl qt vdi root_nodes_tl in
           (* keep the last return and leaf_nodes from the list *)
           let return, leaf_nodes =
             match res_trans_tl with

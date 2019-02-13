@@ -17,7 +17,10 @@ type t =
 
 (** bad for every clang invocation *)
 let clang_blacklisted_flags =
-  ["--expt-relaxed-constexpr"; "-fembed-bitcode-marker"; "-fno-canonical-system-headers"]
+  [ "--expt-relaxed-constexpr"
+  ; "-fembed-bitcode-marker"
+  ; "-fno-absolute-module-directory"
+  ; "-fno-canonical-system-headers" ]
 
 
 let fcp_dir =
@@ -159,7 +162,7 @@ let clang_cc1_cmd_sanitizer cmd =
         else if String.equal option "-isystem" then
           match include_override_regex with
           | Some regexp when Str.string_match regexp arg 0 ->
-              fcp_dir ^/ "clang" ^/ "install" ^/ "lib" ^/ "clang" ^/ "7.0.0" ^/ "include"
+              fcp_dir ^/ "clang" ^/ "install" ^/ "lib" ^/ "clang" ^/ "7.0.1" ^/ "include"
           | _ ->
               arg
         else arg

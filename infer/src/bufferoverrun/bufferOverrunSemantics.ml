@@ -270,12 +270,14 @@ and eval_binop : Typ.IntegerWidths.t -> Binop.t -> Exp.t -> Exp.t -> Mem.t -> Va
 
 
 (**
-  [eval_locs exp mem] is like [eval_locs exp mem |> Val.get_all_locs]
+  [eval_locs exp mem] is like [eval exp mem |> Val.get_all_locs]
   but takes some shortcuts to avoid computing useless and/or problematic intermediate values
 *)
 let rec eval_locs : Exp.t -> Mem.t -> PowLoc.t =
  fun exp mem ->
   match exp with
+  | Const (Cstr s) ->
+      PowLoc.singleton (Loc.of_allocsite (Allocsite.literal_string s))
   | Var id ->
       Mem.find_stack (Var.of_id id |> Loc.of_var) mem |> Val.get_all_locs
   | Lvar pvar ->
@@ -291,7 +293,8 @@ let rec eval_locs : Exp.t -> Mem.t -> PowLoc.t =
   | Lindex (((Lfield _ | Lindex _) as e), _) ->
       Mem.find_set (eval_locs e mem) mem |> Val.get_all_locs
   | Lindex (e, _) ->
-      eval_locs e mem
+      if Language.curr_language_is Java then Mem.find_set (eval_locs e mem) mem |> Val.get_all_locs
+      else eval_locs e mem
 
 
 (* It returns the array value of the input expression.  For example,
@@ -305,7 +308,7 @@ let rec eval_arr : Typ.IntegerWidths.t -> Exp.t -> Mem.t -> Val.t =
     match Mem.find_alias id mem with
     | Some (AliasTarget.Simple loc) ->
         Mem.find loc mem
-    | Some (AliasTarget.Empty _ | AliasTarget.Nullity _) | None ->
+    | Some (AliasTarget.Empty _ | AliasTarget.Fgets _ | AliasTarget.Nullity _) | None ->
         Val.bot )
   | Exp.Lvar pvar ->
       Mem.find (Loc.of_pvar pvar) mem
@@ -407,11 +410,10 @@ let eval_sympath ~strict params sympath mem =
    - non-strict mode (which is used by default): it returns the unknown location.
    - strict mode (which is used only in the substitution of condition of proof obligation): it
      returns the bottom location. *)
-let mk_eval_sym_trace integer_type_widths callee_pdesc actual_exps caller_mem =
+let mk_eval_sym_trace integer_type_widths callee_formals actual_exps caller_mem =
   let params =
-    let formals = Procdesc.get_pvar_formals callee_pdesc in
     let actuals = List.map ~f:(fun (a, _) -> eval integer_type_widths a caller_mem) actual_exps in
-    ParamBindings.make formals actuals
+    ParamBindings.make callee_formals actuals
   in
   let eval_sym s bound_end =
     let sympath = Symb.Symbol.path s in
@@ -465,6 +467,10 @@ module Prune = struct
           let v = Mem.find lv mem in
           let v' = Val.prune_length_eq_zero v in
           update_mem_in_prune lv v' astate
+      | Some (AliasTarget.Fgets lv) ->
+          let strlen_loc = Loc.of_c_strlen lv in
+          let v' = Val.prune_ge_one (Mem.find strlen_loc mem) in
+          update_mem_in_prune strlen_loc v' astate
       | Some (AliasTarget.Nullity lv) ->
           let v = Mem.find lv mem in
           let v' = Val.prune_eq_zero v in
@@ -486,7 +492,7 @@ module Prune = struct
           let itv_v = Itv.prune_comp Binop.Ge (Val.get_itv v) Itv.one in
           let v' = Val.modify_itv itv_v v in
           update_mem_in_prune lv v' astate
-      | None ->
+      | Some (AliasTarget.Fgets _) | None ->
           astate )
     | _ ->
         astate
@@ -729,12 +735,12 @@ let rec list_fold2_def :
 let get_subst_map :
        Tenv.t
     -> Typ.IntegerWidths.t
-    -> Procdesc.t
+    -> (Pvar.t * Typ.t) list
     -> (Exp.t * 'a) list
     -> Mem.t
     -> _ Mem.t0
     -> Relation.SubstMap.t =
- fun tenv integer_type_widths callee_pdesc params caller_mem callee_exit_mem ->
+ fun tenv integer_type_widths callee_formals params caller_mem callee_exit_mem ->
   let add_pair (formal, typ) (actual, actual_exp) rel_l =
     let callee_v = Mem.find (Loc.of_pvar formal) callee_exit_mem in
     let new_rel_matching =
@@ -743,11 +749,10 @@ let get_subst_map :
     in
     List.rev_append new_rel_matching rel_l
   in
-  let formals = Procdesc.get_pvar_formals callee_pdesc in
   let actuals =
     List.map ~f:(fun (a, _) -> (eval integer_type_widths a caller_mem, Some a)) params
   in
   let rel_pairs =
-    list_fold2_def ~default:(Val.Itv.top, None) ~f:add_pair formals actuals ~init:[]
+    list_fold2_def ~default:(Val.Itv.top, None) ~f:add_pair callee_formals actuals ~init:[]
   in
   subst_map_of_rel_pairs rel_pairs

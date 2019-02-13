@@ -300,8 +300,6 @@ val costs_current : string option
 
 val costs_previous : string option
 
-val crashcontext : bool
-
 val current_to_previous_script : string option
 
 val cxx : bool
@@ -396,8 +394,6 @@ val hoisting_report_only_expensive : bool
 
 val icfg_dotty_outfile : string option
 
-val ignore_trivial_traces : bool
-
 val immutable_cast : bool
 
 val infer_is_clang : bool
@@ -465,6 +461,8 @@ val litho : bool
 
 val liveness : bool
 
+val liveness_dangerous_classes : Yojson.Basic.json
+
 val log_events : bool
 
 val log_file : string
@@ -501,6 +499,8 @@ val nelseg : bool
 val no_translate_libs : bool
 
 val nullable_annotation : string option
+
+val nullsafe_strict_containers : bool
 
 val only_cheap_debug : bool
 
@@ -622,6 +622,8 @@ val skip_translation_headers : string list
 
 val source_files : bool
 
+val source_files_cfg : bool
+
 val source_files_filter : string option
 
 val source_files_type_environment : bool
@@ -639,10 +641,6 @@ val specs_library : string list
 val sqlite_lock_timeout : int
 
 val sqlite_vfs : string option
-
-val stacktrace : string option
-
-val stacktraces_dir : string option
 
 val starvation : bool
 
@@ -718,4 +716,7 @@ val java_package_is_external : string -> bool
 (** Check if a Java package is external to the repository *)
 
 val quandaryBO_filtered_issues : IssueType.t list
-(* List of issues that are enabled by QuandaryBO but should not be in the final report.json *)
+(** List of issues that are enabled by QuandaryBO but should not be in the final report.json *)
+
+val is_in_custom_symbols : string -> string -> bool
+(** Does named symbol match any prefix in the named custom symbol list? *)
