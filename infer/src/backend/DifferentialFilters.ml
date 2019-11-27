@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -48,9 +48,8 @@ module FileRenamings = struct
       with Yojson.Json_error err ->
         L.(die UserError)
           "Error parsing file renamings: %s@\n\
-           Expected JSON object of the following form: '%s', but instead got: '%s'"
-          err "{\"current\": \"aaa.java\", \"previous\": \"BBB.java\"}"
-          (Yojson.Basic.to_string assoc)
+           Expected JSON object of the following form: '%s', but instead got: '%s'" err
+          "{\"current\": \"aaa.java\", \"previous\": \"BBB.java\"}" (Yojson.Basic.to_string assoc)
     in
     match j with
     | `List json_renamings ->

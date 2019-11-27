@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -68,9 +68,6 @@ val deref_str_null : Typ.Procname.t option -> deref_str
 
 val deref_str_nullable : Typ.Procname.t option -> string -> deref_str
 (** dereference strings for null dereference due to Nullable annotation *)
-
-val deref_str_weak_variable_in_block : Typ.Procname.t option -> string -> deref_str
-(** dereference strings for null dereference due to weak captured variable in block *)
 
 val deref_str_undef : Typ.Procname.t * Location.t -> deref_str
 (** dereference strings for an undefined value coming from the given procedure *)
@@ -141,8 +138,6 @@ val desc_leak :
   -> error_desc
 
 val desc_null_test_after_dereference : string -> int -> Location.t -> error_desc
-
-val java_unchecked_exn_desc : Typ.Procname.t -> Typ.Name.t -> string -> error_desc
 
 val desc_custom_error : Location.t -> error_desc
 (** Create human-readable error description for assertion failures *)

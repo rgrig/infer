@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -11,7 +11,7 @@ module L = Logging
 (** Module for builtin functions with their symbolic execution handler *)
 
 type args =
-  { pdesc: Procdesc.t
+  { summary: Summary.t
   ; instr: Sil.instr
   ; tenv: Tenv.t
   ; prop_: Prop.normal Prop.t
@@ -39,8 +39,8 @@ let check_register_populated () =
 
 (** get the symbolic execution handler associated to the builtin function name *)
 let get name : t option =
-  try Some (Typ.Procname.Hash.find builtin_functions name) with Caml.Not_found ->
-    check_register_populated () ; None
+  try Some (Typ.Procname.Hash.find builtin_functions name)
+  with Caml.Not_found -> check_register_populated () ; None
 
 
 (** register a builtin [Typ.Procname.t] and symbolic execution handler *)

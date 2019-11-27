@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -21,8 +21,9 @@ val get_decl_opt : Clang_ast_t.pointer option -> Clang_ast_t.decl option
 
 val get_stmt : Clang_ast_t.pointer -> Clang_ast_t.source_range -> Clang_ast_t.stmt option
 
-val get_stmt_opt :
-  Clang_ast_t.pointer option -> Clang_ast_t.source_range -> Clang_ast_t.stmt option
+val get_stmt_exn : Clang_ast_t.pointer -> Clang_ast_t.source_range -> Clang_ast_t.stmt
+
+val get_stmt_opt : Clang_ast_t.pointer option -> Clang_ast_t.source_range -> Clang_ast_t.stmt option
 
 val get_decl_opt_with_decl_ref : Clang_ast_t.decl_ref option -> Clang_ast_t.decl option
 
@@ -109,8 +110,7 @@ val get_super_ObjCImplementationDecl :
   Clang_ast_t.obj_c_implementation_decl_info -> Clang_ast_t.decl option
 (** Given an objc impl decl info, return its super class implementation decl *)
 
-val is_objc_if_descendant :
-  ?blacklist:string list -> Clang_ast_t.decl option -> string list -> bool
+val is_objc_if_descendant : ?blacklist:string list -> Clang_ast_t.decl option -> string list -> bool
 (** Recursively go up the inheritance hierarchy of a given ObjCInterfaceDecl.
     Returns true if the passed in decl is an objc interface decl that's an
     eventual descendant of one of the classes passed in.
@@ -145,3 +145,5 @@ val has_block_attribute : Clang_ast_t.decl -> bool
 val is_implicit_decl : Clang_ast_t.decl -> bool
 
 val get_superclass_curr_class_objc_from_decl : Clang_ast_t.decl -> Clang_ast_t.decl_ref option
+
+val get_method_body_opt : Clang_ast_t.decl -> Clang_ast_t.stmt option

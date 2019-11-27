@@ -1,11 +1,12 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
+module F = Format
 
 let is_synchronized_library_call =
   let targets = ["java.lang.StringBuffer"; "java.util.Hashtable"; "java.util.Vector"] in
@@ -74,8 +75,8 @@ let empty_or_excessive_timeout actuals =
       |> Option.value_map ~default:false ~f:(fun duration -> is_excessive_secs (0.001 *. duration))
   | [_; snd_arg; third_arg] ->
       (* this is either a call to Object.wait(_, _) or to a java.util.concurent.lock(_, _) method.
-           In the first case the arguments are a duration in milliseconds and an extra duration in
-           nanoseconds; in the second case, the arguments are a duration and a time unit. *)
+         In the first case the arguments are a duration in milliseconds and an extra duration in
+         nanoseconds; in the second case, the arguments are a duration and a time unit. *)
       duration_of_exp snd_arg
       |> Option.value_map ~default:false ~f:(fun duration ->
              match timeunit_of_exp third_arg with
@@ -89,14 +90,21 @@ let empty_or_excessive_timeout actuals =
       false
 
 
+type severity = Low | Medium | High [@@deriving compare]
+
+let pp_severity fmt sev =
+  let msg = match sev with Low -> "Low" | Medium -> "Medium" | High -> "High" in
+  F.pp_print_string fmt msg
+
+
 let standard_matchers =
   let open MethodMatcher in
-  let open StarvationDomain.Event in
   let high_sev =
     [ {default with classname= "java.lang.Thread"; methods= ["sleep"]}
     ; { default with
-        classname= "java.lang.Object"; methods= ["wait"]; actuals_pred= empty_or_excessive_timeout
-      }
+        classname= "java.lang.Object"
+      ; methods= ["wait"]
+      ; actuals_pred= empty_or_excessive_timeout }
     ; { default with
         classname= "java.util.concurrent.CountDownLatch"
       ; methods= ["await"]
@@ -141,9 +149,12 @@ let strict_mode_matcher =
   let dont_search_superclasses = {default with search_superclasses= false} in
   let matcher_records =
     [ { dont_search_superclasses with
-        classname= "dalvik.system.BlockGuard$Policy"; methods= ["on"]; method_prefix= true }
+        classname= "dalvik.system.BlockGuard$Policy"
+      ; methods= ["on"]
+      ; method_prefix= true }
     ; { dont_search_superclasses with
-        classname= "java.lang.System"; methods= ["gc"; "runFinalization"] }
+        classname= "java.lang.System"
+      ; methods= ["gc"; "runFinalization"] }
     ; {dont_search_superclasses with classname= "java.lang.Runtime"; methods= ["gc"]}
     ; {dont_search_superclasses with classname= "java.net.Socket"; methods= ["connect"]}
       (* all public constructors of Socket with two or more arguments call connect *)
@@ -179,3 +190,120 @@ let strict_mode_matcher =
 
 let is_strict_mode_violation tenv pn actuals =
   Config.starvation_strict_mode && strict_mode_matcher tenv pn actuals
+
+
+let is_annotated_nonblocking ~attrs_of_pname tenv pname =
+  ConcurrencyModels.find_override_or_superclass_annotated ~attrs_of_pname
+    Annotations.ia_is_nonblocking tenv pname
+  |> Option.is_some
+
+
+let is_annotated_lockless ~attrs_of_pname tenv pname =
+  let check annot = Annotations.(ia_ends_with annot lockless) in
+  ConcurrencyModels.find_override_or_superclass_annotated ~attrs_of_pname check tenv pname
+  |> Option.is_some
+
+
+let executor_type_str = "java.util.concurrent.Executor"
+
+let schedules_work =
+  let open MethodMatcher in
+  (* Some methods below belong to subclasses of [Executor]; we do check for an [Executor] base class. *)
+  let matcher =
+    [ { default with
+        classname= executor_type_str
+      ; methods= ["execute"; "schedule"; "scheduleAtFixedRate"; "scheduleWithFixedDelay"; "submit"]
+      } ]
+    |> of_records
+  in
+  fun tenv pname -> matcher tenv pname []
+
+
+let schedules_work_on_ui_thread =
+  let open MethodMatcher in
+  let matcher =
+    [ { default with
+        classname= "java.lang.Object"
+      ; methods= ["postOnUiThread"; "runOnUiThread"; "postOnUiThreadDelayed"] } ]
+    |> of_records
+  in
+  fun tenv pname -> matcher tenv pname []
+
+
+let schedules_work_on_bg_thread =
+  let open MethodMatcher in
+  let matcher =
+    [{default with classname= "java.lang.Object"; methods= ["scheduleGuaranteedDelayed"]}]
+    |> of_records
+  in
+  fun tenv pname -> matcher tenv pname []
+
+
+type executor_thread_constraint = ForUIThread | ForNonUIThread | ForUnknownThread
+[@@deriving equal]
+
+(* Executors are sometimes stored in fields and annotated according to what type of thread 
+   they schedule work on.  Given an expression representing such a field, try to find the kind of 
+   annotation constraint, if any. *)
+let rec get_executor_thread_annotation_constraint tenv (receiver : HilExp.AccessExpression.t) =
+  match receiver with
+  | FieldOffset (_, field_name) when Typ.Fieldname.is_java field_name ->
+      Typ.Fieldname.Java.get_class field_name
+      |> Typ.Name.Java.from_string |> Tenv.lookup tenv
+      |> Option.map ~f:(fun (tstruct : Typ.Struct.t) -> tstruct.fields @ tstruct.statics)
+      |> Option.bind ~f:(List.find ~f:(fun (fld, _, _) -> Typ.Fieldname.equal fld field_name))
+      |> Option.bind ~f:(fun (_, _, annot) ->
+             if Annotations.(ia_ends_with annot for_ui_thread) then Some ForUIThread
+             else if Annotations.(ia_ends_with annot for_non_ui_thread) then Some ForNonUIThread
+             else None )
+  | Dereference prefix ->
+      get_executor_thread_annotation_constraint tenv prefix
+  | _ ->
+      None
+
+
+(* Given an object, find the [run] method in its class and return the procname, if any *)
+let get_run_method_from_runnable tenv runnable =
+  let run_like_methods = ["run"; "call"] in
+  let is_run_method = function
+    | Typ.Procname.Java pname when Typ.Procname.Java.(not (is_static pname)) ->
+        (* confusingly, the parameter list in (non-static?) Java procnames does not contain [this] *)
+        Typ.Procname.Java.(
+          List.is_empty (get_parameters pname)
+          &&
+          let methodname = get_method pname in
+          List.exists run_like_methods ~f:(String.equal methodname))
+    | _ ->
+        false
+  in
+  HilExp.AccessExpression.get_typ runnable tenv
+  |> Option.map ~f:(function Typ.{desc= Tptr (typ, _)} -> typ | typ -> typ)
+  |> Option.bind ~f:Typ.name
+  |> Option.bind ~f:(Tenv.lookup tenv)
+  |> Option.map ~f:(fun (tstruct : Typ.Struct.t) -> tstruct.methods)
+  |> Option.bind ~f:(List.find ~f:is_run_method)
+
+
+(* Syntactically match for certain methods known to return executors. *)
+let get_returned_executor ~attrs_of_pname tenv callee actuals =
+  let type_check =
+    lazy
+      ( attrs_of_pname callee
+      |> Option.exists ~f:(fun (attrs : ProcAttributes.t) ->
+             match attrs.ret_type.Typ.desc with
+             | Tstruct tname | Typ.Tptr ({desc= Tstruct tname}, _) ->
+                 PatternMatch.is_subtype_of_str tenv tname executor_type_str
+             | _ ->
+                 false ) )
+  in
+  match (callee, actuals) with
+  | Typ.Procname.Java java_pname, [] -> (
+    match Typ.Procname.Java.get_method java_pname with
+    | "getForegroundExecutor" when Lazy.force type_check ->
+        Some ForUIThread
+    | "getBackgroundExecutor" when Lazy.force type_check ->
+        Some ForNonUIThread
+    | _ ->
+        None )
+  | _ ->
+      None

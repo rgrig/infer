@@ -1,158 +1,77 @@
 (*
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-open PolyVariantEqual
 module L = Logging
+module YB = Yojson.Basic
+module YBU = Yojson.Basic.Util
 
 (** Module to merge the results of capture for different buck targets. *)
 
-(** Flag to control whether the timestamp of symbolic links
-    is used to determine whether a captured directory needs to be merged. *)
-let check_timestamp_of_symlinks = true
-
-let buck_out () = Filename.concat Config.project_root "buck-out"
-
-let modified_targets = ref String.Set.empty
-
-let record_modified_targets_from_file file =
-  match Utils.read_file file with
-  | Ok targets ->
-      modified_targets := List.fold ~f:String.Set.add ~init:String.Set.empty targets
-  | Error error ->
-      L.user_error "Failed to read modified targets file '%s': %s@." file error ;
-      ()
-
-
-type stats = {mutable files_linked: int; mutable targets_merged: int}
-
-let empty_stats () = {files_linked= 0; targets_merged= 0}
-
-let link_exists s =
-  try
-    ignore (Unix.lstat s) ;
-    true
-  with Unix.Unix_error _ -> false
-
-
-let create_link ~stats src dst =
-  if link_exists dst then Unix.unlink dst ;
-  Unix.symlink ~src ~dst ;
-  (* Set the accessed and modified time of the original file slightly in the past.  Due to
-     the coarse precision of the timestamps, it is possible for the source and destination of a
-     link to have the same modification time. When this happens, the files will be considered to
-     need re-analysis every time, indefinitely. *)
-  let near_past = Unix.gettimeofday () -. 1. in
-  Unix.utimes src ~access:near_past ~modif:near_past ;
-  stats.files_linked <- stats.files_linked + 1
-
-
-(** Create symbolic links recursively from the destination to the source.
-    Replicate the structure of the source directory in the destination,
-    with files replaced by links to the source. *)
-let rec slink ~stats ~skiplevels src dst =
-  L.(debug MergeCapture Verbose) "slink src:%s dst:%s skiplevels:%d@." src dst skiplevels ;
-  if Sys.is_directory src = `Yes then (
-    if Sys.file_exists dst <> `Yes then Unix.mkdir dst ~perm:0o700 ;
-    let items = Sys.readdir src in
-    Array.iter
-      ~f:(fun item ->
-        slink ~stats ~skiplevels:(skiplevels - 1) (Filename.concat src item)
-          (Filename.concat dst item) )
-      items )
-  else if skiplevels > 0 then ()
-  else create_link ~stats src dst
-
-
-(** Determine if the destination should link to the source.
-    To check if it was linked before, check if all the captured source files
-    from the source are also in the destination.
-    And for each of the files inside (.cfg, .cg, etc), check that the destinations
-    of symbolic links were not modified after the links themselves. *)
-let should_link ~target ~target_results_dir ~stats infer_out_src infer_out_dst =
-  let num_captured_files = ref 0 in
-  let symlink_up_to_date file =
-    let filename = DB.filename_from_string file in
-    let time_orig = DB.file_modified_time ~symlink:false filename in
-    let time_link = DB.file_modified_time ~symlink:true filename in
-    L.(debug MergeCapture Verbose) "file:%s time_orig:%f time_link:%f@." file time_orig time_link ;
-    time_link > time_orig
+let merge_global_tenvs infer_deps_file =
+  let time0 = Mtime_clock.counter () in
+  let global_tenv = Tenv.create () in
+  let merge infer_out_src =
+    let global_tenv_path =
+      infer_out_src ^/ Config.global_tenv_filename |> DB.filename_from_string
+    in
+    Tenv.read global_tenv_path |> Option.iter ~f:(fun tenv -> Tenv.merge ~src:tenv ~dst:global_tenv)
   in
-  let symlinks_up_to_date captured_file =
-    if Sys.is_directory captured_file = `Yes then
-      let contents = Array.to_list (Sys.readdir captured_file) in
-      List.for_all
-        ~f:(fun file ->
-          let file_path = Filename.concat captured_file file in
-          Sys.file_exists file_path = `Yes
-          && ((not check_timestamp_of_symlinks) || symlink_up_to_date file_path) )
-        contents
-    else true
-  in
-  let check_file captured_file =
-    Sys.file_exists captured_file = `Yes && symlinks_up_to_date captured_file
-  in
-  let was_copied () =
-    let captured_src = Filename.concat infer_out_src Config.captured_dir_name in
-    let captured_dst = Filename.concat infer_out_dst Config.captured_dir_name in
-    if Sys.file_exists captured_src = `Yes && Sys.is_directory captured_src = `Yes then (
-      let captured_files = Array.to_list (Sys.readdir captured_src) in
-      num_captured_files := List.length captured_files ;
-      List.for_all ~f:(fun file -> check_file (Filename.concat captured_dst file)) captured_files )
-    else true
-  in
-  let was_modified () = String.Set.mem !modified_targets target in
-  let r = was_modified () || not (was_copied ()) in
-  if r then stats.targets_merged <- stats.targets_merged + 1 ;
-  L.(debug MergeCapture Verbose)
-    "lnk:%s:%d %s@."
-    (if r then "T" else "F")
-    !num_captured_files target_results_dir ;
-  if r then L.(debug MergeCapture Medium) "%s@." target_results_dir ;
-  r
+  Utils.iter_infer_deps ~project_root:Config.project_root ~f:merge infer_deps_file ;
+  Tenv.store_global global_tenv ;
+  L.progress "Merging type environments took %a@." Mtime.Span.pp (Mtime_clock.count time0)
 
 
-(** should_link needs to know whether the source file has changed,
-    and  to determine whether the destination has never been copied.
-    In both cases, perform the link. *)
-let process_merge_file deps_file =
-  let infer_out_dst = Config.results_dir in
-  let stats = empty_stats () in
-  let process_line line =
-    match Str.split_delim (Str.regexp (Str.quote "\t")) line with
-    | target :: _ :: target_results_dir :: _ ->
-        let infer_out_src =
-          if Filename.is_relative target_results_dir then
-            Filename.dirname (buck_out ()) ^/ target_results_dir
-          else target_results_dir
-        in
-        let skiplevels = 2 in
-        (* Don't link toplevel files *)
-        if should_link ~target ~target_results_dir ~stats infer_out_src infer_out_dst then
-          slink ~stats ~skiplevels infer_out_src infer_out_dst
-    | _ ->
-        ()
+let merge_json_results infer_out_src json_file_name =
+  let main_changed_fs_file = Config.results_dir ^/ json_file_name in
+  let changed_fs_file = infer_out_src ^/ json_file_name in
+  let main_json = try YB.from_file main_changed_fs_file |> YBU.to_list with Sys_error _ -> [] in
+  let changed_json = try YB.from_file changed_fs_file |> YBU.to_list with Sys_error _ -> [] in
+  let all_fs =
+    `List
+      (List.dedup_and_sort
+         ~compare:(fun s1 s2 ->
+           match (s1, s2) with `String s1, `String s2 -> String.compare s1 s2 | _ -> 0 )
+         (List.append main_json changed_json))
   in
-  ( match Utils.read_file deps_file with
-  | Ok lines ->
-      List.iter ~f:process_line lines
-  | Error error ->
-      L.internal_error "Couldn't read deps file '%s': %s" deps_file error ) ;
-  L.progress "Targets merged: %d@\n" stats.targets_merged ;
-  L.progress "Files linked: %d@\n" stats.files_linked
+  YB.to_file main_changed_fs_file all_fs
+
+
+let merge_all_json_results merge_results results_json_str =
+  L.progress "Merging %s files...@." results_json_str ;
+  let infer_deps_file = Config.(results_dir ^/ buck_infer_deps_file_name) in
+  Utils.iter_infer_deps ~project_root:Config.project_root ~f:merge_results infer_deps_file ;
+  L.progress "Done merging %s files@." results_json_str
+
+
+let merge_changed_functions () =
+  let merge_changed_functions_json infer_out_src =
+    merge_json_results infer_out_src Config.export_changed_functions_output
+  in
+  merge_all_json_results merge_changed_functions_json "changed functions"
 
 
 let merge_captured_targets () =
   let time0 = Mtime_clock.counter () in
   L.progress "Merging captured Buck targets...@\n%!" ;
   let infer_deps_file = Config.(results_dir ^/ buck_infer_deps_file_name) in
-  MergeResults.merge_buck_flavors_results infer_deps_file ;
-  process_merge_file infer_deps_file ;
-  L.progress "Merging captured Buck targets took %a@\n%!" Mtime.Span.pp (Mtime_clock.count time0)
+  DBWriter.merge ~infer_deps_file ;
+  if Config.genrule_master_mode then
+    ScubaLogging.execute_with_time_logging "merge_captured_tenvs" (fun () ->
+        merge_global_tenvs infer_deps_file ) ;
+  let targets_num =
+    let counter = ref 0 in
+    let incr_counter _line = incr counter in
+    Utils.with_file_in infer_deps_file ~f:(In_channel.iter_lines ~f:incr_counter) ;
+    !counter
+  in
+  ScubaLogging.log_count ~label:"merged_captured_targets" ~value:targets_num ;
+  L.progress "Merging %d captured Buck targets took %a@\n%!" targets_num Mtime.Span.pp
+    (Mtime_clock.count time0)
 
 
 (* shadowed for tracing *)
@@ -160,3 +79,7 @@ let merge_captured_targets () =
   PerfEvent.(log (fun logger -> log_begin_event logger ~name:"merge buck targets" ())) ;
   merge_captured_targets () ;
   PerfEvent.(log (fun logger -> log_end_event logger ()))
+
+
+let merge_captured_targets () =
+  ScubaLogging.execute_with_time_logging "merge_captured_targets" merge_captured_targets

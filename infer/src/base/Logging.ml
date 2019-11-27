@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -134,7 +134,7 @@ let register_formatter =
        let formatters = mk_formatters () in
        let formatters_ref = ref formatters in
        logging_formatters := ((formatters_ref, mk_formatters), formatters) :: !logging_formatters ;
-       formatters_ref)
+       formatters_ref )
 
 
 let flush_formatters {file; console_file} =
@@ -208,14 +208,12 @@ let phase fmt = log ~to_console:false phase_file_fmts fmt
 
 let progress fmt = log ~to_console:(not Config.quiet) progress_file_fmts fmt
 
-let task_progress ~f pp x =
-  let to_console =
-    match Config.progress_bar with `Plain -> true | `Quiet | `MultiLine -> false
-  in
-  log ~to_console progress_file_fmts "%a starting@." pp x ;
-  f () ;
-  log ~to_console progress_file_fmts "%a DONE@." pp x
+let log_task fmt =
+  let to_console = match Config.progress_bar with `Plain -> true | `Quiet | `MultiLine -> false in
+  log ~to_console progress_file_fmts fmt
 
+
+let task_progress ~f pp x = log_task "%a starting@." pp x ; f () ; log_task "%a DONE@." pp x
 
 let user_warning fmt = log ~to_console:(not Config.quiet) user_warning_file_fmts fmt
 
@@ -277,9 +275,7 @@ let internal_error fmt = log ~to_console:true internal_error_file_fmts fmt
 type ocaml_pos = string * int * int * int
 
 (** Convert a ml location to a string *)
-let ocaml_pos_to_string (file, lnum, cnum, enum) =
-  Printf.sprintf "%s:%d:%d-%d:" file lnum cnum enum
-
+let ocaml_pos_to_string (file, lnum, cnum, enum) = Printf.sprintf "%s:%d:%d-%d:" file lnum cnum enum
 
 (** Pretty print a location of ml source *)
 let pp_ocaml_pos fmt ocaml_pos = F.pp_print_string fmt (ocaml_pos_to_string ocaml_pos)
@@ -320,14 +316,9 @@ let setup_log_file () =
       ()
   | None ->
       let fmt, chan, preexisting_logfile =
-        let results_dir =
-          (* if invoked in a sub-dir (e.g., in Buck integrations), log inside the original log
-              file *)
-          Sys.getenv Config.infer_top_results_dir_env_var
-          |> Option.value ~default:Config.results_dir
-        in
+        (* if invoked in a sub-dir (e.g., in Buck integrations), log inside the original log file *)
         (* assumes the results dir exists already *)
-        let logfile_path = results_dir ^/ Config.log_file in
+        let logfile_path = Config.toplevel_results_dir ^/ Config.log_file in
         let preexisting_logfile = PolyVariantEqual.( = ) (Sys.file_exists logfile_path) `Yes in
         let chan = Pervasives.open_out_gen [Open_append; Open_creat] 0o666 logfile_path in
         let file_fmt =

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -66,7 +66,7 @@ let edge_is_strong tenv obj_edge =
   in
   let has_weak_or_unretained_or_assign params =
     List.exists
-      ~f:(fun att ->
+      ~f:(fun Annot.{value= att} ->
         String.equal Config.unsafe_unret att
         || String.equal Config.weak att || String.equal Config.assign att )
       params

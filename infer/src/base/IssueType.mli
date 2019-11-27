@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -24,9 +24,16 @@ val all_issues : unit -> t list
 val pp : Format.formatter -> t -> unit
 (** pretty print a localised string *)
 
-val from_string :
+val register_from_string :
   ?enabled:bool -> ?hum:string -> ?doc_url:string -> ?linters_def_file:string -> string -> t
-(** create from an ordinary string *)
+(** Create a new issue and register it in the list of all issues.
+    NOTE: if the issue with the same string id is already registered,
+          overrides `hum`, `doc_url`, and `linters_def_file`, but DOES NOT override
+          `enabled`. This trick allows to deal with disabling/enabling dynamic AL issues
+          from the config, when we don't know all params yet.
+          Thus, the human-readable description can be updated when we encounter the
+          definition of the issue type, eg in AL.
+  *)
 
 val set_enabled : t -> bool -> unit
 
@@ -45,6 +52,8 @@ val array_out_of_bounds_l3 : t
 val assert_failure : t
 
 val bad_footprint : t
+
+val biabd_use_after_free : t
 
 val buffer_overrun_l1 : t
 
@@ -92,6 +101,8 @@ val codequery : t
 
 val comparing_floats_for_equality : t
 
+val complexity_increase : kind:CostKind.t -> is_on_cold_start:bool -> is_on_ui_thread:bool -> t
+
 val component_factory_function : t
 
 val component_file_cyclomatic_complexity : t
@@ -107,6 +118,8 @@ val component_with_unconventional_superclass : t
 val condition_always_false : t
 
 val condition_always_true : t
+
+val constant_address_dereference : t
 
 val create_intent_from_uri : t
 
@@ -133,49 +146,43 @@ val empty_vector_access : t
 
 val eradicate_condition_redundant : t
 
-val eradicate_condition_redundant_nonnull : t
-
 val eradicate_field_not_initialized : t
-
-val eradicate_field_not_mutable : t
 
 val eradicate_field_not_nullable : t
 
 val eradicate_field_over_annotated : t
 
-val eradicate_field_value_absent : t
-
 val eradicate_inconsistent_subclass_parameter_annotation : t
 
 val eradicate_inconsistent_subclass_return_annotation : t
 
-val eradicate_null_field_access : t
-
-val eradicate_null_method_call : t
+val eradicate_nullable_dereference : t
 
 val eradicate_parameter_not_nullable : t
-
-val eradicate_parameter_value_absent : t
 
 val eradicate_return_not_nullable : t
 
 val eradicate_return_over_annotated : t
 
-val eradicate_return_value_not_present : t
+val eradicate_unvetted_third_party_in_strict : t
 
-val eradicate_value_not_present : t
+val eradicate_forbidden_non_strict_in_strict : t
 
-val expensive_execution_time_call : t
+val expensive_cost_call : kind:CostKind.t -> is_on_cold_start:bool -> is_on_ui_thread:bool -> t
 
 val exposed_insecure_intent_handling : t
 
 val failure_exe : t
 
-val nullsafe_field_not_nullable : t
-
 val field_not_null_checked : t
 
 val graphql_field_access : t
+
+val guardedby_violation_racerd : t
+
+val impure_function : t
+
+val inefficient_keyset_iterator : t
 
 val inferbo_alloc_is_big : t
 
@@ -187,7 +194,7 @@ val inferbo_alloc_may_be_big : t
 
 val inferbo_alloc_may_be_negative : t
 
-val infinite_execution_time_call : t
+val infinite_cost_call : kind:CostKind.t -> t
 
 val inherently_dangerous_function : t
 
@@ -215,11 +222,13 @@ val leak_after_array_abstraction : t
 
 val leak_in_footprint : t
 
+val lockless_violation : t
+
 val lock_consistency_violation : t
 
 val logging_private_data : t
 
-val loop_invariant_call : t
+val expensive_loop_invariant_call : t
 
 val memory_leak : t
 
@@ -227,17 +236,21 @@ val missing_fld : t
 
 val missing_required_prop : t
 
+val mixed_self_weakself : t
+
 val mutable_local_variable_in_component_file : t
 
 val null_dereference : t
 
 val null_test_after_dereference : t
 
-val nullable_dereference : t
+val nullptr_dereference : t
+
+val nullsafe_field_not_nullable : t
+
+val nullsafe_nullable_dereference : t
 
 val parameter_not_null_checked : t
-
-val performance_variation : t
 
 val pointer_size_mismatch : t
 
@@ -283,6 +296,8 @@ val static_initialization_order_fiasco : t
 
 val strict_mode_violation : t
 
+val strong_self_not_checked : t
+
 val symexec_memory_error : t
 
 val tainted_buffer_access : t
@@ -304,8 +319,6 @@ val unreachable_code_after : t
 val unsafe_guarded_by_access : t
 
 val use_after_delete : t
-
-val use_after_destructor : t
 
 val use_after_free : t
 
@@ -337,4 +350,4 @@ val vector_invalidation : t
 
 val wrong_argument_number : t
 
-val zero_execution_time_call : t
+val zero_cost_call : kind:CostKind.t -> t

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -77,8 +77,7 @@ let tests =
     in
     let pp_sinks fmt sinks =
       if MockTrace.Sinks.is_empty sinks then F.pp_print_char fmt '?'
-      else
-        MockTrace.Sinks.iter (fun sink -> pp_call_site fmt (MockTrace.Sink.call_site sink)) sinks
+      else MockTrace.Sinks.iter (fun sink -> pp_call_site fmt (MockTrace.Sink.call_site sink)) sinks
     in
     (* just print source -> sink, no line nums or passthroughs *)
     let pp_trace fmt trace =
@@ -115,10 +114,8 @@ let tests =
     make_load_fld ~rhs_typ:(Typ.mk Tvoid) lhs_id_str fld_str (Exp.Var (ident_of_str root_str))
   in
   let assert_empty = invariant "{ }" in
-  (* hack: register an empty analyze_ondemand to prevent a crash because the callback is unset *)
-  let analyze_ondemand summary _ = summary in
-  let callbacks = {Ondemand.exe_env= Exe_env.mk (); analyze_ondemand} in
-  Ondemand.set_callbacks callbacks ;
+  let exe_env = Exe_env.mk () in
+  Ondemand.set_exe_env exe_env ;
   let test_list =
     [ ("source recorded", [assign_to_source "ret_id"; invariant "{ ret_id$0* => (SOURCE -> ?) }"])
     ; ("non-source not recorded", [assign_to_non_source "ret_id"; assert_empty])
@@ -156,7 +153,7 @@ let tests =
     ; ( "sink without source not tracked"
       , [assign_to_non_source "ret_id"; call_sink "ret_id"; assert_empty] ) ]
     |> TestInterpreter.create_tests ~pp_opt:pp_sparse
-         {formal_map= FormalMap.empty; summary= Summary.dummy}
+         {formal_map= FormalMap.empty; summary= Summary.OnDisk.dummy}
          ~initial:(MockTaintAnalysis.Domain.bottom, Bindings.empty)
   in
   "taint_test_suite" >::: test_list

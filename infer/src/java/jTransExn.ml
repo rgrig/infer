@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -32,8 +32,12 @@ let translate_exceptions (context : JContext.t) exit_nodes get_body_nodes handle
   (* this is removed in the true branches, and in the false branch of the last handler *)
   let id_exn_val = Ident.create_fresh Ident.knormal in
   let create_entry_node loc =
-    let instr_get_ret_val = Sil.Load (id_ret_val, Exp.Lvar ret_var, ret_type, loc) in
-    let instr_deactivate_exn = Sil.Store (Exp.Lvar ret_var, ret_type, Exp.null, loc) in
+    let instr_get_ret_val =
+      Sil.Load {id= id_ret_val; e= Exp.Lvar ret_var; root_typ= ret_type; typ= ret_type; loc}
+    in
+    let instr_deactivate_exn =
+      Sil.Store {e1= Exp.Lvar ret_var; root_typ= ret_type; typ= ret_type; e2= Exp.null; loc}
+    in
     let instr_unwrap_ret_val =
       let unwrap_builtin = Exp.Const (Const.Cfun BuiltinDecl.__unwrap_exception) in
       Sil.Call
@@ -47,7 +51,8 @@ let translate_exceptions (context : JContext.t) exit_nodes get_body_nodes handle
       [instr_get_ret_val; instr_deactivate_exn; instr_unwrap_ret_val]
   in
   let create_entry_block handler_list =
-    try ignore (Hashtbl.find catch_block_table handler_list) with Caml.Not_found ->
+    try ignore (Hashtbl.find catch_block_table handler_list)
+    with Caml.Not_found ->
       let collect succ_nodes rethrow_exception handler =
         let catch_nodes = get_body_nodes handler.JBir.e_handler in
         let loc =
@@ -60,13 +65,12 @@ let translate_exceptions (context : JContext.t) exit_nodes get_body_nodes handle
         match handler.JBir.e_catch_type with
         | None ->
             let finally_node = create_node loc (Procdesc.Node.Stmt_node FinallyBranch) [] in
-            Procdesc.node_set_succs_exn procdesc finally_node catch_nodes exit_nodes ;
+            Procdesc.node_set_succs procdesc finally_node ~normal:catch_nodes ~exn:exit_nodes ;
             [finally_node]
         | Some exn_class_name ->
             let exn_type =
               match
-                JTransType.get_class_type context.program (JContext.get_tenv context)
-                  exn_class_name
+                JTransType.get_class_type context.program (JContext.get_tenv context) exn_class_name
               with
               | {Typ.desc= Tptr (typ, _)} ->
                   typ
@@ -96,10 +100,20 @@ let translate_exceptions (context : JContext.t) exit_nodes get_body_nodes handle
             in
             let instr_set_catch_var =
               let catch_var = JContext.set_pvar context handler.JBir.e_catch_var ret_type in
-              Sil.Store (Exp.Lvar catch_var, ret_type, Exp.Var id_exn_val, loc)
+              Sil.Store
+                { e1= Exp.Lvar catch_var
+                ; root_typ= ret_type
+                ; typ= ret_type
+                ; e2= Exp.Var id_exn_val
+                ; loc }
             in
             let instr_rethrow_exn =
-              Sil.Store (Exp.Lvar ret_var, ret_type, Exp.Exn (Exp.Var id_exn_val), loc)
+              Sil.Store
+                { e1= Exp.Lvar ret_var
+                ; root_typ= ret_type
+                ; typ= ret_type
+                ; e2= Exp.Exn (Exp.Var id_exn_val)
+                ; loc }
             in
             let node_kind_true =
               Procdesc.Node.Prune_node (true, if_kind, PruneNodeKind_ExceptionHandler)
@@ -118,8 +132,8 @@ let translate_exceptions (context : JContext.t) exit_nodes get_body_nodes handle
               in
               create_node loc node_kind_false instrs_false
             in
-            Procdesc.node_set_succs_exn procdesc node_true catch_nodes exit_nodes ;
-            Procdesc.node_set_succs_exn procdesc node_false succ_nodes exit_nodes ;
+            Procdesc.node_set_succs procdesc node_true ~normal:catch_nodes ~exn:exit_nodes ;
+            Procdesc.node_set_succs procdesc node_false ~normal:succ_nodes ~exn:exit_nodes ;
             [node_true; node_false]
       in
       let is_last_handler = ref true in
@@ -141,7 +155,7 @@ let translate_exceptions (context : JContext.t) exit_nodes get_body_nodes handle
             Location.none context.source_file
       in
       let entry_node = create_entry_node loc in
-      Procdesc.node_set_succs_exn procdesc entry_node nodes_first_handler exit_nodes ;
+      Procdesc.node_set_succs procdesc entry_node ~normal:nodes_first_handler ~exn:exit_nodes ;
       Hashtbl.add catch_block_table handler_list [entry_node]
   in
   Hashtbl.iter (fun _ handler_list -> create_entry_block handler_list) handler_table ;

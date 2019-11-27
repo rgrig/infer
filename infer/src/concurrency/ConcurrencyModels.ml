@@ -1,13 +1,11 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-module F = Format
-module MF = MarkupFormatter
 module L = Logging
 
 type lock_effect =
@@ -36,14 +34,17 @@ let is_thread_utils_method method_name_str = function
       false
 
 
-let get_thread = function
+let get_thread_assert_effect = function
   | Typ.Procname.Java java_pname when is_thread_utils_type java_pname -> (
     match Typ.Procname.Java.get_method java_pname with
-    | "assertMainThread" | "assertOnUiThread" | "checkOnMainThread" ->
+    | "assertMainThread" | "assertOnUiThread" | "checkOnMainThread" | "checkIsOnMainThread" ->
         MainThread
-    | "isMainThread" | "isUiThread" ->
+    | "isMainThread" | "isOnMainThread" | "isUiThread" ->
         MainThreadIfTrue
-    | "assertOnBackgroundThread" | "assertOnNonUiThread" | "checkOnNonUiThread" ->
+    | "assertOnBackgroundThread"
+    | "assertOnNonUiThread"
+    | "checkOnNonUiThread"
+    | "checkOnWorkerThread" ->
         BackgroundThread
     | _ ->
         UnknownThread )
@@ -82,9 +83,9 @@ end = struct
       ; unlock= ["release"] }
     in
     [ { def with
-        classname= "apache::thrift::concurrency::Monitor"; trylock= "timedlock" :: def.trylock }
-    ; { def with
-        classname= "apache::thrift::concurrency::Mutex"; trylock= "timedlock" :: def.trylock }
+        classname= "apache::thrift::concurrency::Monitor"
+      ; trylock= "timedlock" :: def.trylock }
+    ; {def with classname= "apache::thrift::concurrency::Mutex"; trylock= "timedlock" :: def.trylock}
     ; {rwm with classname= "apache::thrift::concurrency::NoStarveReadWriteMutex"}
     ; {rwm with classname= "apache::thrift::concurrency::ReadWriteMutex"}
     ; {shd with classname= "boost::shared_mutex"}
@@ -114,8 +115,7 @@ end = struct
 
   let mk_matcher methods =
     let matcher = QualifiedCppName.Match.of_fuzzy_qual_names methods in
-    fun pname ->
-      QualifiedCppName.Match.match_qualifiers matcher (Typ.Procname.get_qualifiers pname)
+    fun pname -> QualifiedCppName.Match.match_qualifiers matcher (Typ.Procname.get_qualifiers pname)
 
 
   let is_lock, is_unlock, is_trylock, is_std_lock =
@@ -138,9 +138,9 @@ end = struct
     QualifiedCppName.Match.of_fuzzy_qual_names class_names
 
 
-  (** C++ guard classes used for scope-based lock management. 
-    NB we pretend all classes below implement the mutex interface even though only 
-    [shared_lock] and [unique_lock] do, for simplicity.  The comments summarise which 
+  (** C++ guard classes used for scope-based lock management.
+    NB we pretend all classes below implement the mutex interface even though only
+    [shared_lock] and [unique_lock] do, for simplicity.  The comments summarise which
     methods are implemented. *)
   let guards =
     (* TODO std::scoped_lock *)
@@ -310,12 +310,6 @@ let get_current_class_and_annotated_superclasses is_annot tenv pname =
       None
 
 
-let find_annotated_or_overriden_annotated_method ~attrs_of_pname is_annot pname tenv =
-  PatternMatch.override_find
-    (fun pn -> Annotations.pname_has_return_annot pn ~attrs_of_pname is_annot)
-    tenv pname
-
-
 let ui_matcher_records =
   let open MethodMatcher in
   let fragment_methods =
@@ -335,6 +329,7 @@ let ui_matcher_records =
   (* search_superclasses is true by default in how [default] is treated *)
   [ {default with classname= "android.support.v4.app.Fragment"; methods= fragment_methods}
   ; {default with classname= "android.app.Fragment"; methods= fragment_methods}
+  ; {default with classname= "androidx.fragment.app.Fragment"; methods= fragment_methods}
   ; {default with classname= "android.content.ContentProvider"; methods= ["onCreate"]}
   ; {default with classname= "android.content.BroadcastReceiver"; methods= ["onReceive"]}
   ; { default with
@@ -343,74 +338,66 @@ let ui_matcher_records =
   ; {default with classname= "android.app.Application"; methods= ["onCreate"]}
   ; { default with
       classname= "android.app.Activity"
-    ; methods= ["onCreate"; "onStart"; "onRestart"; "onResume"; "onPause"; "onStop"; "onDestroy"]
-    }
+    ; methods= ["onCreate"; "onStart"; "onRestart"; "onResume"; "onPause"; "onStop"; "onDestroy"] }
   ; { default with
       (* according to Android documentation, *all* methods of the View class run on UI thread, but
-       let's be a bit conservative and catch all methods that start with "on".
-       https://developer.android.com/reference/android/view/View.html *)
+         let's be a bit conservative and catch all methods that start with "on".
+         https://developer.android.com/reference/android/view/View.html *)
       method_prefix= true
     ; classname= "android.view.View"
-    ; methods= ["on"] } ]
+    ; methods= ["on"] }
+  ; { default with
+      classname= "android.content.ServiceConnection"
+    ; methods= ["onBindingDied"; "onNullBinding"; "onServiceConnected"; "onServiceDisconnected"] }
+  ]
 
 
-let is_ui_method =
+let is_modeled_ui_method =
   let matchers = List.map ui_matcher_records ~f:MethodMatcher.of_record in
   (* we pass an empty actuals list because all matching is done on class and method name here *)
   fun tenv pname -> MethodMatcher.of_list matchers tenv pname []
 
 
-let runs_on_ui_thread =
-  (* assume that methods annotated with @UiThread, @OnEvent, @OnBind, @OnMount, @OnUnbind,
-     @OnUnmount always run on the UI thread *)
-  let annotation_matchers =
-    [ Annotations.ia_is_mainthread
-    ; Annotations.ia_is_ui_thread
-    ; Annotations.ia_is_on_bind
-    ; Annotations.ia_is_on_event
-    ; Annotations.ia_is_on_mount
-    ; Annotations.ia_is_on_unbind
-    ; Annotations.ia_is_on_unmount ]
+type annotation_trail = DirectlyAnnotated | Override of Typ.Procname.t | SuperClass of Typ.name
+[@@deriving compare]
+
+let find_override_or_superclass_annotated ~attrs_of_pname is_annot tenv proc_name =
+  let is_annotated pn = Annotations.pname_has_return_annot pn ~attrs_of_pname is_annot in
+  let is_override = Staged.unstage (PatternMatch.is_override_of proc_name) in
+  let rec find_override_or_superclass_aux class_name =
+    match Tenv.lookup tenv class_name with
+    | None ->
+        None
+    | Some tstruct when Annotations.struct_typ_has_annot tstruct is_annot ->
+        Some (SuperClass class_name)
+    | Some (tstruct : Typ.Struct.t) -> (
+      match
+        List.find_map tstruct.methods ~f:(fun pn ->
+            if is_override pn && is_annotated pn then Some (Override pn) else None )
+      with
+      | Some _ as result ->
+          result
+      | None ->
+          List.find_map tstruct.supers ~f:find_override_or_superclass_aux )
   in
-  let is_annot annot = List.exists annotation_matchers ~f:(fun m -> m annot) in
-  let mono_pname = MF.wrap_monospaced Typ.Procname.pp in
-  fun ~attrs_of_pname tenv proc_desc ->
-    let pname = Procdesc.get_proc_name proc_desc in
-    if
-      Annotations.pdesc_has_return_annot proc_desc Annotations.ia_is_worker_thread
-      || find_annotated_or_overriden_annotated_method ~attrs_of_pname
-           Annotations.ia_is_worker_thread pname tenv
-         |> Option.is_some
-      || get_current_class_and_annotated_superclasses Annotations.ia_is_worker_thread tenv pname
-         |> Option.value_map ~default:false ~f:(function _, [] -> false | _ -> true)
-    then None
-    else if is_ui_method tenv pname then
-      Some (F.asprintf "%a is a standard UI-thread method" mono_pname pname)
-    else if Annotations.pdesc_has_return_annot proc_desc is_annot then
-      Some
-        (F.asprintf "%a is annotated %s" mono_pname pname
-           (MF.monospaced_to_string Annotations.ui_thread))
-    else
-      match find_annotated_or_overriden_annotated_method ~attrs_of_pname is_annot pname tenv with
-      | Some override_pname ->
-          Some
-            (F.asprintf "class %a overrides %a, which is annotated %s" mono_pname pname mono_pname
-               override_pname
-               (MF.monospaced_to_string Annotations.ui_thread))
-      | None -> (
-        match get_current_class_and_annotated_superclasses is_annot tenv pname with
-        | Some (current_class, (super_class :: _ as super_classes)) ->
-            let middle =
-              if List.exists super_classes ~f:(Typ.Name.equal current_class) then ""
-              else F.asprintf " extends %a, which" (MF.wrap_monospaced Typ.Name.pp) super_class
-            in
-            Some
-              (F.asprintf "class %s%s is annotated %s"
-                 (MF.monospaced_to_string (Typ.Name.name current_class))
-                 middle
-                 (MF.monospaced_to_string Annotations.ui_thread))
-        | _ ->
-            None )
+  if is_annotated proc_name then Some DirectlyAnnotated
+  else Typ.Procname.get_class_type_name proc_name |> Option.bind ~f:find_override_or_superclass_aux
+
+
+let annotated_as ~attrs_of_pname predicate tenv pname =
+  find_override_or_superclass_annotated ~attrs_of_pname predicate tenv pname |> Option.is_some
+
+
+let annotated_as_worker_thread ~attrs_of_pname tenv pname =
+  annotated_as ~attrs_of_pname Annotations.ia_is_worker_thread tenv pname
+
+
+let annotated_as_uithread_equivalent ~attrs_of_pname tenv pname =
+  annotated_as ~attrs_of_pname Annotations.ia_is_uithread_equivalent tenv pname
+
+
+let runs_on_ui_thread ~attrs_of_pname tenv pname =
+  is_modeled_ui_method tenv pname || annotated_as_uithread_equivalent ~attrs_of_pname tenv pname
 
 
 let cpp_lock_types_matcher = Clang.lock_types_matcher

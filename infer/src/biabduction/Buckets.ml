@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -75,7 +75,7 @@ let check_access access_opt de_opt =
           List.exists ~f:(fun (formal_name, _) -> Mangled.equal name formal_name) formals
       in
       let process_formal_letref = function
-        | Sil.Load (id, Exp.Lvar pvar, _, _) ->
+        | Sil.Load {id; e= Exp.Lvar pvar} ->
             let is_java_this = Language.curr_language_is Java && Pvar.is_this pvar in
             if (not is_java_this) && is_formal pvar then Some id else None
         | _ ->
@@ -113,7 +113,7 @@ let check_access access_opt de_opt =
       let filter = function
         | Sil.Call _ ->
             true
-        | Sil.Store (_, _, e, _) ->
+        | Sil.Store {e2= e} ->
             exp_is_null e
         | _ ->
             false
@@ -121,13 +121,10 @@ let check_access access_opt de_opt =
       Instrs.exists ~f:filter (Procdesc.Node.get_instrs node)
     in
     let do_node node =
-      Int.equal (Procdesc.Node.get_loc node).Location.line line_number
-      && has_call_or_sets_null node
+      Int.equal (Procdesc.Node.get_loc node).Location.line line_number && has_call_or_sets_null node
     in
     let path, pos_opt = State.get_path () in
-    match
-      IContainer.rev_filter_to_list path ~fold:Paths.Path.fold_all_nodes_nocalls ~f:do_node
-    with
+    match IContainer.rev_filter_to_list path ~fold:Paths.Path.fold_all_nodes_nocalls ~f:do_node with
     | [] ->
         None
     | local_access_nodes ->

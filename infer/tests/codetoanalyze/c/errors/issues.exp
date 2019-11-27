@@ -32,7 +32,7 @@ codetoanalyze/c/errors/memory_leaks/cleanup_attribute.c, FP_cleanup_string_good,
 codetoanalyze/c/errors/memory_leaks/test.c, common_realloc_leak, 3, MEMORY_LEAK, no_bucket
 codetoanalyze/c/errors/memory_leaks/test.c, common_realloc_leak2, 3, MEMORY_LEAK, no_bucket
 codetoanalyze/c/errors/memory_leaks/test.c, common_realloc_leak2, 5, NULL_TEST_AFTER_DEREFERENCE, no_bucket
-codetoanalyze/c/errors/memory_leaks/test.c, conditional_last_instruction, 5, MEMORY_LEAK, no_bucket
+codetoanalyze/c/errors/memory_leaks/test.c, conditional_last_instruction, 2, MEMORY_LEAK, no_bucket
 codetoanalyze/c/errors/memory_leaks/test.c, malloc_sizeof_value_leak_bad, 7, MEMORY_LEAK, no_bucket
 codetoanalyze/c/errors/memory_leaks/test.c, malloc_sizeof_value_leak_bad, 8, ARRAY_OUT_OF_BOUNDS_L3, no_bucket
 codetoanalyze/c/errors/memory_leaks/test.c, simple_leak, 2, MEMORY_LEAK, no_bucket
@@ -54,6 +54,7 @@ codetoanalyze/c/errors/null_dereference/angelism.c, struct_value_by_ref_callee_w
 codetoanalyze/c/errors/null_dereference/angelism.c, struct_value_by_ref_ptr_write, 4, NULL_DEREFERENCE, B1
 codetoanalyze/c/errors/null_dereference/angelism.c, struct_value_from_pointer_skip_bad, 3, NULL_DEREFERENCE, B1
 codetoanalyze/c/errors/null_dereference/angelism.c, struct_value_skip_null_deref, 4, NULL_DEREFERENCE, B1
+codetoanalyze/c/errors/null_dereference/exit_example.c, exit_example_bad, 5, NULL_DEREFERENCE, B1
 codetoanalyze/c/errors/null_dereference/getc.c, crash_clearerr, 4, NULL_DEREFERENCE, B1
 codetoanalyze/c/errors/null_dereference/getc.c, crash_feof, 4, NULL_DEREFERENCE, B1
 codetoanalyze/c/errors/null_dereference/getc.c, crash_ferror, 4, NULL_DEREFERENCE, B1
@@ -73,7 +74,7 @@ codetoanalyze/c/errors/null_dereference/getc.c, crash_rewind, 4, NULL_DEREFERENC
 codetoanalyze/c/errors/null_dereference/getc.c, crash_ungetc, 5, NULL_DEREFERENCE, B1
 codetoanalyze/c/errors/null_dereference/getc.c, crash_vfprintf, 5, NULL_DEREFERENCE, B1
 codetoanalyze/c/errors/null_dereference/getcwd.c, getcwd_no_buf_no_check_bad, 2, NULL_DEREFERENCE, B1
-codetoanalyze/c/errors/null_dereference/getcwd.c, getcwd_no_buf_no_free_bad, 6, MEMORY_LEAK, no_bucket
+codetoanalyze/c/errors/null_dereference/getcwd.c, getcwd_no_buf_no_free_bad, 3, MEMORY_LEAK, no_bucket
 codetoanalyze/c/errors/null_dereference/getcwd.c, getcwd_no_check_bad, 3, NULL_DEREFERENCE, B1
 codetoanalyze/c/errors/null_dereference/issue_680.c, null_ptr_deref2_bad, 0, NULL_DEREFERENCE, B1
 codetoanalyze/c/errors/null_dereference/issue_680.c, null_ptr_deref_bad, 0, NULL_DEREFERENCE, B1
@@ -100,6 +101,5 @@ codetoanalyze/c/errors/resource_leaks/leak.c, socketNotClosed, 5, RESOURCE_LEAK,
 codetoanalyze/c/errors/sizeof/sizeof_706.c, sentinel_bad, 0, DIVIDE_BY_ZERO, no_bucket
 codetoanalyze/c/frontend/enumeration/other_enum.c, other_enum_test, 4, DIVIDE_BY_ZERO, no_bucket
 codetoanalyze/c/frontend/offsetof_expr/offsetof_expr.c, test_offsetof_expr, 3, DIVIDE_BY_ZERO, no_bucket
-codetoanalyze/c/frontend/offsetof_expr/offsetof_expr.c, test_offsetof_expr, 5, DIVIDE_BY_ZERO, no_bucket
 codetoanalyze/c/frontend/vaarg_expr/vaarg_expr.c, vaarg_foo, 6, DIVIDE_BY_ZERO, no_bucket
 codetoanalyze/c/frontend/vaarg_expr/vaarg_expr.c, vaarg_foo, 8, DIVIDE_BY_ZERO, no_bucket

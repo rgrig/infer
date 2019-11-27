@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -211,7 +211,8 @@ module Loops : sig
         ; condition: Clang_ast_t.stmt
         ; increment: Clang_ast_t.stmt
         ; body: Clang_ast_t.stmt }
-    | While of {decl_stmt: Clang_ast_t.stmt; condition: Clang_ast_t.stmt; body: Clang_ast_t.stmt}
+    | While of
+        {decl_stmt: Clang_ast_t.stmt option; condition: Clang_ast_t.stmt; body: Clang_ast_t.stmt}
     | DoWhile of {condition: Clang_ast_t.stmt; body: Clang_ast_t.stmt}
 
   val get_cond : loop_kind -> Clang_ast_t.stmt
@@ -219,21 +220,12 @@ module Loops : sig
   val get_body : loop_kind -> Clang_ast_t.stmt
 end
 
-(** Module that provides utilities for scopes *)
-module Scope : sig
-  module StmtMap = ClangPointers.Map
-
-  val compute_vars_to_destroy : Clang_ast_t.stmt -> Clang_ast_t.decl list StmtMap.t
-end
-
 (** This module handles the translation of the variable self which is challenging because self is
     used both as a variable in instance method calls and also as a type in class method calls. *)
 module Self : sig
   exception
     SelfClassException of
-      { class_name: Typ.Name.t
-      ; position: Logging.ocaml_pos
-      ; source_range: Clang_ast_t.source_range }
+      {class_name: Typ.Name.t; position: Logging.ocaml_pos; source_range: Clang_ast_t.source_range}
 
   val add_self_parameter_for_super_instance :
        Clang_ast_t.stmt_info

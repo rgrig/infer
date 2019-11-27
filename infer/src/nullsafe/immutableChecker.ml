@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -42,5 +42,6 @@ let check_immutable_cast tenv curr_pname curr_pdesc typ_expected typ_found_opt l
       ()
 
 
-let callback_check_immutable_cast ({Callbacks.tenv} as args) =
+let callback_check_immutable_cast ({Callbacks.exe_env; summary} as args) =
+  let tenv = Exe_env.get_tenv exe_env (Summary.get_proc_name summary) in
   Eradicate.callback_check_return_type (check_immutable_cast tenv) args

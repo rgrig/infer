@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -13,6 +13,8 @@ val instantiate_cost :
      Typ.IntegerWidths.t
   -> inferbo_caller_mem:BufferOverrunDomain.Mem.t
   -> callee_pname:Typ.Procname.t
-  -> params:(Exp.t * 'a) list
+  -> callee_formals:(Pvar.t * Typ.t) list
+  -> params:(Exp.t * Typ.t) list
   -> callee_cost:CostDomain.BasicCost.t
+  -> loc:Location.t
   -> CostDomain.BasicCost.t

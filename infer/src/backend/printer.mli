@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -18,7 +18,7 @@ module LineReader : sig
   val create : unit -> t
   (** create a line reader *)
 
-  val from_file_linenum_original : t -> SourceFile.t -> int -> string option
+  val from_file_linenum : t -> SourceFile.t -> int -> string option
   (** get the line from a source file and line number *)
 
   val from_loc : t -> Location.t -> string option

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -16,8 +16,7 @@ val add_no_duplicates_fields : Typ.Struct.field -> Typ.Struct.field list -> Typ.
 val append_no_duplicates_fields :
   Typ.Struct.field list -> Typ.Struct.field list -> Typ.Struct.field list
 
-val append_no_duplicates_methods :
-  Typ.Procname.t list -> Typ.Procname.t list -> Typ.Procname.t list
+val append_no_duplicates_methods : Typ.Procname.t list -> Typ.Procname.t list -> Typ.Procname.t list
 
 val swap_elements_list : 'a list -> 'a list
 

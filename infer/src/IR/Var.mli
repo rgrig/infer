@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -36,9 +36,6 @@ val is_global : t -> bool
 val is_local_to_procedure : Typ.Procname.t -> t -> bool
 
 val is_return : t -> bool
-
-val is_this : t -> bool
-(** return whether the var is the special "this" var *)
 
 val is_footprint : t -> bool
 

@@ -1,7 +1,7 @@
 (*
  * Copyright (c) 2016-present, Programming Research Laboratory (ROPAS)
  *                             Seoul National University, Korea
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -52,7 +52,7 @@ module ArrInfo = struct
         , C {offset= offset2; size= size2; stride= stride2} ) ->
           let offset =
             let thresholds =
-              if Itv.eq size1 size2 then Option.to_list (Itv.is_const size1) else []
+              if Itv.eq size1 size2 then Option.to_list (Itv.get_const size1) else []
             in
             Itv.widen_thresholds ~thresholds ~prev:offset1 ~next:offset2 ~num_iters
           in
@@ -66,7 +66,7 @@ module ArrInfo = struct
           Top
 
 
-  let ( <= ) : lhs:t -> rhs:t -> bool =
+  let leq : lhs:t -> rhs:t -> bool =
    fun ~lhs ~rhs ->
     if phys_equal lhs rhs then true
     else
@@ -130,7 +130,18 @@ module ArrInfo = struct
     | Java {length} ->
         F.fprintf f "length : %a" Itv.pp length
     | Top ->
-        F.pp_print_string f SpecialChars.down_tack
+        AbstractDomain.TopLiftedUtils.pp_top f
+
+
+  let is_pointer : Symb.SymbolPath.partial -> t -> bool =
+   fun path arr ->
+    match (path, arr) with
+    | Deref ((Deref_COneValuePointer | Deref_CPointer), path), C {offset; size} ->
+        Itv.is_offset_path_of path offset && Itv.is_length_path_of path size
+    | Deref (Deref_JavaPointer, path), Java {length} ->
+        Itv.is_length_path_of path length
+    | _, _ ->
+        false
 
 
   let is_symbolic : t -> bool =
@@ -213,7 +224,7 @@ module ArrInfo = struct
    fun new_stride arr ->
     match arr with
     | C {offset; size; stride} ->
-        Option.value_map (Itv.is_const stride) ~default:arr ~f:(fun stride ->
+        Option.value_map (Itv.get_const stride) ~default:arr ~f:(fun stride ->
             assert ((not Z.(equal stride zero)) && not Z.(equal new_stride zero)) ;
             if Z.equal new_stride stride then arr
             else
@@ -259,6 +270,14 @@ module ArrInfo = struct
         cmp_itv Itv.zero Itv.zero
     | _ ->
         Boolean.Top
+
+
+  let is_symbolic_length_of_path path info =
+    match (path, info) with
+    | Symb.SymbolPath.Deref (_, prefix), Java {length} ->
+        Itv.is_length_path_of prefix length
+    | _ ->
+        false
 end
 
 include AbstractDomain.Map (Allocsite) (ArrInfo)
@@ -279,15 +298,15 @@ let make_java : Allocsite.t -> length:Itv.t -> t =
  fun a ~length -> singleton a (ArrInfo.make_java ~length)
 
 
-let join_itv : f:(ArrInfo.t -> Itv.t) -> t -> Itv.t =
- fun ~f a -> fold (fun _ arr -> Itv.join (f arr)) a Itv.bot
+let join_itv : cost_mode:bool -> f:(ArrInfo.t -> Itv.t) -> t -> Itv.t =
+ fun ~cost_mode ~f a ->
+  let join, init = if cost_mode then (Itv.plus, Itv.zero) else (Itv.join, Itv.bot) in
+  fold (fun _ arr -> join (f arr)) a init
 
 
-let offsetof = join_itv ~f:ArrInfo.offsetof
+let offsetof ?(cost_mode = false) = join_itv ~cost_mode ~f:ArrInfo.offsetof
 
-let sizeof = join_itv ~f:ArrInfo.sizeof
-
-let sizeof_byte = join_itv ~f:ArrInfo.byte_size
+let sizeof ?(cost_mode = false) = join_itv ~cost_mode ~f:ArrInfo.sizeof
 
 let plus_offset : t -> Itv.t -> t = fun arr i -> map (fun a -> ArrInfo.plus_offset a i) arr
 
@@ -311,19 +330,34 @@ let get_pow_loc : t -> PowLoc.t =
   fold pow_loc_of_allocsite array PowLoc.bot
 
 
-let subst : t -> Bound.eval_sym -> PowLoc.eval_locpath -> t =
+let subst : t -> Bound.eval_sym -> PowLoc.eval_locpath -> PowLoc.t * t =
  fun a eval_sym eval_locpath ->
-  let subst1 l info acc =
+  let subst1 l info (powloc_acc, acc) =
     let info' = ArrInfo.subst info eval_sym in
     match Allocsite.get_param_path l with
     | None ->
-        add l info' acc
+        (powloc_acc, add l info' acc)
     | Some path ->
         let locs = eval_locpath path in
-        let add_allocsite l acc = match l with Loc.Allocsite a -> add a info' acc | _ -> acc in
-        PowLoc.fold add_allocsite locs acc
+        let add_allocsite l (powloc_acc, acc) =
+          match l with
+          | Loc.Allocsite (Symbol (Symb.SymbolPath.Deref (_, prefix)) as a)
+            when ArrInfo.is_symbolic_length_of_path path info ->
+              let length = Itv.of_length_path ~is_void:false prefix in
+              (powloc_acc, add a (ArrInfo.make_java ~length) acc)
+          | Loc.Allocsite a ->
+              (powloc_acc, add a info' acc)
+          | _ ->
+              if ArrInfo.is_pointer path info then (PowLoc.add l powloc_acc, acc)
+              else (
+                if Config.bo_debug >= 3 then
+                  L.d_printfln_escaped "Substitution of array block failed: %a -> %a" Loc.pp l
+                    ArrInfo.pp info ;
+                (powloc_acc, acc) )
+        in
+        PowLoc.fold add_allocsite locs (powloc_acc, acc)
   in
-  fold subst1 a empty
+  fold subst1 a (PowLoc.empty, empty)
 
 
 let is_symbolic : t -> bool = fun a -> exists (fun _ ai -> ArrInfo.is_symbolic ai) a

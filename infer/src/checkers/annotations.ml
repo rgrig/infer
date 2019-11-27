@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -27,6 +27,8 @@ let bind_string = "BindString"
 
 let camel_nonnull = "NonNull"
 
+let cleanup = "Cleanup"
+
 let expensive = "Expensive"
 
 let false_on_null = "FalseOnNull"
@@ -49,13 +51,23 @@ let inject_prop = "InjectProp"
 
 let inject_view = "InjectView"
 
-let mutable_ = "Mutable"
+let lockless = "Lockless"
 
 let nonnull = "Nonnull"
 
 let no_allocation = "NoAllocation"
 
 let nullable = "Nullable"
+
+let nullsafe_strict = "NullsafeStrict"
+
+let mainthread = "MainThread"
+
+let nonblocking = "NonBlocking"
+
+let notnull = "NotNull"
+
+let not_thread_safe = "NotThreadSafe"
 
 let on_bind = "OnBind"
 
@@ -67,17 +79,7 @@ let on_unbind = "OnUnbind"
 
 let on_unmount = "OnUnmount"
 
-let mainthread = "MainThread"
-
-let nonblocking = "NonBlocking"
-
-let notnull = "NotNull"
-
-let not_thread_safe = "NotThreadSafe"
-
 let performance_critical = "PerformanceCritical"
-
-let present = "Present"
 
 let prop = "Prop"
 
@@ -93,6 +95,8 @@ let suppress_lint = "SuppressLint"
 
 let suppress_view_nullability = "SuppressViewNullability"
 
+let recently_nullable = "RecentlyNullable"
+
 let thread_confined = "ThreadConfined"
 
 let thread_safe = "ThreadSafe"
@@ -102,8 +106,6 @@ let thrift_service = "ThriftService"
 let true_on_null = "TrueOnNull"
 
 let ui_thread = "UiThread"
-
-let verify_annotation = "com.facebook.infer.annotation.Verify"
 
 let visibleForTesting = "VisibleForTesting"
 
@@ -123,12 +125,15 @@ let ma_has_annotation_with ({return; params} : Annot.Method.t) (predicate : Anno
 
 (** [annot_ends_with annot ann_name] returns true if the class name of [annot], without the package,
     is equal to [ann_name] *)
-let annot_ends_with annot ann_name =
-  match String.rsplit2 annot.Annot.class_name ~on:'.' with
-  | None ->
-      String.equal annot.Annot.class_name ann_name
-  | Some (_, annot_class_name) ->
-      String.equal annot_class_name ann_name
+let annot_ends_with ({class_name} : Annot.t) ann_name =
+  String.is_suffix class_name ~suffix:ann_name
+  &&
+  (* here, [class_name] ends with [ann_name] but it could be that it's just a suffix
+     of the last dot-component of [class_name], eg [class_name="x.y.z.a.bcd"] and
+     [ann_name="cd"]; in that case we want to fail the check, so we check that the
+     character just before the match is indeed a dot (or there is no dot at all). *)
+  let dot_pos = String.(length class_name - length ann_name - 1) in
+  Int.is_negative dot_pos || Char.equal '.' class_name.[dot_pos]
 
 
 let class_name_matches s ((annot : Annot.t), _) = String.equal s annot.class_name
@@ -171,11 +176,21 @@ let ia_is_not_thread_safe ia = ia_ends_with ia not_thread_safe
 
 let ia_is_propagates_nullable ia = ia_ends_with ia propagates_nullable
 
-let ia_is_nullable ia = ia_ends_with ia nullable || ia_is_propagates_nullable ia
+let ia_is_nullable ia =
+  ia_ends_with ia nullable
+  (* @RecentlyNullable is a special annotation that was added to solve backward compatibility issues
+     for Android SDK migration.
+     See https://android-developers.googleblog.com/2018/08/android-pie-sdk-is-now-more-kotlin.html for details.
+     From nullsafe point of view, such annotations should be treated exactly as normal @Nullable annotation is treated.
+     (Actually, IDEs might even show it as @Nullable)
+  *)
+  || ia_ends_with ia recently_nullable
+  || ia_is_propagates_nullable ia
 
-let ia_is_present ia = ia_ends_with ia present
 
 let ia_is_nonnull ia = List.exists ~f:(ia_ends_with ia) [nonnull; notnull; camel_nonnull]
+
+let ia_is_nullsafe_strict ia = ia_ends_with ia nullsafe_strict
 
 let ia_is_false_on_null ia = ia_ends_with ia false_on_null
 
@@ -192,6 +207,8 @@ let ia_is_true_on_null ia = ia_ends_with ia true_on_null
 let ia_is_nonblocking ia = ia_ends_with ia nonblocking
 
 let ia_is_initializer ia = ia_ends_with ia initializer_
+
+let ia_is_cleanup ia = ia_ends_with ia cleanup
 
 let ia_is_volatile ia = ia_contains ia volatile
 
@@ -210,19 +227,13 @@ let field_injector_readonly_list = inject :: field_injector_readwrite_list
 
 (** Annotations for readonly injectors.
     The injector framework initializes the field but does not write null into it. *)
-let ia_is_field_injector_readonly ia =
-  List.exists ~f:(ia_ends_with ia) field_injector_readonly_list
-
+let ia_is_field_injector_readonly ia = List.exists ~f:(ia_ends_with ia) field_injector_readonly_list
 
 (** Annotations for read-write injectors.
     The injector framework initializes the field and can write null into it. *)
 let ia_is_field_injector_readwrite ia =
   List.exists ~f:(ia_ends_with ia) field_injector_readwrite_list
 
-
-let ia_is_mutable ia = ia_ends_with ia mutable_
-
-let ia_is_verify ia = ia_contains ia verify_annotation
 
 let ia_is_expensive ia = ia_ends_with ia expensive
 
@@ -234,20 +245,11 @@ let ia_is_inject ia = ia_ends_with ia inject
 
 let ia_is_suppress_lint ia = ia_ends_with ia suppress_lint
 
-let ia_is_on_event ia = ia_ends_with ia on_event
-
-let ia_is_on_bind ia = ia_ends_with ia on_bind
-
-let ia_is_on_mount ia = ia_ends_with ia on_mount
-
-let ia_is_on_unbind ia = ia_ends_with ia on_unbind
-
-let ia_is_on_unmount ia = ia_ends_with ia on_unmount
-
-let ia_is_ui_thread ia = ia_ends_with ia ui_thread
-
-let ia_is_mainthread ia = ia_ends_with ia mainthread
-
 let ia_is_thread_confined ia = ia_ends_with ia thread_confined
 
 let ia_is_worker_thread ia = ia_ends_with ia worker_thread
+
+(* methods annotated with the annotations below always run on the UI thread. *)
+let ia_is_uithread_equivalent =
+  let annotations = [mainthread; ui_thread; on_bind; on_event; on_mount; on_unbind; on_unmount] in
+  fun ia -> List.exists annotations ~f:(ia_ends_with ia)

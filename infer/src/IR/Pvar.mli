@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -38,6 +38,9 @@ val get_name : t -> Mangled.t
 
 val get_ret_pvar : Typ.Procname.t -> t
 (** [get_ret_pvar proc_name] retuns the return pvar associated with the procedure name *)
+
+val get_ret_param_pvar : Typ.Procname.t -> t
+(** [get_ret_param_pvar proc_name] retuns the return_param pvar associated with the procedure name *)
 
 val get_simplified_name : t -> string
 (** Get a simplified version of the name component of a program variable. *)
@@ -115,6 +118,9 @@ val pp : Pp.env -> F.formatter -> t -> unit
 val pp_value : F.formatter -> t -> unit
 (** Pretty print a pvar which denotes a value, not an address *)
 
+val pp_value_non_verbose : F.formatter -> t -> unit
+(** Non-verbose version of pp_value *)
+
 val pp_translation_unit : F.formatter -> translation_unit -> unit
 
 val to_callee : Typ.Procname.t -> t -> t
@@ -147,3 +153,5 @@ val get_initializer_pname : t -> Typ.Procname.t option
 val get_name_of_local_with_procname : t -> Mangled.t
 (** [get_name_of_local_with_procname var] Return a name that is composed of the name of
 var and the name of the procname in case of locals *)
+
+val materialized_cpp_temporary : string

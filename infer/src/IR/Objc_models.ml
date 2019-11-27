@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -167,11 +167,7 @@ module Core_foundation_model = struct
   type core_lib = Core_foundation | Core_graphics
 
   let core_lib_to_type_list lib =
-    match lib with
-    | Core_foundation ->
-        core_foundation_types
-    | Core_graphics ->
-        core_graphics_types
+    match lib with Core_foundation -> core_foundation_types | Core_graphics -> core_graphics_types
 
 
   let rec is_core_lib lib typ =

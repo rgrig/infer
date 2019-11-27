@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -88,9 +88,11 @@ let exp_list_match es1 sub vars es2 =
     | Some (sub_acc, vars_leftover) ->
         exp_match e1 sub_acc vars_leftover e2
   in
-  Option.find_map
-    ~f:(fun es_combined -> List.fold ~f ~init:(Some (sub, vars)) es_combined)
-    (List.zip es1 es2)
+  match List.zip es1 es2 with
+  | Ok es_combined ->
+      List.fold ~f ~init:(Some (sub, vars)) es_combined
+  | Unequal_lengths ->
+      None
 
 
 (** Checks [sexp1 = sexp2[sub ++ sub']] for some [sub'] with
@@ -242,8 +244,9 @@ let rec iter_match_with_impl tenv iter condition sub vars hpat hpats =
   in
   let do_empty_hpats iter_cur _ =
     let sub_new, vars_leftover =
-      match Prop.prop_iter_current tenv iter_cur with _, (sub_new, vars_leftover) ->
-        (sub_new, vars_leftover)
+      match Prop.prop_iter_current tenv iter_cur with
+      | _, (sub_new, vars_leftover) ->
+          (sub_new, vars_leftover)
     in
     let sub_res = sub_extend_with_ren sub_new vars_leftover in
     let p_leftover = Prop.prop_iter_remove_curr_then_to_prop tenv iter_cur in
@@ -256,8 +259,9 @@ let rec iter_match_with_impl tenv iter condition sub vars hpat hpats =
   in
   let do_nonempty_hpats iter_cur _ =
     let sub_new, vars_leftover =
-      match Prop.prop_iter_current tenv iter_cur with _, (sub_new, vars_leftover) ->
-        (sub_new, vars_leftover)
+      match Prop.prop_iter_current tenv iter_cur with
+      | _, (sub_new, vars_leftover) ->
+          (sub_new, vars_leftover)
     in
     let hpat_next, hpats_rest =
       match hpats with [] -> assert false | hpat_next :: hpats_rest -> (hpat_next, hpats_rest)
@@ -352,9 +356,7 @@ let rec iter_match_with_impl tenv iter condition sub vars hpat hpats =
               prop_match_with_impl_sub tenv p condition sub_new vars_leftover hpat_next hpats_rest
       in
       let do_para_lseg _ =
-        let para2_exist_vars, para2_inst =
-          Sil.hpara_instantiate para2 e_start2 e_end2 es_shared2
-        in
+        let para2_exist_vars, para2_inst = Sil.hpara_instantiate para2 e_start2 e_end2 es_shared2 in
         (* let allow_impl hpred = {hpred=hpred; flag=hpat.flag} in *)
         let allow_impl hpred = {hpred; flag= true} in
         let para2_hpat, para2_hpats =

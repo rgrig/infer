@@ -1,4 +1,4 @@
-# Copyright (c) 2018-present, Facebook, Inc.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -26,15 +26,13 @@ include $(TESTS_DIR)/base.make
 
 .PHONY: clean
 clean:
-	$(REMOVE_DIR) codetoanalyze com issues.exp.test$(TEST_SUFFIX) $(OBJECTS) $(CLEAN_EXTRA)
+	$(REMOVE_DIR) codetoanalyze com issues.exp.test$(TEST_SUFFIX) $(CLEAN_EXTRA)
 ifneq ($(INFER_OUT),.)
 	$(REMOVE_DIR) $(INFER_OUT)
 endif
 
 PROJECT_ROOT ?= $(TESTS_DIR)
 
-$(OBJECTS): $(SOURCES)
-	$(QUIET)$(JAVAC) -cp $(CLASSPATH) $(SOURCES)
 
 issues.exp.test$(TEST_SUFFIX): $(INFER_OUT)/report.json $(INFER_BIN)
 	$(QUIET)$(INFER_BIN) report -q --results-dir $(<D) \
@@ -47,7 +45,14 @@ infer-out/report.json: $(JAVA_DEPS) $(SOURCES) $(MAKEFILE_LIST)
 	    $(JAVAC) -cp $(CLASSPATH) $(SOURCES))
 
 %.loads: %.class
+ifeq ($(JDK11_ENABLED),yes)
+	$(QUIET)java -verbose:class $* | grep "\[info\]\[class,load\]" | cut -f2 -d' ' | grep -vE "^(java|sun|jdk|opened:)" > $@
+else
 	$(QUIET)java -verbose:class $* | grep "^\[Loaded" | cut -f2 -d' ' | grep -vE "^(java|sun)" > $@
+endif
+
+# infer compiles as well as analyses; dependency ensures class files are generated
+$(OBJECTS): issues.exp.test$(TEST_SUFFIX)
 
 loads.exp: $(LOADS)
 	$(QUIET)for F in $(LOADS) ; do sed -e "s#^#$(TEST_REL_DIR)/$${F%.*}.java, #" $$F ; done | sort > loads.exp

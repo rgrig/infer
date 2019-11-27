@@ -1,23 +1,24 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 open! IStd
 module F = Format
+module NodeCFG = ProcCfg.Normal
 
+module Defs = AbstractDomain.FiniteSet (Procdesc.Node)
 (** The node in which the reaching definition x := e is defined.
 
     A definition x :=e, declared at node N, reaches the current node
    if there is a path from node N to the current node such that x is
    not modified along the path **)
-module Defs = AbstractDomain.FiniteSet (Procdesc.Node)
 
 (* even though we only add singletons (defs), the set is needed for joins *)
 
-(** Map var -> its reaching definition **)
 module ReachingDefsMap = AbstractDomain.Map (Var) (Defs)
+(** Map var -> its reaching definition *)
 
 (* forward transfer function for reaching definitions *)
 module TransferFunctionsReachingDefs (CFG : ProcCfg.S) = struct
@@ -36,16 +37,16 @@ module TransferFunctionsReachingDefs (CFG : ProcCfg.S) = struct
         astate
     in
     match instr with
-    | Sil.Load (lhs_id, _, _, _) when Ident.is_none lhs_id ->
+    | Sil.Load {id= lhs_id} when Ident.is_none lhs_id ->
         (* dummy deref inserted by frontend--don't count as a read *)
         astate
-    | Sil.Load (id, _, _, _) | Sil.Call ((id, _), _, _, _, _) ->
+    | Sil.Load {id} | Sil.Call ((id, _), _, _, _, _) ->
         strong_update_def astate (Var.of_id id)
     (* only strong update for assigning to a pvar *)
-    | Sil.Store (Lvar pvar, _, _, _) ->
+    | Sil.Store {e1= Lvar pvar} ->
         strong_update_def astate (Var.of_pvar pvar)
     (* by default use weak update *)
-    | Sil.Store (exp_lhs, _, _, _) ->
+    | Sil.Store {e1= exp_lhs} ->
         let vars = Var.get_all_vars_in_exp exp_lhs in
         Sequence.fold ~init:astate ~f:weak_update_def vars
     | _ ->
@@ -64,4 +65,15 @@ let init_reaching_defs_with_formals pdesc =
          ReachingDefsMap.add (Var.of_pvar pvar) start_node_defs acc )
 
 
-module Analyzer = AbstractInterpreter.MakeRPO (TransferFunctionsReachingDefs (ProcCfg.Normal))
+module Analyzer = AbstractInterpreter.MakeRPO (TransferFunctionsReachingDefs (NodeCFG))
+
+type invariant_map = Analyzer.invariant_map
+
+let compute_invariant_map summary tenv =
+  let pdesc = Summary.get_proc_desc summary in
+  let proc_data = ProcData.make_default summary tenv in
+  let node_cfg = NodeCFG.from_pdesc pdesc in
+  Analyzer.exec_cfg node_cfg proc_data ~initial:(init_reaching_defs_with_formals pdesc)
+
+
+let extract_post = Analyzer.extract_post

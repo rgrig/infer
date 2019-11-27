@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -96,8 +96,8 @@ module SourceKind = struct
               Some [(Intent, return); (intent_for_insecure_intent_handling ~caller_pname, return)]
           | "android.support.v4.app.FragmentActivity", "getIntent" ->
               Some [(intent_for_insecure_intent_handling ~caller_pname, return)]
-          | "android.content.Intent", "<init>"
-            when actual_has_type 2 "android.net.Uri" actuals tenv ->
+          | "android.content.Intent", "<init>" when actual_has_type 2 "android.net.Uri" actuals tenv
+            ->
               (* taint the [this] parameter passed to the constructor *)
               Some [(IntentFromURI, Some 0)]
           | ( "android.content.Intent"
@@ -179,9 +179,7 @@ module SourceKind = struct
     let taint_all_but_this ~make_source =
       List.map
         ~f:(fun (name, typ) ->
-          let taint =
-            if Mangled.is_this name then None else Some (make_source name typ.Typ.desc)
-          in
+          let taint = if Mangled.is_this name then None else Some (make_source name typ.Typ.desc) in
           (name, typ, taint) )
         (Procdesc.get_formals pdesc)
     in
@@ -191,7 +189,10 @@ module SourceKind = struct
         let method_name = Typ.Procname.Java.get_method java_pname in
         let taint_matching_supertype typename =
           match (Typ.Name.name typename, method_name) with
-          | ( ("android.app.Activity" | "android.app.Fragment" | "android.support.v4.app.Fragment")
+          | ( ( "android.app.Activity"
+              | "android.app.Fragment"
+              | "android.support.v4.app.Fragment"
+              | "androidx.fragment.app.Fragment" )
             , ("onActivityResult" | "onNewIntent") ) ->
               Some (taint_formals_with_types ["android.content.Intent"] Intent formals)
           | ( "android.app.Service"
@@ -391,19 +392,22 @@ module SinkKind = struct
               taint_nth 1 [StartComponent]
           | ( ( "android.app.Activity"
               | "android.content.Context"
-              | "android.support.v4.app.Fragment" )
+              | "android.support.v4.app.Fragment"
+              | "androidx.fragment.app.Fragment" )
             , "startIntentSenderForResult" ) ->
               taint_nth 2 [StartComponent]
           | "android.app.Activity", "startIntentSenderFromChild" ->
               taint_nth 3 [StartComponent]
           | ( ( "android.app.Fragment"
               | "android.content.Context"
-              | "android.support.v4.app.Fragment" )
+              | "android.support.v4.app.Fragment"
+              | "androidx.fragment.app.Fragment" )
             , "startActivity" ) ->
               taint_nth 0 [StartComponent; StartComponentForInsecureIntentHandling]
           | ( ( "android.app.Fragment"
               | "android.content.Context"
-              | "android.support.v4.app.Fragment" )
+              | "android.support.v4.app.Fragment"
+              | "androidx.fragment.app.Fragment" )
             , ( "bindService"
               | "sendBroadcast"
               | "sendBroadcastAsUser"
@@ -544,6 +548,9 @@ module JavaSanitizer = struct
         let method_name = Typ.Procname.Java.get_method java_pname in
         let sanitizer_matching_supertype typename =
           match (Typ.Name.name typename, method_name) with
+          (* string concatenation is translated differently by invokedynamic in JDK11 *)
+          | "java.lang.Object", "makeConcatWithConstants" ->
+              Some StringConcatenation
           | "java.lang.StringBuilder", "append" ->
               Some StringConcatenation
           | class_name, method_name ->
@@ -595,8 +602,8 @@ include Trace.Make (struct
       ->
         (* untrusted data flows into JS *)
         Some IssueType.javascript_injection
-    | ( (Endpoint _ | Intent | IntentFromURI | UserControlledString | UserControlledURI)
-      , SQLInjection ) ->
+    | (Endpoint _ | Intent | IntentFromURI | UserControlledString | UserControlledURI), SQLInjection
+      ->
         (* untrusted and unescaped data flows to SQL *)
         Some IssueType.sql_injection_risk
     | ( (Endpoint _ | Intent | IntentFromURI | UserControlledString | UserControlledURI)

@@ -1,4 +1,4 @@
-# Copyright (c) 2017-present, Facebook, Inc.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -35,7 +35,7 @@ $(EXPECTED_TEST_OUTPUT): $(CURRENT_REPORT) $(PREVIOUS_REPORT) $(MODIFIED_FILES_F
                          $(INFER_BIN) $(MAKEFILE_LIST)
 	$(QUIET)$(REMOVE_DIR) $(INFER_OUT)
 	$(QUIET)$(call silent_on_success,Computing results difference in $(TEST_REL_DIR),\
-	  $(INFER_BIN) -o $(INFER_OUT) --project-root $(CURDIR) reportdiff \
+	  $(INFER_BIN) --perf-profiler-data-file loom_test.json -o $(INFER_OUT) --project-root $(CURDIR) reportdiff \
 		--report-current $(CURRENT_REPORT) --report-previous $(PREVIOUS_REPORT) \
 		--costs-current $(CURRENT_COSTS) --costs-previous $(PREVIOUS_COSTS) \
 		$(DIFFERENTIAL_ARGS))

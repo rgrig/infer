@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -26,41 +26,60 @@ type if_kind =
   | Ik_switch
 [@@deriving compare]
 
+type instr_metadata =
+  | Abstract of Location.t
+      (** a good place to apply abstraction, mostly used in the biabduction analysis *)
+  | ExitScope of Var.t list * Location.t  (** remove temporaries and dead program variables *)
+  | Nullify of Pvar.t * Location.t  (** nullify stack variable *)
+  | Skip  (** no-op *)
+  | VariableLifetimeBegins of Pvar.t * Typ.t * Location.t  (** stack variable declared *)
+[@@deriving compare]
+
 (** An instruction. *)
 type instr =
   (* Note for frontend writers:
      [x] must be used in a subsequent instruction, otherwise the entire
      `Load` instruction may be eliminated by copy-propagation. *)
-  | Load of Ident.t * Exp.t * Typ.t * Location.t
+  | Load of {id: Ident.t; e: Exp.t; root_typ: Typ.t; typ: Typ.t; loc: Location.t}
       (** Load a value from the heap into an identifier.
-          [x = *lexp:typ] where
-            [lexp] is an expression denoting a heap address
-            [typ] is the root type of [lexp]. *)
-  | Store of Exp.t * Typ.t * Exp.t * Location.t
+
+      [id = *exp:typ(root_typ)] where
+        [exp] is an expression denoting a heap address
+        [typ] is typ of [exp] and [id]
+        [root_typ] is the root type of [exp]
+
+          The [root_typ] is deprecated: it is broken in C/C++.  We are removing [root_typ] in the
+          future, so please use [typ] instead. *)
+  | Store of {e1: Exp.t; root_typ: Typ.t; typ: Typ.t; e2: Exp.t; loc: Location.t}
       (** Store the value of an expression into the heap.
-          [*lexp1:typ = exp2] where
-            [lexp1] is an expression denoting a heap address
-            [typ] is the root type of [lexp1]
-            [exp2] is the expression whose value is store. *)
+
+      [*exp1:typ(root_typ) = exp2] where
+        [exp1] is an expression denoting a heap address
+        [typ] is typ of [*exp1] and [exp2]
+        [root_typ] is the root type of [exp1]
+        [exp2] is the expression whose value is stored.
+
+          The [root_typ] is deprecated: it is broken in C/C++.  We are removing [root_typ] in the
+          future, so please use [typ] instead. *)
   | Prune of Exp.t * Location.t * bool * if_kind
       (** prune the state based on [exp=1], the boolean indicates whether true branch *)
   | Call of (Ident.t * Typ.t) * Exp.t * (Exp.t * Typ.t) list * Location.t * CallFlags.t
       (** [Call ((ret_id, ret_typ), e_fun, arg_ts, loc, call_flags)] represents an instruction
           [ret_id = e_fun(arg_ts);] *)
-  | Nullify of Pvar.t * Location.t  (** nullify stack variable *)
-  | Abstract of Location.t  (** apply abstraction *)
-  | ExitScope of Var.t list * Location.t  (** remove temporaries and dead program variables *)
+  | Metadata of instr_metadata
+      (** hints about the program that are not strictly needed to understand its semantics, for
+          instance information about its original syntactic structure *)
 [@@deriving compare]
 
 let equal_instr = [%compare.equal: instr]
 
-let skip_instr = ExitScope ([], Location.dummy)
+let skip_instr = Metadata Skip
 
 (** Check if an instruction is auxiliary, or if it comes from source instructions. *)
 let instr_is_auxiliary = function
   | Load _ | Store _ | Prune _ | Call _ ->
       false
-  | Nullify _ | Abstract _ | ExitScope _ ->
+  | Metadata _ ->
       true
 
 
@@ -199,12 +218,7 @@ let compare_hpara_dll = compare_hpara_dll0 (fun _ _ -> 0)
 let equal_hpara_dll = [%compare.equal: hpara_dll]
 
 (** {2 Comparision and Inspection Functions} *)
-let is_objc_object = function
-  | Hpointsto (_, _, Sizeof {typ}) ->
-      Typ.is_objc_class typ
-  | _ ->
-      false
-
+let is_objc_object = function Hpointsto (_, _, Sizeof {typ}) -> Typ.is_objc_class typ | _ -> false
 
 (** Check if a pvar is a local static in objc *)
 let is_static_local_name pname pvar =
@@ -282,8 +296,7 @@ let pp_texp pe f = function
   | Exp.Sizeof {typ; nbytes; dynamic_length; subtype} ->
       let pp_len f l = Option.iter ~f:(F.fprintf f "[%a]" (pp_exp_printenv pe)) l in
       let pp_size f size = Option.iter ~f:(Int.pp f) size in
-      F.fprintf f "%a%a%a%a" (Typ.pp pe) typ pp_size nbytes pp_len dynamic_length Subtype.pp
-        subtype
+      F.fprintf f "%a%a%a%a" (Typ.pp pe) typ pp_size nbytes pp_len dynamic_length Subtype.pp subtype
   | e ->
       pp_exp_printenv pe f e
 
@@ -325,34 +338,46 @@ let d_offset_list (offl : offset list) = L.d_pp_with_pe pp_offset_list offl
 
 let pp_exp_typ pe f (e, t) = F.fprintf f "%a:%a" (pp_exp_printenv pe) e (Typ.pp pe) t
 
-(** Get the location of the instruction *)
-let instr_get_loc = function
-  | Load (_, _, _, loc)
-  | Store (_, _, _, loc)
-  | Prune (_, loc, _, _)
-  | Call (_, _, _, loc, _)
-  | Nullify (_, loc)
-  | Abstract loc
-  | ExitScope (_, loc) ->
+let location_of_instr_metadata = function
+  | Abstract loc | ExitScope (_, loc) | Nullify (_, loc) | VariableLifetimeBegins (_, _, loc) ->
       loc
+  | Skip ->
+      Location.dummy
+
+
+(** Get the location of the instruction *)
+let location_of_instr = function
+  | Load {loc} | Store {loc} | Prune (_, loc, _, _) | Call (_, _, _, loc, _) ->
+      loc
+  | Metadata metadata ->
+      location_of_instr_metadata metadata
+
+
+let exps_of_instr_metadata = function
+  | Abstract _ ->
+      []
+  | ExitScope (vars, _) ->
+      List.map ~f:Var.to_exp vars
+  | Nullify (pvar, _) ->
+      [Exp.Lvar pvar]
+  | Skip ->
+      []
+  | VariableLifetimeBegins (pvar, _, _) ->
+      [Exp.Lvar pvar]
 
 
 (** get the expressions occurring in the instruction *)
-let instr_get_exps = function
-  | Load (id, e, _, _) ->
+let exps_of_instr = function
+  | Load {id; e} ->
       [Exp.Var id; e]
-  | Store (e1, _, e2, _) ->
+  | Store {e1; e2} ->
       [e1; e2]
   | Prune (cond, _, _, _) ->
       [cond]
   | Call ((id, _), e, _, _, _) ->
       [e; Exp.Var id]
-  | Nullify (pvar, _) ->
-      [Exp.Lvar pvar]
-  | Abstract _ ->
-      []
-  | ExitScope (vars, _) ->
-      List.map ~f:Var.to_exp vars
+  | Metadata metadata ->
+      exps_of_instr_metadata metadata
 
 
 (** Convert an if_kind to string  *)
@@ -373,17 +398,33 @@ let if_kind_to_string = function
       "switch"
 
 
-(** Pretty print an instruction. *)
+let pp_instr_metadata pe f = function
+  | Abstract loc ->
+      F.fprintf f "APPLY_ABSTRACTION; [%a]" Location.pp loc
+  | ExitScope (vars, loc) ->
+      F.fprintf f "EXIT_SCOPE(%a); [%a]" (Pp.seq ~sep:"," Var.pp) vars Location.pp loc
+  | Nullify (pvar, loc) ->
+      F.fprintf f "NULLIFY(%a); [%a]" (Pvar.pp pe) pvar Location.pp loc
+  | Skip ->
+      F.pp_print_string f "SKIP"
+  | VariableLifetimeBegins (pvar, typ, loc) ->
+      F.fprintf f "VARIABLE_DECLARED(%a:%a); [%a]" Pvar.pp_value pvar (Typ.pp_full pe) typ
+        Location.pp loc
+
+
 let pp_instr ~print_types pe0 f instr =
   let pp_typ = if print_types then Typ.pp_full else Typ.pp in
+  let pp_root ~typ ~root_typ f =
+    if not (Typ.equal typ root_typ) then F.fprintf f "(root %a)" (pp_typ pe0) root_typ
+  in
   color_wrapper pe0 f instr ~f:(fun pe f instr ->
       match instr with
-      | Load (id, e, t, loc) ->
-          F.fprintf f "%a=*%a:%a [%a]" Ident.pp id (pp_exp_printenv ~print_types pe) e (pp_typ pe0)
-            t Location.pp loc
-      | Store (e1, t, e2, loc) ->
-          F.fprintf f "*%a:%a=%a [%a]" (pp_exp_printenv ~print_types pe) e1 (pp_typ pe0) t
-            (pp_exp_printenv ~print_types pe) e2 Location.pp loc
+      | Load {id; e; root_typ; typ; loc} ->
+          F.fprintf f "%a=*%a:%a%t [%a]" Ident.pp id (pp_exp_printenv ~print_types pe) e
+            (pp_typ pe0) typ (pp_root ~typ ~root_typ) Location.pp loc
+      | Store {e1; root_typ; typ; e2; loc} ->
+          F.fprintf f "*%a:%a%t=%a [%a]" (pp_exp_printenv ~print_types pe) e1 (pp_typ pe0) root_typ
+            (pp_root ~typ ~root_typ) (pp_exp_printenv ~print_types pe) e2 Location.pp loc
       | Prune (cond, loc, true_branch, _) ->
           F.fprintf f "PRUNE(%a, %b); [%a]" (pp_exp_printenv ~print_types pe) cond true_branch
             Location.pp loc
@@ -392,12 +433,8 @@ let pp_instr ~print_types pe0 f instr =
           F.fprintf f "%a(%a)%a [%a]" (pp_exp_printenv ~print_types pe) e
             (Pp.comma_seq (pp_exp_typ pe))
             arg_ts CallFlags.pp cf Location.pp loc
-      | Nullify (pvar, loc) ->
-          F.fprintf f "NULLIFY(%a); [%a]" (Pvar.pp pe) pvar Location.pp loc
-      | Abstract loc ->
-          F.fprintf f "APPLY_ABSTRACTION; [%a]" Location.pp loc
-      | ExitScope (vars, loc) ->
-          F.fprintf f "EXIT_SCOPE(%a); [%a]" (Pp.seq ~sep:"," Var.pp) vars Location.pp loc )
+      | Metadata metadata ->
+          pp_instr_metadata pe0 f metadata )
 
 
 let add_with_block_parameters_flag instr =
@@ -784,9 +821,7 @@ let rec pp_sexp_env pe0 envo f se =
       | Eexp (e, inst) ->
           F.fprintf f "%a%a" (pp_exp_printenv pe) e (pp_inst_if_trace pe) inst
       | Estruct (fel, inst) ->
-          let pp_diff f (n, se) =
-            F.fprintf f "%a:%a" Typ.Fieldname.pp n (pp_sexp_env pe envo) se
-          in
+          let pp_diff f (n, se) = F.fprintf f "%a:%a" Typ.Fieldname.pp n (pp_sexp_env pe envo) se in
           F.fprintf f "{%a}%a" (pp_seq_diff pp_diff pe) fel (pp_inst_if_trace pe) inst
       | Earray (len, nel, inst) ->
           let pp_diff f (i, se) =
@@ -1225,8 +1260,7 @@ let rec exp_sub_ids (f : subst_fun) exp =
 
 
 let apply_sub subst : subst_fun =
- fun id ->
-  match List.Assoc.find subst ~equal:Ident.equal id with Some x -> x | None -> Exp.Var id
+ fun id -> match List.Assoc.find subst ~equal:Ident.equal id with Some x -> x | None -> Exp.Var id
 
 
 let exp_sub (subst : subst) e = exp_sub_ids (apply_sub subst) e
@@ -1237,16 +1271,16 @@ let instr_sub_ids ~sub_id_binders f instr =
     match exp_sub_ids f (Var id) with Var id' when not (Ident.equal id id') -> id' | _ -> id
   in
   match instr with
-  | Load (id, rhs_exp, typ, loc) ->
+  | Load {id; e= rhs_exp; root_typ; typ; loc} ->
       let id' = if sub_id_binders then sub_id id else id in
       let rhs_exp' = exp_sub_ids f rhs_exp in
       if phys_equal id' id && phys_equal rhs_exp' rhs_exp then instr
-      else Load (id', rhs_exp', typ, loc)
-  | Store (lhs_exp, typ, rhs_exp, loc) ->
+      else Load {id= id'; e= rhs_exp'; root_typ; typ; loc}
+  | Store {e1= lhs_exp; root_typ; typ; e2= rhs_exp; loc} ->
       let lhs_exp' = exp_sub_ids f lhs_exp in
       let rhs_exp' = exp_sub_ids f rhs_exp in
       if phys_equal lhs_exp' lhs_exp && phys_equal rhs_exp' rhs_exp then instr
-      else Store (lhs_exp', typ, rhs_exp', loc)
+      else Store {e1= lhs_exp'; root_typ; typ; e2= rhs_exp'; loc}
   | Call (((id, typ) as ret_id_typ), fun_exp, actuals, call_flags, loc) ->
       let ret_id' =
         if sub_id_binders then
@@ -1262,14 +1296,13 @@ let instr_sub_ids ~sub_id_binders f instr =
             if phys_equal actual' actual then actual_pair else (actual', typ) )
           actuals
       in
-      if
-        phys_equal ret_id' ret_id_typ && phys_equal fun_exp' fun_exp && phys_equal actuals' actuals
+      if phys_equal ret_id' ret_id_typ && phys_equal fun_exp' fun_exp && phys_equal actuals' actuals
       then instr
       else Call (ret_id', fun_exp', actuals', call_flags, loc)
   | Prune (exp, loc, true_branch, if_kind) ->
       let exp' = exp_sub_ids f exp in
       if phys_equal exp' exp then instr else Prune (exp', loc, true_branch, if_kind)
-  | ExitScope (vars, loc) ->
+  | Metadata (ExitScope (vars, loc)) ->
       let sub_var var =
         match var with
         | Var.ProgramVar _ ->
@@ -1279,8 +1312,8 @@ let instr_sub_ids ~sub_id_binders f instr =
             if phys_equal ident ident' then var else Var.of_id ident'
       in
       let vars' = IList.map_changed ~equal:phys_equal ~f:sub_var vars in
-      if phys_equal vars vars' then instr else ExitScope (vars', loc)
-  | Nullify _ | Abstract _ ->
+      if phys_equal vars vars' then instr else Metadata (ExitScope (vars', loc))
+  | Metadata (Abstract _ | Nullify _ | Skip | VariableLifetimeBegins _) ->
       instr
 
 
@@ -1408,7 +1441,8 @@ let hpred_compact_ sh hpred =
 
 
 let hpred_compact sh hpred =
-  try HpredInstHash.find sh.hpredh hpred with Caml.Not_found ->
+  try HpredInstHash.find sh.hpredh hpred
+  with Caml.Not_found ->
     let hpred' = hpred_compact_ sh hpred in
     HpredInstHash.add sh.hpredh hpred' hpred' ;
     hpred'
@@ -1420,14 +1454,8 @@ let hpred_compact sh hpred =
 let exp_get_offsets exp =
   let rec f offlist_past e =
     match (e : Exp.t) with
-    | Var _
-    | Const _
-    | UnOp _
-    | BinOp _
-    | Exn _
-    | Closure _
-    | Lvar _
-    | Sizeof {dynamic_length= None} ->
+    | Var _ | Const _ | UnOp _ | BinOp _ | Exn _ | Closure _ | Lvar _ | Sizeof {dynamic_length= None}
+      ->
         offlist_past
     | Sizeof {dynamic_length= Some l} ->
         f offlist_past l

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -18,9 +18,7 @@ let inputs =
   @ [ ( "bourdoncle_fig1"
       , [(1, [2]); (2, [3; 8]); (3, [4]); (4, [5; 7]); (5, [6]); (6, [5; 7]); (7, [3; 8])]
       , "1 2 (3 4 (5 6) 7) 8" )
-    ; ( "bourdoncle_fig2left"
-      , [(1, [2; 4]); (2, [3]); (3, []); (4, [5; 3]); (5, [4])]
-      , "1 2 (4 5) 3" )
+    ; ("bourdoncle_fig2left", [(1, [2; 4]); (2, [3]); (3, []); (4, [5; 3]); (5, [4])], "1 2 (4 5) 3")
     ; ("bourdoncle_fig2right", [(1, [2; 4]); (2, [3]); (3, [1]); (4, [3])], "(1 2 4 3)")
     ; ( "bourdoncle_fig5"
       , [ (1, [4; 2])

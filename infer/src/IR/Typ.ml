@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -19,7 +19,7 @@ module IntegerWidths = struct
 
   let java = {char_width= 16; short_width= 16; int_width= 32; long_width= 64; longlong_width= 64}
 
-  module SQLite = SqliteUtils.MarshalledNullableData (struct
+  module SQLite = SqliteUtils.MarshalledNullableDataNOTForComparison (struct
     type nonrec t = t
   end)
 
@@ -129,10 +129,7 @@ let range_of_ikind =
 let ikind_is_char = function IChar | ISChar | IUChar -> true | _ -> false
 
 (** Kinds of floating-point numbers *)
-type fkind =
-  | FFloat  (** [float] *)
-  | FDouble  (** [double] *)
-  | FLongDouble  (** [long double] *)
+type fkind = FFloat  (** [float] *) | FDouble  (** [double] *) | FLongDouble  (** [long double] *)
 [@@deriving compare]
 
 let equal_fkind = [%compare.equal: fkind]
@@ -180,7 +177,7 @@ module T = struct
     | Tint of ikind  (** integer type *)
     | Tfloat of fkind  (** float type *)
     | Tvoid  (** void type *)
-    | Tfun of {no_return: bool}  (** function type with noreturn attribute *)
+    | Tfun  (** function type *)
     | Tptr of t * ptr_kind  (** pointer type *)
     | Tstruct of name  (** structured value type name *)
     | TVar of string  (** type variable (ie. C++ template variables) *)
@@ -206,6 +203,8 @@ module T = struct
   [@@deriving compare]
 
   let equal_desc = [%compare.equal: desc]
+
+  let equal_name = [%compare.equal: name]
 
   let equal_quals = [%compare.equal: type_quals]
 
@@ -245,6 +244,10 @@ let is_const {is_const} = is_const
 let is_restrict {is_restrict} = is_restrict
 
 let is_volatile {is_volatile} = is_volatile
+
+let is_weak_pointer t = match t.desc with Tptr (_, Pk_objc_weak) -> true | _ -> false
+
+let is_strong_pointer t = match t.desc with Tptr (_, Pk_pointer) -> true | _ -> false
 
 let mk ?default ?quals desc : t =
   let default_ = {desc; quals= mk_type_quals ()} in
@@ -288,11 +291,9 @@ let rec pp_full pe f typ =
         F.pp_print_string f (fkind_to_string fk)
     | Tvoid ->
         F.pp_print_string f "void"
-    | Tfun {no_return= false} ->
+    | Tfun ->
         F.pp_print_string f "_fn_"
-    | Tfun {no_return= true} ->
-        F.pp_print_string f "_fn_noreturn_"
-    | Tptr (({desc= Tarray _ | Tfun _} as typ), pk) ->
+    | Tptr (({desc= Tarray _ | Tfun} as typ), pk) ->
         F.fprintf f "%a(%s)" (pp_full pe) typ (ptr_kind_string pk |> escape pe)
     | Tptr (typ, pk) ->
         F.fprintf f "%a%s" (pp_full pe) typ (ptr_kind_string pk |> escape pe)
@@ -348,6 +349,8 @@ module Name = struct
   type t = name [@@deriving compare]
 
   let equal = [%compare.equal: t]
+
+  let hash = Hashtbl.hash
 
   let qual_name = function
     | CStruct name | CUnion name | ObjcClass name | ObjcProtocol name ->
@@ -447,6 +450,8 @@ module Name = struct
       let java_lang_object = make ~package:"java.lang" "Object"
 
       let java_lang_string = make ~package:"java.lang" "String"
+
+      let void = make "void"
     end
 
     let from_string name_str = JavaClass (Mangled.from_string name_str)
@@ -458,11 +463,13 @@ module Name = struct
 
     let is_class = function JavaClass _ -> true | _ -> false
 
-    let java_lang_object = from_string "java.lang.Object"
-
     let java_io_serializable = from_string "java.io.Serializable"
 
+    let java_lang_class = from_string "java.lang.Class"
+
     let java_lang_cloneable = from_string "java.lang.Cloneable"
+
+    let java_lang_object = from_string "java.lang.Object"
 
     let split_typename typename = Split.of_string (name typename)
 
@@ -620,31 +627,33 @@ module Procname = struct
 
 
     (** A type is a pair (package, type_name) that is translated in a string package.type_name *)
-    let type_to_string_verbosity p verbosity =
+    let pp_type_verbosity verbosity fmt p =
       match p with
       | {package= Some package; type_name} when is_verbose verbosity ->
-          package ^ "." ^ type_name
+          F.fprintf fmt "%s.%s" package type_name
       | {type_name} ->
-          type_name
+          F.pp_print_string fmt type_name
 
 
     (** Given a list of types, it creates a unique string of types separated by commas *)
-    let rec param_list_to_string inputList verbosity =
+    let rec pp_param_list verbosity fmt inputList =
       match inputList with
       | [] ->
-          ""
+          ()
       | [head] ->
-          type_to_string_verbosity head verbosity
+          pp_type_verbosity verbosity fmt head
       | head :: rest ->
-          type_to_string_verbosity head verbosity ^ "," ^ param_list_to_string rest verbosity
+          pp_type_verbosity verbosity fmt head ;
+          F.pp_print_string fmt "," ;
+          pp_param_list verbosity fmt rest
 
 
     let java_type_of_name class_name = Name.Java.Split.of_string (Name.name class_name)
 
     (** It is the same as java_type_to_string_verbosity, but Java return types are optional because
         of constructors without type *)
-    let return_type_to_string j verbosity =
-      match j.return_type with None -> "" | Some typ -> type_to_string_verbosity typ verbosity
+    let pp_return_type verbosity fmt j =
+      match j.return_type with None -> () | Some typ -> pp_type_verbosity verbosity fmt typ
 
 
     let get_class_name j = Name.name j.class_name
@@ -663,21 +672,17 @@ module Procname = struct
 
     let replace_return_type ret_type j = {j with return_type= Some ret_type}
 
-    let get_return_type j = return_type_to_string j Verbose
-
     let get_parameters j = j.parameters
 
     (** Prints a string of a java procname with the given level of verbosity *)
-    let to_string ?(withclass = false) j verbosity =
+    let pp ?(withclass = false) verbosity fmt j =
       match verbosity with
       | Verbose | Non_verbose ->
           (* if verbose, then package.class.method(params): rtype,
-         else rtype package.class.method(params)
-         verbose is used for example to create unique filenames, non_verbose to create reports *)
-          let return_type = return_type_to_string j verbosity in
-          let params = param_list_to_string j.parameters verbosity in
-          let class_name =
-            type_to_string_verbosity (Name.Java.split_typename j.class_name) verbosity
+             else rtype package.class.method(params)
+             verbose is used for example to create unique filenames, non_verbose to create reports *)
+          let pp_class_name verbosity fmt j =
+            pp_type_verbosity verbosity fmt (Name.Java.split_typename j.class_name)
           in
           let separator =
             match (j.return_type, verbosity) with
@@ -688,22 +693,26 @@ module Procname = struct
             | _ ->
                 " "
           in
-          let output = class_name ^ "." ^ j.method_name ^ "(" ^ params ^ ")" in
-          if equal_detail_level verbosity Verbose then output ^ separator ^ return_type
-          else return_type ^ separator ^ output
+          if not (equal_detail_level verbosity Verbose) then
+            F.fprintf fmt "%a%s" (pp_return_type verbosity) j separator ;
+          F.fprintf fmt "%a.%s(%a)" (pp_class_name verbosity) j j.method_name
+            (pp_param_list verbosity) j.parameters ;
+          if equal_detail_level verbosity Verbose then
+            F.fprintf fmt "%s%a" separator (pp_return_type verbosity) j
       | Simple ->
           (* methodname(...) or without ... if there are no parameters *)
-          let cls_prefix =
+          let pp_class_prefix ~withclass verbosity fmt j =
             if withclass then
-              type_to_string_verbosity (Name.Java.split_typename j.class_name) verbosity ^ "."
-            else ""
+              F.fprintf fmt "%a." (pp_type_verbosity verbosity)
+                (Name.Java.split_typename j.class_name)
           in
           let params = match j.parameters with [] -> "" | _ -> "..." in
-          let method_name =
-            if String.equal j.method_name "<init>" then get_simple_class_name j
-            else cls_prefix ^ j.method_name
+          let pp_method_name ~withclass verbosity fmt j =
+            if String.equal j.method_name "<init>" then
+              F.pp_print_string fmt (get_simple_class_name j)
+            else F.fprintf fmt "%a%s" (pp_class_prefix ~withclass verbosity) j j.method_name
           in
-          method_name ^ "(" ^ params ^ ")"
+          F.fprintf fmt "%a(%s)" (pp_method_name ~withclass verbosity) j params
 
 
     let get_return_typ pname_java =
@@ -732,7 +741,7 @@ module Procname = struct
         | typ_str ->
             mk (Tstruct (Name.Java.from_string typ_str))
       in
-      let typ = java_from_string (get_return_type pname_java) in
+      let typ = java_from_string (F.asprintf "%a" (pp_return_type Verbose) pname_java) in
       match typ.desc with Tstruct _ -> mk (Tptr (typ, Pk_pointer)) | _ -> typ
 
 
@@ -751,6 +760,8 @@ module Procname = struct
       ; return_type= Some java_void
       ; kind= Static }
 
+
+    let is_constructor {method_name} = String.equal method_name constructor_method_name
 
     let is_anonymous_inner_class_constructor {class_name} =
       Name.Java.is_anonymous_inner_class_name class_name
@@ -802,11 +813,25 @@ module Procname = struct
       match typ.T.desc with T.Tptr ({desc= Tstruct name}, Pk_pointer) -> Some name | _ -> None
 
 
-    let parameters_to_string parameters =
-      let string_pars =
-        List.filter_map ~f:(fun name_opt -> Option.map ~f:Name.to_string name_opt) parameters
-      in
-      if List.is_empty string_pars then "" else "(" ^ String.concat ~sep:"," string_pars ^ ")"
+    let pp_parameters fmt parameters =
+      if List.exists ~f:Option.is_some parameters then
+        (* the tests rely on the fact that we discard non-pointer-to-struct types for some reason,
+           hence the slight re-implementation of [Pp.seq] to avoid building the list of [Some] items
+           explicitly *)
+        let rec pp_parameters_aux fmt = function
+          | [] ->
+              ()
+          | [Some param] ->
+              F.pp_print_string fmt (Name.to_string param)
+          | None :: parameters ->
+              pp_parameters_aux fmt parameters
+          | (Some _ as param_some) :: None :: parameters ->
+              pp_parameters_aux fmt (param_some :: parameters)
+          | Some param :: (Some _ :: _ as parameters) ->
+              F.fprintf fmt "%s," (Name.to_string param) ;
+              pp_parameters_aux fmt parameters
+        in
+        F.fprintf fmt "(%a)" pp_parameters_aux parameters
 
 
     let clang_param_of_name class_name : clang_parameter = Some class_name
@@ -877,32 +902,30 @@ module Procname = struct
 
     let is_operator_equal {method_name} = String.is_substring ~substring:"operator=" method_name
 
-    let kind_to_verbose_string = function
+    let pp_verbose_kind fmt = function
       | CPPMethod {mangled} | CPPDestructor {mangled} ->
-          "(" ^ Option.value ~default:"" mangled ^ ")"
+          F.fprintf fmt "(%s)" (Option.value ~default:"" mangled)
       | CPPConstructor {mangled; is_constexpr} ->
-          "{" ^ Option.value ~default:"" mangled
-          ^ (if is_constexpr then "|constexpr" else "")
-          ^ "}"
+          F.fprintf fmt "{%s%s}"
+            (Option.value ~default:"" mangled)
+            (if is_constexpr then "|constexpr" else "")
       | ObjCClassMethod ->
-          "class"
+          F.pp_print_string fmt "class"
       | ObjCInstanceMethod ->
-          "instance"
+          F.pp_print_string fmt "instance"
       | ObjCInternalMethod ->
-          "internal"
+          F.pp_print_string fmt "internal"
 
 
-    let to_string osig detail_level =
-      match detail_level with
+    let pp verbosity fmt osig =
+      match verbosity with
       | Simple ->
-          osig.method_name
+          F.pp_print_string fmt osig.method_name
       | Non_verbose ->
-          Name.name osig.class_name ^ "_" ^ osig.method_name
+          F.fprintf fmt "%s::%s" (Name.name osig.class_name) osig.method_name
       | Verbose ->
-          let m_str = kind_to_verbose_string osig.kind in
-          Name.name osig.class_name ^ "_" ^ osig.method_name
-          ^ Parameter.parameters_to_string osig.parameters
-          ^ m_str
+          F.fprintf fmt "%s::%s%a%a" (Name.name osig.class_name) osig.method_name
+            Parameter.pp_parameters osig.parameters pp_verbose_kind osig.kind
 
 
     let get_parameters osig = osig.parameters
@@ -930,20 +953,16 @@ module Procname = struct
       ; template_args= NoTemplate }
 
 
-    (** to_string for C_function type *)
-    let to_string {name; mangled; parameters} verbose =
+    let pp verbosity fmt {name; mangled; parameters} =
       let plain = QualifiedCppName.to_qual_string name in
-      match verbose with
+      match verbosity with
       | Simple ->
-          plain ^ "()"
+          F.fprintf fmt "%s()" plain
       | Non_verbose ->
-          plain
-      | Verbose -> (
-        match mangled with
-        | None ->
-            plain ^ Parameter.parameters_to_string parameters
-        | Some s ->
-            plain ^ Parameter.parameters_to_string parameters ^ "{" ^ s ^ "}" )
+          F.pp_print_string fmt plain
+      | Verbose ->
+          let pp_mangled fmt = function None -> () | Some s -> F.fprintf fmt "{%s}" s in
+          F.fprintf fmt "%s%a%a" plain Parameter.pp_parameters parameters pp_mangled mangled
 
 
     let get_parameters c = c.parameters
@@ -959,14 +978,14 @@ module Procname = struct
 
     let make name parameters = {name; parameters}
 
-    let to_string bsig detail_level =
-      match detail_level with
+    let pp verbosity fmt bsig =
+      match verbosity with
       | Simple ->
-          "block"
+          F.pp_print_string fmt "block"
       | Non_verbose ->
-          bsig.name
+          F.pp_print_string fmt bsig.name
       | Verbose ->
-          bsig.name ^ Parameter.parameters_to_string bsig.parameters
+          F.fprintf fmt "%s%a" bsig.name Parameter.pp_parameters bsig.parameters
 
 
     let get_parameters block = block.parameters
@@ -986,6 +1005,7 @@ module Procname = struct
 
   let equal = [%compare.equal: t]
 
+  (** hash function for procname *)
   let hash = Hashtbl.hash
 
   let with_block_parameters base blocks = WithBlockParameters (base, blocks)
@@ -1003,6 +1023,12 @@ module Procname = struct
     | name ->
         is_c_function name
 
+
+  let is_java_lift f = function Java java_pname -> f java_pname | _ -> false
+
+  let is_java_access_method = is_java_lift Java.is_access_method
+
+  let is_java_class_initializer = is_java_lift Java.is_class_initializer
 
   let is_objc_method procname =
     match procname with ObjC_Cpp name -> ObjC_Cpp.is_objc_method name | _ -> false
@@ -1115,7 +1141,7 @@ module Procname = struct
   let is_infer_undefined pn =
     match pn with
     | Java j ->
-        let regexp = Str.regexp "com.facebook.infer.builtins.InferUndefined" in
+        let regexp = Str.regexp_string "com.facebook.infer.builtins.InferUndefined" in
         Str.string_match regexp (Java.get_class_name j) 0
     | _ ->
         (* TODO: add cases for obj-c, c, c++ *)
@@ -1133,79 +1159,94 @@ module Procname = struct
         None
 
 
-  let with_blocks_parameters_to_string base blocks to_string_f =
-    let base_id = to_string_f base in
-    String.concat ~sep:"_" (base_id :: blocks)
-
-
   (** Very verbose representation of an existing Procname.t *)
-  let rec to_unique_id pn =
-    match pn with
+  let rec pp_unique_id fmt = function
     | Java j ->
-        Java.to_string j Verbose
+        Java.pp Verbose fmt j
     | C osig ->
-        C.to_string osig Verbose
+        C.pp Verbose fmt osig
     | ObjC_Cpp osig ->
-        ObjC_Cpp.to_string osig Verbose
+        ObjC_Cpp.pp Verbose fmt osig
     | Block bsig ->
-        Block.to_string bsig Verbose
-    | WithBlockParameters (base, blocks) ->
-        with_blocks_parameters_to_string base blocks to_unique_id
+        Block.pp Verbose fmt bsig
+    | WithBlockParameters (base, []) ->
+        pp_unique_id fmt base
+    | WithBlockParameters (base, (_ :: _ as blocks)) ->
+        pp_unique_id fmt base ;
+        F.pp_print_string fmt "_" ;
+        Pp.seq ~sep:"_" F.pp_print_string fmt blocks
     | Linters_dummy_method ->
-        "Linters_dummy_method"
+        F.pp_print_string fmt "Linters_dummy_method"
 
+
+  let to_unique_id proc_name = F.asprintf "%a" pp_unique_id proc_name
 
   (** Convert a proc name to a string for the user to see *)
-  let rec to_string p =
-    match p with
+  let rec pp fmt = function
     | Java j ->
-        Java.to_string j Non_verbose
+        Java.pp Non_verbose fmt j
     | C osig ->
-        C.to_string osig Non_verbose
+        C.pp Non_verbose fmt osig
     | ObjC_Cpp osig ->
-        ObjC_Cpp.to_string osig Non_verbose
+        ObjC_Cpp.pp Non_verbose fmt osig
     | Block bsig ->
-        Block.to_string bsig Non_verbose
-    | WithBlockParameters (base, blocks) ->
-        with_blocks_parameters_to_string base blocks to_string
+        Block.pp Non_verbose fmt bsig
+    | WithBlockParameters (base, []) ->
+        pp fmt base
+    | WithBlockParameters (base, (_ :: _ as blocks)) ->
+        pp fmt base ;
+        F.pp_print_string fmt "_" ;
+        Pp.seq ~sep:"_" F.pp_print_string fmt blocks
     | Linters_dummy_method ->
-        to_unique_id p
+        pp_unique_id fmt Linters_dummy_method
 
+
+  let to_string proc_name = F.asprintf "%a" pp proc_name
 
   (** Convenient representation of a procname for external tools (e.g. eclipse plugin) *)
-  let rec to_simplified_string ?(withclass = false) p =
-    match p with
+  let rec pp_simplified_string ?(withclass = false) fmt = function
     | Java j ->
-        Java.to_string ~withclass j Simple
+        Java.pp ~withclass Simple fmt j
     | C osig ->
-        C.to_string osig Simple
+        C.pp Simple fmt osig
     | ObjC_Cpp osig ->
-        ObjC_Cpp.to_string osig Simple
+        ObjC_Cpp.pp Simple fmt osig
     | Block bsig ->
-        Block.to_string bsig Simple
+        Block.pp Simple fmt bsig
     | WithBlockParameters (base, _) ->
-        to_simplified_string base
+        pp_simplified_string fmt base
     | Linters_dummy_method ->
-        to_unique_id p
+        pp_unique_id fmt Linters_dummy_method
+
+
+  let to_simplified_string ?withclass proc_name =
+    F.asprintf "%a" (pp_simplified_string ?withclass) proc_name
 
 
   let from_string_c_fun func = C (C.from_string func)
 
-  let hashable_name p =
-    match p with
-    | Java pname ->
+  let java_inner_class_prefix_regex = Str.regexp "\\$[0-9]+"
+
+  let hashable_name proc_name =
+    match proc_name with
+    | Java pname -> (
         (* Strip autogenerated anonymous inner class numbers in order to keep the bug hash
-           invariant when introducing new annonynous classes *)
-        Str.global_replace (Str.regexp "\\$[0-9]+") "$_"
-          (Java.to_string ~withclass:true pname Simple)
+           invariant when introducing new anonymous classes *)
+        let name = F.asprintf "%a" (Java.pp ~withclass:true Simple) pname in
+        match Str.search_forward java_inner_class_prefix_regex name 0 with
+        | _ ->
+            Str.global_replace java_inner_class_prefix_regex "$_" name
+        | exception Caml.Not_found ->
+            name )
     | ObjC_Cpp m when ObjC_Cpp.is_objc_method m ->
         (* In Objective C, the list of parameters is part of the method name. To prevent the bug
            hash to change when a parameter is introduced or removed, only the part of the name
            before the first colon is used for the bug hash *)
-        List.hd_exn (String.split_on_chars (to_simplified_string ~withclass:true p) ~on:[':'])
+        let name = F.asprintf "%a" (pp_simplified_string ~withclass:true) proc_name in
+        List.hd_exn (String.split_on_chars name ~on:[':'])
     | _ ->
         (* Other cases for C and C++ method names *)
-        to_simplified_string ~withclass:true p
+        F.asprintf "%a" (pp_simplified_string ~withclass:true) proc_name
 
 
   let rec get_parameters procname =
@@ -1273,18 +1314,21 @@ module Procname = struct
         Parameter.ClangParameter (Parameter.clang_param_of_name class_name)
 
 
-  (** Pretty print a proc name *)
-  let pp f pn = F.pp_print_string f (to_string pn)
+  let describe f pn =
+    let name = hashable_name pn in
+    match String.lsplit2 ~on:'<' name with
+    | Some (name_without_template, _template_part) ->
+        F.pp_print_string f name_without_template
+    | None ->
+        F.pp_print_string f name
 
-  (** hash function for procname *)
-  let hash_pname = Hashtbl.hash
 
   module Hashable = struct
     type nonrec t = t
 
     let equal = equal
 
-    let hash = hash_pname
+    let hash = hash
   end
 
   module Hash = Hashtbl.Make (Hashable)
@@ -1317,67 +1361,68 @@ module Procname = struct
 
 
   (** Convert a proc name to a filename *)
-  let to_concrete_filename ?crc_only pname =
+  let to_filename ?crc_only pname =
     (* filenames for clang procs are REVERSED qualifiers with '#' as separator *)
-    let get_qual_name_str pname =
-      get_qualifiers pname |> QualifiedCppName.to_rev_list |> String.concat ~sep:"#"
+    let pp_rev_qualified fmt pname =
+      let rev_qualifiers = get_qualifiers pname |> QualifiedCppName.to_rev_list in
+      Pp.seq ~sep:"#" F.pp_print_string fmt rev_qualifiers
     in
     let proc_id =
       match pname with
       | C {parameters; mangled} ->
-          (get_qual_name_str pname ^ Parameter.parameters_to_string parameters)
-          :: Option.to_list mangled
-          |> String.concat ~sep:"#"
+          let pp_mangled fmt = function
+            | None ->
+                ()
+            | Some mangled ->
+                F.fprintf fmt "#%s" mangled
+          in
+          F.asprintf "%a%a%a" pp_rev_qualified pname Parameter.pp_parameters parameters pp_mangled
+            mangled
       | ObjC_Cpp objc_cpp ->
-          get_qual_name_str pname
-          ^ Parameter.parameters_to_string objc_cpp.parameters
-          ^ "#"
-          ^ ObjC_Cpp.kind_to_verbose_string objc_cpp.kind
+          F.asprintf "%a%a#%a" pp_rev_qualified pname Parameter.pp_parameters objc_cpp.parameters
+            ObjC_Cpp.pp_verbose_kind objc_cpp.kind
       | _ ->
-          to_unique_id pname
+          F.asprintf "%a" pp_unique_id pname
     in
     Escape.escape_filename @@ DB.append_crc_cutoff ?crc_only proc_id
 
 
-  let to_filename ?crc_only pname = to_concrete_filename ?crc_only pname
-
   module SQLite = struct
-    let pname_to_key =
-      Base.Hashtbl.create
-        ( module struct
-          type nonrec t = t
+    module T = struct
+      type nonrec t = t
 
-          let compare = compare
+      let compare = compare
 
-          let hash = hash
+      let hash = hash
 
-          let sexp_of_t p = Sexp.Atom (to_string p)
-        end )
+      let sexp_of_t p = Sexp.Atom (F.asprintf "%a" pp p)
+    end
 
+    module Serializer = SqliteUtils.MarshalledDataForComparison (T)
+
+    let pname_to_key = Base.Hashtbl.create (module T)
 
     let serialize pname =
-      let default () = Sqlite3.Data.BLOB (Marshal.to_string pname []) in
+      let default () = Serializer.serialize pname in
       Base.Hashtbl.find_or_add pname_to_key pname ~default
 
 
-    let deserialize : Sqlite3.Data.t -> t = function[@warning "-8"]
-      | Sqlite3.Data.BLOB b ->
-          Marshal.from_string b 0
-
+    let deserialize = Serializer.deserialize
 
     let clear_cache () = Base.Hashtbl.clear pname_to_key
   end
 
-  module SQLiteList = SqliteUtils.MarshalledData (struct
+  module SQLiteList = SqliteUtils.MarshalledDataNOTForComparison (struct
     type nonrec t = t list
   end)
 end
 
 module Fieldname = struct
-  type t = Clang of {class_name: Name.t; field_name: string} | Java of string
-  [@@deriving compare]
+  type t = Clang of {class_name: Name.t; field_name: string} | Java of string [@@deriving compare]
 
   let equal = [%compare.equal: t]
+
+  let is_java = function Java _ -> true | Clang _ -> false
 
   module T = struct
     type nonrec t = t
@@ -1475,7 +1520,8 @@ module Struct = struct
     ; supers: Name.t list  (** superclasses *)
     ; methods: Procname.t list  (** methods defined *)
     ; exported_objc_methods: Procname.t list  (** methods in ObjC interface, subset of [methods] *)
-    ; annots: Annot.Item.t  (** annotations *) }
+    ; annots: Annot.Item.t  (** annotations *)
+    ; dummy: bool  (** dummy struct for class including static method *) }
 
   type lookup = Name.t -> t option
 
@@ -1511,21 +1557,22 @@ module Struct = struct
 
 
   let internal_mk_struct ?default ?fields ?statics ?methods ?exported_objc_methods ?supers ?annots
-      () =
+      ?dummy () =
     let default_ =
       { fields= []
       ; statics= []
       ; methods= []
       ; exported_objc_methods= []
       ; supers= []
-      ; annots= Annot.Item.empty }
+      ; annots= Annot.Item.empty
+      ; dummy= false }
     in
     let mk_struct_ ?(default = default_) ?(fields = default.fields) ?(statics = default.statics)
         ?(methods = default.methods) ?(exported_objc_methods = default.exported_objc_methods)
-        ?(supers = default.supers) ?(annots = default.annots) () =
-      {fields; statics; methods; exported_objc_methods; supers; annots}
+        ?(supers = default.supers) ?(annots = default.annots) ?(dummy = default.dummy) () =
+      {fields; statics; methods; exported_objc_methods; supers; annots; dummy}
     in
-    mk_struct_ ?default ?fields ?statics ?methods ?exported_objc_methods ?supers ?annots ()
+    mk_struct_ ?default ?fields ?statics ?methods ?exported_objc_methods ?supers ?annots ?dummy ()
 
 
   (** the element typ of the final extensible array in the given typ, if any *)
@@ -1574,4 +1621,7 @@ module Struct = struct
           None )
     | _ ->
         None
+
+
+  let is_dummy {dummy} = dummy
 end

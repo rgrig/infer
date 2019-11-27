@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -32,7 +32,7 @@ let check_invariant ap1 ap2 = function
           HilExp.AccessExpression.pp ap2
 
 
-let ( <= ) ~lhs ~rhs =
+let leq ~lhs ~rhs =
   if phys_equal lhs rhs then true
   else
     IdMap.for_all

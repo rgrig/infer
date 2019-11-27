@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -119,8 +119,6 @@ let __split_get_nth = create_procname "__split_get_nth"
 let __throw = create_procname "__throw"
 
 let __unwrap_exception = create_procname "__unwrap_exception"
-
-let __variable_initialization = create_procname "__variable_initialization"
 
 let abort = create_procname "abort"
 

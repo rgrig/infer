@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -82,7 +82,7 @@ module MockTrace = Trace.Make (struct
     else None
 end)
 
-let trace_equal t1 t2 = MockTrace.( <= ) ~lhs:t1 ~rhs:t2 && MockTrace.( <= ) ~lhs:t2 ~rhs:t1
+let trace_equal t1 t2 = MockTrace.leq ~lhs:t1 ~rhs:t2 && MockTrace.leq ~lhs:t2 ~rhs:t1
 
 let source_equal s source = MockSource.equal s source
 

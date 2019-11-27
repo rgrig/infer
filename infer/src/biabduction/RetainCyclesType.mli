@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -19,8 +19,8 @@ type retain_cycle_edge = Object of retain_cycle_edge_obj | Block of Typ.Procname
 to model the cycle structure. The next element from the end of the list is the head. *)
 type t = {rc_head: retain_cycle_edge; rc_elements: retain_cycle_edge list}
 
-(** Set for retain cycles. *)
 module Set : Caml.Set.S with type elt = t
+(** Set for retain cycles. *)
 
 val d_retain_cycle : t -> unit
 

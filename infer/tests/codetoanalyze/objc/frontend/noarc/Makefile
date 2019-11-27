@@ -1,4 +1,4 @@
-# Copyright (c) 2016-present, Facebook, Inc.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -53,6 +53,7 @@ SOURCES = \
   ../subclass/MyClass.m \
   ../subclass/MySubClass.m \
   ../subclass/main.c \
+  ../synchronizedStmt/sync.m \
   ../types/testloop.m \
   ../vardecl/aclass.m \
   ../vardecl/aclass_2.m \

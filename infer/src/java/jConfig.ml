@@ -1,31 +1,18 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-open Javalib_pack
 
 (** {2 Class names and types} *)
 
 let builtins_package = "com.facebook.infer.builtins"
 
 let infer_builtins_cl = builtins_package ^ ".InferBuiltins"
-
-let obj_type = JBasics.TObject (JBasics.TClass JBasics.java_lang_object)
-
-let string_cl = "java.lang.String"
-
-let class_cl = "java.lang.Class"
-
-let npe_cl = "java.lang.NullPointerException"
-
-let cce_cl = "java.lang.ClassCastException"
-
-let out_of_bound_cl = "java.lang.ArrayIndexOutOfBoundsException"
 
 (** {2 Names of special variables, constants and method names} *)
 

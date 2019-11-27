@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -68,5 +68,14 @@ static int array2[] = {};
 void loop_use_global_vars(int x) {
   for (int i = 0; i < x && array1 != array2; i++) {
     // do something
+  }
+}
+
+void ptr_cmp(char* end, int size) {
+  char buf[2] = "hi";
+  for (int i = 0; i < size; i += 2) {
+    if (buf < end) { // pvar &buf occurs directly in prune node
+      return;
+    }
   }
 }

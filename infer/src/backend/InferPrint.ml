@@ -1,34 +1,14 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 open! IStd
-module CLOpt = CommandLineOption
 module Hashtbl = Caml.Hashtbl
 module L = Logging
 module F = Format
-
-let print_usage_exit err_s =
-  L.user_error "Load Error: %s@\n@." err_s ;
-  Config.print_usage_exit ()
-
-
-(** return the list of the .specs files in the results dir and libs, if they're defined *)
-let load_specfiles () =
-  let specs_files_in_dir dir =
-    let is_specs_file fname =
-      Sys.is_directory fname <> `Yes && Filename.check_suffix fname Config.specs_files_suffix
-    in
-    let all_filenames = try Array.to_list (Sys.readdir dir) with Sys_error _ -> [] in
-    let all_filepaths = List.map ~f:(fun fname -> Filename.concat dir fname) all_filenames in
-    List.filter ~f:is_specs_file all_filepaths
-  in
-  let result_specs_dir = DB.filename_to_string DB.Results_dir.specs_dir in
-  specs_files_in_dir result_specs_dir
-
 
 let error_desc_to_plain_string error_desc =
   let pp fmt = Localise.pp_error_desc fmt error_desc in
@@ -57,7 +37,7 @@ let compute_hash ~(severity : string) ~(bug_type : string) ~(proc_name : Typ.Pro
     (* Removing the line,column, and infer temporary variable (e.g., n$67) information from the
        error message as well as the index of the annonymmous class to make the hash invariant
        when moving the source code in the file *)
-    Str.global_replace (Str.regexp "\\(line \\|column \\|\\$\\)[0-9]+") "$_" qualifier
+    Str.global_replace (Str.regexp "\\(line \\|column \\|parameter \\|\\$\\)[0-9]+") "$_" qualifier
   in
   Utils.better_hash
     (severity, bug_type, hashable_procedure_name, base_filename, location_independent_qualifier)
@@ -172,20 +152,18 @@ let should_report (issue_kind : Exceptions.severity) issue_type error_desc eclas
           ; parameter_not_null_checked
           ; premature_nil_termination
           ; empty_vector_access
-          ; use_after_free ]
+          ; biabd_use_after_free ]
         in
         List.mem ~equal:IssueType.equal null_deref_issue_types issue_type
       in
-      if issue_type_is_null_deref then Localise.error_desc_is_reportable_bucket error_desc
-      else true
+      if issue_type_is_null_deref then Localise.error_desc_is_reportable_bucket error_desc else true
 
 
 (* The reason an issue should be censored (that is, not reported). The empty
    string (that is "no reason") means that the issue should be reported. *)
 let censored_reason (issue_type : IssueType.t) source_file =
   let filename = SourceFile.to_rel_path source_file in
-  let rejected_by ((issue_type_polarity, issue_type_re), (filename_polarity, filename_re), reason)
-      =
+  let rejected_by ((issue_type_polarity, issue_type_re), (filename_polarity, filename_re), reason) =
     let accepted =
       (* matches issue_type_re implies matches filename_re *)
       (not (Bool.equal issue_type_polarity (Str.string_match issue_type_re issue_type.unique_id 0)))
@@ -193,7 +171,7 @@ let censored_reason (issue_type : IssueType.t) source_file =
     in
     Option.some_if (not accepted) reason
   in
-  Option.value ~default:"" (List.find_map Config.filter_report ~f:rejected_by)
+  List.find_map Config.censor_report ~f:rejected_by
 
 
 let potential_exception_message = "potential exception at line"
@@ -264,7 +242,8 @@ module JsonIssuePrinter = MakeJsonListPrinter (struct
         "Invalid source file for %a %a@.Trace: %a@." IssueType.pp err_key.err_name
         Localise.pp_error_desc err_key.err_desc Errlog.pp_loc_trace err_data.loc_trace ;
     let should_report_source_file =
-      (not (SourceFile.is_infer_model source_file)) || Config.debug_mode || Config.debug_exceptions
+      (not (SourceFile.is_biabduction_model source_file))
+      || Config.debug_mode || Config.debug_exceptions
     in
     if
       error_filter source_file err_key.err_name
@@ -342,24 +321,37 @@ module JsonCostsPrinter = MakeJsonListPrinter (struct
 
   let to_string {loc; proc_name; cost_opt} =
     match cost_opt with
-    | Some {post} ->
-        let basic_operation_cost = CostDomain.get_operation_cost post in
-        let hum =
-          { Jsonbug_t.hum_polynomial=
-              Format.asprintf "%a" CostDomain.BasicCost.pp basic_operation_cost
-          ; hum_degree= Format.asprintf "%a" CostDomain.BasicCost.pp_degree basic_operation_cost
-          ; big_o= Format.asprintf "%a" CostDomain.BasicCost.pp_degree_hum basic_operation_cost }
+    | Some {post; is_on_ui_thread} when not (Typ.Procname.is_java_access_method proc_name) ->
+        let hum cost =
+          let degree_with_term = CostDomain.BasicCost.get_degree_with_term cost in
+          { Jsonbug_t.hum_polynomial= Format.asprintf "%a" CostDomain.BasicCost.pp_hum cost
+          ; hum_degree=
+              Format.asprintf "%a"
+                (CostDomain.BasicCost.pp_degree ~only_bigO:false)
+                degree_with_term
+          ; big_o=
+              Format.asprintf "%a" (CostDomain.BasicCost.pp_degree ~only_bigO:true) degree_with_term
+          }
+        in
+        let cost_info cost =
+          { Jsonbug_t.polynomial_version= CostDomain.BasicCost.version
+          ; polynomial= CostDomain.BasicCost.encode cost
+          ; degree=
+              Option.map (CostDomain.BasicCost.degree cost) ~f:Polynomials.Degree.encode_to_int
+          ; hum= hum cost }
         in
         let cost_item =
           let file = SourceFile.to_rel_path loc.Location.file in
           { Jsonbug_t.hash= compute_hash ~severity:"" ~bug_type:"" ~proc_name ~file ~qualifier:""
           ; loc= {file; lnum= loc.Location.line; cnum= loc.Location.col; enum= -1}
+          ; procedure_name= Typ.Procname.get_method proc_name
           ; procedure_id= procedure_id_of_procname proc_name
-          ; polynomial= CostDomain.BasicCost.encode basic_operation_cost
-          ; hum }
+          ; is_on_ui_thread
+          ; exec_cost= cost_info (CostDomain.get_cost_kind CostKind.OperationCost post)
+          ; alloc_cost= cost_info (CostDomain.get_cost_kind CostKind.AllocationCost post) }
         in
         Some (Jsonbug_j.string_of_cost_item cost_item)
-    | None ->
+    | _ ->
         None
 end)
 
@@ -412,8 +404,7 @@ let pp_custom_of_report fmt report fields =
       | `Issue_field_hash ->
           Format.fprintf fmt "%s%s" (comma_separator index) (Caml.Digest.to_hex issue.hash)
       | `Issue_field_line_offset ->
-          Format.fprintf fmt "%s%d" (comma_separator index)
-            (issue.line - issue.procedure_start_line)
+          Format.fprintf fmt "%s%d" (comma_separator index) (issue.line - issue.procedure_start_line)
       | `Issue_field_qualifier_contains_potential_exception_note ->
           Format.pp_print_bool fmt
             (String.is_substring issue.qualifier ~substring:potential_exception_message)
@@ -441,7 +432,7 @@ module IssuesTxt = struct
     in
     if
       error_filter source_file key.err_name
-      && ((not Config.filtering) || String.is_empty (censored_reason key.err_name source_file))
+      && ((not Config.filtering) || Option.is_none (censored_reason key.err_name source_file))
     then Exceptions.pp_err err_data.loc key.severity key.err_name key.err_desc None fmt ()
 
 
@@ -492,8 +483,8 @@ module Stats = struct
 
 
   let process_loc loc stats =
-    try Hashtbl.find stats.files loc.Location.file with Caml.Not_found ->
-      Hashtbl.add stats.files loc.Location.file ()
+    try Hashtbl.find stats.files loc.Location.file
+    with Caml.Not_found -> Hashtbl.add stats.files loc.Location.file ()
 
 
   let loc_trace_to_string_list linereader indent_num ltr =
@@ -511,9 +502,7 @@ module Stats = struct
       let loc = lt.Errlog.lt_loc in
       let level = lt.Errlog.lt_level in
       let description = lt.Errlog.lt_description in
-      let code =
-        match Printer.LineReader.from_loc linereader loc with Some s -> s | None -> ""
-      in
+      let code = match Printer.LineReader.from_loc linereader loc with Some s -> s | None -> "" in
       let line =
         let pp fmt =
           if description <> "" then
@@ -616,8 +605,7 @@ module StatsLogs = struct
         { analysis_nodes_visited= Summary.Stats.nb_visited summary.stats
         ; analysis_status= Summary.Stats.failure_kind summary.stats
         ; analysis_total_nodes= Summary.get_proc_desc summary |> Procdesc.get_nodes_num
-        ; clang_method_kind=
-            (match lang with Language.Clang -> Some clang_method_kind | _ -> None)
+        ; clang_method_kind= (match lang with Language.Clang -> Some clang_method_kind | _ -> None)
         ; lang= Language.to_explicit_string lang
         ; method_location= Summary.get_loc summary
         ; method_name= Typ.Procname.to_string proc_name
@@ -672,6 +660,166 @@ module PreconditionStats = struct
     L.result "Procedures with empty precondition: %d@." !nr_empty ;
     L.result "Procedures with only allocation conditions: %d@." !nr_onlyallocation ;
     L.result "Procedures with data constraints: %d@." !nr_dataconstraints
+end
+
+module SummaryStats = struct
+  module MetricTypes = struct
+    type 't typ = Bool : bool typ | Int : int typ
+  end
+
+  module MakeTopN (V : PrettyPrintable.PrintableOrderedType) = struct
+    type 'k t = {capacity: int; filter: V.t -> bool; size: int; sorted_elements: (V.t * 'k) list}
+
+    let make capacity ~filter = {capacity; filter; size= 0; sorted_elements= []}
+
+    let add top k v =
+      if top.filter v then
+        let smaller, greater =
+          List.split_while top.sorted_elements ~f:(fun (v', _) -> V.compare v v' > 0)
+        in
+        if top.size >= top.capacity then
+          match smaller with
+          | [] ->
+              top
+          | _ :: tl ->
+              let sorted_elements = tl @ ((v, k) :: greater) in
+              {top with sorted_elements}
+        else
+          let sorted_elements = smaller @ ((v, k) :: greater) in
+          {top with size= top.size + 1; sorted_elements}
+      else top
+
+
+    let is_empty top = top.size <= 0
+
+    let pp ~pp_k f top =
+      if top.size > 0 then
+        let pp1 f (v, k) = F.fprintf f "@[%a -> %a@]" V.pp v pp_k k in
+        Pp.seq pp1 f (List.rev top.sorted_elements)
+  end
+
+  module IntTopN = MakeTopN (Int)
+
+  module MetricAggregator = struct
+    open MetricTypes
+
+    type ('i, 'k) t =
+      | A :
+          { name: string
+          ; value: 'o
+          ; is_empty: 'o -> bool
+          ; add: 'o -> 'k -> 'i -> 'o
+          ; pp: pp_k:(F.formatter -> 'k -> unit) -> F.formatter -> 'o -> unit }
+          -> ('i, 'k) t
+
+    let add (A aggr) k i = A {aggr with value= aggr.add aggr.value k i}
+
+    let pp ~pp_k f (A {name; pp; value; is_empty}) =
+      if not (is_empty value) then F.fprintf f "@[%s: @[%a@]@]" name (pp ~pp_k) value
+
+
+    let no_k pp ~pp_k:_ = pp
+
+    let int name add = A {name; value= 0; is_empty= Int.(( = ) 0); add; pp= no_k F.pp_print_int}
+
+    let int_sum = int "sum" (fun acc _ v -> acc + v)
+
+    let int_top3 =
+      A
+        { name= "top3"
+        ; value= IntTopN.make 3 ~filter:(fun x -> x > 1)
+        ; is_empty= IntTopN.is_empty
+        ; add= IntTopN.add
+        ; pp= IntTopN.pp }
+
+
+    let true_count = int "True" (fun acc _ b -> if b then acc + 1 else acc)
+
+    let false_count = int "False" (fun acc _ b -> if b then acc else acc + 1)
+
+    type 'k get = {get: 'i. 'i typ -> ('i, 'k) t list}
+
+    let aggregators =
+      let get : type i. i typ -> (i, _) t list = function
+        | Bool ->
+            [true_count; false_count]
+        | Int ->
+            [int_sum; int_top3]
+      in
+      {get}
+
+
+    let get aggregators typ = aggregators.get typ
+  end
+
+  module Metrics = struct
+    open MetricTypes
+
+    type 'i metric = M : {get: 'i -> 't; typ: 't typ} -> 'i metric
+
+    let for_fields poly_fields obj_metrics =
+      PolyFields.map poly_fields
+        { f=
+            (fun field_name field_get ->
+              let prefix = field_name ^ ":" in
+              List.map obj_metrics ~f:(fun (metric_name, M {typ; get= metric_get}) ->
+                  let name = prefix ^ metric_name in
+                  let get r = r |> field_get |> Obj.repr |> metric_get in
+                  (name, M {typ; get}) ) ) }
+      |> List.concat
+  end
+
+  module ObjMetrics = struct
+    open MetricTypes
+    open Metrics
+
+    let obj_is_zero = phys_equal (Obj.repr 0)
+
+    let obj_marshaled_size x = String.length (Marshal.to_string x []) - Marshal.header_size
+
+    let metrics =
+      let bool name get = (name, M {typ= Bool; get}) in
+      let int name get = (name, M {typ= Int; get}) in
+      [ int "reachable_words" Obj.reachable_words
+      ; int "marshaled size" obj_marshaled_size
+      ; bool "is_zero" obj_is_zero ]
+  end
+
+  module MetricResults = struct
+    open MetricTypes
+    open Metrics
+    module StringMap = PrettyPrintable.MakePPMap (String)
+
+    type ('i, 'k) result =
+      | R : {typ: 't typ; get: 'i -> 't; aggrs: ('t, 'k) MetricAggregator.t list} -> ('i, 'k) result
+
+    let init metrics aggregators =
+      List.fold metrics ~init:StringMap.empty ~f:(fun acc (name, M {typ; get}) ->
+          StringMap.add name (R {typ; get; aggrs= MetricAggregator.get aggregators typ}) acc )
+
+
+    let add results k x =
+      StringMap.map
+        (fun (R res) ->
+          let v = res.get x in
+          R {res with aggrs= List.map res.aggrs ~f:(fun aggr -> MetricAggregator.add aggr k v)} )
+        results
+
+
+    let pp ~pp_k f results =
+      let pp_value f (R {aggrs}) = Pp.seq (MetricAggregator.pp ~pp_k) f aggrs in
+      StringMap.pp ~pp_value f results
+  end
+
+  let results =
+    let summary_fields_obj_metrics = Metrics.for_fields Summary.poly_fields ObjMetrics.metrics in
+    let init = MetricResults.init summary_fields_obj_metrics MetricAggregator.aggregators in
+    ref init
+
+
+  let do_summary proc_name summary = results := MetricResults.add !results proc_name summary
+
+  let pp_stats () = L.result "%a@\n" (MetricResults.pp ~pp_k:Typ.Procname.pp) !results
 end
 
 let error_filter filters proc_name file error_name =
@@ -912,35 +1060,8 @@ let process_summary filters formats_by_report_kind linereader stats summary issu
       issues_acc
   in
   if Config.precondition_stats then PreconditionStats.do_summary proc_name summary ;
+  if Config.summary_stats then SummaryStats.do_summary proc_name summary ;
   issues_acc'
-
-
-let spec_files_from_cmdline () =
-  if CLOpt.is_originator then (
-    (* Find spec files specified by command-line arguments.  Not run at init time since the specs
-         files may be generated between init and report time. *)
-    List.iter
-      ~f:(fun arg ->
-        if (not (Filename.check_suffix arg Config.specs_files_suffix)) && arg <> "." then
-          print_usage_exit ("file " ^ arg ^ ": arguments must be .specs files") )
-      Config.anon_args ;
-    if Config.test_filtering then ( Inferconfig.test () ; L.exit 0 ) ;
-    if List.is_empty Config.anon_args then load_specfiles () else List.rev Config.anon_args )
-  else load_specfiles ()
-
-
-(** Create an iterator which loads spec files one at a time *)
-let get_summary_iterator () =
-  let sorted_spec_files = List.sort ~compare:String.compare (spec_files_from_cmdline ()) in
-  let do_spec f fname =
-    match Summary.load_from_file (DB.filename_from_string fname) with
-    | None ->
-        L.(die UserError) "Error: cannot open file %s@." fname
-    | Some summary ->
-        f summary
-  in
-  let iterate f = List.iter ~f:(do_spec f) sorted_spec_files in
-  iterate
 
 
 (** Although the out_file is an Option type, the None option is strictly meant for the
@@ -1031,9 +1152,8 @@ let pp_summary_and_issues formats_by_report_kind issue_formats =
   let stats = Stats.create () in
   let linereader = Printer.LineReader.create () in
   let filters = Inferconfig.create_filters () in
-  let iterate_summaries = get_summary_iterator () in
   let all_issues = ref [] in
-  iterate_summaries (fun summary ->
+  SpecsFiles.iter_from_config ~f:(fun summary ->
       all_issues :=
         process_summary filters formats_by_report_kind linereader stats summary !all_issues ) ;
   all_issues := Issue.sort_filter_issues !all_issues ;
@@ -1046,11 +1166,12 @@ let pp_summary_and_issues formats_by_report_kind issue_formats =
         issue_formats )
     !all_issues ;
   if Config.precondition_stats then PreconditionStats.pp_stats () ;
+  if Config.summary_stats then SummaryStats.pp_stats () ;
   List.iter
     [Config.lint_issues_dir_name; Config.starvation_issues_dir_name; Config.racerd_issues_dir_name]
     ~f:(fun dir_name ->
-      IssueLog.load dir_name ;
-      IssueLog.iter (pp_lint_issues filters formats_by_report_kind linereader) ) ;
+      IssueLog.load dir_name
+      |> IssueLog.iter ~f:(pp_lint_issues filters formats_by_report_kind linereader) ) ;
   finalize_and_close_files formats_by_report_kind stats
 
 
@@ -1060,12 +1181,6 @@ let register_perf_stats_report () =
 
 
 let main ~report_json =
-  ( if Config.loop_hoisting then
-    match Config.perf_profiler_data_file with
-    | Some fname ->
-        LoadPerfData.read_file_perf_data fname
-    | _ ->
-        () ) ;
   let issue_formats = init_issues_format_list report_json in
   let formats_by_report_kind =
     let costs_report_format_kind =
@@ -1089,4 +1204,6 @@ let main ~report_json =
       pp_json_report_by_report_kind formats_by_report_kind fname
   | None ->
       pp_summary_and_issues formats_by_report_kind issue_formats ) ;
+  if Config.test_determinator && Config.process_clang_ast then
+    TestDeterminator.merge_test_determinator_results () ;
   PerfStats.get_reporter PerfStats.Reporting ()

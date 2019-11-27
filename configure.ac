@@ -1,4 +1,4 @@
-dnl Copyright (c) 2015-present, Facebook, Inc.
+dnl Copyright (c) Facebook, Inc. and its affiliates.
 dnl
 dnl This source code is licensed under the MIT license found in the
 dnl LICENSE file in the root directory of this source tree.
@@ -12,14 +12,14 @@ AC_PREREQ([2.63])
 # - the values below
 # - opam
 AC_INIT([Infer],
-        [0.16.0],
+        [0.17.0],
         [https://github.com/facebook/infer/issues/])
 
 AC_CONFIG_SRCDIR([infer/src/istd/IStd.ml])
 
 # WARNING: keep in sync with above
 INFER_MAJOR=0
-INFER_MINOR=16
+INFER_MINOR=17
 INFER_PATCH=0
 
 AC_SUBST([INFER_MAJOR])
@@ -49,16 +49,37 @@ AS_IF([test "x$CLANG_INCLUDES" = "x"], [
   CLANG_INCLUDES="$CLANG_PREFIX/include"
 ])
 
-windows_build=no
-AC_MSG_CHECKING([for Windows build])
+BUILD_PLATFORM=unknown
+WINDOWS_BUILD=no
+AC_MSG_CHECKING([for build platform])
 # see https://stackoverflow.com/questions/714100/os-detecting-makefile
 # but we do this in the configure for homogeneity
 case "${OS}" in
     Windows_NT*)
-        windows_build=yes
+        BUILD_PLATFORM=Windows
         ;;
+    *)
+        uname_str=`uname -s`
+        case "${uname_str}" in
+            Linux*)
+                BUILD_PLATFORM=Linux
+                ;;
+            Darwin*)
+                BUILD_PLATFORM=Darwin
+                ;;
+            cygwin*|mingw*)
+                BUILD_PLATFORM=Windows
+                ;;
+            *)
+                AC_MSG_ERROR(["OS $unamestr is not supported"])
+                ;;
+        esac
 esac
-WINDOWS_BUILD=$windows_build
+AC_MSG_RESULT([$BUILD_PLATFORM])
+AC_SUBST([BUILD_PLATFORM])
+
+AC_MSG_CHECKING([for Windows build])
+AS_IF([test x"$BUILD_PLATFORM" = x"Windows"], [WINDOWS_BUILD=yes])
 AC_MSG_RESULT([$WINDOWS_BUILD])
 AC_SUBST([WINDOWS_BUILD])
 
@@ -116,13 +137,13 @@ AS_IF([test "x$enable_c_analyzers" = "xyes"], [
 ])
 # end if($enable_c_analyzers)
 
-
 AC_CHECK_TOOL([PYTHON27], [python2.7], [no])
 AC_ASSERT_PROG([python2.7], [$PYTHON27])
 
 AC_CHECK_TOOL([XCODE_SELECT], [xcode-select], [no])
 AS_IF([test "x$XCODE_SELECT" != "xno"], [XCODE_SELECT_OUT=`xcode-select -p`])
 
+AC_ARG_VAR([XCODE_BASE], [Install location of xcode])
 AS_IF(
   [test "x$XCODE_BASE" != "x"],
         [AC_CHECK_FILE($XCODE_BASE,[HAS_OBJC=yes],[HAS_OBJC=no])],
@@ -130,8 +151,18 @@ AS_IF(
         [XCODE_BASE=$XCODE_SELECT_OUT HAS_OBJC=yes],
   [HAS_OBJC=no])
 
+AC_CHECK_TOOL([XCRUN], [xcrun], [no])
+
+AC_ARG_VAR([SDKROOT], [path to the OSX platform SDK used by clang])
+AS_IF(
+  [test "x$SDKROOT" = "x" && test "x$XCRUN" != "xno"],
+        [SDKROOT=`xcrun --sdk macosx --show-sdk-path`]
+)
+
 AC_SUBST([XCODE_BASE])
 AC_SUBST([HAS_OBJC])
+AC_SUBST([SDKROOT])
+
 
 # prefer clang over gcc because the plugins makes use of
 # clang-specific #pragma's
@@ -184,6 +215,7 @@ Alternatively, you can checkout a binary release of infer:
 fi
 # end if($enable_c_analyzers)
 
+
 # OCaml dependencies
 AC_PROG_OCAML
 AC_ASSERT_PROG([ocamlc], [$OCAMLC])
@@ -204,6 +236,13 @@ AC_ASSERT_OCAML_PKG([easy-format])
 AC_ASSERT_OCAML_PKG([oUnit])
 AC_CHECK_TOOL([UTOP], [utop], [no])
 AC_ASSERT_OCAML_PKG([yojson])
+
+AC_MSG_CHECKING([which ocamlformat to use])
+AS_IF([test x"$is_facebook_tree" = x"yes"],
+  [OCAMLFORMAT="$(pwd)"/facebook/dependencies/bin/ocamlformat],
+  [OCAMLFORMAT=ocamlformat])
+AC_MSG_RESULT([$OCAMLFORMAT])
+AC_SUBST([OCAMLFORMAT])
 
 AC_ARG_VAR([CPATH], [Additional directories to search for C headers.])
 AC_ARG_VAR([LIBRARY_PATH], [Additional directories to search for C shared objects.])
@@ -241,6 +280,18 @@ if test "x$enable_java_analyzers" = "xyes"; then
   AC_ASSERT_OCAML_PKG([javalib])
   AC_ASSERT_OCAML_PKG([sawja])
 
+  AC_MSG_CHECKING([for Java major version])
+  JAVA_MAJOR_VERSION=`"$JAVAC" -version 2>&1 | head -n 1 | cut -d ' ' -f 2`
+  AS_IF([test "x`echo $JAVA_MAJOR_VERSION | cut -d '.' -f 1`" = "x1"], [
+    # version 1.8.xx -> 8
+    JAVA_MAJOR_VERSION=`echo $JAVA_MAJOR_VERSION | cut -d '.' -f 2`
+  ], [
+    # otherwise pick the first number as the major version
+    JAVA_MAJOR_VERSION=`echo $JAVA_MAJOR_VERSION | cut -d '.' -f 1`
+  ])
+  AC_MSG_RESULT([$JAVA_MAJOR_VERSION])
+  AC_SUBST([JAVA_MAJOR_VERSION])
+
   AC_MSG_CHECKING([for JAVA_HOME])
   cat - <<_ACEOF >conftest.java
 public class conftest {
@@ -251,11 +302,16 @@ public class conftest {
 }
 _ACEOF
   rm -f conftest.class
-  if $JAVAC conftest.java; then
+  if "$JAVAC" conftest.java; then
     rm -f conftest.java
     _USER_JAVA_HOME=$($JAVA -cp . conftest)
     if rm -f conftest.class; then
-       USER_JAVA_HOME=$_USER_JAVA_HOME/..
+       [javac_version_10_or_more=`echo "$JAVA_MAJOR_VERSION" | grep -q -e '^1[0-9]' && echo yes`]
+       if test "x$javac_version_10_or_more" = "xyes"; then
+          USER_JAVA_HOME=$_USER_JAVA_HOME
+       else
+          USER_JAVA_HOME=$_USER_JAVA_HOME/..
+       fi
     else
       AC_MSG_ERROR([Could not run test program with $JAVA])
     fi
@@ -343,30 +399,15 @@ AS_IF([test "$SED" != "xno"], [
 AC_SUBST([GNU_SED])
 
 AC_CHECK_TOOL([BREW], [brew], [no])
-AC_ARG_VAR([SDKROOT], [path to the OSX platform SDK used by clang])
-AC_SUBST([SDKROOT])
 
+AC_CHECK_TOOL([INSTALL_NAME_TOOL], [install_name_tool], [no])
+AC_SUBST([INSTALL_NAME_TOOL])
+AC_CHECK_TOOL([LDD], [ldd], [no])
+AC_SUBST([LDD])
+AC_CHECK_TOOL([OTOOL], [otool], [no])
+AC_SUBST([OTOOL])
 AC_CHECK_TOOL([PATCHELF], [patchelf], [no])
-
-# warn about broken pkg-config version for brew users
-if test "$BREW" != "no"; then
-  if "$BREW" info pkg-config > /dev/null && \
-     test x"$(which pkg-config)" = x"/usr/local/bin/pkg-config"; then
-    AC_MSG_NOTICE([pkg-config seems to have been installed from Homebrew])
-    AC_MSG_CHECKING([for bad version of pkg-config brew package])
-    if readlink $(which pkg-config) | grep -q -e '/0.29.1_1/'; then
-      AC_MSG_RESULT([found 0.29.1_1])
-      AC_MSG_WARN([])
-      AC_MSG_WARN([This version of pkg-config is known to cause issues with compiling infer.])
-      AC_MSG_WARN([Consider running the following command to get a working version:])
-      AC_MSG_WARN([])
-      AC_MSG_WARN([  brew remove pkg-config && brew update && brew install pkg-config])
-      AC_MSG_WARN([])
-    else
-      AC_MSG_RESULT([no bad version found])
-    fi
-  fi
-fi
+AC_SUBST([PATCHELF])
 
 AC_CHECK_INFER_MAN_LAST_MODIFIED()
 

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -32,7 +32,7 @@ type stats_kind = Time of Mtime_clock.counter * Unix.process_times | Memory | Ti
 type stats_type =
   | ClangLinters of SourceFile.t
   | ClangFrontend of SourceFile.t
-  | ClangFrontendLinters of SourceFile.t
+  | ClangProcessAST of SourceFile.t
   | JavaFrontend of SourceFile.t
   | TotalFrontend
   | Backend of SourceFile.t
@@ -43,7 +43,7 @@ type stats_type =
 let source_file_of_stats_type = function
   | ClangLinters source_file
   | ClangFrontend source_file
-  | ClangFrontendLinters source_file
+  | ClangProcessAST source_file
   | JavaFrontend source_file
   | Backend source_file ->
       Some source_file
@@ -64,19 +64,9 @@ let relative_path_of_stats_type stats_type =
   in
   let dirname =
     match stats_type with
-    | ClangLinters _ ->
+    | ClangLinters _ | ClangFrontend _ | ClangProcessAST _ | JavaFrontend _ | TotalFrontend ->
         Config.frontend_stats_dir_name
-    | ClangFrontend _ ->
-        Config.frontend_stats_dir_name
-    | ClangFrontendLinters _ ->
-        Config.frontend_stats_dir_name
-    | JavaFrontend _ ->
-        Config.frontend_stats_dir_name
-    | TotalFrontend ->
-        Config.frontend_stats_dir_name
-    | Backend _ ->
-        Config.backend_stats_dir_name
-    | TotalBackend ->
+    | Backend _ | TotalBackend ->
         Config.backend_stats_dir_name
     | Reporting ->
         Config.reporting_stats_dir_name
@@ -91,8 +81,8 @@ let string_of_stats_type = function
       "linters"
   | ClangFrontend _ ->
       "clang_frontend"
-  | ClangFrontendLinters _ ->
-      "clang_frontend_and_linters"
+  | ClangProcessAST _ ->
+      "clang_process_ast"
   | JavaFrontend _ ->
       "java_frontend"
   | TotalFrontend ->
@@ -243,7 +233,7 @@ let compute_mem_stats () =
       ; minor_heap_kb= words_to_kb (float_of_int gc_ctrl.minor_heap_size) }
   in
   (* We log number of bytes instead of a larger unit in EventLogger so the EventLogger output can
-    display in whatever format fits best *)
+     display in whatever format fits best *)
   let mem =
     Some
       { EventLogger.minor_heap_mem= words_to_bytes gc_stats.minor_words
@@ -314,7 +304,7 @@ let report stats_kind file stats_type () =
       try
         Unix.mkdir_p (Filename.dirname file) ;
         (* the same report may be registered across different infer processes *)
-        Utils.write_file_with_locking file ~f:(fun stats_oc ->
+        Utils.with_intermediate_temp_file_out file ~f:(fun stats_oc ->
             Yojson.Basic.pretty_to_channel stats_oc json_stats )
       with exc ->
         L.internal_error "Info: failed to write stats to %s@\n%s@\n%s@\n%s@." file

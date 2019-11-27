@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -17,44 +17,54 @@ let run driver_mode =
   let open Driver in
   run_prologue driver_mode ;
   let changed_files = read_config_changed_files () in
+  InferAnalyze.invalidate_changed_procedures changed_files ;
   capture driver_mode ~changed_files ;
   analyze_and_report driver_mode ~changed_files ;
   run_epilogue ()
 
 
+let run driver_mode = ScubaLogging.execute_with_time_logging "run" (fun () -> run driver_mode)
+
 let setup () =
+  let db_start =
+    let already_started = ref false in
+    fun () ->
+      if (not !already_started) && CLOpt.is_originator && DBWriter.use_daemon then (
+        DBWriter.start () ;
+        Epilogues.register ~f:DBWriter.stop ~description:"Stop Sqlite write daemon" ;
+        already_started := true )
+  in
   ( match Config.command with
   | Analyze ->
       ResultsDir.assert_results_dir "have you run capture before?"
   | Report | ReportDiff ->
       ResultsDir.create_results_dir ()
-  | Diff ->
-      ResultsDir.remove_results_dir () ; ResultsDir.create_results_dir ()
   | Capture | Compile | Run ->
       let driver_mode = Lazy.force Driver.mode_from_command_line in
       if
         Config.(
           (* In Buck mode, delete infer-out directories inside buck-out to start fresh and to
-              avoid getting errors because some of their contents is missing (removed by
-              [Driver.clean_results_dir ()]). *)
-          buck && flavors)
+             avoid getting errors because some of their contents is missing (removed by
+             [Driver.clean_results_dir ()]). *)
+          (buck && flavors) || genrule_mode)
         || not
              ( Driver.(equal_mode driver_mode Analyze)
-             || Config.(continue_capture || infer_is_clang || infer_is_javac || reactive_mode) )
+             || Config.(
+                  continue_capture || infer_is_clang || infer_is_javac || reactive_mode
+                  || incremental_analysis) )
       then ResultsDir.remove_results_dir () ;
       ResultsDir.create_results_dir () ;
       if
         CLOpt.is_originator && (not Config.continue_capture)
         && not Driver.(equal_mode driver_mode Analyze)
-      then SourceFiles.mark_all_stale ()
+      then ( db_start () ; SourceFiles.mark_all_stale () )
   | Explore ->
       ResultsDir.assert_results_dir "please run an infer analysis first"
   | Events ->
       ResultsDir.assert_results_dir "have you run infer before?" ) ;
-  if CLOpt.is_originator then (
-    RunState.add_run_to_sequence () ;
-    RunState.store () ;
-    if Config.memcached then Memcached.start () ) ;
+  db_start () ;
+  NullsafeInit.init () ;
+  if CLOpt.is_originator then (RunState.add_run_to_sequence () ; RunState.store ()) ;
   ()
 
 
@@ -78,8 +88,14 @@ let log_environment_info () =
     |> Option.map ~f:(String.split ~on:CLOpt.env_var_sep)
     |> Option.value ~default:["<not set>"]
   in
-  L.environment_info "INFER_ARGS = %a" Pp.cli_args infer_args ;
-  L.environment_info "command line arguments: %a" Pp.cli_args (Array.to_list Sys.argv) ;
+  L.environment_info "INFER_ARGS = %a@\n" Pp.cli_args infer_args ;
+  L.environment_info "command line arguments: %a@\n" Pp.cli_args (Array.to_list Sys.argv) ;
+  ( match Utils.get_available_memory_MB () with
+  | None ->
+      L.environment_info "Could not retrieve available memory (possibly not on Linux)@\n"
+  | Some available_memory ->
+      L.environment_info "Available memory at startup: %d MB@\n" available_memory ;
+      ScubaLogging.log_count ~label:"startup_mem_avail_MB" ~value:available_memory ) ;
   print_active_checkers ()
 
 
@@ -99,6 +115,9 @@ let prepare_events_logging () =
 
 
 let () =
+  (* We specifically want to collect samples only from the main process until
+     we figure out what other entries and how we want to collect *)
+  if CommandLineOption.is_originator then ScubaLogging.register_global_log_flushing_at_exit () ;
   ( if Config.linters_validate_syntax_only then
     match CTLParserHelper.validate_al_files () with
     | Ok () ->
@@ -117,12 +136,11 @@ let () =
   setup () ;
   log_environment_info () ;
   prepare_events_logging () ;
-  if Config.debug_mode && CLOpt.is_originator then
+  if Config.debug_mode && CLOpt.is_originator then (
     L.progress "Logs in %s@." (Config.results_dir ^/ Config.log_file) ;
-  ( if Config.test_determinator then (
-    TestDeterminator.test_to_run_java Config.modified_lines Config.profiler_samples
-      Config.method_decls_info ;
-    TestDeterminator.emit_tests_to_run () )
+    L.progress "Execution ID %Ld@." Config.execution_id ) ;
+  ( if Config.test_determinator && not Config.process_clang_ast then
+    TestDeterminator.compute_and_emit_test_to_run ()
   else
     match Config.command with
     | Analyze ->
@@ -143,55 +161,57 @@ let () =
         ReportDiff.reportdiff ~current_report:Config.report_current
           ~previous_report:Config.report_previous ~current_costs:Config.costs_current
           ~previous_costs:Config.costs_previous
-    | Diff ->
-        Diff.diff (Lazy.force Driver.mode_from_command_line)
-    | Explore when Config.procedures ->
-        L.result "%a"
-          Config.(
-            Procedures.pp_all
-              ~filter:(Lazy.force Filtering.procedures_filter)
-              ~proc_name:procedures_name ~attr_kind:procedures_definedness
-              ~source_file:procedures_source_file ~proc_attributes:procedures_attributes)
-          ()
-    | Explore when Config.source_files ->
-        let filter = Lazy.force Filtering.source_files_filter in
-        L.result "%a"
-          (SourceFiles.pp_all ~filter ~type_environment:Config.source_files_type_environment
-             ~procedure_names:Config.source_files_procedure_names
-             ~freshly_captured:Config.source_files_freshly_captured)
-          () ;
-        if Config.source_files_cfg then (
-          let source_files = SourceFiles.get_all ~filter () in
-          List.iter source_files ~f:(fun source_file ->
-              (* create directory in captured/ *)
-              DB.Results_dir.init ~debug:true source_file ;
-              (* collect the CFGs for all the procedures in [source_file] *)
-              let proc_names = SourceFiles.proc_names_of_source source_file in
-              let cfgs = Typ.Procname.Hash.create (List.length proc_names) in
-              List.iter proc_names ~f:(fun proc_name ->
-                  Procdesc.load proc_name
-                  |> Option.iter ~f:(fun cfg -> Typ.Procname.Hash.add cfgs proc_name cfg) ) ;
-              (* emit the dotty file in captured/... *)
-              Dotty.print_icfg_dotty source_file cfgs ) ;
-          L.result "CFGs written in %s/*/%s@." Config.captured_dir Config.dotty_output )
-    | Explore ->
-        let if_some key opt args =
-          match opt with None -> args | Some arg -> key :: string_of_int arg :: args
-        in
-        let if_true key opt args = if not opt then args else key :: args in
-        let if_false key opt args = if opt then args else key :: args in
-        let args =
-          if_some "--max-level" Config.max_nesting
-          @@ if_true "--only-show" Config.only_show
-          @@ if_false "--no-source" Config.source_preview
-          @@ if_true "--html" Config.html
-          @@ if_some "--select" Config.select ["-o"; Config.results_dir]
-        in
-        let prog = Config.lib_dir ^/ "python" ^/ "inferTraceBugs" in
-        if is_error (Unix.waitpid (Unix.fork_exec ~prog ~argv:(prog :: args) ())) then
-          L.external_error
-            "** Error running the reporting script:@\n**   %s %s@\n** See error above@." prog
-            (String.concat ~sep:" " args)
+    | Explore -> (
+      match (Config.procedures, Config.source_files) with
+      | true, false ->
+          L.result "%a"
+            Config.(
+              Procedures.pp_all
+                ~filter:(Lazy.force Filtering.procedures_filter)
+                ~proc_name:procedures_name ~attr_kind:procedures_definedness
+                ~source_file:procedures_source_file ~proc_attributes:procedures_attributes)
+            ()
+      | false, true ->
+          let filter = Lazy.force Filtering.source_files_filter in
+          L.result "%a"
+            (SourceFiles.pp_all ~filter ~type_environment:Config.source_files_type_environment
+               ~procedure_names:Config.source_files_procedure_names
+               ~freshly_captured:Config.source_files_freshly_captured)
+            () ;
+          if Config.source_files_cfg then (
+            let source_files = SourceFiles.get_all ~filter () in
+            List.iter source_files ~f:(fun source_file ->
+                (* create directory in captured/ *)
+                DB.Results_dir.init ~debug:true source_file ;
+                (* collect the CFGs for all the procedures in [source_file] *)
+                let proc_names = SourceFiles.proc_names_of_source source_file in
+                let cfgs = Typ.Procname.Hash.create (List.length proc_names) in
+                List.iter proc_names ~f:(fun proc_name ->
+                    Procdesc.load proc_name
+                    |> Option.iter ~f:(fun cfg -> Typ.Procname.Hash.add cfgs proc_name cfg) ) ;
+                (* emit the dot file in captured/... *)
+                DotCfg.emit_frontend_cfg source_file cfgs ) ;
+            L.result "CFGs written in %s/*/%s@." Config.captured_dir Config.dotty_frontend_output )
+      | false, false ->
+          let if_some key opt args =
+            match opt with None -> args | Some arg -> key :: string_of_int arg :: args
+          in
+          let if_true key opt args = if not opt then args else key :: args in
+          let if_false key opt args = if opt then args else key :: args in
+          let args =
+            if_some "--max-level" Config.max_nesting
+            @@ if_true "--only-show" Config.only_show
+            @@ if_false "--no-source" Config.source_preview
+            @@ if_true "--html" Config.html
+            @@ if_some "--select" Config.select ["-o"; Config.results_dir]
+          in
+          let prog = Config.lib_dir ^/ "python" ^/ "inferTraceBugs" in
+          if is_error (Unix.waitpid (Unix.fork_exec ~prog ~argv:(prog :: args) ())) then
+            L.external_error
+              "** Error running the reporting script:@\n**   %s %s@\n** See error above@." prog
+              (String.concat ~sep:" " args)
+      | true, true ->
+          L.user_error "Options --procedures and --source-files cannot be used together.@\n" )
     | Events ->
         EventLogger.dump () ) ;
   (* to make sure the exitcode=0 case is logged, explicitly invoke exit *)

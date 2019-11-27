@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -8,6 +8,8 @@
 open! IStd
 module L = Logging
 open ConcurrencyModels
+
+let attrs_of_pname = Summary.OnDisk.proc_resolve_attributes
 
 module AnnotationAliases = struct
   let of_json = function
@@ -20,68 +22,72 @@ end
 
 type container_access = ContainerRead | ContainerWrite
 
+let make_android_support_template suffix methods =
+  let open MethodMatcher in
+  [ {default with classname= "android.support.v4.util." ^ suffix; methods}
+  ; {default with classname= "androidx.core.util." ^ suffix; methods} ]
+
+
 let is_java_container_write =
   let open MethodMatcher in
   let array_methods =
     ["append"; "clear"; "delete"; "put"; "remove"; "removeAt"; "removeAtRange"; "setValueAt"]
   in
-  [ { default with
-      classname= "android.support.v4.util.Pools$SimplePool"; methods= ["acquire"; "release"] }
-  ; { default with
-      classname= "android.support.v4.util.SimpleArrayMap"
-    ; methods= ["clear"; "ensureCapacity"; "put"; "putAll"; "remove"; "removeAt"; "setValueAt"] }
-  ; {default with classname= "android.support.v4.util.SparseArrayCompat"; methods= array_methods}
-  ; {default with classname= "android.util.SparseArray"; methods= array_methods}
-  ; {default with classname= "java.util.List"; methods= ["add"; "addAll"; "clear"; "remove"; "set"]}
-  ; {default with classname= "java.util.Map"; methods= ["clear"; "put"; "putAll"; "remove"]} ]
+  make_android_support_template "Pools$SimplePool" ["acquire"; "release"]
+  @ make_android_support_template "SimpleArrayMap"
+      ["clear"; "ensureCapacity"; "put"; "putAll"; "remove"; "removeAt"; "setValueAt"]
+  @ make_android_support_template "SparseArrayCompat" array_methods
+  @ [ {default with classname= "android.util.SparseArray"; methods= array_methods}
+    ; { default with
+        classname= "java.util.List"
+      ; methods= ["add"; "addAll"; "clear"; "remove"; "set"] }
+    ; {default with classname= "java.util.Map"; methods= ["clear"; "put"; "putAll"; "remove"]} ]
   |> of_records
 
 
 let is_java_container_read =
   let open MethodMatcher in
   let array_methods = ["clone"; "get"; "indexOfKey"; "indexOfValue"; "keyAt"; "size"; "valueAt"] in
-  [ { default with
-      classname= "android.support.v4.util.SimpleArrayMap"
-    ; methods=
-        [ "containsKey"
-        ; "containsValue"
-        ; "get"
-        ; "hashCode"
-        ; "indexOfKey"
-        ; "isEmpty"
-        ; "keyAt"
-        ; "size"
-        ; "valueAt" ] }
-  ; {default with classname= "android.support.v4.util.SparseArrayCompat"; methods= array_methods}
-  ; {default with classname= "android.util.SparseArray"; methods= array_methods}
-  ; { default with
-      classname= "java.util.List"
-    ; methods=
-        [ "contains"
-        ; "containsAll"
-        ; "equals"
-        ; "get"
-        ; "hashCode"
-        ; "indexOf"
-        ; "isEmpty"
-        ; "iterator"
-        ; "lastIndexOf"
-        ; "listIterator"
-        ; "size"
-        ; "toArray" ] }
-  ; { default with
-      classname= "java.util.Map"
-    ; methods=
-        [ "containsKey"
-        ; "containsValue"
-        ; "entrySet"
-        ; "equals"
-        ; "get"
-        ; "hashCode"
-        ; "isEmpty"
-        ; "keySet"
-        ; "size"
-        ; "values" ] } ]
+  make_android_support_template "SimpleArrayMap"
+    [ "containsKey"
+    ; "containsValue"
+    ; "get"
+    ; "hashCode"
+    ; "indexOfKey"
+    ; "isEmpty"
+    ; "keyAt"
+    ; "size"
+    ; "valueAt" ]
+  @ make_android_support_template "SparseArrayCompat" array_methods
+  @ [ {default with classname= "android.util.SparseArray"; methods= array_methods}
+    ; { default with
+        classname= "java.util.List"
+      ; methods=
+          [ "contains"
+          ; "containsAll"
+          ; "equals"
+          ; "get"
+          ; "hashCode"
+          ; "indexOf"
+          ; "isEmpty"
+          ; "iterator"
+          ; "lastIndexOf"
+          ; "listIterator"
+          ; "size"
+          ; "toArray" ] }
+    ; { default with
+        classname= "java.util.Map"
+      ; methods=
+          [ "containsKey"
+          ; "containsValue"
+          ; "entrySet"
+          ; "equals"
+          ; "get"
+          ; "hashCode"
+          ; "isEmpty"
+          ; "keySet"
+          ; "size"
+          ; "values" ] } ]
   |> of_records
 
 
@@ -113,8 +119,8 @@ let get_container_access pn tenv =
   | Typ.Procname.Java _ ->
       None
   (* The following order matters: we want to check if pname is a container write
-       before we check if pname is a container read. This is due to a different
-       treatment between std::map::operator[] and all other operator[]. *)
+     before we check if pname is a container read. This is due to a different
+     treatment between std::map::operator[] and all other operator[]. *)
   | (Typ.Procname.ObjC_Cpp _ | C _) when is_cpp_container_write pn ->
       Some ContainerWrite
   | (Typ.Procname.ObjC_Cpp _ | C _) when is_cpp_container_read pn ->
@@ -150,9 +156,7 @@ let should_skip =
       false
 
 
-let has_return_annot predicate pn =
-  Annotations.pname_has_return_annot pn ~attrs_of_pname:Summary.proc_resolve_attributes predicate
-
+let has_return_annot predicate pn = Annotations.pname_has_return_annot pn ~attrs_of_pname predicate
 
 let is_functional pname =
   let is_annotated_functional = has_return_annot Annotations.ia_is_functional in
@@ -163,7 +167,7 @@ let is_functional pname =
       with
       | "android.content.res.Resources", method_name ->
           (* all methods of Resources are considered @Functional except for the ones in this
-                        blacklist *)
+             blacklist *)
           let non_functional_resource_methods =
             [ "getAssets"
             ; "getConfiguration"
@@ -219,7 +223,10 @@ let acquires_ownership pname tenv =
           true
       | ( ( "android.support.v4.util.Pools$Pool"
           | "android.support.v4.util.Pools$SimplePool"
-          | "android.support.v4.util.Pools$SynchronizedPool" )
+          | "android.support.v4.util.Pools$SynchronizedPool"
+          | "androidx.core.util.Pools$Pool"
+          | "androidx.core.util.Pools$SimplePool"
+          | "androidx.core.util.Pools$SynchronizedPool" )
         , "acquire" ) ->
           (* a pool should own all of its objects *)
           true
@@ -255,14 +262,14 @@ let is_box = function
 
 
 (* Methods in @ThreadConfined classes and methods annotated with @ThreadConfined are assumed to all
-                 run on the same thread. For the moment we won't warn on accesses resulting from use of such
-                 methods at all. In future we should account for races between these methods and methods from
-                 completely different classes that don't necessarily run on the same thread as the confined
-                 object. *)
-let is_thread_confined_method tenv pdesc =
-  Annotations.pdesc_return_annot_ends_with pdesc Annotations.thread_confined
-  || PatternMatch.check_current_class_attributes Annotations.ia_is_thread_confined tenv
-       (Procdesc.get_proc_name pdesc)
+  run on the same thread. For the moment we won't warn on accesses resulting from use of such
+  methods at all. In future we should account for races between these methods and methods from
+  completely different classes that don't necessarily run on the same thread as the confined
+  object. *)
+let is_thread_confined_method tenv pname =
+  ConcurrencyModels.find_override_or_superclass_annotated ~attrs_of_pname
+    Annotations.ia_is_thread_confined tenv pname
+  |> Option.is_some
 
 
 let threadsafe_annotations =
@@ -275,10 +282,15 @@ let is_thread_safe item_annot =
   let f ((annot : Annot.t), _) =
     List.exists
       ~f:(fun annot_string ->
-        Annotations.annot_ends_with annot annot_string
-        || String.equal annot.class_name annot_string )
+        Annotations.annot_ends_with annot annot_string || String.equal annot.class_name annot_string
+        )
       threadsafe_annotations
-    && match annot.Annot.parameters with ["false"] -> false | _ -> true
+    &&
+    match annot.Annot.parameters with
+    | [Annot.{name= Some "enableChecks"; value= "false"}] ->
+        false
+    | _ ->
+        true
   in
   List.exists ~f item_annot
 
@@ -287,23 +299,27 @@ let is_thread_safe item_annot =
 let is_assumed_thread_safe item_annot =
   let f (annot, _) =
     Annotations.annot_ends_with annot Annotations.thread_safe
-    && match annot.Annot.parameters with ["false"] -> true | _ -> false
+    &&
+    match annot.Annot.parameters with
+    | [Annot.{name= Some "enableChecks"; value= "false"}] ->
+        true
+    | _ ->
+        false
   in
   List.exists ~f item_annot
 
 
-let pdesc_is_assumed_thread_safe pdesc tenv =
-  is_assumed_thread_safe (Annotations.pdesc_get_return_annot pdesc)
-  || PatternMatch.check_current_class_attributes is_assumed_thread_safe tenv
-       (Procdesc.get_proc_name pdesc)
+let is_assumed_thread_safe tenv pname =
+  ConcurrencyModels.find_override_or_superclass_annotated ~attrs_of_pname is_assumed_thread_safe
+    tenv pname
+  |> Option.is_some
 
 
 (* return true if we should compute a summary for the procedure. if this returns false, we won't
          analyze the procedure or report any warnings on it *)
 (* note: in the future, we will want to analyze the procedures in all of these cases in order to
          find more bugs. this is just a temporary measure to avoid obvious false positives *)
-let should_analyze_proc pdesc tenv =
-  let pn = Procdesc.get_proc_name pdesc in
+let should_analyze_proc tenv pn =
   (not
      ( match pn with
      | Typ.Procname.Java java_pname ->
@@ -313,7 +329,7 @@ let should_analyze_proc pdesc tenv =
      | _ ->
          false ))
   && (not (FbThreadSafety.is_logging_method pn))
-  && (not (pdesc_is_assumed_thread_safe pdesc tenv))
+  && (not (is_assumed_thread_safe tenv pn))
   && not (should_skip pn)
 
 
@@ -321,33 +337,26 @@ let get_current_class_and_threadsafe_superclasses tenv pname =
   get_current_class_and_annotated_superclasses is_thread_safe tenv pname
 
 
-let is_thread_safe_class pname tenv =
-  (not
-     ((* current class not marked thread-safe *)
-      PatternMatch.check_current_class_attributes Annotations.ia_is_not_thread_safe tenv pname))
-  &&
-  (* current class or superclass is marked thread-safe *)
-  match get_current_class_and_threadsafe_superclasses tenv pname with
-  | Some (_, thread_safe_annotated_classes) ->
-      not (List.is_empty thread_safe_annotated_classes)
+let is_thread_safe_method pname tenv =
+  match find_override_or_superclass_annotated ~attrs_of_pname is_thread_safe tenv pname with
+  | Some (DirectlyAnnotated | Override _) ->
+      true
   | _ ->
       false
 
 
-let is_thread_safe_method pname tenv =
-  find_annotated_or_overriden_annotated_method ~attrs_of_pname:Summary.proc_resolve_attributes
-    is_thread_safe pname tenv
-  |> Option.is_some
+let is_marked_thread_safe pname tenv =
+  ((* current class not marked [@NotThreadSafe] *)
+   not
+     (PatternMatch.check_current_class_attributes Annotations.ia_is_not_thread_safe tenv pname))
+  && ConcurrencyModels.find_override_or_superclass_annotated ~attrs_of_pname is_thread_safe tenv
+       pname
+     |> Option.is_some
 
 
-let is_marked_thread_safe pdesc tenv =
-  let pname = Procdesc.get_proc_name pdesc in
-  is_thread_safe_class pname tenv || is_thread_safe_method pname tenv
-
-
-let is_safe_access access prefix_path tenv =
-  match (access, AccessPath.get_typ prefix_path tenv) with
-  | ( AccessPath.FieldAccess fieldname
+let is_safe_access (access : 'a HilExp.Access.t) prefix_exp tenv =
+  match (access, HilExp.AccessExpression.get_typ prefix_exp tenv) with
+  | ( HilExp.Access.FieldAccess fieldname
     , Some ({Typ.desc= Tstruct typename} | {desc= Tptr ({desc= Tstruct typename}, _)}) ) -> (
     match Tenv.lookup tenv typename with
     | Some struct_typ ->
@@ -360,59 +369,63 @@ let is_safe_access access prefix_path tenv =
       false
 
 
-let should_flag_interface_call tenv exp call_flags pname =
-  (* return true if this function is library code from the JDK core libraries or Android *)
-  let is_java_library = function
-    | Typ.Procname.Java java_pname -> (
-      match Typ.Procname.Java.get_package java_pname with
-      | Some package_name ->
-          String.is_prefix ~prefix:"java." package_name
-          || String.is_prefix ~prefix:"android." package_name
-          || String.is_prefix ~prefix:"com.google." package_name
-      | None ->
-          false )
-    | _ ->
-        false
-  in
-  let is_builder_function = function
-    | Typ.Procname.Java java_pname ->
-        String.is_suffix ~suffix:"$Builder" (Typ.Procname.Java.get_class_name java_pname)
-    | _ ->
-        false
-  in
+let should_flag_interface_call tenv exps call_flags pname =
   let thread_safe_or_thread_confined annot =
     Annotations.ia_is_thread_safe annot || Annotations.ia_is_thread_confined annot
   in
-  call_flags.CallFlags.cf_interface && Typ.Procname.is_java pname
-  && (not (is_java_library pname || is_builder_function pname))
-  (* can't ask anyone to annotate interfaces in library code, and Builder's should always be
-     thread-safe (would be unreasonable to ask everyone to annotate them) *)
-  && (not (PatternMatch.check_class_attributes thread_safe_or_thread_confined tenv pname))
-  && (not (has_return_annot thread_safe_or_thread_confined pname))
-  &&
-  match exp with
-  | HilExp.AccessExpression receiver_access_exp :: _ -> (
-      HilExp.AccessExpression.to_access_path receiver_access_exp
-      |> AccessPath.truncate
-      |> function
-      | receiver_prefix, Some receiver_field ->
-          is_safe_access receiver_field receiver_prefix tenv |> not
-      | _ ->
-          true )
+  (* is this function in library code from the JDK core libraries or Android? *)
+  let is_java_library java_pname =
+    Typ.Procname.Java.get_package java_pname
+    |> Option.exists ~f:(fun package_name ->
+           String.is_prefix ~prefix:"java." package_name
+           || String.is_prefix ~prefix:"android." package_name
+           || String.is_prefix ~prefix:"com.google." package_name )
+  in
+  let is_builder_function java_pname =
+    String.is_suffix ~suffix:"$Builder" (Typ.Procname.Java.get_class_name java_pname)
+  in
+  let receiver_is_not_safe exps tenv =
+    List.hd exps
+    |> Option.bind ~f:(fun exp -> HilExp.get_access_exprs exp |> List.hd)
+    |> Option.map ~f:HilExp.AccessExpression.truncate
+    |> Option.exists ~f:(function
+         | Some (receiver_prefix, receiver_access) ->
+             not (is_safe_access receiver_access receiver_prefix tenv)
+         | _ ->
+             true )
+  in
+  let implements_threadsafe_interface java_pname tenv =
+    (* generated classes implementing this interface are always threadsafe *)
+    Typ.Procname.Java.get_class_type_name java_pname
+    |> fun tname -> PatternMatch.is_subtype_of_str tenv tname "android.os.IInterface"
+  in
+  match pname with
+  | Typ.Procname.Java java_pname ->
+      call_flags.CallFlags.cf_interface
+      && (not (is_java_library java_pname))
+      && (not (is_builder_function java_pname))
+      (* can't ask anyone to annotate interfaces in library code, and Builders should always be
+         thread-safe (would be unreasonable to ask everyone to annotate them) *)
+      && ConcurrencyModels.find_override_or_superclass_annotated ~attrs_of_pname
+           thread_safe_or_thread_confined tenv pname
+         |> Option.is_none
+      && receiver_is_not_safe exps tenv
+      && not (implements_threadsafe_interface java_pname tenv)
   | _ ->
       false
 
 
-let is_synchronized_container callee_pname ((_, (base_typ : Typ.t)), accesses) tenv =
+let is_synchronized_container callee_pname (access_exp : HilExp.AccessExpression.t) tenv =
   let is_threadsafe_collection pn tenv =
     match pn with
     | Typ.Procname.Java java_pname ->
-        let typename = Typ.Name.Java.from_string (Typ.Procname.Java.get_class_name java_pname) in
+        let typename = Typ.Procname.Java.get_class_type_name java_pname in
         let aux tn _ =
           match Typ.Name.name tn with
           | "java.util.concurrent.ConcurrentMap"
           | "java.util.concurrent.CopyOnWriteArrayList"
-          | "android.support.v4.util.Pools$SynchronizedPool" ->
+          | "android.support.v4.util.Pools$SynchronizedPool"
+          | "androidx.core.util.Pools$SynchronizedPool" ->
               true
           | _ ->
               false
@@ -431,16 +444,35 @@ let is_synchronized_container callee_pname ((_, (base_typ : Typ.t)), accesses) t
       | None ->
           false
     in
-    match List.rev accesses with
-    | AccessPath.FieldAccess base_field :: AccessPath.FieldAccess container_field :: _
+    let open HilExp in
+    match
+      AccessExpression.to_accesses access_exp
+      |> snd
+      |> List.rev_filter ~f:Access.is_field_or_array_access
+    with
+    | Access.FieldAccess base_field :: Access.FieldAccess container_field :: _
       when Typ.Procname.is_java callee_pname ->
         let base_typename = Typ.Name.Java.from_string (Typ.Fieldname.Java.get_class base_field) in
         is_annotated_synchronized base_typename container_field tenv
-    | [AccessPath.FieldAccess container_field] -> (
-      match base_typ.desc with
+    | [Access.FieldAccess container_field] -> (
+      match (AccessExpression.get_base access_exp |> snd).desc with
       | Typ.Tstruct base_typename | Tptr ({Typ.desc= Tstruct base_typename}, _) ->
           is_annotated_synchronized base_typename container_field tenv
       | _ ->
           false )
     | _ ->
         false
+
+
+(** check that callee is abstract and accepts one argument. In addition, its argument type must be 
+    equal to its return type. *)
+let is_abstract_getthis_like callee =
+  attrs_of_pname callee
+  |> Option.exists ~f:(fun (attrs : ProcAttributes.t) ->
+         attrs.is_abstract
+         &&
+         match attrs.formals with
+         | [(_, typ)] when Typ.equal typ attrs.ret_type ->
+             true
+         | _ ->
+             false )

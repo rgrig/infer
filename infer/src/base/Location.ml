@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -45,3 +45,12 @@ let pp_range f (loc_start, loc_end) =
     else F.fprintf f "-%a" pp_short loc_end
   in
   F.fprintf f "%a%a" pp_file_pos loc_start (pp_end loc_start) loc_end
+
+
+module Map = PrettyPrintable.MakePPMap (struct
+  type nonrec t = t
+
+  let compare = compare
+
+  let pp = pp
+end)

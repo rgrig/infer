@@ -1,9 +1,11 @@
 /*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
+#include <stdint.h>
+
 // Cost: 5
 int foo_OK() {
   int i, j;
@@ -127,4 +129,40 @@ void call_while_upto20_10_good() { while_upto20_bad(10); }
 
 void call_while_upto20_unsigned_good(unsigned x) { while_upto20_bad(x); }
 
-void zero_cost_function() {}
+// Cost: 1
+void unit_cost_function() {}
+
+int always(int i) { return i % 2 == (i + 2) % 2; }
+
+void infinite_FN() {
+  int z;
+  for (int i = 0; always(i); i++) {
+    z += i;
+  }
+}
+
+void infinite() {
+  int z;
+  for (int i = 0; i % 2 == (i + 2) % 2; i++) {
+    z += i;
+  }
+}
+
+void call_infinite() { infinite(); }
+
+// Cost should not include the symbol of c.
+void ignore_character_symbols_constant_FP(char c) {
+  for (; c < 'z';) {
+    if (rand()) {
+      c = 'a';
+    }
+  }
+}
+
+unsigned int div_const(unsigned int n) { return n / 2; }
+
+void iter_div_const_constant() {
+  unsigned int n = div_const(20);
+  for (int i = 0; i < n; i++) {
+  }
+}

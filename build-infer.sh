@@ -2,7 +2,7 @@
 
 # Convenience script to build Infer when using opam
 
-# Copyright (c) 2015-present, Facebook, Inc.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -13,10 +13,14 @@ set -u
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 INFER_ROOT="$SCRIPT_DIR"
+DEPENDENCIES_DIR="$INFER_ROOT/facebook/dependencies"
 PLATFORM="$(uname)"
+SANDCASTLE=${SANDCASTLE:-}
 NCPU="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
 INFER_OPAM_DEFAULT_SWITCH="ocaml-variants.4.07.1+flambda"
+INFER_OPAM_DEFAULT_COMPILER="$INFER_OPAM_DEFAULT_SWITCH"
 INFER_OPAM_SWITCH=${INFER_OPAM_SWITCH:-$INFER_OPAM_DEFAULT_SWITCH}
+INFER_OPAM_COMPILER=${INFER_OPAM_COMPILER:-$INFER_OPAM_DEFAULT_COMPILER}
 
 function usage() {
   echo "Usage: $0 [-y] [targets]"
@@ -43,7 +47,6 @@ function usage() {
 BUILD_CLANG=${BUILD_CLANG:-no}
 BUILD_JAVA=${BUILD_JAVA:-no}
 INFER_CONFIGURE_OPTS=${INFER_CONFIGURE_OPTS:-""}
-INFER_OPAM_SWITCH=${INFER_OPAM_SWITCH:-$INFER_OPAM_SWITCH_DEFAULT}
 INTERACTIVE=${INTERACTIVE:-yes}
 JOBS=${JOBS:-$NCPU}
 ONLY_SETUP_OPAM=${ONLY_SETUP_OPAM:-no}
@@ -119,8 +122,8 @@ if [ "$INTERACTIVE" == "no" ] || [ "$USER_OPAM_SWITCH" == "no" ]; then
 fi
 
 setup_opam () {
-    opam var root 1>/dev/null 2>/dev/null || opam init --reinit --bare --no-setup
-    opam_switch_create_if_needed "$INFER_OPAM_SWITCH"
+    opam var root 1>/dev/null 2>/dev/null || opam init --reinit --bare --no-setup &&
+    opam_switch_create_if_needed "$INFER_OPAM_SWITCH" "$INFER_OPAM_COMPILER" &&
     opam switch set "$INFER_OPAM_SWITCH"
 }
 
@@ -129,7 +132,10 @@ install_opam_deps () {
     if [ "$USE_OPAM_LOCK" == yes ]; then
         locked=--locked
     fi
-    opam install --deps-only infer "$INFER_ROOT" $locked
+    opam install --deps-only infer "$INFER_ROOT" $locked &&
+    if [ -n "$SANDCASTLE" ]; then
+        opam pin list | grep yojson || opam pin add yojson "${DEPENDENCIES_DIR}/yojson-1.7.0fix"
+    fi
 }
 
 echo "initializing opam... " >&2

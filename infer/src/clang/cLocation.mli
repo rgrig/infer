@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -14,7 +14,7 @@ val clang_to_sil_location : SourceFile.t -> Clang_ast_t.source_location -> Locat
 val should_translate_lib :
      SourceFile.t
   -> Clang_ast_t.source_range
-  -> CModule_type.decl_trans_context
+  -> CFrontend_config.decl_trans_context
   -> translate_when_used:bool
   -> bool
 
@@ -27,3 +27,5 @@ val location_of_source_range :
 (** picks the start of the source range by default *)
 
 val location_of_stmt_info : SourceFile.t -> Clang_ast_t.stmt_info -> Location.t
+
+val location_of_decl_info : SourceFile.t -> Clang_ast_t.decl_info -> Location.t * Location.t

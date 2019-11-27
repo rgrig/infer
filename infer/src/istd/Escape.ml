@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -61,6 +61,8 @@ let escape_url s =
   let map = function
     | '!' ->
         Some "%21"
+    | '"' ->
+        Some "%22"
     | '#' ->
         Some "%23"
     | '$' ->
@@ -148,5 +150,5 @@ let escape_shell =
         escape_double_quotes arg |> F.sprintf "\"%s\""
       else
         (* ends on-going single quote, output single quote inside double quotes, then open a new
-             single quote *)
+           single quote *)
         escape_map (function '\'' -> Some "'\"'\"'" | _ -> None) arg |> F.sprintf "'%s'"

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -13,10 +13,10 @@
 
 open Base
 
-type +'a t [@@deriving compare, hash, sexp]
+type +'a t [@@deriving compare, equal, hash, sexp]
 
 module Infix : sig
-  type +'a vector = 'a t [@@deriving compare, hash, sexp]
+  type +'a vector = 'a t [@@deriving compare, equal, hash, sexp]
 end
 
 (* val binary_search :
@@ -86,10 +86,12 @@ val init : int -> f:(int -> 'a) -> 'a t
 (* val append : 'a t -> 'a t -> 'a t *)
 
 val concat : 'a t list -> 'a t
+val copy : 'a t -> 'a t
 
-(* val copy : 'a t -> 'a t *)
 (* val sub : ('a t, 'a t) Base__Blit_intf.sub *)
 (* val subo : ('a t, 'a t) Base__Blit_intf.subo *)
+
+val of_ : 'a -> 'a t
 
 val of_array : 'a array -> 'a t
 (** [of_array a] is a vector that shares its representation with array [a],
@@ -109,7 +111,7 @@ val map_preserving_phys_equal : 'a t -> f:('a -> 'a) -> 'a t
 (* val folding_map : 'a t -> init:'b -> f:('b -> 'a -> 'b * 'c) -> 'c t *)
 (* val folding_mapi : 'a t -> init:'b -> f:(int -> 'b -> 'a -> 'b * 'c) ->
    'c t *)
-(* val fold_map : 'a t -> init:'b -> f:('b -> 'a -> 'b * 'c) -> 'b * 'c t *)
+val fold_map : 'a t -> init:'b -> f:('b -> 'a -> 'b * 'c) -> 'b * 'c t
 
 (* val fold_mapi :
  *   'a t -> init:'b -> f:(int -> 'b -> 'a -> 'b * 'c) -> 'b * 'c t *)
@@ -153,6 +155,7 @@ val of_list_rev : 'a list -> 'a t
 (* val of_list_map : 'a list -> f:('a -> 'b) -> 'b t *)
 (* val of_list_rev_map : 'a list -> f:('a -> 'b) -> 'b t *)
 
+val map_inplace : 'a t -> f:('a -> 'a) -> unit
 val find_exn : 'a t -> f:('a -> bool) -> 'a
 
 (* val find_map_exn : 'a t -> f:('a -> 'b option) -> 'b *)
@@ -167,7 +170,7 @@ val find_exn : 'a t -> f:('a -> bool) -> 'a
 val contains_dup : compare:('a -> 'a -> int) -> 'a t -> bool
 
 (* val reduce : 'a t -> f:('a -> 'a -> 'a) -> 'a option *)
-(* val reduce_exn : 'a t -> f:('a -> 'a -> 'a) -> 'a *)
+val reduce_exn : 'a t -> f:('a -> 'a -> 'a) -> 'a
 
 (* val random_element :
  *   ?random_state:Base.Random.State.t -> 'a t -> 'a option *)
@@ -175,11 +178,13 @@ val contains_dup : compare:('a -> 'a -> int) -> 'a t -> bool
 (* val random_element_exn : ?random_state:Base.Random.State.t -> 'a t -> 'a *)
 (* val zip : 'a t -> 'b t -> ('a * 'b) t option *)
 (* val zip_exn : 'a t -> 'b t -> ('a * 'b) t *)
-(* val unzip : ('a * 'b) t -> 'a t * 'b t *)
+
+val unzip : ('a * 'b) t -> 'a t * 'b t
+
 (* val sorted_copy : 'a t -> compare:('a -> 'a -> int) -> 'a t *)
 (* val last : 'a t -> 'a *)
 
 val empty : 'a t
-(* val equal : 'a t -> 'a t -> equal:('a -> 'a -> bool) -> bool *)
+
 (* val to_sequence : 'a t -> 'a Sequence.t *)
 (* val to_sequence_mutable : 'a t -> 'a Sequence.t *)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -20,9 +20,15 @@ class Binders {
     b.transact(0, null, null, 1);
   }
 
-  void interBad() throws RemoteException {
+  // assert happens after bad call so thread status is still unknown
+  void FN_interBad() throws RemoteException {
     b.transact(0, null, null, 0);
     forceMainThread();
+  }
+
+  void interBad() throws RemoteException {
+    forceMainThread();
+    b.transact(0, null, null, 0);
   }
 
   void intraBad() throws RemoteException {

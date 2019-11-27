@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -26,7 +26,7 @@ int test_switch() {
   return 0;
 }
 
-int unroll_loop_FP(int n) {
+int unroll_loop(int n) {
   int ret = 0;
   int loop = n + 3 / 4;
   switch (n % 8) {

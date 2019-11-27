@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -41,6 +41,12 @@ let is_this = function {plain= "this"} -> true | _ -> false
 let self = from_string "self"
 
 let is_self = function {plain= "self"} -> true | _ -> false
+
+let rename ~f {plain; mangled} =
+  let plain = f plain in
+  let mangled = Option.map ~f mangled in
+  {plain; mangled}
+
 
 module Set = Caml.Set.Make (struct
   type nonrec t = t

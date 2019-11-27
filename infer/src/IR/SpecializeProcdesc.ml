@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -23,7 +23,8 @@ let convert_cfg ~callee_pdesc ~resolved_pdesc ~f_instr_list =
         []
     | node :: other_node ->
         let converted_node =
-          try Procdesc.NodeMap.find node !node_map with Caml.Not_found ->
+          try Procdesc.NodeMap.find node !node_map
+          with Caml.Not_found ->
             let new_node = convert_node node
             and successors = Procdesc.Node.get_succs node
             and exn_nodes = Procdesc.Node.get_exn node in
@@ -32,7 +33,8 @@ let convert_cfg ~callee_pdesc ~resolved_pdesc ~f_instr_list =
               Procdesc.set_start_node resolved_pdesc new_node ;
             if Procdesc.Node.equal node callee_exit_node then
               Procdesc.set_exit_node resolved_pdesc new_node ;
-            Procdesc.node_set_succs_exn callee_pdesc new_node (loop successors) (loop exn_nodes) ;
+            Procdesc.node_set_succs callee_pdesc new_node ~normal:(loop successors)
+              ~exn:(loop exn_nodes) ;
             new_node
         in
         converted_node :: loop other_node
@@ -62,28 +64,36 @@ let with_formals_types_proc callee_pdesc resolved_pdesc substitutions =
   in
   let convert_instr = function
     | Sil.Load
-        ( id
-        , (Exp.Lvar origin_pvar as origin_exp)
-        , {Typ.desc= Tptr ({desc= Tstruct origin_typename}, Pk_pointer)}
-        , loc ) ->
+        { id
+        ; e= Exp.Lvar origin_pvar as origin_exp
+        ; root_typ= {Typ.desc= Tptr ({desc= Tstruct origin_typename}, Pk_pointer)}
+        ; loc } ->
         let specialized_typname =
-          try Mangled.Map.find (Pvar.get_name origin_pvar) substitutions with Caml.Not_found ->
-            origin_typename
+          try Mangled.Map.find (Pvar.get_name origin_pvar) substitutions
+          with Caml.Not_found -> origin_typename
         in
         subst_map := Ident.Map.add id specialized_typname !subst_map ;
-        Some (Sil.Load (id, convert_exp origin_exp, mk_ptr_typ specialized_typname, loc))
-    | Sil.Load (id, (Exp.Var origin_id as origin_exp), ({Typ.desc= Tstruct _} as origin_typ), loc)
+        let root_typ = mk_ptr_typ specialized_typname in
+        Some (Sil.Load {id; e= convert_exp origin_exp; root_typ; typ= root_typ; loc})
+    | Sil.Load
+        {id; e= Exp.Var origin_id as origin_exp; root_typ= {Typ.desc= Tstruct _} as origin_typ; loc}
       ->
         let updated_typ : Typ.t =
           try Typ.mk ~default:origin_typ (Tstruct (Ident.Map.find origin_id !subst_map))
           with Caml.Not_found -> origin_typ
         in
-        Some (Sil.Load (id, convert_exp origin_exp, updated_typ, loc))
-    | Sil.Load (id, origin_exp, origin_typ, loc) ->
-        Some (Sil.Load (id, convert_exp origin_exp, origin_typ, loc))
-    | Sil.Store (assignee_exp, origin_typ, origin_exp, loc) ->
+        Some
+          (Sil.Load {id; e= convert_exp origin_exp; root_typ= updated_typ; typ= updated_typ; loc})
+    | Sil.Load {id; e= origin_exp; root_typ; typ; loc} ->
+        Some (Sil.Load {id; e= convert_exp origin_exp; root_typ; typ; loc})
+    | Sil.Store {e1= assignee_exp; root_typ= origin_typ; e2= origin_exp; loc} ->
         let set_instr =
-          Sil.Store (convert_exp assignee_exp, origin_typ, convert_exp origin_exp, loc)
+          Sil.Store
+            { e1= convert_exp assignee_exp
+            ; root_typ= origin_typ
+            ; typ= origin_typ
+            ; e2= convert_exp origin_exp
+            ; loc }
         in
         Some set_instr
     | Sil.Call
@@ -112,7 +122,7 @@ let with_formals_types_proc callee_pdesc resolved_pdesc substitutions =
         Some call_instr
     | Sil.Prune (origin_exp, loc, is_true_branch, if_kind) ->
         Some (Sil.Prune (convert_exp origin_exp, loc, is_true_branch, if_kind))
-    | Sil.Nullify _ | Abstract _ | ExitScope _ ->
+    | Sil.Metadata _ ->
         (* these are generated instructions that will be replaced by the preanalysis *)
         None
   in
@@ -202,10 +212,12 @@ let with_block_args_instrs resolved_pdesc substitutions =
         List.map extra_formals ~f:(fun (var, typ) ->
             let id = Ident.create_fresh_specialized_with_blocks Ident.knormal in
             let pvar = Pvar.mk var resolved_pname in
-            (Var.of_id id, (Exp.Var id, pvar, typ), Sil.Load (id, Exp.Lvar pvar, typ, loc)) )
+            ( Var.of_id id
+            , (Exp.Var id, pvar, typ)
+            , Sil.Load {id; e= Exp.Lvar pvar; root_typ= typ; typ; loc} ) )
         |> List.unzip3
       in
-      let remove_temps_instr = Sil.ExitScope (dead_vars, loc) in
+      let remove_temps_instr = Sil.Metadata (ExitScope (dead_vars, loc)) in
       (block_name, id_exp_typs, load_instrs, remove_temps_instr)
     in
     let convert_generic_call return_ids exp origin_args loc call_flags =
@@ -214,24 +226,32 @@ let with_block_args_instrs resolved_pdesc substitutions =
       (call_instr :: instrs, id_map)
     in
     match instr with
-    | Sil.Load (id, Exp.Lvar block_param, _, _)
+    | Sil.Load {id; e= Exp.Lvar block_param}
       when Mangled.Map.mem (Pvar.get_name block_param) substitutions ->
         let id_map = Ident.Map.add id (Pvar.get_name block_param) id_map in
         (* we don't need the load the block param instruction anymore *)
         (instrs, id_map)
-    | Sil.Load (id, origin_exp, origin_typ, loc) ->
-        (Sil.Load (id, convert_exp origin_exp, origin_typ, loc) :: instrs, id_map)
-    | Sil.Store (assignee_exp, origin_typ, Exp.Var id, loc) when Ident.Map.mem id id_map ->
+    | Sil.Load {id; e= origin_exp; root_typ; typ; loc} ->
+        (Sil.Load {id; e= convert_exp origin_exp; root_typ; typ; loc} :: instrs, id_map)
+    | Sil.Store {e1= assignee_exp; root_typ= origin_typ; e2= Exp.Var id; loc}
+      when Ident.Map.mem id id_map ->
         let block_param = Ident.Map.find id id_map in
         let block_name, id_exp_typs, load_instrs, remove_temps_instr =
           get_block_name_and_load_captured_vars_instrs block_param loc
         in
         let closure = Exp.Closure {name= block_name; captured_vars= id_exp_typs} in
-        let instr = Sil.Store (assignee_exp, origin_typ, closure, loc) in
+        let instr =
+          Sil.Store {e1= assignee_exp; root_typ= origin_typ; typ= origin_typ; e2= closure; loc}
+        in
         ((remove_temps_instr :: instr :: load_instrs) @ instrs, id_map)
-    | Sil.Store (assignee_exp, origin_typ, origin_exp, loc) ->
+    | Sil.Store {e1= assignee_exp; root_typ= origin_typ; e2= origin_exp; loc} ->
         let set_instr =
-          Sil.Store (convert_exp assignee_exp, origin_typ, convert_exp origin_exp, loc)
+          Sil.Store
+            { e1= convert_exp assignee_exp
+            ; root_typ= origin_typ
+            ; typ= origin_typ
+            ; e2= convert_exp origin_exp
+            ; loc }
         in
         (set_instr :: instrs, id_map)
     | Sil.Call (return_ids, Exp.Var id, origin_args, loc, call_flags) -> (
@@ -242,9 +262,7 @@ let with_block_args_instrs resolved_pdesc substitutions =
         in
         let call_instr =
           let id_exps = List.map ~f:(fun (id, _, typ) -> (id, typ)) id_exp_typs in
-          let converted_args =
-            List.map ~f:(fun (exp, typ) -> (convert_exp exp, typ)) origin_args
-          in
+          let converted_args = List.map ~f:(fun (exp, typ) -> (convert_exp exp, typ)) origin_args in
           Sil.Call
             ( return_ids
             , Exp.Const (Const.Cfun block_name)
@@ -260,7 +278,7 @@ let with_block_args_instrs resolved_pdesc substitutions =
         convert_generic_call return_ids origin_call_exp origin_args loc call_flags
     | Sil.Prune (origin_exp, loc, is_true_branch, if_kind) ->
         (Sil.Prune (convert_exp origin_exp, loc, is_true_branch, if_kind) :: instrs, id_map)
-    | Sil.Nullify _ | Abstract _ | Sil.ExitScope _ ->
+    | Sil.Metadata _ ->
         (* these are generated instructions that will be replaced by the preanalysis *)
         (instrs, id_map)
   in
@@ -280,7 +298,7 @@ let append_no_duplicates_formals_and_annot =
 let with_block_args callee_pdesc pname_with_block_args block_args =
   let callee_attributes = Procdesc.get_attributes callee_pdesc in
   (* Substitution from a block parameter to the block name and the new formals
-  that correspond to the captured variables *)
+     that correspond to the captured variables *)
   let substitutions : (Typ.Procname.t * (Mangled.t * Typ.t) list) Mangled.Map.t =
     List.fold2_exn callee_attributes.formals block_args ~init:Mangled.Map.empty
       ~f:(fun subts (param_name, _) block_arg_opt ->
@@ -290,7 +308,7 @@ let with_block_args callee_pdesc pname_with_block_args block_args =
               List.map
                 ~f:(fun (_, var, typ) ->
                   (* Here we create fresh names for the new formals, based on the names of the captured
-                   variables annotated with the name of the caller method *)
+                     variables annotated with the name of the caller method *)
                   (Pvar.get_name_of_local_with_procname var, typ) )
                 cl.captured_vars
             in
@@ -299,7 +317,7 @@ let with_block_args callee_pdesc pname_with_block_args block_args =
             subts )
   in
   (* Extend formals with fresh variables for the captured variables of the block arguments,
-    without duplications. *)
+     without duplications. *)
   let new_formals_blocks_captured_vars, extended_formals_annots =
     let new_formals_blocks_captured_vars_with_annots =
       let formals_annots =
@@ -322,8 +340,8 @@ let with_block_args callee_pdesc pname_with_block_args block_args =
         source_file
     | None ->
         Logging.die InternalError
-          "specialize_with_block_args ahould only be called with defined procedures, but we \
-           cannot find the captured file of procname %a"
+          "specialize_with_block_args ahould only be called with defined procedures, but we cannot \
+           find the captured file of procname %a"
           Typ.Procname.pp pname
   in
   let resolved_attributes =

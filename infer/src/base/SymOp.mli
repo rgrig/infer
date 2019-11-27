@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -59,8 +59,8 @@ type failure_kind =
   | FKrecursion_timeout of int  (** max recursion level exceeded *)
   | FKcrash of string  (** uncaught exception or failed assertion *)
 
-(** Timeout exception *)
 exception Analysis_failure_exe of failure_kind
+(** Timeout exception *)
 
 val exn_not_failure : exn -> bool
 (** check that the exception is not a timeout exception *)

@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -22,6 +22,9 @@ val environment_info : ('a, F.formatter, unit) format -> 'a
 
 val progress : ('a, F.formatter, unit) format -> 'a
 (** print immediately to standard error unless --quiet is specified *)
+
+val log_task : ('a, F.formatter, unit) format -> 'a
+(** log progress in the log file and on the console unless there is an active task bar *)
 
 val task_progress : f:(unit -> unit) -> (F.formatter -> 'a -> unit) -> 'a -> unit
 (** [task_progress ~f pp x] executes [f] and log progress [pp x] in the log file and also on the
@@ -58,8 +61,8 @@ val debug : debug_kind -> debug_level -> ('a, F.formatter, unit) format -> 'a
 
 val debug_dev : ('a, Format.formatter, unit) format -> 'a
   [@@deprecated
-    "Only use to debug during development. If you want more permanent logging, use \
-     [Logging.debug] instead."]
+    "Only use to debug during development. If you want more permanent logging, use [Logging.debug] \
+     instead."]
   [@@warning "-32"]
 (** For debugging during development. *)
 

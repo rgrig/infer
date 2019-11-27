@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -117,8 +117,7 @@ let log_call_trace ~caller_name ~callee_name ?callee_attributes ?reason ?dynamic
 (***************)
 
 let get_specs_from_payload summary =
-  Option.map summary.Summary.payloads.biabduction ~f:(fun BiabductionSummary.({preposts}) ->
-      preposts )
+  Option.map summary.Summary.payloads.biabduction ~f:(fun BiabductionSummary.{preposts} -> preposts)
   |> BiabductionSummary.get_specs_from_preposts
 
 
@@ -427,14 +426,12 @@ let check_dereferences caller_pname tenv callee_pname actual_pre sub spec_pre fo
       None
   | deref_err :: _ -> (
     (* Prefer to report Deref_null over other kinds of deref errors. this
-         * makes sure we report a NULL_DEREFERENCE instead of
-           a less interesting PRECONDITION_NOT_MET
-         * whenever possible *)
+       * makes sure we report a NULL_DEREFERENCE instead of
+       a less interesting PRECONDITION_NOT_MET
+       * whenever possible *)
     (* TOOD (t4893533): use this trick outside of angelic mode and in other parts of the code *)
     match
-      List.find
-        ~f:(fun err -> match err with Deref_null _, _ -> true | _ -> false)
-        deref_err_list
+      List.find ~f:(fun err -> match err with Deref_null _, _ -> true | _ -> false) deref_err_list
     with
     | Some x ->
         Some x
@@ -650,7 +647,8 @@ let sigma_star_fld tenv (sigma1 : Sil.hpred list) (sigma2 : Sil.hpred list) : Si
       | _ ->
           star sg1 sigma2' )
   in
-  try star sigma1 sigma2 with exn when SymOp.exn_not_failure exn ->
+  try star sigma1 sigma2
+  with exn when SymOp.exn_not_failure exn ->
     L.d_str "cannot star " ;
     Prop.d_sigma sigma1 ;
     L.d_str " and " ;
@@ -664,11 +662,7 @@ let hpred_typing_lhs_compare hpred1 (e2, _) =
 
 
 let hpred_star_typing (hpred1 : Sil.hpred) (_, te2) : Sil.hpred =
-  match hpred1 with
-  | Sil.Hpointsto (e1, se1, _) ->
-      Sil.Hpointsto (e1, se1, te2)
-  | _ ->
-      assert false
+  match hpred1 with Sil.Hpointsto (e1, se1, _) -> Sil.Hpointsto (e1, se1, te2) | _ -> assert false
 
 
 (** Implementation of [*] between predicates and typings *)
@@ -691,7 +685,8 @@ let sigma_star_typ (sigma1 : Sil.hpred list) (typings2 : (Exp.t * Exp.t) list) :
       | _ ->
           star sg1 typings2' )
   in
-  try star sigma1 typings2 with exn when SymOp.exn_not_failure exn ->
+  try star sigma1 typings2
+  with exn when SymOp.exn_not_failure exn ->
     L.d_str "cannot star " ;
     Prop.d_sigma sigma1 ;
     L.d_str " and " ;
@@ -833,9 +828,9 @@ let prop_set_exn tenv pname prop se_exn =
 
 (** Include a subtrace for a procedure call if the callee is not a model. *)
 let include_subtrace callee_pname =
-  match Summary.proc_resolve_attributes callee_pname with
+  match Summary.OnDisk.proc_resolve_attributes callee_pname with
   | Some attrs ->
-      (not attrs.ProcAttributes.is_model)
+      (not attrs.ProcAttributes.is_biabduction_model)
       && SourceFile.is_under_project_root attrs.ProcAttributes.loc.Location.file
   | None ->
       false
@@ -1012,16 +1007,16 @@ let mk_actual_precondition tenv prop actual_params formal_params =
 let mk_posts tenv prop callee_pname posts =
   let mk_getter_idempotent posts =
     (* if we have seen a previous call to the same function, only use specs whose return value
-           is consistent with constraints on the return value of the previous call w.r.t to
-           nullness. meant to eliminate false NPE warnings from the common
-           "if (get() != null) get().something()" pattern *)
+       is consistent with constraints on the return value of the previous call w.r.t to
+       nullness. meant to eliminate false NPE warnings from the common
+       "if (get() != null) get().something()" pattern *)
     let last_call_ret_non_null =
       List.exists
         ~f:(function
           | Sil.Apred (Aretval (pname, _), [exp]) when Typ.Procname.equal callee_pname pname ->
               Prover.check_disequal tenv prop exp Exp.zero
           | _ ->
-              false)
+              false )
         (Attribute.get_all prop)
     in
     if last_call_ret_non_null then
@@ -1031,7 +1026,7 @@ let mk_posts tenv prop callee_pname posts =
             | Sil.Hpointsto (Exp.Lvar pvar, Sil.Eexp (e, _), _) when Pvar.is_return pvar ->
                 Prover.check_equal tenv (Prop.normalize tenv prop) e Exp.zero
             | _ ->
-                false)
+                false )
           prop.Prop.sigma
       in
       List.filter ~f:(fun (prop, _) -> not (returns_null prop)) posts
@@ -1113,9 +1108,10 @@ let add_missing_field_to_tenv ~missing_sigma exe_env caller_tenv callee_pname hp
   in
   let callee_attributes = Summary.get_attributes callee_summary in
   (* if the callee is a model, then we don't have a tenv for it *)
-  if (not callee_attributes.ProcAttributes.is_model) && add_fields then
+  if (not callee_attributes.ProcAttributes.is_biabduction_model) && add_fields then
     let callee_tenv_opt =
-      try Some (Exe_env.get_tenv exe_env callee_pname) with _ ->
+      try Some (Exe_env.get_tenv exe_env callee_pname)
+      with _ ->
         let source_file = callee_attributes.ProcAttributes.loc.Location.file in
         Tenv.load source_file
     in
@@ -1202,9 +1198,7 @@ let exe_spec exe_env tenv ret_id (n, nspecs) caller_pdesc callee_pname loc prop 
           frame_typ missing_typ
       in
       let report_valid_res split =
-        match
-          combine tenv ret_id posts actual_pre path_pre split caller_pdesc callee_pname loc
-        with
+        match combine tenv ret_id posts actual_pre path_pre split caller_pdesc callee_pname loc with
         | None ->
             Invalid_res Cannot_combine
         | Some results ->
@@ -1357,7 +1351,7 @@ let exe_call_postprocess tenv ret_id trace_call callee_pname callee_attrs loc re
             | Dereference_error (Deref_freed _, desc, path_opt) ->
                 trace_call CR_not_met ;
                 extend_path path_opt None ;
-                raise (Exceptions.Use_after_free (desc, __POS__))
+                raise (Exceptions.Biabd_use_after_free (desc, __POS__))
             | Dereference_error (Deref_undef (_, _, pos), desc, path_opt) ->
                 trace_call CR_not_met ;
                 extend_path path_opt (Some pos) ;
@@ -1378,7 +1372,7 @@ let exe_call_postprocess tenv ret_id trace_call callee_pname callee_attrs loc re
                         let exn = get_check_exn tenv check callee_pname loc __POS__ in
                         raise exn
                     | _ ->
-                        false)
+                        false )
                   invalid_res
               then call_desc (Some Localise.Pnm_bounds)
               else call_desc None
@@ -1452,8 +1446,8 @@ let exe_call_postprocess tenv ret_id trace_call callee_pname callee_attrs loc re
 
 
 (** Execute the function call and return the list of results with return value *)
-let exe_function_call ?dynamic_dispatch exe_env callee_summary tenv ret_id caller_pdesc
-    callee_pname loc actual_params prop path =
+let exe_function_call ?dynamic_dispatch exe_env callee_summary tenv ret_id caller_pdesc callee_pname
+    loc actual_params prop path =
   let callee_attributes = Summary.get_attributes callee_summary in
   let caller_name = Procdesc.get_proc_name caller_pdesc in
   let trace_call =

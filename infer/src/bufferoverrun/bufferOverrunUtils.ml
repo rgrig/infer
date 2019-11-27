@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -32,16 +32,22 @@ end
 module Exec = struct
   open ModelEnv
 
-  let load_locs id locs mem =
-    let v = Dom.Mem.find_set locs mem in
+  let load_locs ~represents_multiple_values ~modeled_range id typ locs mem =
+    let set_modeled_range v =
+      Option.value_map modeled_range ~default:v ~f:(fun modeled_range ->
+          Dom.Val.set_modeled_range modeled_range v )
+    in
+    let v = Dom.Mem.find_set ~typ locs mem |> set_modeled_range in
     let mem = Dom.Mem.add_stack (Loc.of_id id) v mem in
-    if not v.represents_multiple_values then
-      match PowLoc.is_singleton_or_more locs with
-      | IContainer.Singleton loc ->
-          Dom.Mem.load_simple_alias id loc mem
-      | _ ->
-          mem
-    else mem
+    let mem =
+      if represents_multiple_values then Dom.Mem.add_heap_set ~represents_multiple_values locs v mem
+      else mem
+    in
+    match PowLoc.is_singleton_or_more locs with
+    | IContainer.Singleton loc ->
+        Dom.Mem.load_simple_alias id loc mem
+    | _ ->
+        mem
 
 
   let rec decl_local_loc ({tenv} as model_env) loc typ ~inst_num ~represents_multiple_values
@@ -56,14 +62,14 @@ module Exec = struct
       | Some (CArray {element_typ; length}) ->
           decl_local_array model_env loc element_typ ~length:(Some length) ~inst_num
             ~represents_multiple_values ~dimension mem
-      | Some JavaCollection | None ->
+      | Some CppStdVector | Some JavaCollection | Some JavaInteger | None ->
           (mem, inst_num) )
     | _ ->
         (mem, inst_num)
 
 
-  and decl_local_array ({pname; node_hash; location} as model_env) loc typ ~length ?stride
-      ~inst_num ~represents_multiple_values ~dimension mem =
+  and decl_local_array ({pname; node_hash; location} as model_env) loc typ ~length ?stride ~inst_num
+      ~represents_multiple_values ~dimension mem =
     let size = Option.value_map ~default:Itv.top ~f:Itv.of_int_lit length in
     let path = Loc.get_path loc in
     let allocsite =
@@ -80,9 +86,9 @@ module Exec = struct
         | Language.Java ->
             (Dom.Val.of_java_array_alloc allocsite ~length:size ~traces, None)
       in
-      let arr = Dom.Val.sets_represents_multiple_values arr ~represents_multiple_values in
       let mem = Dom.Mem.init_array_relation allocsite ~offset_opt ~size ~size_exp_opt:None mem in
-      if Int.equal dimension 1 then Dom.Mem.add_stack loc arr mem else Dom.Mem.add_heap loc arr mem
+      if Int.equal dimension 1 then Dom.Mem.add_stack ~represents_multiple_values loc arr mem
+      else Dom.Mem.add_heap ~represents_multiple_values loc arr mem
     in
     let loc = Loc.of_allocsite allocsite in
     let mem, _ =
@@ -118,7 +124,7 @@ module Exec = struct
             in
             let offset, size = (Itv.zero, length) in
             let v =
-              let traces = TraceSet.empty (* TODO: location of field declaration *) in
+              let traces = TraceSet.bottom (* TODO: location of field declaration *) in
               Dom.Val.of_c_array_alloc allocsite ~stride ~offset ~size ~traces
             in
             mem |> Dom.Mem.strong_update field_loc v
@@ -153,9 +159,7 @@ module Exec = struct
           match field_typ.Typ.desc with
           | Tarray {length= Some length} ->
               let length = Itv.plus (Itv.of_int_lit length) dyn_length |> Dom.Val.of_itv in
-              let v =
-                Dom.Mem.find_set field_loc mem |> Dom.Val.set_array_length location ~length
-              in
+              let v = Dom.Mem.find_set field_loc mem |> Dom.Val.set_array_length location ~length in
               Dom.Mem.strong_update field_loc v mem
           | _ ->
               set_dyn_length model_env field_typ field_loc dyn_length mem )
@@ -165,14 +169,30 @@ module Exec = struct
         mem
 
 
-  let get_max_char s = String.fold s ~init:0 ~f:(fun acc c -> max acc (Char.to_int c))
+  let get_min_max_char s ~init_char =
+    let init_i = Char.to_int init_char in
+    String.fold s ~init:(init_i, init_i) ~f:(fun (min_acc, max_acc) c ->
+        let i = Char.to_int c in
+        (min min_acc i, max max_acc i) )
+
 
   let decl_string {pname; node_hash; location; integer_type_widths} ~do_alloc locs s mem =
-    let stride = Some (Typ.width_of_ikind integer_type_widths IChar / 8) in
-    let offset = Itv.zero in
-    let size = Itv.of_int (String.length s + 1) in
+    let size =
+      let s_length =
+        if Language.curr_language_is Java then String.length s else String.length s + 1
+      in
+      Itv.of_int s_length
+    in
     let traces = Trace.Set.singleton location Trace.ArrayDeclaration in
-    let char_itv = Itv.join Itv.zero (Itv.of_int (get_max_char s)) in
+    let char_itv =
+      let itv =
+        if Int.equal (String.length s) 0 then Itv.bot
+        else
+          let min, max = get_min_max_char s ~init_char:s.[0] in
+          Itv.join (Itv.of_int min) (Itv.of_int max)
+      in
+      if Language.curr_language_is Java then itv else Itv.join Itv.zero itv
+    in
     let decl loc mem =
       (* It doesn't allocate if the character pointer is in stack, because they are already
          allocated at the entry of the function. *)
@@ -187,7 +207,14 @@ module Exec = struct
             Allocsite.make pname ~node_hash ~inst_num:0 ~dimension:1 ~path:deref_path
               ~represents_multiple_values:true
           in
-          let v = Dom.Val.of_c_array_alloc allocsite ~stride ~offset ~size ~traces in
+          let v =
+            if Language.curr_language_is Java then
+              Dom.Val.of_java_array_alloc allocsite ~length:size ~traces
+            else
+              let stride = Some (Typ.width_of_ikind integer_type_widths IChar / 8) in
+              let offset = Itv.zero in
+              Dom.Val.of_c_array_alloc allocsite ~stride ~offset ~size ~traces
+          in
           (Loc.of_allocsite allocsite, Dom.Mem.update_mem (PowLoc.singleton loc) v mem)
         else (loc, mem)
       in
@@ -205,56 +232,71 @@ module Exec = struct
     let set_c_strlen1 allocsite arrinfo acc =
       let loc = Loc.of_allocsite allocsite in
       let idx = Dom.Val.of_itv ~traces (ArrayBlk.ArrInfo.offsetof arrinfo) in
-      if Itv.( <= ) ~lhs:Itv.zero ~rhs:src_itv then Dom.Mem.set_first_idx_of_null loc idx acc
+      if Itv.leq ~lhs:Itv.zero ~rhs:src_itv then Dom.Mem.set_first_idx_of_null loc idx acc
       else Dom.Mem.unset_first_idx_of_null loc idx acc
     in
     ArrayBlk.fold set_c_strlen1 (Dom.Val.get_array_blk tgt) mem
 end
 
 module Check = struct
-  let check_access ~size ~idx ~size_sym_exp ~idx_sym_exp ~relation ~arr ~idx_traces ~last_included
-      ~latest_prune location cond_set =
+  let check_access ~size ~idx ~offset ~size_sym_exp ~idx_sym_exp ~relation ~arr_traces ~idx_traces
+      ~last_included ~latest_prune location cond_set =
     match (size, idx) with
     | NonBottom length, NonBottom idx ->
-        let offset =
-          match ArrayBlk.offsetof (Dom.Val.get_array_blk arr) with
-          | Bottom ->
-              (* Java's collection has no offset. *)
-              Itv.ItvPure.zero
-          | NonBottom offset ->
-              offset
-        in
-        let arr_traces = Dom.Val.get_traces arr in
         PO.ConditionSet.add_array_access location ~size:length ~offset ~idx ~size_sym_exp
           ~idx_sym_exp ~relation ~last_included ~idx_traces ~arr_traces ~latest_prune cond_set
     | _ ->
         cond_set
 
 
+  let log_array_access allocsite size offset idx =
+    L.(debug BufferOverrun Verbose)
+      "@[<v 2>Add condition :@,array: %a@,  size: %a@,  idx: %a + %a@,@]@." Allocsite.pp allocsite
+      Itv.pp size Itv.ItvPure.pp offset Itv.pp idx
+
+
+  let offsetof arr_info =
+    match ArrayBlk.ArrInfo.offsetof arr_info with
+    | Bottom ->
+        (* Java's collection has no offset. *)
+        Itv.ItvPure.zero
+    | NonBottom offset ->
+        offset
+
+
   let array_access ~arr ~idx ~idx_sym_exp ~relation ~is_plus ~last_included ~latest_prune location
       cond_set =
-    let arr_blk = Dom.Val.get_array_blk arr in
-    let size = ArrayBlk.sizeof arr_blk in
-    let size_sym_exp = Relation.SymExp.of_sym (Dom.Val.get_size_sym arr) in
-    let idx_itv = Dom.Val.get_itv idx in
     let idx_traces = Dom.Val.get_traces idx in
-    let idx = if is_plus then idx_itv else Itv.neg idx_itv in
+    let idx =
+      let idx_itv = Dom.Val.get_itv idx in
+      if is_plus then idx_itv else Itv.neg idx_itv
+    in
+    let arr_traces = Dom.Val.get_traces arr in
+    let size_sym_exp = Relation.SymExp.of_sym (Dom.Val.get_size_sym arr) in
     let idx_sym_exp =
       let offset_sym_exp = Relation.SymExp.of_sym (Dom.Val.get_offset_sym arr) in
       Option.map2 offset_sym_exp idx_sym_exp ~f:(fun offset_sym_exp idx_sym_exp ->
           let op = if is_plus then Relation.SymExp.plus else Relation.SymExp.minus in
           op idx_sym_exp offset_sym_exp )
     in
-    L.(debug BufferOverrun Verbose)
-      "@[<v 2>Add condition :@,array: %a@,  idx: %a + %a@,@]@." ArrayBlk.pp arr_blk Itv.pp
-      (ArrayBlk.offsetof arr_blk) Itv.pp idx ;
-    check_access ~size ~idx ~size_sym_exp ~idx_sym_exp ~relation ~arr ~idx_traces ~last_included
-      ~latest_prune location cond_set
+    let array_access1 allocsite arr_info acc =
+      let size = ArrayBlk.ArrInfo.sizeof arr_info in
+      let offset = offsetof arr_info in
+      log_array_access allocsite size offset idx ;
+      check_access ~size ~idx ~offset ~size_sym_exp ~idx_sym_exp ~relation ~arr_traces ~idx_traces
+        ~last_included ~latest_prune location acc
+    in
+    ArrayBlk.fold array_access1 (Dom.Val.get_array_blk arr) cond_set
 
 
   let lindex integer_type_widths ~array_exp ~index_exp ~last_included mem location cond_set =
     let idx = Sem.eval integer_type_widths index_exp mem in
-    let arr = Sem.eval_arr integer_type_widths array_exp mem in
+    let arr =
+      if Language.curr_language_is Java then
+        let arr_locs = Sem.eval_locs array_exp mem in
+        if PowLoc.is_empty arr_locs then Dom.Val.Itv.top else Dom.Mem.find_set arr_locs mem
+      else Sem.eval_arr integer_type_widths array_exp mem
+    in
     let idx_sym_exp =
       Relation.SymExp.of_exp ~get_sym_f:(Sem.get_sym_f integer_type_widths mem) index_exp
     in
@@ -264,17 +306,22 @@ module Check = struct
       location cond_set
 
 
-  let array_access_byte ~arr ~idx ~relation ~is_plus ~last_included location cond_set =
-    let arr_blk = Dom.Val.get_array_blk arr in
-    let size = ArrayBlk.sizeof_byte arr_blk in
-    let idx_itv = Dom.Val.get_itv idx in
+  let array_access_byte ~arr ~idx ~relation ~is_plus ~last_included ~latest_prune location cond_set
+      =
     let idx_traces = Dom.Val.get_traces idx in
-    let idx = if is_plus then idx_itv else Itv.neg idx_itv in
-    L.(debug BufferOverrun Verbose)
-      "@[<v 2>Add condition :@,array: %a@,  idx: %a + %a@,@]@." ArrayBlk.pp arr_blk Itv.pp
-      (ArrayBlk.offsetof arr_blk) Itv.pp idx ;
-    check_access ~size ~idx ~size_sym_exp:None ~idx_sym_exp:None ~relation ~arr ~idx_traces
-      ~last_included location cond_set
+    let idx =
+      let idx_itv = Dom.Val.get_itv idx in
+      if is_plus then idx_itv else Itv.neg idx_itv
+    in
+    let arr_traces = Dom.Val.get_traces arr in
+    let array_access_byte1 allocsite arr_info acc =
+      let size = ArrayBlk.ArrInfo.byte_size arr_info in
+      let offset = offsetof arr_info in
+      log_array_access allocsite size offset idx ;
+      check_access ~size ~idx ~offset ~size_sym_exp:None ~idx_sym_exp:None ~relation ~arr_traces
+        ~idx_traces ~last_included ~latest_prune location acc
+    in
+    ArrayBlk.fold array_access_byte1 (Dom.Val.get_array_blk arr) cond_set
 
 
   let lindex_byte integer_type_widths ~array_exp ~byte_index_exp ~last_included mem location

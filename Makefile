@@ -1,4 +1,4 @@
-# Copyright (c) 2015-present, Facebook, Inc.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -21,11 +21,13 @@ endif
 
 ifeq ($(BUILD_C_ANALYZERS),yes)
 BUILD_SYSTEMS_TESTS += \
+  annotation-reachability-sources-override \
   assembly \
   backtrack_level \
   ck_analytics ck_imports \
   clang_compilation_db_escaped clang_compilation_db_relpath \
   clang_multiple_files \
+  clang_test_determinator \
   clang_translation \
   clang_unknown_ext \
   clang_with_blacklisted_flags \
@@ -34,8 +36,6 @@ BUILD_SYSTEMS_TESTS += \
   clang_with_MD_flag \
   deduplicate_template_warnings \
   delete_results_dir \
-  diff \
-  diff_gen_build_script \
   duplicate_symbols \
   fail_on_issue \
   j1 \
@@ -45,6 +45,10 @@ BUILD_SYSTEMS_TESTS += \
   run_hidden_linters \
   tracebugs \
   utf8_in_procname \
+  export_changed_functions \
+  incremental_analysis_remove_file \
+  incremental_analysis_change_procedure \
+  incremental_analysis_add_procedure \
 
 DIRECT_TESTS += \
   c_biabduction \
@@ -52,23 +56,37 @@ DIRECT_TESTS += \
   c_errors \
   c_frontend \
   c_performance \
+  c_purity \
   c_uninit \
+  cpp_annotation-reachability \
   cpp_bufferoverrun \
   cpp_conflicts \
   cpp_errors \
   cpp_frontend \
+  cpp_impurity \
+  cpp_linters \
   cpp_linters-for-test-only \
   cpp_liveness \
   cpp_nullable \
-  cpp_ownership cpp_pulse \
+  cpp_pulse \
   cpp_quandary cpp_quandaryBO \
   cpp_racerd \
   cpp_siof \
-	cpp_starvation \
+  cpp_starvation \
   cpp_uninit \
 
+
 ifneq ($(BUCK),no)
-BUILD_SYSTEMS_TESTS += buck_blacklist buck-clang-db buck_flavors buck_flavors_run buck_flavors_deterministic
+BUILD_SYSTEMS_TESTS += \
+  buck_blacklist \
+  buck-clang-db \
+  buck_clang_test_determinator \
+  buck_flavors \
+  buck_flavors_diff \
+  buck_flavors_run \
+  buck_flavors_deterministic \
+  buck_export_changed_functions \
+
 endif
 ifneq ($(CMAKE),no)
 BUILD_SYSTEMS_TESTS += clang_compilation_db cmake inferconfig inferconfig_not_strict
@@ -82,10 +100,29 @@ endif
 ifeq ($(HAS_OBJC),yes)
 BUILD_SYSTEMS_TESTS += objc_getters_setters objc_missing_fld objc_retain_cycles objc_retain_cycles_weak
 DIRECT_TESTS += \
-  objc_frontend objc_errors objc_linters objc_ioslints objcpp_errors objcpp_nullable objcpp_retain-cycles \
-  objc_linters-def-folder objc_nullable objc_liveness objcpp_liveness objc_uninit \
-  objcpp_frontend objcpp_linters cpp_linters  objc_linters-for-test-only objcpp_linters-for-test-only \
-	objcpp_racerd
+  objc_errors \
+  objc_frontend \
+  objc_ioslints \
+  objc_linters \
+  objc_linters-def-folder \
+  objc_linters-for-test-only \
+  objc_liveness \
+  objc_nullable \
+  objc_performance \
+  objc_pulse \
+  objc_quandary \
+  objc_self-in-block \
+  objc_uninit \
+  objcpp_errors \
+  objcpp_frontend \
+  objcpp_linters \
+  objcpp_linters-for-test-only \
+  objcpp_liveness \
+  objcpp_nullable \
+  objcpp_pulse \
+  objcpp_racerd \
+  objcpp_retain-cycles \
+
 ifneq ($(XCODE_SELECT),no)
 BUILD_SYSTEMS_TESTS += xcodebuild_no_xcpretty
 endif
@@ -97,45 +134,54 @@ endif # BUILD_C_ANALYZERS
 
 ifeq ($(BUILD_JAVA_ANALYZERS),yes)
 BUILD_SYSTEMS_TESTS += \
-	differential_interesting_paths_filter \
+  differential_interesting_paths_filter \
   differential_of_costs_report \
+  incremental_analysis_cost_change \
   differential_skip_anonymous_class_renamings \
   differential_skip_duplicated_types_on_filenames \
   differential_skip_duplicated_types_on_filenames_with_renamings \
   gradle \
-	java_test_determinator \
+  java_test_determinator \
   javac \
   resource_leak_exception_lines \
-	racerd_dedup
+  racerd_dedup
+
+#TODO T41549034: Jdk11 translates string append differently, causing
+#test failures in NullPointerExceptions:stringVarEqualsFalseNPE
 
 DIRECT_TESTS += \
+  java_annotreach \
   java_bufferoverrun \
   java_checkers \
   java_classloads \
-  java_eradicate \
+  java_nullsafe-default \
   java_hoisting \
   java_hoistingExpensive \
+  java_impurity \
+  java_inefficientKeysetIterator \
   java_infer \
+  java_litho \
   java_performance \
   java_purity \
   java_quandary \
   java_racerd \
   java_starvation \
-  java_tracing \
+  java_starvation-dedup \
+  java_starvation-whole-program \
+  java_topl \
+
+ifeq ($(IS_FACEBOOK_TREE),yes)
+DIRECT_TESTS += java_fb-performance
+endif
 
 ifneq ($(ANT),no)
 BUILD_SYSTEMS_TESTS += ant
 endif
+
+
+
 ifneq ($(BUCK),no)
-BUILD_SYSTEMS_TESTS += buck genrule buck_javac_jar
-# Introduce the dependency only if the two tests are going to be built in parallel, so that they do
-# not run in parallel (otherwise Buck has a bad time). This works by checking if one of the main
-# testing targets was passed as a goal on the command line.
-ifneq ($(filter build_systems_tests config_tests test test-replace,${MAKECMDGOALS}),)
-build_genrule_print: build_buck_print
-build_genrule_replace: build_buck_replace
-build_genrule_test: build_buck_test
-endif
+BUILD_SYSTEMS_TESTS += buck genrule genrulecapture buck_javac_jar
 endif
 ifneq ($(MVN),no)
 BUILD_SYSTEMS_TESTS += mvn
@@ -144,13 +190,6 @@ endif
 
 ifeq ($(BUILD_C_ANALYZERS)+$(BUILD_JAVA_ANALYZERS),yes+yes)
 BUILD_SYSTEMS_TESTS += make utf8_in_pwd waf
-# the waf test and the make test run the same `make` command; use the same trick as for
-# "build_buck_test" to prevent make from running them in parallel
-ifneq ($(filter build_systems_tests config_tests test test-replace,${MAKECMDGOALS}),)
-build_waf_replace: build_make_replace
-build_waf_print: build_make_print
-build_waf_test: build_make_test
-endif
 endif
 
 ifeq ($(IS_INFER_RELEASE),no)
@@ -174,8 +213,6 @@ fb-setup:
 	$(QUIET)$(call silent_on_success,Facebook setup,\
 	$(MAKE) -C facebook setup)
 
-OCAMLFORMAT_EXE?=ocamlformat
-
 .PHONY: fmt
 fmt:
 	parallel $(OCAMLFORMAT_EXE) -i ::: $$(git diff --name-only --diff-filter=ACMRU $$(git merge-base origin/master HEAD) | grep "\.mli\?$$")
@@ -186,7 +223,7 @@ DUNE_ML:=$(shell find * -name 'dune*.in' | grep -v workspace)
 fmt_dune:
 	parallel $(OCAMLFORMAT_EXE) -i ::: $(DUNE_ML)
 
-SRC_ML:=$(shell find * \( -name _build -or -name facebook-clang-plugins -or -path facebook/dependencies -or -path sledge/llvm \) -not -prune -or -type f -and -name '*'.ml -or -name '*'.mli 2>/dev/null)
+SRC_ML:=$(shell find * \( -name _build -or -name facebook-clang-plugins -or -path facebook/dependencies -or -path sledge/llvm -or -path sledge/.llvm_build \) -not -prune -or -type f -and -name '*'.ml -or -name '*'.mli 2>/dev/null)
 
 .PHONY: fmt_all
 fmt_all:
@@ -259,23 +296,23 @@ endif
 
 $(INFER_COMMAND_MANUALS): src_build $(MAKEFILE_LIST)
 	$(QUIET)$(MKDIR_P) $(@D)
-	$(QUIET)$(INFER_BIN) $(patsubst infer-%.1,%,$(@F)) --help --help-format=groff > $@
+	$(QUIET)$(INFER_BIN) $(patsubst infer-%.1,%,$(@F)) --help-scrubbed --help-format=groff > $@
 
 $(INFER_COMMAND_TEXT_MANUALS): src_build $(MAKEFILE_LIST)
 	$(QUIET)$(MKDIR_P) $(@D)
-	$(QUIET)$(INFER_BIN) $(patsubst infer-%.txt,%,$(@F)) --help --help-format=plain > $@
+	$(QUIET)$(INFER_BIN) $(patsubst infer-%.txt,%,$(@F)) --help-scrubbed --help-format=plain > $@
 
 $(INFER_MANUAL): src_build $(MAKEFILE_LIST)
 	$(QUIET)$(MKDIR_P) $(@D)
-	$(QUIET)$(INFER_BIN) --help --help-format=groff > $@
+	$(QUIET)$(INFER_BIN) --help-scrubbed --help-format=groff > $@
 
 $(INFER_TEXT_MANUAL): src_build $(MAKEFILE_LIST)
 	$(QUIET)$(MKDIR_P) $(@D)
-	$(QUIET)$(INFER_BIN) --help --help-format=plain > $@
+	$(QUIET)$(INFER_BIN) --help-scrubbed --help-format=plain > $@
 
 $(INFER_FULL_TEXT_MANUAL): src_build $(MAKEFILE_LIST)
 	$(QUIET)$(MKDIR_P) $(@D)
-	$(QUIET)$(INFER_BIN) --help-full --help-format=plain > $@
+	$(QUIET)$(INFER_BIN) --help-scrubbed-full --help-format=plain > $@
 
 $(INFER_GROFF_MANUALS_GZIPPED): %.gz: %
 	$(QUIET)$(REMOVE) $@
@@ -329,7 +366,9 @@ clang_plugin: clang_setup
 	  CPP="$(CPP)" LDFLAGS="$(LDFLAGS)" LIBS="$(LIBS)" \
 	  LOCAL_CLANG=$(CLANG_PREFIX)/bin/clang \
 	  CLANG_PREFIX=$(CLANG_PREFIX) \
-	  CLANG_INCLUDES=$(CLANG_INCLUDES))
+	  CLANG_INCLUDES=$(CLANG_INCLUDES) \
+	  SDKPATH=$(XCODE_ISYSROOT) \
+	)
 	$(QUIET)$(call silent_on_success,Building clang plugin OCaml interface,\
 	$(MAKE) -C $(FCP_DIR)/clang-ocaml all \
           build/clang_ast_proj.ml build/clang_ast_proj.mli \
@@ -338,51 +377,62 @@ clang_plugin: clang_setup
 	  CPP="$(CPP)" LDFLAGS="$(LDFLAGS)" LIBS="$(LIBS)" \
 	  LOCAL_CLANG=$(CLANG_PREFIX)/bin/clang \
 	  CLANG_PREFIX=$(CLANG_PREFIX) \
-	  CLANG_INCLUDES=$(CLANG_INCLUDES))
-
+	  CLANG_INCLUDES=$(CLANG_INCLUDES) \
+	  SDKPATH=$(XCODE_ISYSROOT) \
+	)
 .PHONY: clang_plugin_test
 clang_plugin_test: clang_setup
-		$(QUIET)$(call silent_on_success,Running facebook-clang-plugins/libtooling/ tests,\
-		$(MAKE) -C $(FCP_DIR)/libtooling test \
-		  CC=$(CC) CXX=$(CXX) \
-		  CFLAGS="$(CFLAGS)" CXXFLAGS="$(CXXFLAGS)" \
-		  CPP="$(CPP)" LDFLAGS="$(LDFLAGS)" LIBS="$(LIBS)" \
-		  LOCAL_CLANG=$(CLANG_PREFIX)/bin/clang \
-		  CLANG_PREFIX=$(CLANG_PREFIX) \
-		  CLANG_INCLUDES=$(CLANG_INCLUDES))
-		$(QUIET)$(call silent_on_success,Running facebook-clang-plugins/clang-ocaml/ tests,\
-		$(MAKE) -C $(FCP_DIR)/clang-ocaml test \
-		  CC=$(CC) CXX=$(CXX) \
-		  CFLAGS="$(CFLAGS)" CXXFLAGS="$(CXXFLAGS)" \
-		  CPP="$(CPP)" LDFLAGS="$(LDFLAGS)" LIBS="$(LIBS)" \
-		  LOCAL_CLANG=$(CLANG_PREFIX)/bin/clang \
-		  CLANG_PREFIX=$(CLANG_PREFIX) \
-		  CLANG_INCLUDES=$(CLANG_INCLUDES))
+	$(QUIET)$(call silent_on_success,Running facebook-clang-plugins/libtooling/ tests,\
+	$(MAKE) -C $(FCP_DIR)/libtooling test \
+	  CC=$(CC) CXX=$(CXX) \
+	  CFLAGS="$(CFLAGS)" CXXFLAGS="$(CXXFLAGS)" \
+	  CPP="$(CPP)" LDFLAGS="$(LDFLAGS)" LIBS="$(LIBS)" \
+	  LOCAL_CLANG=$(CLANG_PREFIX)/bin/clang \
+	  CLANG_PREFIX=$(CLANG_PREFIX) \
+	  CLANG_INCLUDES=$(CLANG_INCLUDES) \
+	  SDKPATH=$(XCODE_ISYSROOT) \
+	)
+	$(QUIET)$(call silent_on_success,Running facebook-clang-plugins/clang-ocaml/ tests,\
+	$(MAKE) -C $(FCP_DIR)/clang-ocaml test \
+	  CC=$(CC) CXX=$(CXX) \
+	  CFLAGS="$(CFLAGS)" CXXFLAGS="$(CXXFLAGS)" \
+	  CPP="$(CPP)" LDFLAGS="$(LDFLAGS)" LIBS="$(LIBS)" \
+	  LOCAL_CLANG=$(CLANG_PREFIX)/bin/clang \
+	  CLANG_PREFIX=$(CLANG_PREFIX) \
+	  CLANG_INCLUDES=$(CLANG_INCLUDES) \
+	  SDKPATH=$(XCODE_ISYSROOT) \
+	)
 
 .PHONY: clang_plugin_test
 clang_plugin_test_replace: clang_setup
-		$(QUIET)$(call silent_on_success,Running facebook-clang-plugins/libtooling/ record tests,\
-		$(MAKE) -C $(FCP_DIR)/libtooling record-test-outputs \
-		  CC=$(CC) CXX=$(CXX) \
-		  CFLAGS="$(CFLAGS)" CXXFLAGS="$(CXXFLAGS)" \
-		  CPP="$(CPP)" LDFLAGS="$(LDFLAGS)" LIBS="$(LIBS)" \
-		  LOCAL_CLANG=$(CLANG_PREFIX)/bin/clang \
-		  CLANG_PREFIX=$(CLANG_PREFIX) \
-		  CLANG_INCLUDES=$(CLANG_INCLUDES))
-		$(QUIET)$(call silent_on_success,Running facebook-clang-plugins/clang-ocaml/ record tests,\
-		$(MAKE) -C $(FCP_DIR)/clang-ocaml record-test-outputs \
-		  CC=$(CC) CXX=$(CXX) \
-		  CFLAGS="$(CFLAGS)" CXXFLAGS="$(CXXFLAGS)" \
-		  CPP="$(CPP)" LDFLAGS="$(LDFLAGS)" LIBS="$(LIBS)" \
-		  LOCAL_CLANG=$(CLANG_PREFIX)/bin/clang \
-		  CLANG_PREFIX=$(CLANG_PREFIX) \
-		  CLANG_INCLUDES=$(CLANG_INCLUDES))
+	$(QUIET)$(call silent_on_success,Running facebook-clang-plugins/libtooling/ record tests,\
+	$(MAKE) -C $(FCP_DIR)/libtooling record-test-outputs \
+	  CC=$(CC) CXX=$(CXX) \
+	  CFLAGS="$(CFLAGS)" CXXFLAGS="$(CXXFLAGS)" \
+	  CPP="$(CPP)" LDFLAGS="$(LDFLAGS)" LIBS="$(LIBS)" \
+	  LOCAL_CLANG=$(CLANG_PREFIX)/bin/clang \
+	  CLANG_PREFIX=$(CLANG_PREFIX) \
+	  CLANG_INCLUDES=$(CLANG_INCLUDES) \
+	  SDKPATH=$(XCODE_ISYSROOT) \
+	)
+	$(QUIET)$(call silent_on_success,Running facebook-clang-plugins/clang-ocaml/ record tests,\
+	$(MAKE) -C $(FCP_DIR)/clang-ocaml record-test-outputs \
+	  CC=$(CC) CXX=$(CXX) \
+	  CFLAGS="$(CFLAGS)" CXXFLAGS="$(CXXFLAGS)" \
+	  CPP="$(CPP)" LDFLAGS="$(LDFLAGS)" LIBS="$(LIBS)" \
+	  LOCAL_CLANG=$(CLANG_PREFIX)/bin/clang \
+	  CLANG_PREFIX=$(CLANG_PREFIX) \
+	  CLANG_INCLUDES=$(CLANG_INCLUDES) \
+	  SDKPATH=$(XCODE_ISYSROOT) \
+	)
 
 .PHONY: ocaml_unit_test
 ocaml_unit_test: test_build
 	$(QUIET)$(REMOVE_DIR) infer-out-unit-tests
 	$(QUIET)$(call silent_on_success,Running OCaml unit tests,\
-	INFER_ARGS=--results-dir^infer-out-unit-tests $(BUILD_DIR)/test/inferunit.bc)
+	INFER_ARGS=--results-dir^infer-out-unit-tests \
+	BUILD_DIR=$(BUILD_DIR)/test \
+	$(SCRIPT_DIR)/dune_exec_shim.sh $(BUILD_DIR)/test/inferunit.bc)
 
 define silence_make
   $(1) 2> >(grep -v 'warning: \(ignoring old\|overriding\) \(commands\|recipe\) for target')
@@ -552,13 +602,10 @@ ifeq ($(BUILD_C_ANALYZERS),yes)
 	    $(MKDIR_P) '$(DESTDIR)$(libdir)'/infer/\$$1" --
 	test -d      '$(DESTDIR)$(libdir)/infer/infer/lib/clang_wrappers/' || \
 	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/lib/clang_wrappers/'
-	find infer/models/cpp/include -type d -print0 | xargs -0 -n 1 \
-	  $(SHELL) -x -c "test -d '$(DESTDIR)$(libdir)'/infer/\$$1 || \
-	    $(MKDIR_P) '$(DESTDIR)$(libdir)'/infer/\$$1" --
 	test -d      '$(DESTDIR)$(libdir)/infer/infer/lib/linter_rules/' || \
 	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/lib/linter_rules/'
 	test -d      '$(DESTDIR)$(libdir)/infer/infer/etc/' || \
-		$(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/etc'
+	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/etc'
 endif
 ifeq ($(BUILD_JAVA_ANALYZERS),yes)
 	test -d      '$(DESTDIR)$(libdir)/infer/infer/lib/java/' || \
@@ -598,8 +645,6 @@ ifeq ($(BUILD_C_ANALYZERS),yes)
 	  $(LN_S) ../../bin/infer '$(notdir $(cc))';))
 	find infer/lib/specs/* -print0 | xargs -0 -I \{\} \
 	  $(INSTALL_DATA) -C \{\} '$(DESTDIR)$(libdir)'/infer/\{\}
-	find infer/models/cpp/include -not -type d -print0 | xargs -0 -I \{\} \
-		$(INSTALL_DATA) -C \{\} '$(DESTDIR)$(libdir)'/infer/\{\}
 	$(INSTALL_DATA) -C          'infer/lib/linter_rules/linters.al' \
 	  '$(DESTDIR)$(libdir)/infer/infer/lib/linter_rules/linters.al'
 	$(INSTALL_DATA) -C          'infer/etc/clang_ast.dict' \
@@ -650,6 +695,73 @@ else
 endif
 endif
 
+# install dynamic libraries
+# use this if you want to distribute infer binaries
+install-with-libs: install
+	test -d      '$(DESTDIR)$(libdir)'/infer/infer/libso || \
+	  $(MKDIR_P) '$(DESTDIR)$(libdir)'/infer/infer/libso
+ifneq ($(OPAM),no)
+	set -x; \
+	OPAM_SHARE=$$($(OPAM) config var share); \
+	APRON_LIB_PATHS="$$OPAM_SHARE/apron/lib/libapron.so $$OPAM_SHARE/apron/lib/liboctMPQ.so"; \
+	ELINA_LIB_PATHS="$$OPAM_SHARE/elina/lib/libelinalinearize.so $$OPAM_SHARE/elina/lib/liboptpoly.so $$OPAM_SHARE/elina/lib/libpartitions.so"; \
+	$(INSTALL_PROGRAM) -C $$APRON_LIB_PATHS '$(DESTDIR)$(libdir)'/infer/infer/libso/; \
+	$(INSTALL_PROGRAM) -C $$ELINA_LIB_PATHS '$(DESTDIR)$(libdir)'/infer/infer/libso/
+ifneq ($(LDD),no)
+ifneq ($(PATCHELF),no)
+#	this sort of assumes Linux
+#	figure out where libgmp and libmpfr are using ldd
+	set -x; \
+	for lib in $$($(LDD) $(INFER_BIN) \
+	              | cut -d ' ' -f 3 \
+	              | grep -e 'lib\(gmp\|mpfr\)'); do \
+	  $(INSTALL_PROGRAM) -C "$$lib" '$(DESTDIR)$(libdir)'/infer/infer/libso/; \
+	done
+#	update rpath of executables
+	for sofile in '$(DESTDIR)$(libdir)'/infer/infer/libso/*.so; do \
+	  $(PATCHELF) --set-rpath '$$ORIGIN' --force-rpath "$$sofile"; \
+	done
+	$(PATCHELF) --set-rpath '$$ORIGIN/../libso' --force-rpath '$(DESTDIR)$(libdir)'/infer/infer/bin/infer
+ifeq ($(IS_FACEBOOK_TREE),yes)
+	$(PATCHELF) --set-rpath '$$ORIGIN/../libso' --force-rpath '$(DESTDIR)$(libdir)'/infer/infer/bin/InferCreateTraceViewLinks
+endif
+else # ldd found but not patchelf
+	echo "ERROR: ldd (Linux?) found but not patchelf, please install patchelf" >&2; exit 1
+endif
+else # ldd not found
+ifneq ($(OTOOL),no)
+ifneq ($(INSTALL_NAME_TOOL),no)
+#	this sort of assumes osx
+#	figure out where libgmp and libmpfr are using otool
+	set -e; \
+	set -x; \
+	for lib in $$($(OTOOL) -L $(INFER_BIN) \
+	              | cut -d ' ' -f 1 | tr -d '\t' \
+	              | grep -e 'lib\(gmp\|mpfr\)'); do \
+	  $(INSTALL_PROGRAM) -C "$$lib" '$(DESTDIR)$(libdir)'/infer/infer/libso/; \
+	done
+	set -x; \
+	for sofile in '$(DESTDIR)$(libdir)'/infer/infer/libso/*.{so,dylib}; do \
+	  $(INSTALL_NAME_TOOL) -add_rpath "@executable_path" "$$sofile" 2> /dev/null || true; \
+	  scripts/set_libso_path.sh '$(DESTDIR)$(libdir)'/infer/infer/libso "$$sofile"; \
+	done
+	$(INSTALL_NAME_TOOL) -add_rpath '@executable_path/../libso' '$(DESTDIR)$(libdir)'/infer/infer/bin/infer 2> /dev/null || true
+	scripts/set_libso_path.sh '$(DESTDIR)$(libdir)'/infer/infer/libso '$(DESTDIR)$(libdir)'/infer/infer/bin/infer
+ifeq ($(IS_FACEBOOK_TREE),yes)
+	$(INSTALL_NAME_TOOL) -add_rpath '@executable_path/../libso' '$(DESTDIR)$(libdir)'/infer/infer/bin/InferCreateTraceViewLinks 2> /dev/null || true
+	scripts/set_libso_path.sh '$(DESTDIR)$(libdir)'/infer/infer/libso '$(DESTDIR)$(libdir)'/infer/infer/bin/InferCreateTraceViewLinks
+endif
+else # install_name_tool not found
+	echo "ERROR: otool (OSX?) found but not install_name_tool, please install install_name_tool" >&2; exit 1
+endif
+else # otool not found
+	echo "ERROR: need ldd + patchelf (Linux) or otool + install_name_tool (OSX) available" >&2; exit 1
+endif
+endif # ldd
+else # opam
+	echo "ERROR: need opam" >&2; exit 1
+endif
+
 # Nuke objects built from OCaml. Useful when changing the OCaml compiler, for instance.
 .PHONY: ocaml_clean
 ocaml_clean:
@@ -686,7 +798,7 @@ conf-clean: clean
 	$(REMOVE) $(PYTHON_DIR)/inferlib/*.pyc
 	$(REMOVE) $(PYTHON_DIR)/inferlib/*/*.pyc
 	$(REMOVE) .buckversion
-	$(REMOVE) Makefile.config
+	$(REMOVE) Makefile.autoconf
 	$(REMOVE) acinclude.m4
 	$(REMOVE) aclocal.m4
 	$(REMOVE_DIR) autom4te.cache/
@@ -712,7 +824,7 @@ endif
 # This is a magical version number that doesn't reinstall the world when added on top of what we
 # have in opam.locked. To upgrade this version number, manually try to install several utop versions
 # until you find one that doesn't recompile the world. TODO(t20828442): get rid of magic
-OPAM_DEV_DEPS = ocamlformat.0.8 ocp-indent merlin utop.2.2.0 webbrowser
+OPAM_DEV_DEPS = ocp-indent merlin utop.2.4.0 webbrowser
 
 ifneq ($(EMACS),no)
 OPAM_DEV_DEPS += tuareg

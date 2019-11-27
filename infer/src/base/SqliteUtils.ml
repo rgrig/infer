@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,16 +9,14 @@ module L = Logging
 
 exception Error of string
 
-let error ~fatal fmt =
-  (if fatal then Format.kasprintf (fun err -> raise (Error err)) else L.internal_error) fmt
+let error fmt = Format.kasprintf (fun err -> raise (Error err)) fmt
 
-
-let check_result_code ?(fatal = false) db ~log rc =
+let check_result_code db ~log rc =
   match (rc : Sqlite3.Rc.t) with
   | OK | ROW ->
       ()
   | _ as err ->
-      error ~fatal "%s: %s (%s)" log (Sqlite3.Rc.to_string err) (Sqlite3.errmsg db)
+      error "%s: %s (%s)" log (Sqlite3.Rc.to_string err) (Sqlite3.errmsg db)
 
 
 let exec db ~log ~stmt =
@@ -27,16 +25,15 @@ let exec db ~log ~stmt =
       PerfEvent.log_begin_event logger ~name:"sql exec" ~arguments:[("stmt", `String log)] () ) ;
   let rc = Sqlite3.exec db stmt in
   PerfEvent.(log (fun logger -> log_end_event logger ())) ;
-  try check_result_code ~fatal:true db ~log rc with Error err ->
-    error ~fatal:true "exec: %s (%s)" err (Sqlite3.errmsg db)
+  try check_result_code db ~log rc with Error err -> error "exec: %s (%s)" err (Sqlite3.errmsg db)
 
 
 let finalize db ~log stmt =
-  try check_result_code ~fatal:true db ~log (Sqlite3.finalize stmt) with
+  try check_result_code db ~log (Sqlite3.finalize stmt) with
   | Error err ->
-      error ~fatal:true "finalize: %s (%s)" err (Sqlite3.errmsg db)
+      error "finalize: %s (%s)" err (Sqlite3.errmsg db)
   | Sqlite3.Error err ->
-      error ~fatal:true "finalize: %s: %s (%s)" log err (Sqlite3.errmsg db)
+      error "finalize: %s: %s (%s)" log err (Sqlite3.errmsg db)
 
 
 let result_fold_rows ?finalize:(do_finalize = true) db ~log stmt ~init ~f =
@@ -50,8 +47,7 @@ let result_fold_rows ?finalize:(do_finalize = true) db ~log stmt ~init ~f =
     | err ->
         L.die InternalError "%s: %s (%s)" log (Sqlite3.Rc.to_string err) (Sqlite3.errmsg db)
   in
-  if do_finalize then
-    protect ~finally:(fun () -> finalize db ~log stmt) ~f:(fun () -> aux init stmt)
+  if do_finalize then protect ~finally:(fun () -> finalize db ~log stmt) ~f:(fun () -> aux init stmt)
   else aux init stmt
 
 
@@ -66,8 +62,7 @@ let zero_or_one_row ~log = function
   | [x] ->
       Some x
   | _ :: _ :: _ as l ->
-      L.die InternalError "%s: zero or one result expected, got %d rows instead" log
-        (List.length l)
+      L.die InternalError "%s: zero or one result expected, got %d rows instead" log (List.length l)
 
 
 let result_option ?finalize db ~log ~read_row stmt =
@@ -81,8 +76,7 @@ let result_single_column_option ?finalize db ~log stmt =
 
 
 let result_unit ?finalize db ~log stmt =
-  if
-    not (Container.is_empty stmt ~iter:(Container.iter ~fold:(result_fold_rows ?finalize db ~log)))
+  if not (Container.is_empty stmt ~iter:(Container.iter ~fold:(result_fold_rows ?finalize db ~log)))
   then L.die InternalError "%s: the SQLite query should not return any rows" log
 
 
@@ -109,10 +103,25 @@ module type Data = sig
   val deserialize : Sqlite3.Data.t -> t
 end
 
-module MarshalledData (D : sig
+module type T = sig
   type t
-end) =
-struct
+end
+
+module MarshalledDataForComparison (D : T) = struct
+  type t = D.t
+
+  let deserialize = function[@warning "-8"] Sqlite3.Data.BLOB b -> Marshal.from_string b 0
+
+  (*
+    If the serialized data is used for comparison (e.g. used in WHERE clause), we need to normalize it.
+    Marshalling is brittle as it depends on sharing.
+
+    For now let's suppose that marshalling with no sharing is normalizing.
+  *)
+  let serialize x = Sqlite3.Data.BLOB (Marshal.to_string x [Marshal.No_sharing])
+end
+
+module MarshalledDataNOTForComparison (D : T) = struct
   type t = D.t
 
   let deserialize = function[@warning "-8"] Sqlite3.Data.BLOB b -> Marshal.from_string b 0
@@ -120,10 +129,7 @@ struct
   let serialize x = Sqlite3.Data.BLOB (Marshal.to_string x [])
 end
 
-module MarshalledNullableData (D : sig
-  type t
-end) =
-struct
+module MarshalledNullableDataNOTForComparison (D : T) = struct
   type t = D.t option
 
   let deserialize = function[@warning "-8"]

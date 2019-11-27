@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -8,98 +8,168 @@
 open! IStd
 module F = Format
 
-(** Abstraction of a path that represents a lock, special-casing equality and comparisons
+(** Domain for thread-type.  The main goals are 
+    - Track code paths that are explicitly on UI/BG thread (via annotations, or assertions). 
+    - Maintain UI/BG-thread-ness through the call stack (if a caller is of unknown status and 
+      callee is on UI/BG thread then caller must be on the UI/BG thread too). 
+    - Traces with "UI-thread" status cannot interleave but all other combinations can.  
+    - Top is AnyThread, which means that there are executions on both UI and BG threads on 
+      this method.
+    - Bottom is UnknownThread, and used as initial state.
+*)
+module ThreadDomain : sig
+  type t = UnknownThread | UIThread | BGThread | AnyThread
+
+  include AbstractDomain.WithBottom with type t := t
+end
+
+(** Abstraction of a path that represents a lock, special-casing comparison
     to work over type, base variable modulo this and access list *)
 module Lock : sig
-  include ExplicitTrace.Element with type t = AccessPath.t
+  include PrettyPrintable.PrintableOrderedType with type t = AccessPath.t
 
   val owner_class : t -> Typ.name option
   (** Class of the root variable of the path representing the lock *)
 
-  val equal : t -> t -> bool
-
   val pp_locks : F.formatter -> t -> unit
+
+  val describe : F.formatter -> t -> unit
 end
 
-(** Represents the existence of a program path from the current method to the eventual acquisition
-    of a lock or a blocking call.  Equality/comparison disregards the call trace but includes
-    location. *)
 module Event : sig
-  type severity_t = Low | Medium | High [@@deriving compare]
-
-  type event_t =
+  type t =
     | LockAcquire of Lock.t
-    | MayBlock of (string * severity_t)
+    | MayBlock of (string * StarvationModels.severity)
     | StrictModeCall of string
   [@@deriving compare]
 
-  include ExplicitTrace.TraceElem with type elem_t = event_t
-
-  val make_trace : ?header:string -> Typ.Procname.t -> t -> Errlog.loc_trace
+  val describe : F.formatter -> t -> unit
 end
-
-module EventDomain : ExplicitTrace.FiniteSet with type elt = Event.t
-
-(** Represents the existence of a program path to the [first] lock being taken in the current
-  method or, transitively, a callee *in the same class*, and, which continues (to potentially
-  another class) until the [eventually] event, schematically -->first-->eventually.
-  It is guaranteed that during the second part of the trace (first-->eventually) the lock [first]
-  is not released.  *)
-module Order : sig
-  type order_t = private {first: Lock.t; eventually: Event.t}
-
-  include ExplicitTrace.TraceElem with type elem_t = order_t
-
-  val may_deadlock : t -> t -> bool
-  (** check if two pairs are symmetric in terms of locks, where locks are compared modulo the
-      variable name at the root of each path. *)
-
-  val make_trace : ?header:string -> Typ.Procname.t -> t -> Errlog.loc_trace
-end
-
-module OrderDomain : ExplicitTrace.FiniteSet with type elt = Order.t
 
 module LockState : AbstractDomain.WithTop
 
-module UIThreadExplanationDomain : sig
-  include ExplicitTrace.TraceElem with type elem_t = string
-
-  val make_trace : ?header:string -> Typ.Procname.t -> t -> Errlog.loc_trace
+(** a lock acquisition with location information *)
+module Acquisition : sig
+  type t = private
+    {lock: Lock.t; loc: Location.t [@compare.ignore]; procname: Typ.Procname.t [@compare.ignore]}
+  [@@deriving compare]
 end
 
-module UIThreadDomain :
-  AbstractDomain.WithBottom
-  with type t = UIThreadExplanationDomain.t AbstractDomain.Types.bottom_lifted
+(** A set of lock acquisitions with source locations and procnames. *)
+module Acquisitions : sig
+  include PrettyPrintable.PPSet with type elt = Acquisition.t
+
+  val lock_is_held : Lock.t -> t -> bool
+  (** is the given lock in the set *)
+end
+
+(** An event and the currently-held locks at the time it occurred. *)
+module CriticalPairElement : sig
+  type t = private {acquisitions: Acquisitions.t; event: Event.t; thread: ThreadDomain.t}
+end
+
+(** A [CriticalPairElement] equipped with a call stack. 
+    The intuition is that if we have a critical pair `(locks, event)` in the summary 
+    of a method then there is a trace of that method where `event` occurs, and right 
+    before it occurs the locks held are exactly `locks` (no over/under approximation).
+    We call it "critical" because the information here alone determines deadlock conditions. 
+*)
+module CriticalPair : sig
+  type t = private {elem: CriticalPairElement.t; loc: Location.t; trace: CallSite.t list}
+
+  include PrettyPrintable.PrintableOrderedType with type t := t
+
+  val get_loc : t -> Location.t
+  (** outermost callsite location *)
+
+  val get_earliest_lock_or_call_loc : procname:Typ.Procname.t -> t -> Location.t
+  (** outermost callsite location OR lock acquisition *)
+
+  val may_deadlock : t -> t -> bool
+  (** two pairs can run in parallel and satisfy the conditions for deadlock *)
+
+  val make_trace :
+    ?header:string -> ?include_acquisitions:bool -> Typ.Procname.t -> t -> Errlog.loc_trace
+
+  val is_uithread : t -> bool
+  (** is pair about an event on the UI thread *)
+
+  val can_run_in_parallel : t -> t -> bool
+  (** can two pairs describe events on two threads that can run in parallel *)
+end
+
+module CriticalPairs : AbstractDomain.FiniteSetS with type elt = CriticalPair.t
 
 module GuardToLockMap : AbstractDomain.WithTop
 
+(** Tracks whether a variable has been tested for whether we execute on UI thread, or 
+    has been assigned an executor object. *)
+module Attribute : sig
+  type t =
+    | Nothing
+    | ThreadGuard
+    | Executor of StarvationModels.executor_thread_constraint
+    | Runnable of Typ.Procname.t
+
+  include AbstractDomain.WithTop with type t := t
+end
+
+(** Tracks all variables assigned values of [Attribute] *)
+module AttributeDomain : sig
+  include
+    AbstractDomain.InvertedMapS
+      with type key = HilExp.AccessExpression.t
+       and type value = Attribute.t
+
+  val is_thread_guard : HilExp.AccessExpression.t -> t -> bool
+
+  val get_executor_constraint :
+    HilExp.AccessExpression.t -> t -> StarvationModels.executor_thread_constraint option
+
+  val exit_scope : Var.t list -> t -> t
+end
+
+(** A record of scheduled parallel work: the method scheduled to run, where, and on what thread. *)
+module ScheduledWorkItem : sig
+  type t = {procname: Typ.Procname.t; loc: Location.t; thread: ThreadDomain.t}
+
+  include PrettyPrintable.PrintableOrderedType with type t := t
+end
+
+module ScheduledWorkDomain : AbstractDomain.FiniteSetS with type elt = ScheduledWorkItem.t
+
 type t =
-  { events: EventDomain.t
-  ; guard_map: GuardToLockMap.t
+  { guard_map: GuardToLockMap.t
   ; lock_state: LockState.t
-  ; order: OrderDomain.t
-  ; ui: UIThreadDomain.t }
+  ; critical_pairs: CriticalPairs.t
+  ; attributes: AttributeDomain.t
+  ; thread: ThreadDomain.t
+  ; scheduled_work: ScheduledWorkDomain.t }
 
 include AbstractDomain.WithBottom with type t := t
 
-val acquire : Tenv.t -> t -> Location.t -> Lock.t list -> t
+val acquire : ?tenv:Tenv.t -> t -> procname:Typ.Procname.t -> loc:Location.t -> Lock.t list -> t
 (** simultaneously acquire a number of locks, no-op if list is empty *)
 
 val release : t -> Lock.t list -> t
 (** simultaneously release a number of locks, no-op if list is empty *)
 
-val blocking_call : Typ.Procname.t -> Event.severity_t -> Location.t -> t -> t
+val blocking_call : callee:Typ.Procname.t -> StarvationModels.severity -> loc:Location.t -> t -> t
 
-val strict_mode_call : Typ.Procname.t -> Location.t -> t -> t
+val strict_mode_call : callee:Typ.Procname.t -> loc:Location.t -> t -> t
 
-val set_on_ui_thread : t -> Location.t -> string -> t
-(** set the property "runs on UI thread" to true by attaching the given explanation string as to
-    why this method is thought to do so *)
-
-val add_guard : Tenv.t -> t -> HilExp.t -> Lock.t -> acquire_now:bool -> Location.t -> t
+val add_guard :
+     acquire_now:bool
+  -> procname:Typ.Procname.t
+  -> loc:Location.t
+  -> Tenv.t
+  -> t
+  -> HilExp.t
+  -> Lock.t
+  -> t
 (** Install a mapping from the guard expression to the lock provided, and optionally lock it. *)
 
-val lock_guard : Tenv.t -> t -> HilExp.t -> Location.t -> t
+val lock_guard : procname:Typ.Procname.t -> loc:Location.t -> Tenv.t -> t -> HilExp.t -> t
 (** Acquire the lock the guard was constructed with. *)
 
 val remove_guard : t -> HilExp.t -> t
@@ -108,8 +178,25 @@ val remove_guard : t -> HilExp.t -> t
 val unlock_guard : t -> HilExp.t -> t
 (** Release the lock the guard was constructed with. *)
 
-type summary = t
+val schedule_work :
+  Location.t -> StarvationModels.executor_thread_constraint -> t -> Typ.Procname.t -> t
+(** record the fact that a method is scheduled to run on a certain thread/executor *)
+
+type summary =
+  { critical_pairs: CriticalPairs.t
+  ; thread: ThreadDomain.t
+  ; scheduled_work: ScheduledWorkDomain.t
+  ; return_attribute: Attribute.t }
+
+val empty_summary : summary
 
 val pp_summary : F.formatter -> summary -> unit
 
-val integrate_summary : Tenv.t -> t -> Typ.Procname.t -> Location.t -> summary -> t
+val integrate_summary :
+  ?tenv:Tenv.t -> ?lhs:HilExp.AccessExpression.t -> CallSite.t -> t -> summary -> t
+(** apply a callee summary to the current abstract state; 
+    [lhs] is the expression assigned the returned value, if any *)
+
+val summary_of_astate : Procdesc.t -> t -> summary
+
+val filter_blocking_calls : t -> t

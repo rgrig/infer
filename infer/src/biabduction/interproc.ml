@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -131,26 +131,24 @@ let path_set_create_worklist proc_cfg =
 
 let htable_retrieve (htable : (Procdesc.Node.id, Paths.PathSet.t) Hashtbl.t)
     (key : Procdesc.Node.id) : Paths.PathSet.t =
-  try Hashtbl.find htable key with Caml.Not_found ->
+  try Hashtbl.find htable key
+  with Caml.Not_found ->
     Hashtbl.replace htable key Paths.PathSet.empty ;
     Paths.PathSet.empty
 
 
 (** Add [d] to the pathset todo at [node] returning true if changed *)
 let path_set_put_todo (wl : Worklist.t) (node : Procdesc.Node.t) (d : Paths.PathSet.t) : bool =
-  let changed =
-    if Paths.PathSet.is_empty d then false
-    else
-      let node_id = Procdesc.Node.get_id node in
-      let old_todo = htable_retrieve wl.Worklist.path_set_todo node_id in
-      let old_visited = htable_retrieve wl.Worklist.path_set_visited node_id in
-      let d' = Paths.PathSet.diff d old_visited in
-      (* differential fixpoint *)
-      let todo_new = Paths.PathSet.union old_todo d' in
-      Hashtbl.replace wl.Worklist.path_set_todo node_id todo_new ;
-      not (Paths.PathSet.equal old_todo todo_new)
-  in
-  changed
+  if Paths.PathSet.is_empty d then false
+  else
+    let node_id = Procdesc.Node.get_id node in
+    let old_todo = htable_retrieve wl.Worklist.path_set_todo node_id in
+    let old_visited = htable_retrieve wl.Worklist.path_set_visited node_id in
+    let d' = Paths.PathSet.diff d old_visited in
+    (* differential fixpoint *)
+    let todo_new = Paths.PathSet.union old_todo d' in
+    Hashtbl.replace wl.Worklist.path_set_todo node_id todo_new ;
+    not (Paths.PathSet.equal old_todo todo_new)
 
 
 let path_set_checkout_todo (wl : Worklist.t) (node : Procdesc.Node.t) : Paths.PathSet.t =
@@ -372,7 +370,7 @@ let do_after_node node = Printer.node_finish_session node
 (** Return the list of normal ids occurring in the instructions *)
 let instrs_get_normal_vars instrs =
   let do_instr res instr =
-    Sil.instr_get_exps instr
+    Sil.exps_of_instr instr
     |> List.fold_left ~init:res ~f:(fun res e ->
            Exp.free_vars e
            |> Sequence.filter ~f:Ident.is_normal
@@ -504,7 +502,10 @@ let forward_tabulate summary exe_env tenv proc_cfg wl =
     let curr_node = Worklist.remove wl in
     mark_visited summary curr_node ;
     (* mark nodes visited in fp and re phases *)
-    let session = incr summary.Summary.sessions ; !(summary.Summary.sessions) in
+    let session =
+      summary.Summary.sessions <- summary.Summary.sessions + 1 ;
+      summary.Summary.sessions
+    in
     do_before_node session curr_node ;
     do_node_and_handle curr_node session
   done ;
@@ -558,7 +559,7 @@ let compute_visited vset =
     let lines =
       node_loc.Location.line
       :: IContainer.rev_map_to_list ~fold:Instrs.fold
-           ~f:(fun instr -> (Sil.instr_get_loc instr).Location.line)
+           ~f:(fun instr -> (Sil.location_of_instr instr).Location.line)
            (ProcCfg.Exceptional.instrs n)
     in
     List.remove_consecutive_duplicates ~equal:Int.equal (List.sort ~compare:Int.compare lines)
@@ -605,8 +606,8 @@ let extract_specs tenv pdesc pathset : Prop.normal BiabductionSummary.spec list 
   let pre_post_map =
     let add map (pre, post, visited) =
       let current_posts, current_visited =
-        try Pmap.find pre map with Caml.Not_found ->
-          (Paths.PathSet.empty, BiabductionSummary.Visitedset.empty)
+        try Pmap.find pre map
+        with Caml.Not_found -> (Paths.PathSet.empty, BiabductionSummary.Visitedset.empty)
       in
       let new_posts =
         match post with
@@ -664,7 +665,7 @@ let collect_postconditions wl tenv proc_cfg : Paths.PathSet.t * BiabductionSumma
         let vset = vset_add_pathset vset pathset_diverging in
         compute_visited vset
       in
-      (do_join_post pname tenv pathset, visited)
+      (pathset, visited)
     with Exceptions.Leak _ ->
       L.d_strln "Leak in post collection" ;
       assert false
@@ -717,7 +718,7 @@ let prop_init_formals_seed tenv new_formals (prop : 'a Prop.t) : Prop.exposed Pr
 
 (** Construct an initial prop by extending [prop] with locals, and formals if [add_formals] is true
     as well as seed variables *)
-let initial_prop tenv (curr_f : Procdesc.t) (prop : 'a Prop.t) add_formals : Prop.normal Prop.t =
+let initial_prop tenv (curr_f : Procdesc.t) (prop : 'a Prop.t) ~add_formals : Prop.normal Prop.t =
   let construct_decl (x, typ) = (Pvar.mk x (Procdesc.get_proc_name curr_f), typ) in
   let new_formals =
     if add_formals then List.map ~f:construct_decl (Procdesc.get_formals curr_f) else []
@@ -732,7 +733,7 @@ let initial_prop tenv (curr_f : Procdesc.t) (prop : 'a Prop.t) add_formals : Pro
 
 
 (** Construct an initial prop from the empty prop *)
-let initial_prop_from_emp tenv curr_f = initial_prop tenv curr_f Prop.prop_emp true
+let initial_prop_from_emp tenv curr_f = initial_prop tenv curr_f Prop.prop_emp ~add_formals:true
 
 (** Construct an initial prop from an existing pre with formals *)
 let initial_prop_from_pre tenv curr_f pre =
@@ -744,8 +745,8 @@ let initial_prop_from_pre tenv curr_f pre =
     let sub = Sil.subst_of_list sub_list in
     let pre2 = Prop.prop_sub sub pre in
     let pre3 = Prop.set pre2 ~pi_fp:(Prop.get_pure pre2) ~sigma_fp:pre2.Prop.sigma in
-    initial_prop tenv curr_f pre3 false
-  else initial_prop tenv curr_f pre false
+    initial_prop tenv curr_f pre3 ~add_formals:false
+  else initial_prop tenv curr_f pre ~add_formals:false
 
 
 (** Re-execute one precondition and return some spec if there was no re-execution error. *)
@@ -882,25 +883,23 @@ let perform_analysis_phase exe_env tenv (summary : Summary.t) (proc_cfg : ProcCf
         ~f:(fun spec -> spec.BiabductionSummary.pre)
         (Tabulation.get_specs_from_payload summary)
     in
-    let valid_specs = ref [] in
+    let valid_specs_rev = ref [] in
     let go () =
       let filter p =
         let speco = execute_filter_prop summary exe_env tenv proc_cfg p in
-        (match speco with None -> () | Some spec -> valid_specs := !valid_specs @ [spec]) ;
+        (match speco with None -> () | Some spec -> valid_specs_rev := spec :: !valid_specs_rev) ;
         speco
       in
-      if Config.undo_join then
-        ignore (BiabductionSummary.Jprop.filter filter candidate_preconditions)
-      else ignore (List.map ~f:filter candidate_preconditions)
+      ignore (BiabductionSummary.Jprop.filter filter candidate_preconditions)
     in
     let get_results () =
-      let specs = !valid_specs in
+      let specs = List.rev !valid_specs_rev in
       let source = (Procdesc.get_loc (ProcCfg.Exceptional.proc_desc proc_cfg)).file in
       let filename =
         DB.Results_dir.path_to_filename (DB.Results_dir.Abs_source_dir source)
           [Typ.Procname.to_filename pname]
       in
-      if Config.write_dotty then Dotty.pp_speclist_dotty_file filename specs ;
+      if Config.write_dotty then DotBiabduction.emit_specs_to_file filename specs ;
       (specs, BiabductionSummary.RE_EXECUTION)
     in
     (go, get_results)
@@ -925,23 +924,6 @@ let reset_global_values proc_desc =
   reset_prop_metrics () ;
   Abs.reset_current_rules () ;
   set_current_language proc_desc
-
-
-(* Collect all pairs of the kind (precondition, runtime exception) from a summary *)
-let exception_preconditions tenv pname summary =
-  let collect_exceptions pre (exns, all_post_exn) (prop, _) =
-    match Tabulation.prop_get_exn_name pname prop with
-    | Some exn_name when PatternMatch.is_runtime_exception tenv exn_name ->
-        ((pre, exn_name) :: exns, all_post_exn)
-    | _ ->
-        (exns, false)
-  in
-  let collect_spec errors spec =
-    List.fold
-      ~f:(collect_exceptions spec.BiabductionSummary.pre)
-      ~init:errors spec.BiabductionSummary.posts
-  in
-  List.fold ~f:collect_spec ~init:([], true) (Tabulation.get_specs_from_payload summary)
 
 
 (* Collect all pairs of the kind (precondition, custom error) from a summary *)
@@ -995,41 +977,6 @@ let is_unavoidable tenv pre =
       true
   | _ ->
       false
-
-
-(** Detects if there are specs of the form {precondition} proc {runtime exception} and report
-    an error in that case, generating the trace that lead to the runtime exception if the method is
-    called in the context { precondition } *)
-let report_runtime_exceptions tenv pdesc summary =
-  let pname = Summary.get_proc_name summary in
-  let is_public_method =
-    PredSymb.equal_access (Summary.get_attributes summary).access PredSymb.Public
-  in
-  let is_main =
-    is_public_method
-    &&
-    match pname with
-    | Typ.Procname.Java pname_java ->
-        Typ.Procname.Java.is_static pname_java
-        && String.equal (Typ.Procname.Java.get_method pname_java) "main"
-    | _ ->
-        false
-  in
-  let is_annotated pdesc = Annotations.pdesc_has_return_annot pdesc Annotations.ia_is_verify in
-  let exn_preconditions, all_post_exn = exception_preconditions tenv pname summary in
-  let should_report pre =
-    all_post_exn || is_main || is_annotated pdesc || is_unavoidable tenv pre
-  in
-  let report (pre, runtime_exception) =
-    if should_report pre then
-      let pre_str =
-        F.asprintf "%a" (Prop.pp_prop Pp.text) (BiabductionSummary.Jprop.to_prop pre)
-      in
-      let exn_desc = Localise.java_unchecked_exn_desc pname runtime_exception pre_str in
-      let exn = Exceptions.Java_runtime_exception (runtime_exception, pre_str, exn_desc) in
-      Reporting.log_issue_deprecated_using_state Exceptions.Error pname exn
-  in
-  List.iter ~f:report exn_preconditions
 
 
 let report_custom_errors tenv summary =
@@ -1161,8 +1108,6 @@ let analyze_proc summary exe_env tenv proc_cfg : Summary.t =
   let updated_summary = update_summary tenv summary specs phase res in
   if Language.curr_language_is Clang && Config.report_custom_error then
     report_custom_errors tenv updated_summary ;
-  if Language.curr_language_is Java && Config.tracing then
-    report_runtime_exceptions tenv proc_desc updated_summary ;
   updated_summary
 
 
@@ -1235,10 +1180,10 @@ let perform_transition proc_cfg tenv proc_name summary =
   else summary
 
 
-let analyze_procedure_aux summary exe_env tenv proc_desc : Summary.t =
+let analyze_procedure_aux summary exe_env tenv : Summary.t =
+  let proc_desc = Summary.get_proc_desc summary in
   let proc_name = Procdesc.get_proc_name proc_desc in
   let proc_cfg = ProcCfg.Exceptional.from_pdesc proc_desc in
-  Preanal.do_preanalysis proc_desc tenv ;
   let summaryfp =
     BiabductionConfig.run_in_footprint_mode (analyze_proc summary exe_env tenv) proc_cfg
     |> perform_transition proc_cfg tenv proc_name
@@ -1264,10 +1209,13 @@ let analyze_procedure_aux summary exe_env tenv proc_desc : Summary.t =
   summary_compact
 
 
-let analyze_procedure {Callbacks.summary; proc_desc; tenv; exe_env} : Summary.t =
+let analyze_procedure {Callbacks.summary; exe_env} : Summary.t =
+  let tenv = Exe_env.get_tenv exe_env (Summary.get_proc_name summary) in
   (* make sure models have been registered *)
   BuiltinDefn.init () ;
-  try analyze_procedure_aux summary exe_env tenv proc_desc with exn ->
+  if Topl.is_active () then Topl.instrument tenv (Summary.get_proc_desc summary) ;
+  try analyze_procedure_aux summary exe_env tenv
+  with exn ->
     IExn.reraise_if exn ~f:(fun () -> not (Exceptions.handle_exception exn)) ;
     Reporting.log_error_using_state summary exn ;
     summary

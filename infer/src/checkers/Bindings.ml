@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -23,7 +23,7 @@ module Reverse = struct
   let add k v rm =
     M.update k
       (function
-        | None -> Some (false, VarSet.singleton v) | Some (_, s) -> Some (false, VarSet.add v s))
+        | None -> Some (false, VarSet.singleton v) | Some (_, s) -> Some (false, VarSet.add v s) )
       rm
 
 
@@ -100,7 +100,7 @@ let pp f {resolve; reverse} =
     Reverse.pp reverse
 
 
-let ( <= ) ~lhs ~rhs = IdAccessPathMapDomain.( <= ) ~lhs:lhs.resolve ~rhs:rhs.resolve
+let leq ~lhs ~rhs = IdAccessPathMapDomain.leq ~lhs:lhs.resolve ~rhs:rhs.resolve
 
 let join bindings1 bindings2 =
   if phys_equal bindings1 bindings2 then bindings1

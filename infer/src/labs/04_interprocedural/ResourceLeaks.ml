@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -13,11 +13,7 @@ module L = Logging
 module Payload = SummaryPayload.Make (struct
   type t = ResourceLeakDomain.t
 
-  let update_payloads resources_payload (payloads : Payloads.t) =
-    {payloads with lab_resource_leaks= Some resources_payload}
-
-
-  let of_payloads {Payloads.lab_resource_leaks} = lab_resource_leaks
+  let field = Payloads.Fields.lab_resource_leaks
 end)
 
 module TransferFunctions (CFG : ProcCfg.S) = struct
@@ -95,9 +91,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   let pp_session_name _node fmt = F.pp_print_string fmt "resource leaks lab"
 end
 
+module CFG = ProcCfg.Normal
 (** 5(a) Type of CFG to analyze--Exceptional to follow exceptional control-flow edges, Normal to
    ignore them *)
-module CFG = ProcCfg.Normal
 
 (* Create an intraprocedural abstract interpreter from the transfer functions we defined *)
 module Analyzer = LowerHil.MakeAbstractInterpreter (TransferFunctions (CFG))

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -36,7 +36,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
 
   let exec_instr astate _ _ = function
-    | Sil.Store (_, {desc= Tptr _}, rhs_exp, _) ->
+    | Sil.Store {typ= {desc= Tptr _}; e2= rhs_exp} ->
         add_address_taken_pvars rhs_exp astate
     | Sil.Call (_, _, actuals, _, _) ->
         let add_actual_by_ref astate_acc = function
@@ -46,7 +46,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
               astate_acc
         in
         List.fold ~f:add_actual_by_ref ~init:astate actuals
-    | Sil.Store _ | Load _ | Prune _ | Nullify _ | Abstract _ | ExitScope _ ->
+    | Sil.Store _ | Load _ | Prune _ | Metadata _ ->
         astate
 
 

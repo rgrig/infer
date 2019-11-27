@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -10,23 +10,32 @@
 open! IStd
 
 type t =
-  { ret: Annot.Item.t * Typ.t  (** Annotated return type. *)
-  ; params: (Mangled.t * Annot.Item.t * Typ.t) list  (** Annotated parameters. *) }
+  { is_strict_mode: bool
+  ; model_source: model_source option  (** None, if signature is not modelled *)
+  ; ret: ret_signature
+  ; params: param_signature list }
 [@@deriving compare]
 
-type annotation = Nullable | Present [@@deriving compare]
+and ret_signature = {ret_annotation_deprecated: Annot.Item.t; ret_annotated_type: AnnotatedType.t}
+[@@deriving compare]
+
+and param_signature =
+  { param_annotation_deprecated: Annot.Item.t
+  ; mangled: Mangled.t
+  ; param_annotated_type: AnnotatedType.t }
+[@@deriving compare]
+
+and model_source = InternalModel | ThirdPartyRepo of {filename: string; line_number: int}
+[@@deriving compare]
 
 val param_has_annot : (Annot.Item.t -> bool) -> Pvar.t -> t -> bool
 (** Check if the given parameter has an annotation in the given signature *)
 
-val mark : Typ.Procname.t -> annotation -> t -> bool * bool list -> t
-(** Mark the annotated signature with the given annotation map. *)
+val set_modelled_nullability : Typ.Procname.t -> t -> model_source -> bool * bool list -> t
+(** Override nullability for a function signature given its modelled nullability (for ret value and params) *)
 
-val get : ProcAttributes.t -> t
+val get : is_strict_mode:bool -> ProcAttributes.t -> t
 (** Get a method signature with annotations from a proc_attributes. *)
-
-val mk_ia : annotation -> Annot.Item.t -> Annot.Item.t
-(** Add the annotation to the item_annotation. *)
 
 val pp : Typ.Procname.t -> Format.formatter -> t -> unit
 (** Pretty print a method signature with annotations. *)

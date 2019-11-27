@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -309,7 +309,7 @@ void call_not_prune_multiple2_Good() {
   not_prune_multiple2(m);
 }
 
-void call_not_prune_multiple2_Bad_FN() {
+void call_not_prune_multiple2_Bad() {
   int m[2] = {0, 10};
   not_prune_multiple2(m);
 }
@@ -341,4 +341,47 @@ void call_not_prune_multiple4_Good() {
 void call_not_prune_multiple4_Bad_FN() {
   int m[2] = {0, 10};
   not_prune_multiple4(m);
+}
+
+int* unknown1();
+int* unknown2();
+
+void unknown_alias_Good() {
+  int* x = unknown1();
+  int* y = unknown2();
+
+  if (*x < *y) {
+    int a[10]; // Here should be reachable.
+    a[5] = 0;
+  }
+}
+
+void unknown_alias_Bad() {
+  int* x = unknown1();
+  int* y = unknown2();
+
+  if (*x < *y) {
+    int a[10]; // Here should be reachable.
+    a[10] = 0;
+  }
+}
+
+void prune_linear_by_minmax(size_t s, size_t t) {
+  if (s > 0 && s < 1000) {
+    if (t >= s + 1) {
+      size_t u = t - 2;
+    }
+  }
+}
+
+void call_prune_linear_by_minmax_Good() {
+  prune_linear_by_minmax(unknown_function(), unknown_function());
+}
+
+void prune_int_by_pointer_Bad(int* p) {
+  int* x = (int*)100;
+  if (x == p) {
+  }
+  int a[5];
+  a[5] = 0;
 }

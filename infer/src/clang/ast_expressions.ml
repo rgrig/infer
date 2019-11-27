@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -128,9 +128,7 @@ let make_message_expr param_qt selector decl_ref_exp stmt_info add_cast =
   let stmt_info = stmt_info_with_fresh_pointer stmt_info in
   let parameters =
     if add_cast then
-      let cast_expr =
-        create_implicit_cast_expr stmt_info [decl_ref_exp] param_qt `LValueToRValue
-      in
+      let cast_expr = create_implicit_cast_expr stmt_info [decl_ref_exp] param_qt `LValueToRValue in
       [cast_expr]
     else [decl_ref_exp]
   in
@@ -165,9 +163,9 @@ let make_next_object_exp stmt_info item items =
         | [stmt] ->
             get_decl_ref stmt
         | _ ->
-            CFrontend_config.incorrect_assumption __POS__ stmt_info.Clang_ast_t.si_source_range
+            CFrontend_errors.incorrect_assumption __POS__ stmt_info.Clang_ast_t.si_source_range
               "unexpected item %a"
-              (Pp.to_string ~f:Clang_ast_j.string_of_stmt)
+              (Pp.of_string ~f:Clang_ast_j.string_of_stmt)
               item )
   in
   let var_decl_ref, var_type = get_decl_ref item in
@@ -182,6 +180,23 @@ let make_next_object_exp stmt_info item items =
   let nil_exp = create_nil stmt_info in
   let loop_cond = make_binary_stmt cast nil_exp stmt_info expr_info boi' in
   (assignment, loop_cond)
+
+
+let make_function_call stmt_info fname params =
+  let expr_info = make_expr_info (builtin_to_qual_type `Void) `XValue `Ordinary in
+  let name_decl_info = {Clang_ast_t.ni_name= fname; ni_qual_name= [fname]} in
+  let decl_ref =
+    make_decl_ref `Function 0 name_decl_info false (Some (builtin_to_qual_type `Void))
+  in
+  let decl_ref_expr_info = make_decl_ref_expr_info decl_ref in
+  let decl_ref_expr = Clang_ast_t.DeclRefExpr (stmt_info, [], expr_info, decl_ref_expr_info) in
+  let implicit_cast_expr =
+    create_implicit_cast_expr stmt_info [decl_ref_expr]
+      (builtin_to_qual_type `Void)
+      `FunctionToPointerDecay
+  in
+  let stmts = implicit_cast_expr :: params in
+  Clang_ast_t.CallExpr (stmt_info, stmts, expr_info)
 
 
 (* We translate an expression with a conditional*)

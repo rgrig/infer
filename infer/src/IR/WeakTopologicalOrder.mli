@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -78,8 +78,8 @@ end
 
 module type Make = functor (CFG : PreProcCfg) -> S with module CFG = CFG
 
+module Bourdoncle_SCC : Make
 (**
   Implementation of Bourdoncle's "Hierarchical decomposition of a directed graph into strongly
   connected components and subcomponents".  See [Bou] Figure 4, page 10.
 *)
-module Bourdoncle_SCC : Make

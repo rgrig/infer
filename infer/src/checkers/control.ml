@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -21,7 +21,6 @@ module L = Logging
    3. remove invariant vars in the loop from control vars
  *)
 
-module VarSet = AbstractDomain.FiniteSet (Var)
 module CFG = ProcCfg.Normal
 module LoopHead = Procdesc.Node
 
@@ -35,14 +34,18 @@ module CVar = struct
 end
 
 module ControlDepSet = AbstractDomain.FiniteSet (CVar)
+
+module ControlMap = PrettyPrintable.MakePPMap (Var)
+(** Map control var -> loop head location  *)
+
 module GuardNodes = AbstractDomain.FiniteSet (Procdesc.Node)
 module LoopHeads = Procdesc.NodeSet
 
-(** Map exit node -> loop head set  *)
 module ExitNodeToLoopHeads = Procdesc.NodeMap
+(** Map exit node -> loop head set  *)
 
-(** Map loop head -> prune nodes in the loop guard  *)
 module LoopHeadToGuardNodes = Procdesc.NodeMap
+(** Map loop head -> prune nodes in the loop guard  *)
 
 type loop_control_maps =
   { exit_map: LoopHeads.t ExitNodeToLoopHeads.t
@@ -62,7 +65,7 @@ module TransferFunctionsControlDeps (CFG : ProcCfg.S) = struct
 
 
   let find_vars_in_decl id loop_head _ = function
-    | Sil.Load (lhs_id, exp, _, _) when Ident.equal lhs_id id ->
+    | Sil.Load {id= lhs_id; e= exp} when Ident.equal lhs_id id ->
         collect_vars_in_exp exp loop_head |> Option.some
     | Sil.Call ((lhs_id, _), _, arg_list, _, _) when Ident.equal lhs_id id ->
         List.fold_left arg_list ~init:ControlDepSet.empty ~f:(fun deps (exp, _) ->
@@ -73,27 +76,23 @@ module TransferFunctionsControlDeps (CFG : ProcCfg.S) = struct
 
 
   let get_vars_in_exp exp prune_node loop_head =
-    let global_control_vars =
+    let program_control_vars =
       Exp.program_vars exp
-      |> Sequence.fold ~init:ControlDepSet.empty ~f:(fun global_acc pvar ->
-             let cvar = Var.of_pvar pvar in
-             if Pvar.is_global pvar then ControlDepSet.add {cvar; loop_head} global_acc
-             else
-               Logging.die InternalError
-                 "We should never have non-global program variables in prune nodes: %a@." Var.pp
-                 cvar )
+      |> Sequence.fold ~init:ControlDepSet.empty ~f:(fun acc pvar ->
+             ControlDepSet.add {cvar= Var.of_pvar pvar; loop_head} acc )
     in
     Exp.free_vars exp
-    |> Sequence.fold ~init:global_control_vars ~f:(fun acc id ->
+    |> Sequence.fold ~init:program_control_vars ~f:(fun acc id ->
            match
              Procdesc.Node.find_in_node_or_preds prune_node ~f:(find_vars_in_decl id loop_head)
            with
            | Some deps ->
                ControlDepSet.union deps acc
            | None ->
-               L.internal_error "Failed to get the definition of the control variable %a" Ident.pp
-                 id ;
-               assert false )
+               L.internal_error
+                 "Failed to get the definition of the control variable %a in exp %a \n" Ident.pp id
+                 Exp.pp exp ;
+               acc )
 
 
   (* extract vars from the prune instructions in the node *)
@@ -158,22 +157,31 @@ end
 
 module ControlDepAnalyzer = AbstractInterpreter.MakeRPO (TransferFunctionsControlDeps (CFG))
 
+type invariant_map = ControlDepAnalyzer.invariant_map
+
+let compute_invariant_map summary tenv control_maps : invariant_map =
+  let proc_data = ProcData.make summary tenv control_maps in
+  let node_cfg = CFG.from_pdesc (Summary.get_proc_desc summary) in
+  ControlDepAnalyzer.exec_cfg node_cfg proc_data ~initial:ControlDepSet.empty
+
+
 (* Filter CVs which are invariant in the loop where the CV originated from *)
 let remove_invariant_vars control_vars loop_inv_map =
   ControlDepSet.fold
     (fun {cvar; loop_head} acc ->
       match LoopInvariant.LoopHeadToInvVars.find_opt loop_head loop_inv_map with
       | Some inv_vars ->
-          if LoopInvariant.InvariantVars.mem cvar inv_vars then acc else VarSet.add cvar acc
+          if LoopInvariant.InvariantVars.mem cvar inv_vars then acc
+          else ControlMap.add cvar (Procdesc.Node.get_loc loop_head) acc
       | _ ->
           (* Each cvar is always attached to a loop head *)
           assert false )
-    control_vars VarSet.empty
+    control_vars ControlMap.empty
 
 
 let compute_control_vars control_invariant_map loop_inv_map node =
   let node_id = CFG.Node.id node in
-  let deps = VarSet.empty in
+  let deps = ControlMap.empty in
   ControlDepAnalyzer.extract_post node_id control_invariant_map
   |> Option.map ~f:(fun control_deps ->
          (* loop_inv_map: loop head -> variables that are invariant in the loop *)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,7 +7,7 @@
 #include <vector>
 
 namespace CppIsTricky {
-void vector_size_Bad() {
+void FN_vector_size_Bad() {
   const auto vec = std::vector<int>{1, 2, 3};
   const int numExpectedElements = 1;
   const auto delta = numExpectedElements - vec.size();

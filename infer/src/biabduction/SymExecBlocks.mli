@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -8,7 +8,7 @@
 open! IStd
 
 val resolve_method_with_block_args_and_analyze :
-     caller_pdesc:Procdesc.t
+     caller_summary:Summary.t
   -> Typ.Procname.t
   -> (Exp.t * Typ.t) list
   -> (Summary.t * (Exp.t * Typ.t) list) option

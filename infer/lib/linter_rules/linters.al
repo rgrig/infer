@@ -1,4 +1,4 @@
-// Copyright (c) 2016-present, Facebook, Inc.
+// Copyright (c) Facebook, Inc. and its affiliates.
 //
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
@@ -148,8 +148,8 @@ DEFINE-CHECKER STRONG_DELEGATE_WARNING = {
 
 DEFINE-CHECKER GLOBAL_VARIABLE_INITIALIZED_WITH_FUNCTION_OR_METHOD_CALL = {
 
-  LET is_global_variable =
-     is_objc_extension() AND is_global_var() AND (NOT is_const_var());
+  LET is_global_but_not_const_variable =
+     is_objc_extension() AND is_global_var() AND (NOT is_const_expr_var()) AND (NOT is_init_integral_constant_expr());
 
 	LET makes_an_expensive_call =
 	 (is_node("CallExpr") AND NOT call_function("CGPointMake"))
@@ -165,7 +165,7 @@ DEFINE-CHECKER GLOBAL_VARIABLE_INITIALIZED_WITH_FUNCTION_OR_METHOD_CALL = {
 
   SET report_when =
 	   WHEN
-     		(is_global_variable AND is_initialized_with_expensive_call)
+     		(is_global_but_not_const_variable AND is_initialized_with_expensive_call)
 		 HOLDS-IN-NODE VarDecl;
 
   SET message =
@@ -176,11 +176,35 @@ DEFINE-CHECKER GLOBAL_VARIABLE_INITIALIZED_WITH_FUNCTION_OR_METHOD_CALL = {
 
 
 DEFINE-CHECKER CXX_REFERENCE_CAPTURED_IN_OBJC_BLOCK = {
-	  SET report_when =
-		     WHEN
-				   ((is_node("BlockDecl") AND captures_cxx_references())
-					 HOLDS-NEXT)
-         HOLDS-IN-NODE BlockExpr;
+
+		// The current node is block definition capturing a C++ reference
+		LET capture_reference =
+ 			WHEN
+				((is_node("BlockDecl") AND captures_cxx_references()) HOLDS-NEXT)
+ 			HOLDS-IN-NODE BlockExpr;
+
+ 		// At some point we encounter a block definition capturing a C++ reference
+ 		LET block_definition_capture_reference =
+			capture_reference HOLDS-EVENTUALLY;
+
+		// A variable definition initialized with a block capturing a C++ reference
+ 		LET variable_initialized_with_block =
+		IN-NODE VarDecl WITH-TRANSITION InitExpr
+			(block_definition_capture_reference)
+ 		HOLDS-EVENTUALLY;
+
+ 		// Reference to a variable initialized with a capturing block
+ 		LET variable_block_definition =
+			IN-NODE DeclRefExpr WITH-TRANSITION PointerToDecl
+				(variable_initialized_with_block)
+			HOLDS-EVENTUALLY;
+
+		// Report when a function that does not have NoEscapeAttribute call a block or a variable definied with
+		// a block capturing a C++ ref
+		SET report_when =
+			WHEN
+				(NOT has_no_escape_attribute) AND (block_definition_capture_reference OR variable_block_definition)
+			HOLDS-IN-NODE CallExpr;
 
 	  SET message =
 	        "C++ Reference variable(s) %cxx_ref_captured_in_block% captured by Objective-C block";
@@ -272,4 +296,21 @@ DEFINE-CHECKER WRONG_SCOPE_FOR_DISPATCH_ONCE_T = {
 		SET message = "Variables of type dispatch_once_t must have global or static scope. The result of using this type with automatic or dynamic allocation is undefined.";
 		SET severity = "WARNING";
 		SET mode = "ON";
+};
+
+
+DEFINE-CHECKER UNSAFE_CALL_TO_OPTIONAL_METHOD = {
+
+  SET report_when =
+   WHEN
+     is_call_to_optional_objc_method
+     AND
+     (NOT objc_method_call_within_responds_to_selector_block)
+  HOLDS-IN-NODE ObjCMessageExpr;
+
+  SET message = "This is a call to an `@optional` protocol method. Calling it without checking if its implemented can lead to crashes at run time.";
+	SET suggestion = "Please make sure to test the method is implemented by first calling `if ([object respondsToSelector:@selector(%decl_name%)]) ...` ";
+	SET severity = "ERROR";
+	SET mode = "ON";
+
 };

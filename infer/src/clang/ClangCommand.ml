@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -15,17 +15,8 @@ type t =
   ; quoting_style: ClangQuotes.style
   ; is_driver: bool }
 
-(** bad for every clang invocation *)
-let clang_blacklisted_flags =
-  [ "--expt-relaxed-constexpr"
-  ; "-fembed-bitcode-marker"
-  ; "-fno-absolute-module-directory"
-  ; "-fno-canonical-system-headers" ]
-
-
 let fcp_dir =
-  Config.bin_dir ^/ Filename.parent_dir_name ^/ Filename.parent_dir_name
-  ^/ "facebook-clang-plugins"
+  Config.bin_dir ^/ Filename.parent_dir_name ^/ Filename.parent_dir_name ^/ "facebook-clang-plugins"
 
 
 (** path of the plugin to load in clang *)
@@ -84,12 +75,14 @@ let file_arg_cmd_sanitizer cmd =
   {cmd with argv= [Format.sprintf "@%s" file]}
 
 
-let include_override_regex = Option.map ~f:Str.regexp Config.clang_include_to_override_regex
+let libcxx_include_to_override_regex =
+  Option.map ~f:Str.regexp Config.clang_libcxx_include_to_override_regex
+
 
 (** Filter arguments from [args], looking into argfiles too. [replace_options_arg prev arg] returns
    [arg'], where [arg'] is the new version of [arg] given the preceding arguments (in reverse order) [prev]. *)
-let filter_and_replace_unsupported_args ?(replace_options_arg = fun _ s -> s)
-    ?(blacklisted_flags = []) ?(blacklisted_flags_with_arg = []) ?(post_args = []) args =
+let filter_and_replace_unsupported_args ?(replace_options_arg = fun _ s -> s) ?(post_args = [])
+    ?(pre_args = []) args =
   (* [prev] is the previously seen argument, [res_rev] is the reversed result, [changed] is true if
      some change has been performed *)
   let rec aux in_argfiles (prev_is_blacklisted_with_arg, res_rev, changed) args =
@@ -102,7 +95,7 @@ let filter_and_replace_unsupported_args ?(replace_options_arg = fun _ s -> s)
         aux in_argfiles (false, res_rev, true) tl
     | at_argfile :: tl
       when String.is_prefix at_argfile ~prefix:"@" && not (String.Set.mem in_argfiles at_argfile)
-          -> (
+      -> (
         let in_argfiles' = String.Set.add in_argfiles at_argfile in
         let argfile = String.slice at_argfile 1 (String.length at_argfile) in
         match In_channel.read_lines argfile with
@@ -126,76 +119,99 @@ let filter_and_replace_unsupported_args ?(replace_options_arg = fun _ s -> s)
             L.external_warning "Error reading argument file '%s': %s@\n" at_argfile
               (Exn.to_string e) ;
             aux in_argfiles' (false, at_argfile :: res_rev, changed) tl )
-    | flag :: tl when List.mem ~equal:String.equal blacklisted_flags flag ->
+    | flag :: tl
+      when List.mem ~equal:String.equal Config.clang_blacklisted_flags flag
+           || String.lsplit2 ~on:'=' flag
+              |> function
+              | Some (flag, _arg) ->
+                  List.mem ~equal:String.equal Config.clang_blacklisted_flags_with_arg flag
+              | None ->
+                  false ->
         aux in_argfiles (false, res_rev, true) tl
-    | flag :: tl when List.mem ~equal:String.equal blacklisted_flags_with_arg flag ->
+    | flag :: tl when List.mem ~equal:String.equal Config.clang_blacklisted_flags_with_arg flag ->
         (* remove the flag and its arg separately in case we are at the end of an argfile *)
         aux in_argfiles (true, res_rev, true) tl
     | arg :: tl ->
         let arg' = replace_options_arg res_rev arg in
         aux in_argfiles (false, arg' :: res_rev, changed || not (phys_equal arg arg')) tl
   in
-  match aux String.Set.empty (false, [], false) args with _, res_rev, _ ->
-    (* return non-reversed list *)
-    List.rev_append res_rev post_args
+  match aux String.Set.empty (false, [], false) args with
+  | _, res_rev, _ ->
+      (* return non-reversed list *)
+      List.append pre_args (List.rev_append res_rev post_args)
 
 
-(* Work around various path or library issues occurring when one tries to substitute Apple's version
-   of clang with a different version. Also mitigate version discrepancies in clang's
-   fatal warnings. *)
+(** Work around various path or library issues occurring when one tries to substitute Apple's version
+    of clang with a different version. Also mitigate version discrepancies in clang's
+    fatal warnings. *)
 let clang_cc1_cmd_sanitizer cmd =
+  let replace_args arg = function
+    | Some override_regex when Str.string_match override_regex arg 0 ->
+        fcp_dir ^/ "clang" ^/ "install" ^/ "lib" ^/ "clang" ^/ "8.0.0" ^/ "include"
+    | _ ->
+        arg
+  in
   (* command line options not supported by the opensource compiler or the plugins *)
-  let blacklisted_flags_with_arg = ["-mllvm"] in
   let replace_options_arg options arg =
-    match options with
-    | option :: _ ->
-        if String.equal option "-arch" && String.equal arg "armv7k" then "armv7"
-          (* replace armv7k arch with armv7 *)
-        else if String.is_suffix arg ~suffix:"dep.tmp" then (
-          (* compilation-database Buck integration produces path to `dep.tmp` file that doesn't exist. Create it *)
-          Unix.mkdir_p (Filename.dirname arg) ;
+    match (options, arg) with
+    | [], _ ->
+        arg
+    | "-arch" :: _, "armv7k" ->
+        (* replace armv7k arch with armv7 *) "armv7"
+    | _, arg when String.is_suffix arg ~suffix:"dep.tmp" ->
+        (* compilation-database Buck integration produces path to `dep.tmp` file that doesn't exist. Create it *)
+        Unix.mkdir_p (Filename.dirname arg) ;
+        arg
+    | "-dependency-file" :: _, _ when Option.is_some Config.buck_compilation_database ->
+        (* In compilation database mode, dependency files are not assumed to exist *)
+        "/dev/null"
+    | "-idirafter" :: _, arg ->
+        replace_args arg Config.clang_idirafter_to_override_regex
+    | "-isystem" :: _, arg ->
+        replace_args arg Config.clang_isystem_to_override_regex
+    | "-I" :: _, arg -> (
+      match libcxx_include_to_override_regex with
+      | Some libcxx_include_to_override_regex
+        when Str.string_match libcxx_include_to_override_regex arg 0 ->
+          fcp_dir ^/ "clang" ^/ "install" ^/ "include" ^/ "c++" ^/ "v1"
+      | _ ->
           arg )
-        else if
-          String.equal option "-dependency-file" && Option.is_some Config.buck_compilation_database
-          (* In compilation database mode, dependency files are not assumed to exist *)
-        then "/dev/null"
-        else if String.equal option "-isystem" then
-          match include_override_regex with
-          | Some regexp when Str.string_match regexp arg 0 ->
-              fcp_dir ^/ "clang" ^/ "install" ^/ "lib" ^/ "clang" ^/ "7.0.1" ^/ "include"
-          | _ ->
-              arg
-        else arg
-    | [] ->
+    | _ ->
         arg
   in
   let args_defines =
     if Config.bufferoverrun && not Config.biabduction then ["-D__INFER_BUFFEROVERRUN"] else []
   in
+  let explicit_sysroot_passed = has_flag cmd "-isysroot" in
+  (* supply isysroot only when SDKROOT is not set up and explicit isysroot is not provided,
+     cf. https://lists.apple.com/archives/xcode-users/2005/Dec/msg00524.html
+     for details on the effects of setting SDKROOT *)
+  let implicit_sysroot =
+    if not explicit_sysroot_passed then
+      Option.map Config.implicit_sdk_root ~f:(fun x -> ["-isysroot"; x]) |> Option.value ~default:[]
+    else []
+  in
+  let pre_args_rev = [] |> List.rev_append implicit_sysroot in
   let post_args_rev =
     []
     |> List.rev_append ["-include"; Config.lib_dir ^/ "clang_wrappers" ^/ "global_defines.h"]
     |> List.rev_append args_defines
     |> (* Never error on warnings. Clang is often more strict than Apple's version.  These arguments
-       are appended at the end to override previous opposite settings.  How it's done: suppress
-       all the warnings, since there are no warnings, compiler can't elevate them to error
-       level. *)
-       argv_cons "-Wno-everything"
+          are appended at the end to override previous opposite settings.  How it's done: suppress
+          all the warnings, since there are no warnings, compiler can't elevate them to error
+          level. *)
+    argv_cons "-Wno-everything"
   in
   let clang_arguments =
-    filter_and_replace_unsupported_args ~blacklisted_flags:clang_blacklisted_flags
-      ~blacklisted_flags_with_arg ~replace_options_arg ~post_args:(List.rev post_args_rev) cmd.argv
+    filter_and_replace_unsupported_args ~replace_options_arg ~post_args:(List.rev post_args_rev)
+      ~pre_args:(List.rev pre_args_rev) cmd.argv
   in
   file_arg_cmd_sanitizer {cmd with argv= clang_arguments}
 
 
 let mk ~is_driver quoting_style ~prog ~args =
   (* Some arguments break the compiler so they need to be removed even before the normalization step *)
-  let blacklisted_flags_with_arg = ["-index-store-path"] in
-  let sanitized_args =
-    filter_and_replace_unsupported_args ~blacklisted_flags:clang_blacklisted_flags
-      ~blacklisted_flags_with_arg args
-  in
+  let sanitized_args = filter_and_replace_unsupported_args args in
   let sanitized_args =
     if is_driver then sanitized_args @ List.rev Config.clang_extra_flags else sanitized_args
   in
@@ -229,18 +245,14 @@ let with_plugin_args args =
   let args_before_rev =
     []
     |> (* -cc1 has to be the first argument or clang will think it runs in driver mode *)
-       argv_cons "-cc1"
-    |> (* It's important to place this option before other -isystem options. *)
-       argv_do_if
-         Config.(cxx_infer_headers && (biabduction || bufferoverrun || siof))
-         (List.rev_append ["-isystem"; Config.cpp_extra_include_dir])
+    argv_cons "-cc1"
     |> List.rev_append
          [ "-load"
          ; plugin_path
          ; (* (t7400979) this is a workaround to avoid that clang crashes when the -fmodules flag and the
-         YojsonASTExporter plugin are used. Since the -plugin argument disables the generation of .o
-         files, we invoke apple clang again to generate the expected artifacts. This will keep
-         xcodebuild plus all the sub-steps happy. *)
+              YojsonASTExporter plugin are used. Since the -plugin argument disables the generation of .o
+              files, we invoke apple clang again to generate the expected artifacts. This will keep
+              xcodebuild plus all the sub-steps happy. *)
            (if has_flag args "-fmodules" then "-plugin" else "-add-plugin")
          ; plugin_name
          ; plugin_arg_flag

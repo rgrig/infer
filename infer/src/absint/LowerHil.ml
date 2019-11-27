@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -68,17 +68,17 @@ module Make (TransferFunctions : TransferFunctions.HIL) (HilConfig : HilConfig) 
       HilInstr.of_sil ~include_array_indexes:HilConfig.include_array_indexes ~f_resolve_id instr
     in
     match hil_translation with
-    | Ignore ->
-        (None, bindings)
     | Bind (id, access_path) ->
         (None, Bindings.add id access_path bindings)
-    | Instr (ExitScope (vars, loc)) ->
+    | Instr (Metadata (ExitScope (vars, loc))) ->
         let bindings, vars =
           List.fold vars ~init:(bindings, []) ~f:(fun (bindings, vars) var ->
               let bindings, vars' = Bindings.exit_scope var bindings in
               (bindings, append_bindings vars vars') )
         in
-        let instr = if List.is_empty vars then None else Some (HilInstr.ExitScope (vars, loc)) in
+        let instr =
+          if List.is_empty vars then None else Some (HilInstr.Metadata (ExitScope (vars, loc)))
+        in
         (instr, bindings)
     | Instr instr ->
         (Some instr, bindings)
@@ -110,15 +110,14 @@ module MakeAbstractInterpreterWithConfig
     (HilConfig : HilConfig)
     (TransferFunctions : TransferFunctions.HIL) :
   S
-  with type domain = TransferFunctions.Domain.t
-   and module Interpreter = MakeAbstractInterpreter(Make(TransferFunctions)(HilConfig)) = struct
+    with type domain = TransferFunctions.Domain.t
+     and module Interpreter = MakeAbstractInterpreter(Make(TransferFunctions)(HilConfig)) = struct
   module LowerHilInterpreter = Make (TransferFunctions) (HilConfig)
   module Interpreter = MakeAbstractInterpreter (LowerHilInterpreter)
 
   type domain = TransferFunctions.Domain.t
 
-  let compute_post ({ProcData.pdesc; tenv} as proc_data) ~initial =
-    Preanal.do_preanalysis pdesc tenv ;
+  let compute_post proc_data ~initial =
     let initial' = (initial, Bindings.empty) in
     let pp_instr (_, bindings) instr =
       match LowerHilInterpreter.hil_instr_of_sil bindings instr with

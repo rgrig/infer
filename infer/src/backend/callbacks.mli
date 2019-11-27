@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -10,12 +10,7 @@ open! IStd
 (** Module to register and invoke callbacks *)
 
 type proc_callback_args =
-  { get_procs_in_file: Typ.Procname.t -> Typ.Procname.t list
-  ; tenv: Tenv.t
-  ; integer_type_widths: Typ.IntegerWidths.t
-  ; summary: Summary.t
-  ; proc_desc: Procdesc.t
-  ; exe_env: Exe_env.t }
+  {get_procs_in_file: Typ.Procname.t -> Typ.Procname.t list; summary: Summary.t; exe_env: Exe_env.t}
 
 (** Type of a procedure callback:
     - List of all the procedures the callback will be called on.
@@ -25,7 +20,7 @@ type proc_callback_args =
 type proc_callback_t = proc_callback_args -> Summary.t
 
 type cluster_callback_args =
-  {procedures: (Tenv.t * Procdesc.t) list; source_file: SourceFile.t; exe_env: Exe_env.t}
+  {procedures: (Tenv.t * Summary.t) list; source_file: SourceFile.t; exe_env: Exe_env.t}
 
 type cluster_callback_t = cluster_callback_args -> unit
 
@@ -36,5 +31,8 @@ val register_procedure_callback :
 val register_cluster_callback : name:string -> Language.t -> cluster_callback_t -> unit
 (** register a cluster callback *)
 
-val analyze_file : Exe_env.t -> SourceFile.t -> unit
-(** Invoke all the registered callbacks on the given file. *)
+val iterate_procedure_callbacks : Exe_env.t -> Summary.t -> Summary.t
+(** Invoke all registered procedure callbacks on the given procedure. *)
+
+val iterate_cluster_callbacks : Typ.Procname.t list -> Exe_env.t -> SourceFile.t -> unit
+(** Invoke all registered cluster callbacks on a cluster of procedures. *)

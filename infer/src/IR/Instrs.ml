@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -56,6 +56,8 @@ type not_reversed_t = not_reversed t
 
 let of_array instrs = NotReversed instrs
 
+let get_underlying_not_reversed = function NotReversed instrs -> instrs
+
 let empty = of_array [||]
 
 let singleton instr = of_array [|instr|]
@@ -89,6 +91,15 @@ let map_changed =
   fun ~equal (NotReversed instrs as t) ~f ->
     let instrs' = aux_unchanged ~equal instrs ~f 0 in
     if phys_equal instrs instrs' then t else NotReversed instrs'
+
+
+let concat_map_changed ~equal (NotReversed instrs as t) ~f =
+  let instrs' = Array.concat_map ~f instrs in
+  if
+    Int.equal (Array.length instrs) (Array.length instrs')
+    && Array.for_all2_exn ~f:equal instrs instrs'
+  then t
+  else NotReversed instrs'
 
 
 let reverse_order (NotReversed instrs) = Reversed (RevArray.of_rev_array instrs)

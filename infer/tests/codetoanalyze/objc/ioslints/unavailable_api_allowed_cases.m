@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -63,6 +63,14 @@
 // bug
 - (void)without_responds_to_selector:(Unavailable_api_allowed_cases*)a {
   [a m];
+}
+
+// no bug
+- (void)call_m:(Unavailable_api_allowed_cases*)a
+    API_AVAILABLE(ios(10), macosx(10.13)) {
+  int x = 1;
+  [a m];
+  x = 3;
 }
 
 // bug

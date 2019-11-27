@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -31,10 +31,6 @@ type qual_name = QualifiedCppName.t
 
 type templated_name = qual_name * Typ.template_arg list
 
-type 'marker mtyp = typ
-
-type 'captured_types capt = unit -> 'captured_types
-
 (* Typ helpers *)
 
 let template_args_of_template_spec_info = function
@@ -65,77 +61,53 @@ let templated_name_of_java java =
 
 (* Intermediate matcher types *)
 
-type ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out) name_matcher =
-  { on_objc_cpp: 'context -> 'f_in -> objc_cpp -> ('f_out * 'captured_types capt) option
-  ; on_qual_name: 'context -> 'f_in -> qual_name -> ('f_out * 'captured_types capt) option
-  ; get_markers: 'markers_in -> 'markers_out }
+type ('context, 'f_in, 'f_out, 'arg_payload) name_matcher =
+  { on_objc_cpp: 'context -> 'f_in -> objc_cpp -> 'f_out option
+  ; on_qual_name: 'context -> 'f_in -> qual_name -> 'f_out option }
 
-type ( 'f_in
-     , 'f_out
-     , 'captured_types_in
-     , 'captured_types_out
-     , 'markers_in
-     , 'markers_out
-     , 'list_constraint ) template_arg =
-  { eat_template_arg:
-         'f_in * 'captured_types_in capt * Typ.template_arg list
-      -> ('f_out * 'captured_types_out capt * Typ.template_arg list) option
-  ; add_marker: 'markers_in -> 'markers_out }
+type ('f_in, 'f_out, 'list_constraint) template_arg =
+  {eat_template_arg: 'f_in * Typ.template_arg list -> ('f_out * Typ.template_arg list) option}
 
-type ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out, 'list_constraint) templ_matcher
-   =
-  { on_objc_cpp:
-         'context
-      -> 'f_in
-      -> objc_cpp
-      -> ('f_out * 'captured_types capt * Typ.template_arg list) option
+type ('context, 'f_in, 'f_out, 'list_constraint, 'arg_payload) templ_matcher =
+  { on_objc_cpp: 'context -> 'f_in -> objc_cpp -> ('f_out * Typ.template_arg list) option
   ; on_templated_name:
-         'context
-      -> 'f_in
-      -> templated_name
-      -> ('f_out * 'captured_types capt * Typ.template_arg list) option
-  ; get_markers: 'markers_in -> 'markers_out }
+      'context -> 'f_in -> templated_name -> ('f_out * Typ.template_arg list) option }
 
-type ('context, 'f_in, 'f_out, 'captured_types, 'emptyness) path_extra =
-  | PathEmpty : ('context, 'f, 'f, unit, empty) path_extra
+type ('context, 'f_in, 'f_out, 'emptyness) path_extra =
+  | PathEmpty : ('context, 'f, 'f, empty) path_extra
   | PathNonEmpty :
-      { on_objc_cpp: 'context -> 'f_in -> objc_cpp -> ('f_out * 'captured_types capt) option }
-      -> ('context, 'f_in, 'f_out, 'captured_types, non_empty) path_extra
+      {on_objc_cpp: 'context -> 'f_in -> objc_cpp -> 'f_out option}
+      -> ('context, 'f_in, 'f_out, non_empty) path_extra
 
-type ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out, 'emptyness) path_matcher =
-  { on_templated_name: 'context -> 'f_in -> templated_name -> ('f_out * 'captured_types capt) option
-  ; path_extra: ('context, 'f_in, 'f_out, 'captured_types, 'emptyness) path_extra
-  ; get_markers: 'markers_in -> 'markers_out }
+type ('context, 'f_in, 'f_out, 'emptyness, 'arg_payload) path_matcher =
+  { on_templated_name: 'context -> 'f_in -> templated_name -> 'f_out option
+  ; path_extra: ('context, 'f_in, 'f_out, 'emptyness) path_extra }
 
 type typ_matcher = typ -> bool
 
 (* Combinators *)
 
-let empty : ('context, 'f, 'f, unit, 'markers, 'markers, empty) path_matcher =
-  let get_markers m = m in
-  let get_capture () = () in
+let empty : ('context, 'f, 'f, empty, 'arg_payload) path_matcher =
   let on_templated_name _context f (qual_name, template_args) =
     match (QualifiedCppName.extract_last qual_name, template_args) with
     | None, [] ->
-        Some (f, get_capture)
+        Some f
     | None, _ ->
         assert false
     | Some _, _ ->
         None
   in
-  {on_templated_name; path_extra= PathEmpty; get_markers}
+  {on_templated_name; path_extra= PathEmpty}
 
 
 let name_cons :
-       ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out, _) path_matcher
+       ('context, 'f_in, 'f_out, _, 'arg_payload) path_matcher
     -> string
-    -> ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out) name_matcher =
+    -> ('context, 'f_in, 'f_out, 'arg_payload) name_matcher =
  fun m name ->
-  let {on_templated_name; get_markers} = m in
+  let {on_templated_name} = m in
   let match_fuzzy_name =
-    let fuzzy_name_regexp =
-      name |> Str.quote |> Printf.sprintf "^%s\\(<[a-z0-9_:<>]+>\\)?$" |> Str.regexp
-    in
+    let fuzzy_name_regexp = name |> Str.quote |> Printf.sprintf "^%s\\(<.+>\\)?$" |> Str.regexp in
     fun s -> Str.string_match fuzzy_name_regexp s 0
   in
   let on_qual_name context f qual_name =
@@ -150,15 +122,15 @@ let name_cons :
       on_templated_name context f (templated_name_of_class_name objc_cpp.class_name)
     else None
   in
-  {on_objc_cpp; on_qual_name; get_markers}
+  {on_objc_cpp; on_qual_name}
 
 
 let name_cons_f :
-       ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out, _) path_matcher
+       ('context, 'f_in, 'f_out, _, 'arg_payload) path_matcher
     -> ('context -> string -> bool)
-    -> ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out) name_matcher =
+    -> ('context, 'f_in, 'f_out, 'arg_payload) name_matcher =
  fun m f_name ->
-  let {on_templated_name; get_markers} = m in
+  let {on_templated_name} = m in
   let on_qual_name context f qual_name =
     match QualifiedCppName.extract_last qual_name with
     | Some (last, rest) when f_name context last ->
@@ -171,15 +143,14 @@ let name_cons_f :
       on_templated_name context f (templated_name_of_class_name objc_cpp.class_name)
     else None
   in
-  {on_objc_cpp; on_qual_name; get_markers}
+  {on_objc_cpp; on_qual_name}
 
 
 let all_names_cons :
-       ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out, non_empty) path_matcher
-    -> ('context, 'f_in, 'f_out, 'captured_tpes, 'markers_in, 'markers_out, non_empty) path_matcher
-    =
+       ('context, 'f_in, 'f_out, non_empty, 'arg_payload) path_matcher
+    -> ('context, 'f_in, 'f_out, non_empty, 'arg_payload) path_matcher =
  fun m ->
-  let {on_templated_name; get_markers; path_extra= PathNonEmpty {on_objc_cpp}} = m in
+  let {on_templated_name; path_extra= PathNonEmpty {on_objc_cpp}} = m in
   let rec on_templated_name_rec context f templated_name =
     match on_templated_name context f templated_name with
     | Some _ as some ->
@@ -200,294 +171,173 @@ let all_names_cons :
     | None ->
         on_templated_name context f (templated_name_of_class_name objc_cpp.class_name)
   in
-  {on_templated_name; get_markers; path_extra= PathNonEmpty {on_objc_cpp}}
+  {on_templated_name; path_extra= PathNonEmpty {on_objc_cpp}}
 
 
 let templ_begin :
-       ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out) name_matcher
-    -> ( 'context
-       , 'f_in
-       , 'f_out
-       , 'captured_types
-       , 'markers_in
-       , 'markers_out
-       , accept_more )
-       templ_matcher =
+       ('context, 'f_in, 'f_out, 'arg_payload) name_matcher
+    -> ('context, 'f_in, 'f_out, accept_more, 'arg_payload) templ_matcher =
  fun m ->
-  let {on_objc_cpp; on_qual_name; get_markers} = m in
+  let {on_objc_cpp; on_qual_name} = m in
   let on_templated_name context f (qual_name, template_args) =
-    match on_qual_name context f qual_name with
-    | None ->
-        None
-    | Some (f, captured_types) ->
-        Some (f, captured_types, template_args)
+    match on_qual_name context f qual_name with None -> None | Some f -> Some (f, template_args)
   in
   let on_objc_cpp context f (objc_cpp : Typ.Procname.ObjC_Cpp.t) =
     match on_objc_cpp context f objc_cpp with
     | None ->
         None
-    | Some (f, captured_types) ->
+    | Some f ->
         let template_args = template_args_of_template_spec_info objc_cpp.template_args in
-        Some (f, captured_types, template_args)
+        Some (f, template_args)
   in
-  {on_objc_cpp; on_templated_name; get_markers}
+  {on_objc_cpp; on_templated_name}
 
 
 let templ_cons :
-       ( 'context
-       , 'f_in
-       , 'f_interm
-       , 'captured_types_in
-       , 'markers_interm
-       , 'markers_out
-       , accept_more )
-       templ_matcher
-    -> ( 'f_interm
-       , 'f_out
-       , 'captured_types_in
-       , 'captured_types_out
-       , 'markers_in
-       , 'markers_interm
-       , 'lc )
-       template_arg
-    -> ('context, 'f_in, 'f_out, 'captured_types_out, 'markers_in, 'markers_out, 'lc) templ_matcher
-    =
+       ('context, 'f_in, 'f_interm, accept_more, 'arg_payload) templ_matcher
+    -> ('f_interm, 'f_out, 'lc) template_arg
+    -> ('context, 'f_in, 'f_out, 'lc, 'arg_payload) templ_matcher =
  fun m template_arg ->
-  let {on_objc_cpp; on_templated_name; get_markers} = m in
-  let {eat_template_arg; add_marker} = template_arg in
-  let get_markers m = get_markers (add_marker m) in
+  let {on_objc_cpp; on_templated_name} = m in
+  let {eat_template_arg} = template_arg in
   let on_templated_name context f templated_name =
     on_templated_name context f templated_name |> Option.bind ~f:eat_template_arg
   in
   let on_objc_cpp context f objc_cpp =
     on_objc_cpp context f objc_cpp |> Option.bind ~f:eat_template_arg
   in
-  {on_objc_cpp; on_templated_name; get_markers}
+  {on_objc_cpp; on_templated_name}
 
 
 let templ_end :
-       ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out, _) templ_matcher
-    -> ( 'context
-       , 'f_in
-       , 'f_out
-       , 'captured_types
-       , 'markers_in
-       , 'markers_out
-       , non_empty )
-       path_matcher =
-  let match_empty_templ_args (f, captured_types, template_args) =
-    match template_args with [] -> Some (f, captured_types) | _ -> None
+       ('context, 'f_in, 'f_out, _, 'arg_payload) templ_matcher
+    -> ('context, 'f_in, 'f_out, non_empty, 'arg_payload) path_matcher =
+  let match_empty_templ_args (f, template_args) =
+    match template_args with [] -> Some f | _ -> None
   in
   fun m ->
-    let {on_objc_cpp; on_templated_name; get_markers} = m in
+    let {on_objc_cpp; on_templated_name} = m in
     let on_templated_name context f templated_name =
       on_templated_name context f templated_name |> Option.bind ~f:match_empty_templ_args
     in
     let on_objc_cpp context f objc_cpp =
       on_objc_cpp context f objc_cpp |> Option.bind ~f:match_empty_templ_args
     in
-    {on_templated_name; path_extra= PathNonEmpty {on_objc_cpp}; get_markers}
+    {on_templated_name; path_extra= PathNonEmpty {on_objc_cpp}}
 
 
 module type Common = sig
-  type ('context, 'f) matcher
+  type ('context, 'f, 'arg_payload) matcher
 
-  type ('context, 'f) dispatcher
+  type ('context, 'f, 'arg_payload) dispatcher
 
-  val make_dispatcher : ('context, 'f) matcher list -> ('context, 'f) dispatcher
+  val make_dispatcher :
+    ('context, 'f, 'arg_payload) matcher list -> ('context, 'f, 'arg_payload) dispatcher
 
   (* Template arguments *)
 
-  val any_typ :
-    ('f, 'f, 'captured_types, 'captured_types, 'markers, 'markers, accept_more) template_arg
+  val any_typ : ('f, 'f, accept_more) template_arg
   (** Eats a type *)
 
-  val capt_typ :
-       'marker
-    -> ( 'marker mtyp -> 'f
-       , 'f
-       , 'captured_types
-       , 'marker mtyp * 'captured_types
-       , 'markers
-       , 'marker * 'markers
-       , accept_more )
-       template_arg
-  (** Captures a type than can be back-referenced *)
+  val capt_typ : (Typ.t -> 'f, 'f, accept_more) template_arg
+  (** Captures a type *)
 
-  val capt_int :
-    ( Int64.t -> 'f
-    , 'f
-    , 'captured_types
-    , 'captured_types
-    , 'markers
-    , 'markers
-    , accept_more )
-    template_arg
+  val capt_int : (Int64.t -> 'f, 'f, accept_more) template_arg
   (** Captures an int *)
 
-  val capt_all :
-    ( Typ.template_arg list -> 'f
-    , 'f
-    , 'captured_types
-    , 'captured_types
-    , 'markers
-    , 'markers
-    , end_of_list )
-    template_arg
+  val capt_all : (Typ.template_arg list -> 'f, 'f, end_of_list) template_arg
   (** Captures all template args *)
 
-  val ( ~- ) : string -> ('context, 'f, 'f, unit, 'markers, 'markers) name_matcher
+  val ( ~- ) : string -> ('context, 'f, 'f, 'arg_payload) name_matcher
   (** Starts a path with a name *)
 
-  val ( ~+ ) :
-    ('context -> string -> bool) -> ('context, 'f, 'f, unit, 'markers, 'markers) name_matcher
+  val ( ~+ ) : ('context -> string -> bool) -> ('context, 'f, 'f, 'arg_payload) name_matcher
   (** Starts a path with a matching name that satisfies the given function *)
 
   val ( &+ ) :
-       ( 'context
-       , 'f_in
-       , 'f_interm
-       , 'captured_types_in
-       , 'markers_interm
-       , 'markers_out
-       , accept_more )
-       templ_matcher
-    -> ( 'f_interm
-       , 'f_out
-       , 'captured_types_in
-       , 'captured_types_out
-       , 'markers_in
-       , 'markers_interm
-       , 'lc )
-       template_arg
-    -> ('context, 'f_in, 'f_out, 'captured_types_out, 'markers_in, 'markers_out, 'lc) templ_matcher
+       ('context, 'f_in, 'f_interm, accept_more, 'arg_payload) templ_matcher
+    -> ('f_interm, 'f_out, 'lc) template_arg
+    -> ('context, 'f_in, 'f_out, 'lc, 'arg_payload) templ_matcher
   (** Separate template arguments *)
 
   val ( < ) :
-       ('context, 'f_in, 'f_interm, 'captured_types_in, 'markers_interm, 'markers_out) name_matcher
-    -> ( 'f_interm
-       , 'f_out
-       , 'captured_types_in
-       , 'captured_types_out
-       , 'markers_in
-       , 'markers_interm
-       , 'lc )
-       template_arg
-    -> ('context, 'f_in, 'f_out, 'captured_types_out, 'markers_in, 'markers_out, 'lc) templ_matcher
+       ('context, 'f_in, 'f_interm, 'arg_payload) name_matcher
+    -> ('f_interm, 'f_out, 'lc) template_arg
+    -> ('context, 'f_in, 'f_out, 'lc, 'arg_payload) templ_matcher
   (** Starts template arguments after a name *)
 
   val ( >:: ) :
-       ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out, _) templ_matcher
+       ('context, 'f_in, 'f_out, _, 'arg_payload) templ_matcher
     -> string
-    -> ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out) name_matcher
+    -> ('context, 'f_in, 'f_out, 'arg_payload) name_matcher
   (** Ends template arguments and starts a name *)
 
+  val ( >::+ ) :
+       ('context, 'f_in, 'f_out, 'lc, 'arg_payload) templ_matcher
+    -> ('context -> string -> bool)
+    -> ('context, 'f_in, 'f_out, 'arg_payload) name_matcher
+
   val ( &+...>:: ) :
-       ( 'context
-       , 'f_in
-       , 'f_out
-       , 'captured_types
-       , 'markers_in
-       , 'markers_out
-       , accept_more )
-       templ_matcher
+       ('context, 'f_in, 'f_out, accept_more, 'arg_payload) templ_matcher
     -> string
-    -> ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out) name_matcher
+    -> ('context, 'f_in, 'f_out, 'arg_payload) name_matcher
   (** Ends template arguments with eats-ALL and starts a name *)
 
   val ( &:: ) :
-       ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out) name_matcher
+       ('context, 'f_in, 'f_out, 'arg_payload) name_matcher
     -> string
-    -> ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out) name_matcher
+    -> ('context, 'f_in, 'f_out, 'arg_payload) name_matcher
   (** Separates names (accepts ALL template arguments on the left one) *)
 
   val ( &::+ ) :
-       ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out) name_matcher
+       ('context, 'f_in, 'f_out, 'arg_payload) name_matcher
     -> ('context -> string -> bool)
-    -> ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out) name_matcher
+    -> ('context, 'f_in, 'f_out, 'arg_payload) name_matcher
 
   val ( <>:: ) :
-       ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out) name_matcher
+       ('context, 'f_in, 'f_out, 'arg_payload) name_matcher
     -> string
-    -> ('context, 'f_in, 'f_out, 'captured_types, 'markers_in, 'markers_out) name_matcher
+    -> ('context, 'f_in, 'f_out, 'arg_payload) name_matcher
   (** Separates names (accepts NO template arguments on the left one) *)
 end
 
 module Common = struct
   (* Template arguments *)
 
-  let add_no_marker capture_markers = capture_markers
-
   (** Eats all template args *)
-  let any_template_args :
-      ('f, 'f, 'captured_types, 'captured_types, 'markers, 'markers, end_of_list) template_arg =
-    let eat_template_arg (f, captured_types, _) = Some (f, captured_types, []) in
-    {eat_template_arg; add_marker= add_no_marker}
+  let any_template_args : ('f, 'f, end_of_list) template_arg =
+    let eat_template_arg (f, _) = Some (f, []) in
+    {eat_template_arg}
 
 
   (** Eats a type *)
-  let any_typ :
-      ('f, 'f, 'captured_types, 'captured_types, 'markers, 'markers, accept_more) template_arg =
-    let eat_template_arg (f, captured_types, template_args) =
-      match template_args with Typ.TType _ :: rest -> Some (f, captured_types, rest) | _ -> None
+  let any_typ : ('f, 'f, accept_more) template_arg =
+    let eat_template_arg (f, template_args) =
+      match template_args with Typ.TType _ :: rest -> Some (f, rest) | _ -> None
     in
-    {eat_template_arg; add_marker= add_no_marker}
+    {eat_template_arg}
 
 
-  (** Captures a type than can be back-referenced *)
-  let capt_typ :
-         'marker
-      -> ( 'marker mtyp -> 'f
-         , 'f
-         , 'captured_types
-         , 'marker mtyp * 'captured_types
-         , 'markers
-         , 'marker * 'markers
-         , accept_more )
-         template_arg =
-   fun marker ->
-    let eat_template_arg (f, captured_types, template_args) =
-      match template_args with
-      | Typ.TType ty :: rest ->
-          let captured_types () = (ty, captured_types ()) in
-          Some (f ty, captured_types, rest)
-      | _ ->
-          None
+  (** Captures a type *)
+  let capt_typ : (Typ.t -> 'f, 'f, accept_more) template_arg =
+    let eat_template_arg (f, template_args) =
+      match template_args with Typ.TType ty :: rest -> Some (f ty, rest) | _ -> None
     in
-    let add_marker capture_markers = (marker, capture_markers) in
-    {eat_template_arg; add_marker}
+    {eat_template_arg}
 
 
   (** Captures an int *)
-  let capt_int :
-      ( Int64.t -> 'f
-      , 'f
-      , 'captured_types
-      , 'captured_types
-      , 'markers
-      , 'markers
-      , accept_more )
-      template_arg =
-    let eat_template_arg (f, captured_types, template_args) =
-      match template_args with Typ.TInt i :: rest -> Some (f i, captured_types, rest) | _ -> None
+  let capt_int : (Int64.t -> 'f, 'f, accept_more) template_arg =
+    let eat_template_arg (f, template_args) =
+      match template_args with Typ.TInt i :: rest -> Some (f i, rest) | _ -> None
     in
-    {eat_template_arg; add_marker= add_no_marker}
+    {eat_template_arg}
 
 
   (** Captures all template args *)
-  let capt_all :
-      ( Typ.template_arg list -> 'f
-      , 'f
-      , 'captured_types
-      , 'captured_types
-      , 'markers
-      , 'markers
-      , end_of_list )
-      template_arg =
-    let eat_template_arg (f, captured_types, template_args) =
-      Some (f template_args, captured_types, [])
-    in
-    {eat_template_arg; add_marker= add_no_marker}
+  let capt_all : (Typ.template_arg list -> 'f, 'f, end_of_list) template_arg =
+    let eat_template_arg (f, template_args) = Some (f template_args, []) in
+    {eat_template_arg}
 
 
   let ( <! ) name_matcher () = templ_begin name_matcher
@@ -514,6 +364,8 @@ module Common = struct
 
   let ( >:: ) templ_matcher name = templ_matcher >! () &::! name
 
+  let ( >::+ ) templ_matcher f_name = templ_matcher >! () &::+! f_name
+
   let ( &+...>:: ) templ_matcher name = templ_matcher &+...>! () &::! name
 
   let ( &:: ) name_matcher name = name_matcher <...>! () &::! name
@@ -528,121 +380,129 @@ module Call = struct
 
   (** Little abstraction over arguments: currently actual args, we'll want formal args later *)
   module FuncArg = struct
-    type t = Exp.t * Typ.t
+    type 'arg_payload t = {exp: Exp.t; typ: Typ.t; arg_payload: 'arg_payload}
 
-    let typ (_, ty) = ty
+    let typ {typ} = typ
 
-    let exp (e, _) = e
+    let exp {exp} = exp
 
-    let get_var_exn arg =
-      match exp arg with
+    let arg_payload {arg_payload} = arg_payload
+
+    let get_var_exn {exp; typ} =
+      match exp with
       | Exp.Var v ->
           v
       | e ->
-          Logging.(die InternalError)
-            "Expected Lvar, got %a:%a" Exp.pp e (Typ.pp Pp.text) (typ arg)
+          Logging.(die InternalError) "Expected Lvar, got %a:%a" Exp.pp e (Typ.pp Pp.text) typ
   end
 
-  type ('context, 'f_in, 'f_out, 'captured_types) proc_matcher =
-    { on_objc_cpp: 'context -> 'f_in -> objc_cpp -> ('f_out * 'captured_types) option
-    ; on_c: 'context -> 'f_in -> c -> ('f_out * 'captured_types) option
-    ; on_java: 'context -> 'f_in -> java -> ('f_out * 'captured_types) option }
+  type ('context, 'f_in, 'f_out) proc_matcher =
+    { on_objc_cpp: 'context -> 'f_in -> objc_cpp -> 'f_out option
+    ; on_c: 'context -> 'f_in -> c -> 'f_out option
+    ; on_java: 'context -> 'f_in -> java -> 'f_out option }
 
-  type ('context, 'f_in, 'f_out, 'captured_types) on_args =
-    'context -> 'captured_types -> 'f_in * FuncArg.t list -> ('f_out * FuncArg.t list) option
+  type ('context, 'f_in, 'f_out, 'arg_payload) on_args =
+    'context -> 'f_in * 'arg_payload FuncArg.t list -> ('f_out * 'arg_payload FuncArg.t list) option
 
-  type ('context, 'f_in, 'f_proc_out, 'f_out, 'captured_types, 'markers) args_matcher =
-    { on_proc: ('context, 'f_in, 'f_proc_out, 'captured_types) proc_matcher
-    ; on_args: ('context, 'f_proc_out, 'f_out, 'captured_types) on_args
-    ; markers: 'markers }
+  type ('context, 'f_in, 'f_proc_out, 'f_out, 'arg_payload) args_matcher =
+    { on_proc: ('context, 'f_in, 'f_proc_out) proc_matcher
+    ; on_args: ('context, 'f_proc_out, 'f_out, 'arg_payload) on_args }
 
-  type ('context, 'captured_types, 'markers) one_arg_matcher =
-    { match_arg: 'context -> 'captured_types -> FuncArg.t -> bool
-    ; marker_static_checker: 'markers -> bool }
+  type ('context, 'arg_payload) one_arg_matcher =
+    {match_arg: 'context -> 'arg_payload FuncArg.t -> bool}
 
-  type ('arg_in, 'arg_out, 'f_in, 'f_out) arg_capture =
-    {get_captured_value: FuncArg.t -> 'arg_in; do_capture: 'f_in -> 'arg_out -> 'f_out}
+  type ('arg_in, 'arg_out, 'f_in, 'f_out, 'arg_payload) arg_capture =
+    {get_captured_value: 'arg_payload FuncArg.t -> 'arg_in; do_capture: 'f_in -> 'arg_out -> 'f_out}
 
-  type ('context, 'arg_in, 'arg_out, 'f_in, 'f_out, 'captured_types, 'markers) one_arg =
-    { one_arg_matcher: ('context, 'captured_types, 'markers) one_arg_matcher
-    ; capture: ('arg_in, 'arg_out, 'f_in, 'f_out) arg_capture }
+  type ('context, 'arg_in, 'arg_out, 'f_in, 'f_out, 'arg_payload) one_arg =
+    { one_arg_matcher: ('context, 'arg_payload) one_arg_matcher
+    ; capture: ('arg_in, 'arg_out, 'f_in, 'f_out, 'arg_payload) arg_capture }
 
-  type ('arg_in, 'arg_out, 'f_in, 'f_out) arg_preparer =
-    { on_empty: ('f_in -> 'arg_out -> 'f_out) -> 'f_in -> ('f_out * FuncArg.t list) option
+  type ('arg_in, 'arg_out, 'f_in, 'f_out, 'arg_payload) arg_preparer =
+    { on_empty:
+        ('f_in -> 'arg_out -> 'f_out) -> 'f_in -> ('f_out * 'arg_payload FuncArg.t list) option
     ; wrapper: 'arg_in -> 'arg_out }
 
-  type ('context, 'f_in, 'f_out, 'captured_types, 'markers) func_arg =
-    { eat_func_arg: ('context, 'f_in, 'f_out, 'captured_types) on_args
-    ; marker_static_checker: 'markers -> bool }
+  type ('context, 'f_in, 'f_out, 'arg_payload) func_arg =
+    {eat_func_arg: ('context, 'f_in, 'f_out, 'arg_payload) on_args}
 
-  type ('context, 'f) matcher =
-    { on_objc_cpp: 'context -> objc_cpp -> FuncArg.t list -> 'f option
-    ; on_c: 'context -> c -> FuncArg.t list -> 'f option
-    ; on_java: 'context -> java -> FuncArg.t list -> 'f option }
+  type ('context, 'f, 'arg_payload) matcher =
+    { on_objc_cpp: 'context -> objc_cpp -> 'arg_payload FuncArg.t list -> 'f option
+    ; on_c: 'context -> c -> 'arg_payload FuncArg.t list -> 'f option
+    ; on_java: 'context -> java -> 'arg_payload FuncArg.t list -> 'f option }
 
-  type ('context, 'f) pre_result =
+  type ('context, 'f, 'arg_payload) pre_result =
     | DoesNotMatch
     | Matches of 'f
-    | RetryWith of ('context, 'f) matcher
+    | RetryWith of ('context, 'f, 'arg_payload) matcher
 
   let pre_bind_opt opt ~f = match opt with None -> DoesNotMatch | Some x -> f x
 
   let pre_map_opt opt ~f = match opt with None -> DoesNotMatch | Some x -> Matches (f x)
 
-  type ('context, 'f_in, 'f_out, 'captured_types) func_args_end =
-       on_args:('context, 'f_in, 'f_out, 'captured_types) on_args
+  type ('context, 'f_in, 'f_out, 'arg_payload) func_args_end =
+       on_args:('context, 'f_in, 'f_out, 'arg_payload) on_args
     -> 'context
-    -> FuncArg.t list
-    -> 'f_in * 'captured_types
-    -> ('context, 'f_out) pre_result
+    -> 'arg_payload FuncArg.t list
+    -> 'f_in
+    -> ('context, 'f_out, 'arg_payload) pre_result
 
-  type ('context, 'f_in, 'f_out) all_args_matcher =
-    { on_objc_cpp: 'context -> 'f_in -> objc_cpp -> FuncArg.t list -> ('context, 'f_out) pre_result
-    ; on_c: 'context -> 'f_in -> c -> FuncArg.t list -> ('context, 'f_out) pre_result
-    ; on_java: 'context -> 'f_in -> java -> FuncArg.t list -> ('context, 'f_out) pre_result }
+  type ('context, 'f_in, 'f_out, 'arg_payload) all_args_matcher =
+    { on_objc_cpp:
+           'context
+        -> 'f_in
+        -> objc_cpp
+        -> 'arg_payload FuncArg.t list
+        -> ('context, 'f_out, 'arg_payload) pre_result
+    ; on_c:
+           'context
+        -> 'f_in
+        -> c
+        -> 'arg_payload FuncArg.t list
+        -> ('context, 'f_out, 'arg_payload) pre_result
+    ; on_java:
+           'context
+        -> 'f_in
+        -> java
+        -> 'arg_payload FuncArg.t list
+        -> ('context, 'f_out, 'arg_payload) pre_result }
 
-  type ('context, 'f) dispatcher = 'context -> Typ.Procname.t -> FuncArg.t list -> 'f option
+  type ('context, 'f, 'arg_payload) dispatcher =
+    'context -> Typ.Procname.t -> 'arg_payload FuncArg.t list -> 'f option
 
   let args_begin :
-         ('context, 'f_in, 'f_out, 'captured_types, unit, 'markers, non_empty) path_matcher
-      -> ('context, 'f_in, 'f_out, 'f_out, 'captured_types, 'markers) args_matcher =
-    let on_args _context _capt f_args = Some f_args in
+         ('context, 'f_in, 'f_out, non_empty, 'arg_payload) path_matcher
+      -> ('context, 'f_in, 'f_out, 'f_out, 'arg_payload) args_matcher =
+    let on_args _context f_args = Some f_args in
     fun m ->
-      let {on_templated_name; path_extra= PathNonEmpty {on_objc_cpp}; get_markers} = m in
-      let markers = get_markers () in
-      let get_captures (f, captured_types) = (f, captured_types ()) in
+      let {on_templated_name; path_extra= PathNonEmpty {on_objc_cpp}} = m in
       let on_c context f (c : c) =
         let template_args = template_args_of_template_spec_info c.template_args in
-        on_templated_name context f (c.name, template_args) |> Option.map ~f:get_captures
+        on_templated_name context f (c.name, template_args)
       in
       let on_java context f (java : java) =
-        on_templated_name context f (templated_name_of_java java) |> Option.map ~f:get_captures
+        on_templated_name context f (templated_name_of_java java)
       in
-      let on_objc_cpp context f objc_cpp =
-        on_objc_cpp context f objc_cpp |> Option.map ~f:get_captures
-      in
-      let on_proc : (_, _, _, _) proc_matcher = {on_objc_cpp; on_c; on_java} in
-      {on_proc; on_args; markers}
+      let on_objc_cpp context f objc_cpp = on_objc_cpp context f objc_cpp in
+      let on_proc : _ proc_matcher = {on_objc_cpp; on_c; on_java} in
+      {on_proc; on_args}
 
 
   let args_cons :
-         ('context, 'f_in, 'f_proc_out, 'f_interm, 'captured_types, 'markers) args_matcher
-      -> ('context, 'f_interm, 'f_out, 'captured_types, 'markers) func_arg
-      -> ('context, 'f_in, 'f_proc_out, 'f_out, 'captured_types, 'markers) args_matcher =
+         ('context, 'f_in, 'f_proc_out, 'f_interm, 'arg_payload) args_matcher
+      -> ('context, 'f_interm, 'f_out, 'arg_payload) func_arg
+      -> ('context, 'f_in, 'f_proc_out, 'f_out, 'arg_payload) args_matcher =
    fun m func_arg ->
-    let {on_proc; on_args; markers} = m in
-    let {marker_static_checker; eat_func_arg} = func_arg in
-    assert (marker_static_checker markers) ;
-    let on_args context capt f_args =
-      on_args context capt f_args |> Option.bind ~f:(eat_func_arg context capt)
-    in
-    {on_proc; on_args; markers}
+    let {on_proc; on_args} = m in
+    let {eat_func_arg} = func_arg in
+    let on_args context f_args = on_args context f_args |> Option.bind ~f:(eat_func_arg context) in
+    {on_proc; on_args}
 
 
   let args_end :
-         ('context, 'f_in, 'f_proc_out, 'f_out, 'captured_types, 'markers) args_matcher
-      -> ('context, 'f_proc_out, 'f_out, 'captured_types) func_args_end
-      -> ('context, 'f_in, 'f_out) all_args_matcher =
+         ('context, 'f_in, 'f_proc_out, 'f_out, 'arg_payload) args_matcher
+      -> ('context, 'f_proc_out, 'f_out, 'arg_payload) func_args_end
+      -> ('context, 'f_in, 'f_out, 'arg_payload) all_args_matcher =
    fun m func_args_end ->
     let {on_proc= {on_c; on_java; on_objc_cpp}; on_args} = m in
     let on_c context f c args =
@@ -658,9 +518,11 @@ module Call = struct
 
 
   let make_matcher :
-      ('context, 'f_in, 'f_out) all_args_matcher -> 'f_in -> ('context, 'f_out) matcher =
+         ('context, 'f_in, 'f_out, 'arg_payload) all_args_matcher
+      -> 'f_in
+      -> ('context, 'f_out, 'arg_payload) matcher =
    fun m f ->
-    let ({on_c; on_java; on_objc_cpp} : (_, _, _) all_args_matcher) = m in
+    let ({on_c; on_java; on_objc_cpp} : (_, _, _, _) all_args_matcher) = m in
     let on_objc_cpp context objc_cpp args =
       match on_objc_cpp context f objc_cpp args with
       | DoesNotMatch ->
@@ -692,7 +554,8 @@ module Call = struct
 
 
   (** Simple implementation of a dispatcher, could be optimized later *)
-  let make_dispatcher : ('context, 'f) matcher list -> ('context, 'f) dispatcher =
+  let make_dispatcher :
+      ('context, 'f, 'arg_payload) matcher list -> ('context, 'f, 'arg_payload) dispatcher =
    fun matchers ->
     let on_objc_cpp context objc_cpp args =
       List.find_map matchers ~f:(fun (matcher : _ matcher) ->
@@ -716,54 +579,32 @@ module Call = struct
           None
 
 
+  let merge_dispatchers :
+         ('context, 'f, 'arg_payload) dispatcher
+      -> ('context, 'f, 'arg_payload) dispatcher
+      -> ('context, 'f, 'arg_payload) dispatcher =
+   fun dispatcher1 dispatcher2 context procname args ->
+    match dispatcher1 context procname args with
+    | Some _ as r ->
+        r
+    | None ->
+        dispatcher2 context procname args
+
+
   (* Function args *)
 
-  let no_marker_checker _markers = true
-
   (** Matches any arg *)
-  let match_any_arg : (_, _, _) one_arg_matcher =
-    let match_arg _context _capt _arg = true in
-    {match_arg; marker_static_checker= no_marker_checker}
-
-
-  let mk_match_typ_nth :
-         ('markers -> 'marker)
-      -> ('captured_types -> 'marker mtyp)
-      -> 'marker
-      -> ('context, 'captured_types, 'markers) one_arg_matcher =
-   fun get_m get_c marker ->
-    let marker_static_checker markers = Polymorphic_compare.( = ) marker (get_m markers) in
-    let match_arg _context capt arg = Typ.equal (FuncArg.typ arg) (get_c capt) in
-    {match_arg; marker_static_checker}
-
-
-  (** Matches first captured type *)
-  let match_typ1 : 'marker -> ('context, 'marker mtyp * _, 'marker * _) one_arg_matcher =
-    let pos1 (x, _) = x in
-    fun marker -> mk_match_typ_nth pos1 pos1 marker
-
-
-  (** Matches second captured type *)
-  let match_typ2 : 'marker -> ('context, _ * ('marker mtyp * _), _ * ('marker * _)) one_arg_matcher
-      =
-    let pos2 (_, (x, _)) = x in
-    fun marker -> mk_match_typ_nth pos2 pos2 marker
-
-
-  (** Matches third captured type *)
-  let match_typ3 :
-      'marker -> ('context, _ * (_ * ('marker mtyp * _)), _ * (_ * ('marker * _))) one_arg_matcher
-      =
-    let pos3 (_, (_, (x, _))) = x in
-    fun marker -> mk_match_typ_nth pos3 pos3 marker
+  let match_any_arg : _ one_arg_matcher =
+    let match_arg _context _arg = true in
+    {match_arg}
 
 
   (** Matches the type matched by the given path_matcher *)
   let match_typ :
-         ('context, _, _, unit, unit, unit, non_empty) path_matcher
-      -> ('context, _, _) one_arg_matcher =
+         ('context, _, _, non_empty, 'arg_payload) path_matcher
+      -> ('context, 'arg_payload) one_arg_matcher =
    fun m ->
-    let ({on_templated_name} : (_, _, _, unit, unit, unit, non_empty) path_matcher) = m in
+    let ({on_templated_name} : (_, _, _, non_empty, 'arg_payload) path_matcher) = m in
     let rec match_typ context typ =
       match typ with
       | {Typ.desc= Tstruct name} ->
@@ -773,42 +614,51 @@ module Call = struct
       | _ ->
           false
     in
-    let match_arg context _capt arg = match_typ context (FuncArg.typ arg) in
-    {match_arg; marker_static_checker= no_marker_checker}
+    let match_arg context arg = match_typ context (FuncArg.typ arg) in
+    {match_arg}
 
 
   (** Matches the type matched by the given typ_matcher *)
   let match_prim_typ : typ_matcher -> _ one_arg_matcher =
    fun on_typ ->
-    let match_arg _context _capt arg = on_typ (FuncArg.typ arg) in
-    {match_arg; marker_static_checker= no_marker_checker}
+    let match_arg _context arg = on_typ (FuncArg.typ arg) in
+    {match_arg}
 
 
   (* Function argument capture *)
 
   (** Do not capture this argument *)
-  let no_capture : (_, _, 'f, 'f) arg_capture =
+  let no_capture : (_, _, 'f, 'f, _) arg_capture =
     let get_captured_value _arg = () in
     let do_capture f _v = f in
     {get_captured_value; do_capture}
 
 
   (** Capture the argument *)
-  let capture_arg : (FuncArg.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f) arg_capture =
+  let capture_arg :
+      ('arg_payload FuncArg.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, 'arg_payload) arg_capture =
     let get_captured_value arg = arg in
     let do_capture f v = f v in
     {get_captured_value; do_capture}
 
 
+  (** Capture the argument value *)
+  let capture_arg_val :
+      ('arg_payload, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, 'arg_payload) arg_capture =
+    let get_captured_value arg = FuncArg.arg_payload arg in
+    let do_capture f v = f v in
+    {get_captured_value; do_capture}
+
+
   (** Capture the argument expression *)
-  let capture_arg_exp : (Exp.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f) arg_capture =
+  let capture_arg_exp : (Exp.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, _) arg_capture =
     let get_captured_value arg = FuncArg.exp arg in
     let do_capture f v = f v in
     {get_captured_value; do_capture}
 
 
   (** Capture the argument local var or fail *)
-  let capture_arg_var_exn : (Ident.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f) arg_capture =
+  let capture_arg_var_exn : (Ident.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, _) arg_capture =
     let get_captured_value arg = FuncArg.get_var_exn arg in
     let do_capture f v = f v in
     {get_captured_value; do_capture}
@@ -827,39 +677,52 @@ module Call = struct
 
 
   let make_arg :
-         ('arg_in, 'arg_out, 'f_in, 'f_out) arg_preparer
-      -> ('context, 'arg_in, 'arg_out, 'f_in, 'f_out, _, _) one_arg
-      -> ('context, 'f_in, 'f_out, _, _) func_arg =
+         ('arg_in, 'arg_out, 'f_in, 'f_out, 'arg_payload) arg_preparer
+      -> ('context, 'arg_in, 'arg_out, 'f_in, 'f_out, 'arg_payload) one_arg
+      -> ('context, 'f_in, 'f_out, 'arg_payload) func_arg =
    fun arg_preparer one_arg ->
     let {on_empty; wrapper} = arg_preparer in
     let {one_arg_matcher; capture} = one_arg in
-    let {match_arg; marker_static_checker} = one_arg_matcher in
+    let {match_arg} = one_arg_matcher in
     let {get_captured_value; do_capture} = capture in
-    let eat_func_arg context capt (f, args) =
+    let eat_func_arg context (f, args) =
       match args with
       | [] ->
           on_empty do_capture f
-      | arg :: rest when match_arg context capt arg ->
+      | arg :: rest when match_arg context arg ->
           Some (arg |> get_captured_value |> wrapper |> do_capture f, rest)
       | _ ->
           None
     in
-    {eat_func_arg; marker_static_checker}
+    {eat_func_arg}
 
 
-  let any_arg : ('context, unit, _, 'f, 'f, _, _) one_arg =
+  let any_arg : ('context, unit, _, 'f, 'f, 'arg_payload) one_arg =
     {one_arg_matcher= match_any_arg; capture= no_capture}
 
 
-  let capt_arg : ('context, FuncArg.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, _, _) one_arg =
+  let capt_arg :
+      ('context, 'arg_payload FuncArg.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, 'arg_payload) one_arg
+      =
     {one_arg_matcher= match_any_arg; capture= capture_arg}
 
 
-  let capt_exp : ('context, Exp.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, _, _) one_arg =
+  let all_args : ('context, 'arg_payload FuncArg.t list -> 'f_out, 'f_out, 'arg_payload) func_arg =
+    let eat_func_arg _context (f, args) = Some (f args, []) in
+    {eat_func_arg}
+
+
+  let capt_arg_payload :
+      ('context, 'arg_payload, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, 'arg_payload) one_arg =
+    {one_arg_matcher= match_any_arg; capture= capture_arg_val}
+
+
+  let capt_exp : ('context, Exp.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, 'arg_payload) one_arg =
     {one_arg_matcher= match_any_arg; capture= capture_arg_exp}
 
 
-  let capt_var_exn : ('context, Ident.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, _, _) one_arg =
+  let capt_var_exn : ('context, Ident.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, 'arg_payload) one_arg
+      =
     {one_arg_matcher= match_any_arg; capture= capture_arg_var_exn}
 
 
@@ -882,36 +745,24 @@ module Call = struct
     {one_arg_matcher= one_arg_matcher_of_prim_typ typ; capture= capture_arg_exp}
 
 
-  let typ1 : 'marker -> ('context, unit, _, 'f, 'f, _, _) one_arg =
-   fun m -> {one_arg_matcher= match_typ1 m; capture= no_capture}
-
-
-  let typ2 : 'marker -> ('context, unit, _, 'f, 'f, _, _) one_arg =
-   fun m -> {one_arg_matcher= match_typ2 m; capture= no_capture}
-
-
-  let typ3 : 'marker -> ('context, unit, _, 'f, 'f, _, _) one_arg =
-   fun m -> {one_arg_matcher= match_typ3 m; capture= no_capture}
-
-
   (* Function args end *)
 
   (** Matches if there is no function arguments left *)
-  let no_args_left : ('context, _, _, _) func_args_end =
+  let no_args_left : ('context, _, _, 'arg_payload) func_args_end =
     let match_empty_args = function Some (f, []) -> Matches f | _ -> DoesNotMatch in
-    fun ~on_args context args (f, capt) -> on_args context capt (f, args) |> match_empty_args
+    fun ~on_args context args f -> on_args context (f, args) |> match_empty_args
 
 
   (** Matches any function arguments *)
-  let any_func_args : ('context, _, _, _) func_args_end =
-   fun ~on_args context args (f, capt) -> on_args context capt (f, args) |> pre_map_opt ~f:fst
+  let any_func_args : ('context, _, _, 'arg_payload) func_args_end =
+   fun ~on_args context args f -> on_args context (f, args) |> pre_map_opt ~f:fst
 
 
   (** If [func_args_end1] does not match, use [func_args_end2] *)
   let alternative_args_end :
-         ('context, 'f_in, 'f_out, 'captured_types) func_args_end
-      -> ('context, 'f_in, 'f_out, 'captured_types) func_args_end
-      -> ('context, 'f_in, 'f_out, 'captured_types) func_args_end =
+         ('context, 'f_in, 'f_out, 'arg_payload) func_args_end
+      -> ('context, 'f_in, 'f_out, 'arg_payload) func_args_end
+      -> ('context, 'f_in, 'f_out, 'arg_payload) func_args_end =
    fun func_args_end1 func_args_end2 ~on_args context args f_capt ->
     match func_args_end1 ~on_args context args f_capt with
     | DoesNotMatch ->
@@ -921,13 +772,14 @@ module Call = struct
 
 
   (** Retries matching with another matcher *)
-  let args_end_retry : _ matcher -> ('context, _, _, _) func_args_end =
+  let args_end_retry : _ matcher -> ('context, _, _, 'arg_payload) func_args_end =
    fun m ~on_args:_ _context _args _f_capt -> RetryWith m
 
 
   (** Retries matching with another matcher if the function does not have the
     exact number/types of args *)
-  let exact_args_or_retry : ('context, 'f) matcher -> ('context, _, _, _) func_args_end =
+  let exact_args_or_retry :
+      ('context, 'f, 'arg_payload) matcher -> ('context, _, _, 'arg_payload) func_args_end =
    fun m -> alternative_args_end no_args_left (args_end_retry m)
 
 
@@ -956,6 +808,8 @@ module Call = struct
 
   let ( $+ ) args_matcher one_arg = args_matcher $+! (one_arg $!! ())
 
+  let ( $++ ) args_matcher () = args_matcher $+! all_args
+
   let ( $+? ) args_matcher one_arg = args_matcher $+! (one_arg $?! ())
 
   let ( >$ ) templ_matcher one_arg = templ_matcher >$! () $+ one_arg
@@ -970,6 +824,8 @@ module Call = struct
 
   let ( $+...$--> ) args_matcher f = args_matcher $* any_func_args $*--> f
 
+  let ( $++$--> ) args_matcher f = args_matcher $++ () $--> f
+
   let ( >--> ) templ_matcher f = templ_matcher >$! () $+...$--> f
 
   let ( >$$--> ) templ_matcher f = templ_matcher >$! () $--> f
@@ -979,6 +835,8 @@ module Call = struct
   let ( <>$$--> ) name_matcher f = name_matcher <! () >$$--> f
 
   let ( &--> ) name_matcher f = name_matcher <...>! () $! () $+...$--> f
+
+  let ( &++> ) name_matcher f = name_matcher <...>! () $! () $++$--> f
 
   let ( <>--> ) name_matcher f = name_matcher <! () >--> f
 
@@ -992,24 +850,24 @@ module type NameCommon = sig
   include Common
 
   val ( >--> ) :
-       ('context, 'f_in, 'f_out, 'captured_types, unit, 'markers, _) templ_matcher
+       ('context, 'f_in, 'f_out, _, 'arg_payload) templ_matcher
     -> 'f_in
-    -> ('context, 'f_out) matcher
+    -> ('context, 'f_out, 'arg_payload) matcher
 
   val ( <>--> ) :
-       ('context, 'f_in, 'f_out, 'captured_types, unit, 'markers) name_matcher
+       ('context, 'f_in, 'f_out, 'arg_payload) name_matcher
     -> 'f_in
-    -> ('context, 'f_out) matcher
+    -> ('context, 'f_out, 'arg_payload) matcher
 
   val ( &--> ) :
-       ('context, 'f_in, 'f_out, 'captured_types, unit, 'markers) name_matcher
+       ('context, 'f_in, 'f_out, 'arg_payload) name_matcher
     -> 'f_in
-    -> ('context, 'f_out) matcher
+    -> ('context, 'f_out, 'arg_payload) matcher
 
   val ( &::.*--> ) :
-       ('context, 'f_in, 'f_out, 'captured_types, unit, 'markers) name_matcher
+       ('context, 'f_in, 'f_out, 'arg_payload) name_matcher
     -> 'f_in
-    -> ('context, 'f_out) matcher
+    -> ('context, 'f_out, 'arg_payload) matcher
   (** After a name, accepts ALL template arguments, accepts ALL path tails (names, templates),
         accepts ALL function arguments, binds the function *)
 end
@@ -1017,23 +875,21 @@ end
 module NameCommon = struct
   include Common
 
-  type ('context, 'f) matcher =
+  type ('context, 'f, 'arg_payload) matcher =
     { on_templated_name: 'context -> templated_name -> 'f option
     ; on_objc_cpp: 'context -> objc_cpp -> 'f option }
 
   let make_matcher :
-         ('context, 'f_in, 'f_out, _, _, _, non_empty) path_matcher
+         ('context, 'f_in, 'f_out, non_empty, 'arg_payload) path_matcher
       -> 'f_in
-      -> ('context, 'f_out) matcher =
+      -> ('context, 'f_out, 'arg_payload) matcher =
    fun m f ->
     let ({on_templated_name; path_extra= PathNonEmpty {on_objc_cpp}}
-          : ('context, 'f_in, 'f_out, _, _, _, non_empty) path_matcher) =
+          : ('context, 'f_in, 'f_out, non_empty, 'arg_payload) path_matcher) =
       m
     in
-    let on_templated_name context templated_name =
-      templated_name |> on_templated_name context f |> Option.map ~f:fst
-    in
-    let on_objc_cpp context objc_cpp = objc_cpp |> on_objc_cpp context f |> Option.map ~f:fst in
+    let on_templated_name context templated_name = templated_name |> on_templated_name context f in
+    let on_objc_cpp context objc_cpp = objc_cpp |> on_objc_cpp context f in
     {on_templated_name; on_objc_cpp}
 
 
@@ -1051,9 +907,10 @@ end
 module ProcName = struct
   include NameCommon
 
-  type ('context, 'f) dispatcher = 'context -> Typ.Procname.t -> 'f option
+  type ('context, 'f, 'arg_payload) dispatcher = 'context -> Typ.Procname.t -> 'f option
 
-  let make_dispatcher : ('context, 'f) matcher list -> ('context, 'f) dispatcher =
+  let make_dispatcher :
+      ('context, 'f, 'arg_payload) matcher list -> ('context, 'f, 'arg_payload) dispatcher =
    fun matchers ->
     let on_objc_cpp context objc_cpp =
       List.find_map matchers ~f:(fun (matcher : _ matcher) -> matcher.on_objc_cpp context objc_cpp)
@@ -1086,9 +943,10 @@ end
 module TypName = struct
   include NameCommon
 
-  type ('context, 'f) dispatcher = 'context -> Typ.name -> 'f option
+  type ('context, 'f, 'arg_payload) dispatcher = 'context -> Typ.name -> 'f option
 
-  let make_dispatcher : ('context, 'f) matcher list -> ('context, 'f) dispatcher =
+  let make_dispatcher :
+      ('context, 'f, 'arg_payload) matcher list -> ('context, 'f, 'arg_payload) dispatcher =
    fun matchers context typname ->
     let templated_name = templated_name_of_class_name typname in
     List.find_map matchers ~f:(fun (matcher : _ matcher) ->

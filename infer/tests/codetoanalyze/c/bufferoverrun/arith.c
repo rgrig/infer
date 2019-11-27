@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -539,4 +539,10 @@ void shift_right_zero_Good(int x) {
 void shift_right_zero_Bad(int x) {
   int arr[1];
   arr[1 + (0 >> x)] = 1;
+}
+
+#define INTENDED_INTEGER_UNDERFLOW (0ULL - 2)
+
+void use_intended_integer_underflow_Good() {
+  unsigned long long x = INTENDED_INTEGER_UNDERFLOW;
 }

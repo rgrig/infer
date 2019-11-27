@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -48,16 +48,16 @@ let sil_var_of_decl_ref context source_range decl_ref procname =
             sil_var_of_decl context var_decl procname
         | None ->
             (* FIXME(t21762295) *)
-            CFrontend_config.incorrect_assumption __POS__ source_range
+            CFrontend_errors.incorrect_assumption __POS__ source_range
               "pointer '%d' for var decl not found. The var decl was: %a" pointer
-              (Pp.to_string ~f:Clang_ast_j.string_of_decl_ref)
+              (Pp.of_string ~f:Clang_ast_j.string_of_decl_ref)
               decl_ref )
 
 
 let has_block_attribute decl_info =
   let open Clang_ast_t in
   List.exists decl_info.di_attributes ~f:(fun attr ->
-      match attr with BlocksAttr _ -> true | _ -> false )
+      match attr with `BlocksAttr _ -> true | _ -> false )
 
 
 let add_var_to_locals procdesc var_decl typ pvar =
@@ -85,13 +85,12 @@ let sil_var_of_captured_var context source_range procname decl_ref =
     match decl_ref with
     | {Clang_ast_t.dr_name= Some {Clang_ast_t.ni_name}} ->
         (* In Objective-C class methods, self is not the standard self instance, since in this
-        context we don't have an instance. Instead it is used to get the class of the method.
-        We translate this variables in a different way than normal, we don't treat them as
-        variables in Sil, instead we remove them and get the class directly in the frontend.
-        For that reason, we shouldn't add them as captured variables of blocks, since they
-        don't appear anywhere else in the translation. *)
-        if is_block_inside_objc_class_method && String.equal ni_name CFrontend_config.self then
-          None
+           context we don't have an instance. Instead it is used to get the class of the method.
+           We translate this variables in a different way than normal, we don't treat them as
+           variables in Sil, instead we remove them and get the class directly in the frontend.
+           For that reason, we shouldn't add them as captured variables of blocks, since they
+           don't appear anywhere else in the translation. *)
+        if is_block_inside_objc_class_method && String.equal ni_name CFrontend_config.self then None
         else Some (sil_var_of_decl_ref context source_range decl_ref procname)
     | _ ->
         assert false
@@ -118,3 +117,27 @@ let captured_vars_from_block_info context source_range captured_vars =
     List.map ~f:(fun cv -> Option.value_exn cv.Clang_ast_t.bcv_variable) captured_vars
   in
   List.filter_map ~f:(sil_var_of_captured_var context source_range procname) cv_decl_ref_list
+
+
+let mk_temp_sil_var procdesc ~name =
+  let procname = Procdesc.get_proc_name procdesc in
+  Pvar.mk_tmp name procname
+
+
+let mk_temp_sil_var_for_expr context ~name ~clang_pointer expr_info =
+  match Caml.Hashtbl.find_opt context.CContext.temporary_names clang_pointer with
+  | Some pvar_typ ->
+      pvar_typ
+  | None ->
+      let qual_type = expr_info.Clang_ast_t.ei_qual_type in
+      let typ = CType_decl.qual_type_to_sil_type context.CContext.tenv qual_type in
+      let pvar_typ = (mk_temp_sil_var context.CContext.procdesc ~name, typ) in
+      Caml.Hashtbl.add context.CContext.temporary_names clang_pointer pvar_typ ;
+      pvar_typ
+
+
+let materialize_cpp_temporary context stmt_info expr_info =
+  (* the type we get here is a 'best effort' type - the translation may decide to use different type
+     later *)
+  mk_temp_sil_var_for_expr context ~name:Pvar.materialized_cpp_temporary
+    ~clang_pointer:stmt_info.Clang_ast_t.si_pointer expr_info

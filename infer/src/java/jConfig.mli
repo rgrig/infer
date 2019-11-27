@@ -1,18 +1,11 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-open Javalib_pack
-
-val string_cl : string
-
-val class_cl : string
-
-val obj_type : JBasics.value_type
 
 val boolean_code : string
 
@@ -61,9 +54,3 @@ val field_cst : string
 val field_st : Mangled.t
 
 val infer_builtins_cl : string
-
-val npe_cl : string
-
-val out_of_bound_cl : string
-
-val cce_cl : string

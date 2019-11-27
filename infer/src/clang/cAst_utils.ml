@@ -1,12 +1,11 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-open PolyVariantEqual
 
 (** Functions for transformations of ast nodes *)
 
@@ -31,7 +30,7 @@ let get_qualified_name ?(linters_mode = false) name_info =
   if not linters_mode then get_qual_name name_info.Clang_ast_t.ni_qual_name
   else
     (* Because we are in linters mode, we can't get precise info about templates,
-        so we strip the template characters to not upset invariants in the system. *)
+       so we strip the template characters to not upset invariants in the system. *)
     let replace_template_chars qual_name =
       String.tr ~target:'<' ~replacement:'_' qual_name |> String.tr ~target:'>' ~replacement:'_'
     in
@@ -75,7 +74,34 @@ let dummy_stmt_info () =
   {Clang_ast_t.si_pointer= get_fresh_pointer (); si_source_range= dummy_source_range ()}
 
 
-let get_decl decl_ptr = Int.Table.find ClangPointers.pointer_decl_table decl_ptr
+let named_decl_info_equal ndi1 ndi2 =
+  match
+    List.for_all2 ndi1.Clang_ast_t.ni_qual_name ndi2.Clang_ast_t.ni_qual_name ~f:String.equal
+  with
+  | List.Or_unequal_lengths.Ok b ->
+      b
+  | List.Or_unequal_lengths.Unequal_lengths ->
+      false
+
+
+let get_decl decl_ptr =
+  let decl = Int.Table.find ClangPointers.pointer_decl_table decl_ptr in
+  match decl with
+  | Some (VarDecl ({di_parent_pointer= Some parent_pointer}, ndi, _, _)) -> (
+    match Int.Table.find ClangPointers.pointer_decl_table parent_pointer with
+    | Some (CXXRecordDecl (_, _, _, decls, _, _, _, _)) -> (
+        let has_same_ndi = function
+          | Clang_ast_t.VarDecl (_, ndi', _, _) ->
+              named_decl_info_equal ndi ndi'
+          | _ ->
+              false
+        in
+        match List.find decls ~f:has_same_ndi with Some _ as decl' -> decl' | None -> decl )
+    | _ ->
+        decl )
+  | _ ->
+      decl
+
 
 let get_decl_opt decl_ptr_opt =
   match decl_ptr_opt with Some decl_ptr -> get_decl decl_ptr | None -> None
@@ -84,9 +110,17 @@ let get_decl_opt decl_ptr_opt =
 let get_stmt stmt_ptr source_range =
   let stmt = Int.Table.find ClangPointers.pointer_stmt_table stmt_ptr in
   if Option.is_none stmt then
-    CFrontend_config.incorrect_assumption __POS__ source_range "stmt with pointer %d not found@\n"
+    CFrontend_errors.incorrect_assumption __POS__ source_range "stmt with pointer %d not found@\n"
       stmt_ptr ;
   stmt
+
+
+let get_stmt_exn stmt_ptr source_range =
+  match get_stmt stmt_ptr source_range with
+  | Some stmt ->
+      stmt
+  | None ->
+      L.die InternalError "statement clang pointer %d not found" stmt_ptr
 
 
 let get_stmt_opt stmt_ptr_opt source_range =
@@ -96,6 +130,7 @@ let get_stmt_opt stmt_ptr_opt source_range =
 let get_decl_opt_with_decl_ref decl_ref_opt =
   match decl_ref_opt with
   | Some decl_ref ->
+      L.debug Capture Verbose "#####POINTER LOOK UP: '%i'@\n" decl_ref.Clang_ast_t.dr_decl_pointer ;
       get_decl decl_ref.Clang_ast_t.dr_decl_pointer
   | None ->
       None
@@ -114,15 +149,13 @@ let update_enum_map enum_constant_pointer sil_exp =
   in
   let enum_map_value = (predecessor_pointer_opt, Some sil_exp) in
   CFrontend_config.enum_map :=
-    ClangPointers.Map.set !CFrontend_config.enum_map ~key:enum_constant_pointer
-      ~data:enum_map_value
+    ClangPointers.Map.set !CFrontend_config.enum_map ~key:enum_constant_pointer ~data:enum_map_value
 
 
 let add_enum_constant enum_constant_pointer predecessor_pointer_opt =
   let enum_map_value = (predecessor_pointer_opt, None) in
   CFrontend_config.enum_map :=
-    ClangPointers.Map.set !CFrontend_config.enum_map ~key:enum_constant_pointer
-      ~data:enum_map_value
+    ClangPointers.Map.set !CFrontend_config.enum_map ~key:enum_constant_pointer ~data:enum_map_value
 
 
 let get_enum_constant_exp enum_constant_pointer =
@@ -173,11 +206,10 @@ let sil_annot_of_type {Clang_ast_t.qt_type_ptr} =
   in
   let annot_name_opt =
     match get_type qt_type_ptr with
-    | Some (AttributedType (_, attr_info)) ->
-        if attr_info.ati_attr_kind = `Nullable then Some Annotations.nullable
-        else if attr_info.ati_attr_kind = `Nonnull then Some Annotations.nonnull
-          (* other annotations go here *)
-        else None
+    | Some (AttributedType (_, {ati_attr_kind= TypeNullableAttrKind})) ->
+        Some Annotations.nullable
+    | Some (AttributedType (_, {ati_attr_kind= TypeNonNullAttrKind})) ->
+        Some Annotations.nonnull
     | _ ->
         None
   in
@@ -202,7 +234,7 @@ let name_opt_of_typedef_qual_type qual_type =
 
 let qual_type_of_decl_ptr decl_ptr =
   { (* This function needs to be in this module - CAst_utils can't depend on
-     Ast_expressions *)
+       Ast_expressions *)
     Clang_ast_t.qt_type_ptr= Clang_ast_extend.DeclPtr decl_ptr
   ; qt_is_const= false
   ; qt_is_volatile= false
@@ -518,7 +550,7 @@ let has_block_attribute decl =
   match decl with
   | VarDecl (decl_info, _, _, _) ->
       let attributes = decl_info.di_attributes in
-      List.exists ~f:(fun attr -> match attr with BlocksAttr _ -> true | _ -> false) attributes
+      List.exists ~f:(fun attr -> match attr with `BlocksAttr _ -> true | _ -> false) attributes
   | _ ->
       false
 
@@ -542,8 +574,8 @@ let get_superclass_curr_class_objc_from_decl (decl : Clang_ast_t.decl) =
         otdi.otdi_super
     | _ ->
         Logging.die InternalError
-          "Expected that ObjCImplementationDecl always has a pointer to it's interface, but \
-           wasn't the case with %s"
+          "Expected that ObjCImplementationDecl always has a pointer to it's interface, but wasn't \
+           the case with %s"
           ni.Clang_ast_t.ni_name )
   | ObjCCategoryDecl (_, _, _, _, ocdi) ->
       ocdi.odi_class_interface
@@ -553,4 +585,22 @@ let get_superclass_curr_class_objc_from_decl (decl : Clang_ast_t.decl) =
       Logging.die InternalError
         "Expected to be called only with ObjCInterfaceDecl, ObjCImplementationDecl, \
          ObjCCategoryDecl or ObjCCategoryImplDecl, but got %s"
+        (Clang_ast_proj.get_decl_kind_string decl)
+
+
+let get_method_body_opt decl =
+  let open Clang_ast_t in
+  match decl with
+  | FunctionDecl (_, _, _, fdi)
+  | CXXMethodDecl (_, _, _, fdi, _)
+  | CXXConstructorDecl (_, _, _, fdi, _)
+  | CXXConversionDecl (_, _, _, fdi, _)
+  | CXXDestructorDecl (_, _, _, fdi, _) ->
+      fdi.Clang_ast_t.fdi_body
+  | ObjCMethodDecl (_, _, mdi) ->
+      mdi.Clang_ast_t.omdi_body
+  | BlockDecl (_, block_decl_info) ->
+      block_decl_info.Clang_ast_t.bdi_body
+  | _ ->
+      Logging.die InternalError "Should only be called with method, but got %s"
         (Clang_ast_proj.get_decl_kind_string decl)

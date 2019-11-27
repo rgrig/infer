@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -33,6 +33,12 @@ val map_changed :
   -> f:(Sil.instr -> Sil.instr)
   -> not_reversed_t
 
+val concat_map_changed :
+     equal:(Sil.instr -> Sil.instr -> bool)
+  -> not_reversed_t
+  -> f:(Sil.instr -> Sil.instr array)
+  -> not_reversed_t
+
 val reverse_order : not_reversed_t -> reversed t
 
 val is_empty : _ t -> bool
@@ -56,3 +62,5 @@ val pp : Pp.env -> Format.formatter -> _ t -> unit
 val fold : (_ t, Sil.instr, 'a) Container.fold
 
 val iter : (_ t, Sil.instr) Container.iter
+
+val get_underlying_not_reversed : not_reversed t -> Sil.instr array

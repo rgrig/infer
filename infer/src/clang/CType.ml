@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -17,7 +17,7 @@ let objc_classname_of_type typ =
   match typ.Typ.desc with
   | Typ.Tstruct name ->
       name
-  | Typ.Tfun _ ->
+  | Typ.Tfun ->
       Typ.Name.Objc.from_string CFrontend_config.objc_object
   | _ ->
       L.(debug Capture Verbose)

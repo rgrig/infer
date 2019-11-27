@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -59,7 +59,7 @@ void l1_symbolic_widened_Bad(int n) {
   }
 }
 
-void l1_symbolic_widened_Good_FP(int n) {
+void l1_symbolic_widened_Good(int n) {
   int a[n];
   for (int i = n; less_than(i, n); i++) {
     a[i] = 0;

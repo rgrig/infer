@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -182,6 +182,8 @@ let remove_first =
   fun list ~f -> aux list ~f []
 
 
+let force_until_first_some lazies = List.find_map lazies ~f:Lazy.force
+
 let pp_print_list ~max ?(pp_sep = Format.pp_print_cut) pp_v ppf =
   let rec aux n = function
     | [] ->
@@ -194,3 +196,8 @@ let pp_print_list ~max ?(pp_sep = Format.pp_print_cut) pp_v ppf =
           aux (n + 1) rest )
   in
   function [] -> () | [v] -> pp_v ppf v | v :: rest -> pp_v ppf v ; aux 1 rest
+
+
+let fold2_result ~init ~f l1 l2 =
+  List.fold2 l1 l2 ~init:(Ok init) ~f:(fun result x1 x2 ->
+      Result.bind result ~f:(fun acc -> f acc x1 x2) )

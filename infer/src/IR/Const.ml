@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -43,9 +43,9 @@ let pp pe f = function
   | Cfun fn -> (
     match pe.Pp.kind with
     | HTML ->
-        F.fprintf f "_fun_%s" (Escape.escape_xml (Typ.Procname.to_string fn))
+        F.fprintf f "_fun_%s" (Escape.escape_xml (F.asprintf "%a" Typ.Procname.pp fn))
     | _ ->
-        F.fprintf f "_fun_%s" (Typ.Procname.to_string fn) )
+        F.fprintf f "_fun_%a" Typ.Procname.pp fn )
   | Cstr s ->
       F.fprintf f "\"%s\"" (String.escaped s)
   | Cfloat v ->

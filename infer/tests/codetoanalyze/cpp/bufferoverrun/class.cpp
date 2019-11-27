@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -287,6 +287,18 @@ void use_global_Good() {
 }
 
 void use_global_Bad() {
+  int a[30];
+  a[S::x] = 0;
+}
+
+const unsigned int S::x;
+
+void use_global_2_Good() {
+  int a[50];
+  a[S::x] = 0;
+}
+
+void use_global_2_Bad() {
   int a[30];
   a[S::x] = 0;
 }

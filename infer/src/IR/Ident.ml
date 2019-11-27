@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -156,6 +156,9 @@ end
 (** Name used for the return variable *)
 let name_return = Mangled.from_string "return"
 
+(** Name used for the return param variable *)
+let name_return_param = Mangled.from_string "__return_param"
+
 (** Return the standard name for the given kind *)
 let standard_name kind =
   if equal_kind kind KNormal || equal_kind kind KNone then Name.Normal
@@ -214,9 +217,7 @@ let update_name_generator ids =
 
 
 (** Generate a normal identifier whose name encodes a path given as a string. *)
-let create_path pathstring =
-  create_normal (string_to_name ("%path%" ^ pathstring)) path_ident_stamp
-
+let create_path pathstring = create_normal (string_to_name ("%path%" ^ pathstring)) path_ident_stamp
 
 (** {2 Pretty Printing} *)
 
@@ -248,7 +249,7 @@ end)
 let hashqueue_of_sequence ?init s =
   let q = match init with None -> HashQueue.create () | Some q0 -> q0 in
   Sequence.iter s ~f:(fun id ->
-      let _ : [`Key_already_present | `Ok] = HashQueue.enqueue q id () in
+      let (_ : [`Key_already_present | `Ok]) = HashQueue.enqueue_back q id () in
       () ) ;
   q
 

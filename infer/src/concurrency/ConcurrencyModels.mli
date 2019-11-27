@@ -1,12 +1,11 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
-module F = Format
 
 (** effect of call plus Hil expressions being un/locked, if known *)
 type lock_effect =
@@ -30,30 +29,38 @@ val is_thread_utils_method : string -> Typ.Procname.t -> bool
 val get_lock_effect : Typ.Procname.t -> HilExp.t list -> lock_effect
 (** describe how this procedure behaves with respect to locking *)
 
-val get_thread : Typ.Procname.t -> thread
-(** describe how this procedure behaves with respect to thread access *)
-
-val runs_on_ui_thread :
-     attrs_of_pname:(Typ.Procname.t -> ProcAttributes.t option)
-  -> Tenv.t
-  -> Procdesc.t
-  -> string option
-(** We don't want to warn on methods that run on the UI thread because they should always be
-    single-threaded. Assume that methods annotated with @UiThread, @OnEvent, @OnBind, @OnMount,
-    @OnUnbind, @OnUnmount always run on the UI thread.  Also assume that any superclass
-    marked @UiThread implies all methods are on UI thread. Return Some string explaining why
-    this method is on the UI thread, else return None. *)
+val get_thread_assert_effect : Typ.Procname.t -> thread
+(** In Java, certain methods can be used to assert execution on a specific kind of thread,
+    or return a boolean equivalent to such a fact. *)
 
 val get_current_class_and_annotated_superclasses :
   (Annot.Item.t -> bool) -> Tenv.t -> Typ.Procname.t -> (Typ.name * Typ.name list) option
 
-val find_annotated_or_overriden_annotated_method :
-     attrs_of_pname:(Typ.Procname.t -> ProcAttributes.t option)
-  -> (Annot.Item.t -> bool)
-  -> Typ.Procname.t
-  -> Tenv.t
-  -> Typ.Procname.t sexp_option
-
 val cpp_lock_types_matcher : QualifiedCppName.Match.quals_matcher
 
 val is_recursive_lock_type : Typ.name -> bool
+
+(** Type documenting why a method is considered as annotated with a certain annotation *)
+type annotation_trail =
+  | DirectlyAnnotated  (** the method is directly annotated as such *)
+  | Override of Typ.Procname.t  (** it overrides a method annotated in a super class *)
+  | SuperClass of Typ.name  (** the method's class or a super class of that is annotated as such *)
+[@@deriving compare]
+
+val find_override_or_superclass_annotated :
+     attrs_of_pname:(BuiltinDecl.t -> ProcAttributes.t option)
+  -> (Annot.Item.t -> bool)
+  -> Tenv.t
+  -> Typ.Procname.t
+  -> annotation_trail option
+(** check if a method's transitive annotations satisfy the given predicate *)
+
+val annotated_as_worker_thread :
+  attrs_of_pname:(Typ.Procname.t -> ProcAttributes.t option) -> Tenv.t -> Typ.Procname.t -> bool
+
+val runs_on_ui_thread :
+  attrs_of_pname:(Typ.Procname.t -> ProcAttributes.t option) -> Tenv.t -> Typ.Procname.t -> bool
+(** is method not transitively annotated @WorkerThread and is modeled or annotated @UIThread or equivalent? *)
+
+val is_modeled_ui_method : Tenv.t -> Typ.Procname.t -> bool
+(** is method a known Android UI thread callback (eg [Activity.onCreate]) *)

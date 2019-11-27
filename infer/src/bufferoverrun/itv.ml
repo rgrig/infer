@@ -1,7 +1,7 @@
 (*
  * Copyright (c) 2016-present, Programming Research Laboratory (ROPAS)
  *                             Seoul National University, Korea
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -18,13 +18,14 @@ module SymbolSet = Symb.SymbolSet
 module ItvRange = struct
   type t = Bounds.NonNegativeBound.t
 
-  let zero : t = Bounds.NonNegativeBound.zero
+  let zero loop_head : t = Bounds.NonNegativeBound.zero loop_head
 
-  let of_bounds : lb:Bound.t -> ub:Bound.t -> t =
-   fun ~lb ~ub ->
-    Bound.plus_u ub Bound.one
-    |> Bound.plus_u (Bound.neg lb)
-    |> Bound.simplify_bound_ends_from_paths |> Bounds.NonNegativeBound.of_bound
+  let of_bounds : loop_head_loc:Location.t -> lb:Bound.t -> ub:Bound.t -> t =
+   fun ~loop_head_loc ~lb ~ub ->
+    Bound.plus_u ~weak:true ub Bound.one
+    |> Bound.plus_u ~weak:true (Bound.neg lb)
+    |> Bound.simplify_min_one |> Bound.simplify_bound_ends_from_paths
+    |> Bounds.NonNegativeBound.of_loop_bound loop_head_loc
 
 
   let to_top_lifted_polynomial : t -> Polynomials.NonNegativePolynomial.t =
@@ -39,20 +40,20 @@ module ItvPure = struct
 
   let ub : t -> Bound.t = snd
 
-  let is_lb_infty : t -> bool = function MInf, _ -> true | _ -> false
+  let is_lb_infty : t -> bool = fun (l, _) -> Bound.is_minf l
 
   let is_finite : t -> bool =
    fun (l, u) ->
-    match (Bound.is_const l, Bound.is_const u) with Some _, Some _ -> true | _, _ -> false
+    match (Bound.get_const l, Bound.get_const u) with Some _, Some _ -> true | _, _ -> false
 
 
   let have_similar_bounds (l1, u1) (l2, u2) = Bound.are_similar l1 l2 && Bound.are_similar u1 u2
 
-  let has_infty = function Bound.MInf, _ | _, Bound.PInf -> true | _, _ -> false
+  let has_infty (l, u) = Bound.is_minf l || Bound.is_pinf u
 
   let exists_str ~f (l, u) = Bound.exists_str ~f l || Bound.exists_str ~f u
 
-  let ( <= ) : lhs:t -> rhs:t -> bool =
+  let leq : lhs:t -> rhs:t -> bool =
    fun ~lhs:(l1, u1) ~rhs:(l2, u2) -> Bound.le l2 l1 && Bound.le u1 u2
 
 
@@ -103,7 +104,7 @@ module ItvPure = struct
    fun ~markup fmt (l, u) ->
     if Bound.equal l u then Bound.pp_mark ~markup fmt l
     else
-      match Bound.is_same_symbol l u with
+      match Bound.get_same_one_symbol l u with
       | Some symbol when Config.bo_debug < 3 ->
           Symb.SymbolPath.pp_mark ~markup fmt symbol
       | _ ->
@@ -120,23 +121,27 @@ module ItvPure = struct
 
   let mone = of_bound Bound.mone
 
-  let zero_255 = (Bound.zero, Bound._255)
+  let zero_255 = (Bound.zero, Bound.z255)
 
-  let m1_255 = (Bound.minus_one, Bound._255)
+  let m1_255 = (Bound.mone, Bound.z255)
 
-  let nat = (Bound.zero, Bound.PInf)
+  let nat = (Bound.zero, Bound.pinf)
 
   let one = of_bound Bound.one
 
-  let pos = (Bound.one, Bound.PInf)
+  let pos = (Bound.one, Bound.pinf)
 
-  let set_lb_zero (_, ub) = (Bound.zero, ub)
+  let set_lb lb (_, ub) = (lb, ub)
 
-  let top = (Bound.MInf, Bound.PInf)
+  let set_lb_zero = set_lb Bound.zero
+
+  let top = (Bound.minf, Bound.pinf)
 
   let zero = of_bound Bound.zero
 
-  let get_iterator_itv (_, u) = (Bound.zero, Bound.plus_u u Bound.mone)
+  let zero_one = (Bound.zero, Bound.one)
+
+  let get_iterator_itv = set_lb_zero
 
   let true_sem = one
 
@@ -144,13 +149,13 @@ module ItvPure = struct
 
   let unknown_bool = join false_sem true_sem
 
-  let is_top : t -> bool = function Bound.MInf, Bound.PInf -> true | _ -> false
+  let is_top : t -> bool = fun (l, u) -> Bound.is_minf l && Bound.is_pinf u
 
-  let is_nat : t -> bool = function l, Bound.PInf -> Bound.is_zero l | _ -> false
+  let is_nat : t -> bool = fun (l, u) -> Bound.is_zero l && Bound.is_pinf u
 
-  let is_const : t -> Z.t option =
+  let get_const : t -> Z.t option =
    fun (l, u) ->
-    match (Bound.is_const l, Bound.is_const u) with
+    match (Bound.get_const l, Bound.get_const u) with
     | (Some n as z), Some m when Z.equal n m ->
         z
     | _, _ ->
@@ -175,7 +180,9 @@ module ItvPure = struct
 
   let is_le_mone : t -> bool = fun (_, ub) -> Bound.le ub Bound.mone
 
-  let range : t -> ItvRange.t = fun (lb, ub) -> ItvRange.of_bounds ~lb ~ub
+  let range : Location.t -> t -> ItvRange.t =
+   fun loop_head_loc (lb, ub) -> ItvRange.of_bounds ~loop_head_loc ~lb ~ub
+
 
   let neg : t -> t =
    fun (l, u) ->
@@ -190,7 +197,9 @@ module ItvPure = struct
 
   let lnot : t -> Boolean.t = fun x -> to_bool x |> Boolean.not_
 
-  let plus : t -> t -> t = fun (l1, u1) (l2, u2) -> (Bound.plus_l l1 l2, Bound.plus_u u1 u2)
+  let plus : t -> t -> t =
+   fun (l1, u1) (l2, u2) -> (Bound.plus_l ~weak:false l1 l2, Bound.plus_u ~weak:false u1 u2)
+
 
   let minus : t -> t -> t = fun i1 i2 -> plus i1 (neg i2)
 
@@ -218,19 +227,37 @@ module ItvPure = struct
     | Some n ->
         if NonZeroInt.is_one n then itv
         else if NonZeroInt.is_minus_one n then neg itv
-        else if NonZeroInt.is_positive n then
-          let l' = Option.value ~default:Bound.MInf (Bound.div_const_l l n) in
-          let u' = Option.value ~default:Bound.PInf (Bound.div_const_u u n) in
-          (l', u')
         else
-          let l' = Option.value ~default:Bound.MInf (Bound.div_const_l u n) in
-          let u' = Option.value ~default:Bound.PInf (Bound.div_const_u l n) in
-          (l', u')
+          let l', u' =
+            if NonZeroInt.is_positive n then (Bound.div_const_l l n, Bound.div_const_u u n)
+            else (Bound.div_const_l u n, Bound.div_const_u l n)
+          in
+          let default_l, default_u =
+            if Bound.(le zero l) then
+              if NonZeroInt.is_positive n then
+                (* if 0<=l<=u and 0<c, 0 <= [l/c, u/c] <= u *)
+                (Bound.zero, u)
+              else (* if 0<=l<=u and c<0, -u <= [u/c, l/c] <= 0 *)
+                (Bound.neg u, Bound.zero)
+            else if Bound.(le u zero) then
+              if NonZeroInt.is_positive n then
+                (* if l<=u<=0 and 0<c, l <= [l/c, u/c] <= 0 *)
+                (l, Bound.zero)
+              else (* if l<=u<=0 and c<0, 0 <= [u/c, l/c] <= -l *)
+                (Bound.zero, Bound.neg l)
+            else if Bound.(le l zero && le zero u) then
+              if NonZeroInt.is_positive n then (* if l<=0<=u and 0<c, l <= [l/c, u/c] <= u *)
+                (l, u)
+              else (* if l<=0<=u and c<0, -u <= [u/c, l/c] <= -l *)
+                (Bound.neg u, Bound.neg l)
+            else (Bound.minf, Bound.pinf)
+          in
+          (Option.value ~default:default_l l', Option.value ~default:default_u u')
 
 
   let mult : t -> t -> t =
    fun x y ->
-    match (is_const x, is_const y) with
+    match (get_const x, get_const y) with
     | _, Some n ->
         mult_const n x
     | Some n, _ ->
@@ -239,30 +266,32 @@ module ItvPure = struct
         top
 
 
-  let div : t -> t -> t = fun x y -> match is_const y with None -> top | Some n -> div_const x n
+  let div : t -> t -> t = fun x y -> match get_const y with None -> top | Some n -> div_const x n
 
   let mod_sem : t -> t -> t =
    fun x y ->
-    match is_const y with
+    match get_const y with
     | None ->
         top
     | Some n when Z.(equal n zero) ->
         x (* x % [0,0] does nothing. *)
     | Some m -> (
-      match is_const x with
+      match get_const x with
       | Some n ->
           of_big_int Z.(n mod m)
       | None ->
           let abs_m = Z.abs m in
-          if is_ge_zero x then (Bound.zero, Bound.of_big_int Z.(abs_m - one))
-          else if is_le_zero x then (Bound.of_big_int Z.(one - abs_m), Bound.zero)
+          if is_ge_zero x then
+            (Bound.zero, Bound.overapprox_min (Bound.of_big_int Z.(abs_m - one)) (ub x))
+          else if is_le_zero x then
+            (Bound.overapprox_max (Bound.of_big_int Z.(one - abs_m)) (lb x), Bound.zero)
           else (Bound.of_big_int Z.(one - abs_m), Bound.of_big_int Z.(abs_m - one)) )
 
 
   (* x << [-1,-1] does nothing. *)
   let shiftlt : t -> t -> t =
    fun x y ->
-    Option.value_map (is_const y) ~default:top ~f:(fun n ->
+    Option.value_map (get_const y) ~default:top ~f:(fun n ->
         match Z.to_int n with
         | n ->
             if n < 0 then x else mult_const Z.(one lsl n) x
@@ -275,7 +304,7 @@ module ItvPure = struct
    fun x y ->
     if is_zero x then x
     else
-      match is_const y with
+      match get_const y with
       | Some n when Z.(leq n zero) ->
           x
       | Some n when Z.(n >= of_int 64) ->
@@ -288,12 +317,14 @@ module ItvPure = struct
 
   let band_sem : t -> t -> t =
    fun x y ->
-    match (is_const x, is_const y) with
+    match (get_const x, get_const y) with
     | Some x', Some y' ->
         if Z.(equal x' y') then x else of_big_int Z.(x' land y')
     | _, _ ->
         if is_ge_zero x && is_ge_zero y then (Bound.zero, Bound.overapprox_min (ub x) (ub y))
-        else if is_le_zero x && is_le_zero y then (Bound.MInf, Bound.overapprox_min (ub x) (ub y))
+        else if is_le_zero x && is_le_zero y then (Bound.minf, Bound.overapprox_min (ub x) (ub y))
+        else if is_ge_zero x then (Bound.zero, ub x)
+        else if is_ge_zero y then (Bound.zero, ub y)
         else top
 
 
@@ -329,16 +360,26 @@ module ItvPure = struct
 
   let lor_sem : t -> t -> Boolean.t = fun x y -> Boolean.or_ (to_bool x) (to_bool y)
 
-  let min_sem : t -> t -> t =
-   fun (l1, u1) (l2, u2) -> (Bound.underapprox_min l1 l2, Bound.overapprox_min u1 u2)
+  let lift_minmax_bound ~use_minmax_bound ~mk ~f x y =
+    let r = f x y in
+    if use_minmax_bound && Bound.is_infty r && Bound.is_not_infty x && Bound.is_not_infty y then
+      mk x y
+    else r
 
 
-  let is_invalid : t -> bool = function
-    | Bound.PInf, _ | _, Bound.MInf ->
-        true
-    | l, u ->
-        Bound.lt u l
+  let min_sem : ?use_minmax_bound:bool -> t -> t -> t =
+   fun ?(use_minmax_bound = false) (l1, u1) (l2, u2) ->
+    let lift = lift_minmax_bound ~use_minmax_bound ~mk:Bound.of_minmax_bound_min in
+    (lift ~f:Bound.underapprox_min l1 l2, lift ~f:Bound.overapprox_min u1 u2)
 
+
+  let max_sem : ?use_minmax_bound:bool -> t -> t -> t =
+   fun ?(use_minmax_bound = false) (l1, u1) (l2, u2) ->
+    let lift = lift_minmax_bound ~use_minmax_bound ~mk:Bound.of_minmax_bound_max in
+    (lift ~f:Bound.underapprox_max l1 l2, lift ~f:Bound.overapprox_max u1 u2)
+
+
+  let is_invalid : t -> bool = fun (l, u) -> Bound.is_pinf l || Bound.is_minf u || Bound.lt u l
 
   let normalize : t -> t bottom_lifted = fun x -> if is_invalid x then Bottom else NonBottom x
 
@@ -390,11 +431,7 @@ module ItvPure = struct
 
   let prune_eq : t -> t -> t bottom_lifted =
    fun x y ->
-    match prune_comp Binop.Le x y with
-    | Bottom ->
-        Bottom
-    | NonBottom x' ->
-        prune_comp Binop.Ge x' y
+    match prune_comp Binop.Le x y with Bottom -> Bottom | NonBottom x' -> prune_comp Binop.Ge x' y
 
 
   let prune_eq_zero : t -> t bottom_lifted =
@@ -412,6 +449,11 @@ module ItvPure = struct
 
   let get_symbols : t -> SymbolSet.t =
    fun (l, u) -> SymbolSet.union (Bound.get_symbols l) (Bound.get_symbols u)
+
+
+  let has_only_non_int_symbols x =
+    let symbols = get_symbols x in
+    (not (SymbolSet.is_empty symbols)) && SymbolSet.for_all Symb.Symbol.is_non_int symbols
 
 
   let make_positive : t -> t =
@@ -433,11 +475,23 @@ module ItvPure = struct
       (b, b)
 
 
-  let of_normal_path ~unsigned = of_path (Bound.of_normal_path ~unsigned)
+  let of_normal_path ~unsigned ?non_int = of_path (Bound.of_normal_path ~unsigned ?non_int)
 
-  let of_offset_path = of_path Bound.of_offset_path
+  let of_offset_path ~is_void = of_path (Bound.of_offset_path ~is_void)
 
-  let of_length_path = of_path Bound.of_length_path
+  let of_length_path ~is_void = of_path (Bound.of_length_path ~is_void)
+
+  let of_modeled_path = of_path Bound.of_modeled_path
+
+  let is_offset_path_of path x =
+    Bound.is_offset_path_of path (lb x) && Bound.is_offset_path_of path (ub x)
+
+
+  let is_length_path_of path x =
+    Bound.is_length_path_of path (lb x) && Bound.is_length_path_of path (ub x)
+
+
+  let has_void_ptr_symb x = Bound.has_void_ptr_symb (lb x) || Bound.has_void_ptr_symb (ub x)
 end
 
 include AbstractDomain.BottomLifted (ItvPure)
@@ -501,6 +555,8 @@ let unknown_bool = NonBottom ItvPure.unknown_bool
 
 let zero = NonBottom ItvPure.zero
 
+let zero_one = NonBottom ItvPure.zero_one
+
 let of_bool = function
   | Boolean.Bottom ->
       bot
@@ -520,15 +576,15 @@ let of_int_lit : IntLit.t -> t = fun n -> of_big_int (IntLit.to_big_int n)
 
 let is_false : t -> bool = function NonBottom x -> ItvPure.is_false x | Bottom -> false
 
-let le : lhs:t -> rhs:t -> bool = ( <= )
+let le : lhs:t -> rhs:t -> bool = leq
 
-let eq : t -> t -> bool = fun x y -> ( <= ) ~lhs:x ~rhs:y && ( <= ) ~lhs:y ~rhs:x
+let eq : t -> t -> bool = fun x y -> leq ~lhs:x ~rhs:y && leq ~lhs:y ~rhs:x
 
-let range : t -> ItvRange.t = function
+let range loop_head : t -> ItvRange.t = function
   | Bottom ->
-      ItvRange.zero
+      ItvRange.zero loop_head
   | NonBottom itv ->
-      ItvPure.range itv
+      ItvPure.range loop_head itv
 
 
 let lift1 : (ItvPure.t -> ItvPure.t) -> t -> t =
@@ -575,11 +631,15 @@ let incr = plus one
 
 let decr x = minus x one
 
+let set_lb lb = lift1 (ItvPure.set_lb lb)
+
 let set_lb_zero = lift1 ItvPure.set_lb_zero
 
 let get_iterator_itv : t -> t = lift1 ItvPure.get_iterator_itv
 
-let is_const : t -> Z.t option = bind1zo ItvPure.is_const
+let get_const : t -> Z.t option = bind1zo ItvPure.get_const
+
+let is_zero = bind1bool ItvPure.is_zero
 
 let is_one = bind1bool ItvPure.is_one
 
@@ -621,7 +681,13 @@ let land_sem : t -> t -> Boolean.t = bind2b ItvPure.land_sem
 
 let lor_sem : t -> t -> Boolean.t = bind2b ItvPure.lor_sem
 
-let min_sem : t -> t -> t = lift2 ItvPure.min_sem
+let min_sem : ?use_minmax_bound:bool -> t -> t -> t =
+ fun ?use_minmax_bound -> lift2 (ItvPure.min_sem ?use_minmax_bound)
+
+
+let max_sem : ?use_minmax_bound:bool -> t -> t -> t =
+ fun ?use_minmax_bound -> lift2 (ItvPure.max_sem ?use_minmax_bound)
+
 
 let prune_eq_zero : t -> t = bind1 ItvPure.prune_eq_zero
 
@@ -630,6 +696,10 @@ let prune_ne_zero : t -> t = bind1 ItvPure.prune_ne_zero
 let prune_ge_one : t -> t = bind1 ItvPure.prune_ge_one
 
 let prune_comp : Binop.t -> t -> t -> t = fun comp -> bind2 (ItvPure.prune_comp comp)
+
+let prune_lt : t -> t -> t = lift2 ItvPure.prune_lt
+
+let prune_le : t -> t -> t = lift2 ItvPure.prune_le
 
 let prune_eq : t -> t -> t = bind2 ItvPure.prune_eq
 
@@ -654,8 +724,18 @@ let max_of_ikind integer_type_widths ikind =
   NonBottom (ItvPure.max_of_ikind integer_type_widths ikind)
 
 
-let of_normal_path ~unsigned path = NonBottom (ItvPure.of_normal_path ~unsigned path)
+let of_normal_path ~unsigned ?non_int path =
+  NonBottom (ItvPure.of_normal_path ~unsigned ?non_int path)
 
-let of_offset_path path = NonBottom (ItvPure.of_offset_path path)
 
-let of_length_path path = NonBottom (ItvPure.of_length_path path)
+let of_offset_path ~is_void path = NonBottom (ItvPure.of_offset_path ~is_void path)
+
+let of_length_path ~is_void path = NonBottom (ItvPure.of_length_path ~is_void path)
+
+let of_modeled_path path = NonBottom (ItvPure.of_modeled_path path)
+
+let is_offset_path_of path = bind1_gen ~bot:false (ItvPure.is_offset_path_of path)
+
+let is_length_path_of path = bind1_gen ~bot:false (ItvPure.is_length_path_of path)
+
+let has_only_non_int_symbols = bind1bool ItvPure.has_only_non_int_symbols

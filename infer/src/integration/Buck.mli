@@ -1,11 +1,19 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
+
+val buck_config : string list Lazy.t
+
+val parse_command_and_targets :
+     filter_kind:[< `Yes | `No | `Auto]
+  -> dep_depth:int option option
+  -> string list
+  -> string * string list * string list
 
 type flavored_arguments = {command: string; rev_not_targets: string list; targets: string list}
 

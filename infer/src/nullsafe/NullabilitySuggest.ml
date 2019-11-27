@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -16,11 +16,11 @@ module UseDefChain = struct
     | NullDefAssign of (Location.t * AccessPath.t)
   [@@deriving compare]
 
-  let ( <= ) ~lhs ~rhs = compare lhs rhs <= 0
+  let leq ~lhs ~rhs = compare lhs rhs <= 0
 
   (* Keep only one chain in join/widen as we are going to report only one
    * trace to the user eventually. *)
-  let join lhs rhs = if ( <= ) ~lhs ~rhs then rhs else lhs
+  let join lhs rhs = if leq ~lhs ~rhs then rhs else lhs
 
   let widen ~prev ~next ~num_iters:_ = join prev next
 
@@ -70,8 +70,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         match Domain.find ap astate with
         | UseDefChain.NullDefCompare _ ->
             (* Stop NullDefCompare from propagating here because we want to prevent
-                 * the checker from suggesting @Nullable on y in the following case:
-                 * if (x == null) ... else { y = x; } *)
+             * the checker from suggesting @Nullable on y in the following case:
+             * if (x == null) ... else { y = x; } *)
             None
         | _ ->
             Some (UseDefChain.DependsOn (loc, ap))
@@ -112,7 +112,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           | None ->
               astate
         else astate
-    | ExitScope _ ->
+    | Metadata _ ->
         astate
 
 
@@ -159,7 +159,7 @@ let make_error_trace astate ap ud =
 
 
 let pretty_field_name proc_data field_name =
-  match Procdesc.get_proc_name proc_data.ProcData.pdesc with
+  match Summary.get_proc_name proc_data.ProcData.summary with
   | Typ.Procname.Java jproc_name ->
       let proc_class_name = Typ.Procname.Java.get_class_name jproc_name in
       let field_class_name = Typ.Fieldname.Java.get_class field_name in
@@ -179,14 +179,25 @@ let is_outside_codebase proc_name field_name =
       false
 
 
-let checker {Callbacks.summary; proc_desc; tenv} =
+let checker {Callbacks.summary; exe_env} =
+  let proc_desc = Summary.get_proc_desc summary in
   let proc_name = Procdesc.get_proc_name proc_desc in
+  let tenv = Exe_env.get_tenv exe_env proc_name in
   let annotation = Localise.nullable_annotation_name proc_name in
   let report astate (proc_data : extras ProcData.t) =
     let report_access_path ap udchain =
       match AccessPath.get_field_and_annotation ap proc_data.tenv with
       | Some (field_name, _) when is_outside_codebase proc_name field_name ->
-          (* Skip reporting when the field is outside the analyzed codebase *)
+          (* Skip reporting when the field is outside the analyzed codebase.
+             Note that we do similar filtering on high level which is common
+             for all checkers.
+             But this one is different: here we look NOT at the function
+             to be reported (the one that is using the field), but the root
+             cause (the field with the wrong annotation itself).
+             NOTE: Ideally we'd like to support such filtering in the way that
+             is agnostic to particular checker, but it is not trivial to
+             do, so let's do it in ad hoc way.
+          *)
           ()
       | Some (field_name, _) when Typ.Fieldname.Java.is_captured_parameter field_name ->
           (* Skip reporting when field comes from generated code *)
@@ -210,14 +221,13 @@ let checker {Callbacks.summary; proc_desc; tenv} =
     in
     Domain.iter report_access_path astate
   in
-  let proc_name = Procdesc.get_proc_name proc_desc in
   if AndroidFramework.is_destroy_method proc_name then
     (* Skip the fields nullified in Fragment onDestroy and onDestroyView *)
     summary
   else
     (* Assume all fields are not null in the beginning *)
     let initial = Domain.empty in
-    let proc_data = ProcData.make_default proc_desc tenv in
+    let proc_data = ProcData.make_default summary tenv in
     ( match Analyzer.compute_post proc_data ~initial with
     | Some post ->
         report post proc_data

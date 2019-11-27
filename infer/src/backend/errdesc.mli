@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -87,8 +87,7 @@ val explain_dereference_as_caller_expression :
 (** return a description explaining value [exp] in [prop] in terms of a source expression
     using the formal parameters of the call *)
 
-val explain_divide_by_zero :
-  Tenv.t -> Exp.t -> Procdesc.Node.t -> Location.t -> Localise.error_desc
+val explain_divide_by_zero : Tenv.t -> Exp.t -> Procdesc.Node.t -> Location.t -> Localise.error_desc
 (** explain a division by zero *)
 
 val explain_condition_always_true_false :

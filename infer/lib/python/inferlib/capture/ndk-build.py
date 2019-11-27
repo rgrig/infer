@@ -1,4 +1,4 @@
-# Copyright (c) 2016-present, Facebook, Inc.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -29,8 +29,13 @@ create_argparser = util.base_argparser(MODULE_DESCRIPTION, MODULE_NAME)
 
 class NdkBuildCapture():
     def __init__(self, args, cmd):
-        cmd = [cmd[0], 'NDK_TOOLCHAIN_VERSION=clang', 'TARGET_CC=clang',
-               'TARGET_CXX=clang++', 'TARGET_LD=ld'] + cmd[1:]
+        cmd = [
+            cmd[0],
+            'NDK_TOOLCHAIN_VERSION=clang',
+            'TARGET_CC=clang',
+            'TARGET_CXX=clang',
+            'TARGET_LD=ld',
+        ] + cmd[1:]
         self.args = args
         self.cmd = cmd
         command_name = os.path.basename(cmd[0])

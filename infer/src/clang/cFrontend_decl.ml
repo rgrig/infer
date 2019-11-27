@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -12,36 +12,10 @@ module F = Format
 
 module L = Logging
 
-let protect ~f ~recover ~pp_context (trans_unit_ctx : CFrontend_config.translation_unit_context) =
-  let log_and_recover ~print fmt =
-    recover () ;
-    incr CFrontend_config.procedures_failed ;
-    (if print then L.internal_error else L.(debug Capture Quiet)) ("%a@\n" ^^ fmt) pp_context ()
-  in
-  try f () with
-  (* Always keep going in case of known limitations of the frontend, crash otherwise (by not
-       catching the exception) unless `--keep-going` was passed. Print errors we should fix
-       (t21762295) to the console. *)
-  | CFrontend_config.Unimplemented e ->
-      ClangLogging.log_caught_exception trans_unit_ctx "Unimplemented" e.position e.source_range
-        e.ast_node ;
-      log_and_recover ~print:false "Unimplemented feature:@\n  %s@\n" e.msg
-  | CFrontend_config.IncorrectAssumption e ->
-      (* FIXME(t21762295): we do not expect this to happen but it does *)
-      ClangLogging.log_caught_exception trans_unit_ctx "IncorrectAssumption" e.position
-        e.source_range e.ast_node ;
-      log_and_recover ~print:true "Known incorrect assumption in the frontend: %s@\n" e.msg
-  | exn ->
-      let trace = Backtrace.get () in
-      IExn.reraise_if exn ~f:(fun () ->
-          L.internal_error "%a: %a@\n%!" pp_context () Exn.pp exn ;
-          not Config.keep_going ) ;
-      log_and_recover ~print:true "Frontend error: %a@\nBacktrace:@\n%s" Exn.pp exn
-        (Backtrace.to_string trace)
-
-
 module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFrontend = struct
-  let model_exists procname = (not Config.models_mode) && Summary.has_model procname
+  let model_exists procname =
+    (not Config.biabduction_models_mode) && Summary.OnDisk.has_model procname
+
 
   (** Translates the method/function's body into nodes of the cfg. *)
   let add_method ?(is_destructor_wrapper = false) trans_unit_ctx tenv cfg class_decl_opt procname
@@ -50,6 +24,7 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
       "@\n@\n>>---------- ADDING METHOD: '%a' ---------<<@\n@\n" Typ.Procname.pp procname ;
     incr CFrontend_config.procedures_attempted ;
     let recover () =
+      incr CFrontend_config.procedures_failed ;
       Typ.Procname.Hash.remove cfg procname ;
       let method_kind = ms.CMethodSignature.method_kind in
       CMethod_trans.create_external_procdesc trans_unit_ctx cfg procname method_kind None
@@ -61,20 +36,20 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
     let f () =
       match Typ.Procname.Hash.find cfg procname with
       | procdesc when Procdesc.is_defined procdesc && not (model_exists procname) -> (
-          let vars_to_destroy = CTrans_utils.Scope.compute_vars_to_destroy body in
-          let context =
-            CContext.create_context trans_unit_ctx tenv cfg procdesc class_decl_opt
-              has_return_param outer_context_opt vars_to_destroy
-          in
-          let start_node = Procdesc.get_start_node procdesc in
-          let exit_node = Procdesc.get_exit_node procdesc in
           L.(debug Capture Verbose)
             "@\n@\n>>---------- Start translating body of function: '%s' ---------<<@\n@."
             (Typ.Procname.to_string procname) ;
+          let vars_to_destroy = CScope.Variables.compute_vars_to_destroy_map body in
+          let context =
+            CContext.create_context trans_unit_ctx tenv cfg procdesc class_decl_opt has_return_param
+              outer_context_opt vars_to_destroy
+          in
+          let start_node = Procdesc.get_start_node procdesc in
+          let exit_node = Procdesc.get_exit_node procdesc in
           let meth_body_nodes =
             T.instructions_trans context body extra_instrs exit_node ~is_destructor_wrapper
           in
-          Procdesc.node_set_succs_exn procdesc start_node meth_body_nodes [] ;
+          Procdesc.node_set_succs procdesc start_node ~normal:meth_body_nodes ~exn:[] ;
           match Procdesc.is_connected procdesc with
           | Ok () ->
               ()
@@ -88,7 +63,7 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
       | exception Caml.Not_found ->
           ()
     in
-    protect ~f ~recover ~pp_context trans_unit_ctx
+    CFrontend_errors.protect ~f ~recover ~pp_context trans_unit_ctx
 
 
   let function_decl trans_unit_ctx tenv cfg func_decl block_data_opt =
@@ -120,7 +95,7 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
               return_param_typ_opt outer_context_opt extra_instrs
       | None ->
           ()
-    with CFrontend_config.IncorrectAssumption e ->
+    with CFrontend_errors.IncorrectAssumption e ->
       ClangLogging.log_caught_exception trans_unit_ctx "IncorrectAssumption" e.position
         e.source_range e.ast_node
 
@@ -168,7 +143,7 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
             ignore
               (CMethod_trans.create_local_procdesc ~set_objc_accessor_attr trans_unit_ctx cfg tenv
                  ms [] [])
-    with CFrontend_config.IncorrectAssumption e ->
+    with CFrontend_errors.IncorrectAssumption e ->
       ClangLogging.log_caught_exception trans_unit_ctx "IncorrectAssumption" e.position
         e.source_range e.ast_node
 
@@ -264,6 +239,7 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
     | IndirectFieldDecl _
     | OMPDeclareReductionDecl _
     | UnresolvedUsingValueDecl _
+    | OMPRequiresDecl _
     | OMPThreadPrivateDecl _
     | PragmaCommentDecl _
     | PragmaDetectMismatchDecl _
@@ -285,9 +261,7 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
     let method_matcher =
       QualifiedCppName.Match.of_fuzzy_qual_names Config.whitelisted_cpp_methods
     in
-    let class_matcher =
-      QualifiedCppName.Match.of_fuzzy_qual_names Config.whitelisted_cpp_classes
-    in
+    let class_matcher = QualifiedCppName.Match.of_fuzzy_qual_names Config.whitelisted_cpp_classes in
     fun qual_name ->
       (* either the method is explictely whitelisted, or the whole class is whitelisted *)
       QualifiedCppName.Match.match_qualifiers method_matcher qual_name
@@ -402,10 +376,10 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
         when String.is_prefix ~prefix:"__infer_" named_decl_info.ni_name
              || (vdi_is_global && Option.is_some vdi_init_expr) ->
           (* create a fake procedure that initializes the global variable so that the variable
-              initializer can be analyzed by the backend (eg, the SIOF checker) *)
+             initializer can be analyzed by the backend (eg, the SIOF checker) *)
           let procname =
             (* create the corresponding global variable to get the right pname for its
-                initializer *)
+               initializer *)
             let global =
               CGeneral_utils.mk_sil_global_var trans_unit_ctx decl_info named_decl_info vdi qt
             in
@@ -417,15 +391,14 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
               decl_info.Clang_ast_t.di_source_range ClangMethodKind.C_FUNCTION None None None `None
           in
           let stmt_info =
-            { si_pointer= CAst_utils.get_fresh_pointer ()
-            ; si_source_range= decl_info.di_source_range }
+            {si_pointer= CAst_utils.get_fresh_pointer (); si_source_range= decl_info.di_source_range}
           in
           let body = Clang_ast_t.DeclStmt (stmt_info, [], [dec]) in
           ignore (CMethod_trans.create_local_procdesc trans_unit_ctx cfg tenv ms [body] []) ;
           add_method trans_unit_ctx tenv cfg CContext.ContextNoCls procname body ms None None []
       (* Note that C and C++ records are treated the same way
-          Skip translating implicit struct declarations, unless they have
-          full definition (which happens with C++ lambdas) *)
+         Skip translating implicit struct declarations, unless they have
+         full definition (which happens with C++ lambdas) *)
       | ClassTemplateSpecializationDecl (di, _, _, decl_list, _, _, rdi, _, _, _)
       | CXXRecordDecl (di, _, _, decl_list, _, _, rdi, _)
       | RecordDecl (di, _, _, decl_list, _, _, rdi)
@@ -443,12 +416,12 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
           in
           let method_decls, no_method_decls = List.partition_tf ~f:is_method_decl decl_list in
           List.iter ~f:translate no_method_decls ;
-          protect
+          CFrontend_errors.protect
             ~f:(fun () -> ignore (CType_decl.add_types_from_decl_to_tenv tenv dec))
-            ~recover:Fn.id
+            ~recover:(fun () -> ())
             ~pp_context:(fun fmt () ->
               F.fprintf fmt "Error adding types from decl '%a'"
-                (Pp.to_string ~f:Clang_ast_j.string_of_decl)
+                (Pp.of_string ~f:Clang_ast_j.string_of_decl)
                 dec )
             trans_unit_ctx ;
           List.iter ~f:translate method_decls

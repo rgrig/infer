@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -27,7 +27,7 @@ ReferenceWrapperHeap getwrapperHeap() {
             // destructor of WrapsB
 }
 
-int FN_reference_wrapper_heap_bad() {
+int reference_wrapper_heap_bad() {
   ReferenceWrapperHeap rw = getwrapperHeap();
   return rw.b->f; // we want to report use after lifetime bug here
 }
@@ -42,7 +42,7 @@ ReferenceWrapperStack getwrapperStack() {
   return b;
 }
 
-int FN_reference_wrapper_stack_bad() {
+int reference_wrapper_stack_bad() {
   ReferenceWrapperStack rw = getwrapperStack();
   return rw.b->f; // we want to report use after lifetime bug here
 }

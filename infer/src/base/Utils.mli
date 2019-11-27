@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -50,22 +50,35 @@ val directory_iter : (string -> unit) -> string -> unit
 val directory_is_empty : string -> bool
 (** Returns true if a given directory is empty. The directory is assumed to exist. *)
 
-val read_json_file : string -> (Yojson.Basic.json, string) Result.t
+val read_json_file : string -> (Yojson.Basic.t, string) Result.t
 
 val with_file_in : string -> f:(In_channel.t -> 'a) -> 'a
 
 val with_file_out : string -> f:(Out_channel.t -> 'a) -> 'a
 
+type file_lock =
+  { file: string
+  ; oc: Pervasives.out_channel
+  ; fd: Core.Unix.File_descr.t
+  ; lock: unit -> unit
+  ; unlock: unit -> unit }
+
+val create_file_lock : unit -> file_lock
+
+val with_file_lock : file_lock:file_lock -> f:(unit -> 'a) -> 'a
+
 val with_intermediate_temp_file_out : string -> f:(Out_channel.t -> 'a) -> 'a
 (** like [with_file_out] but uses a fresh intermediate temporary file and rename to avoid write-write races *)
 
-val write_json_to_file : string -> Yojson.Basic.json -> unit
+val write_json_to_file : string -> Yojson.Basic.t -> unit
 
 val consume_in : In_channel.t -> unit
 (** consume and ignore all the lines from the channel until End_of_file is reached *)
 
 val echo_in : In_channel.t -> unit
 (** echo the lines we get to stdout until End_of_file is reached *)
+
+val with_channel_in : f:(string -> unit) -> In_channel.t -> unit
 
 val with_process_in : string -> (In_channel.t -> 'a) -> 'a * Unix.Exit_or_signal.t
 
@@ -96,10 +109,6 @@ val compare_versions : string -> string -> int
     -1 if v1 is older than v2 and 0 if they are the same version.
     The versions are strings of the shape "n.m.t", the order is lexicographic. *)
 
-val write_file_with_locking : ?delete:bool -> f:(Out_channel.t -> unit) -> string -> unit
-(** Lock file passed as argument and write into it using [f]. If [delete] then the file is unlinked
-    once this is done. *)
-
 val rmtree : string -> unit
 (** [rmtree path] removes [path] and, if [path] is a directory, recursively removes its contents *)
 
@@ -117,3 +126,35 @@ val strip_balanced_once : drop:(char -> bool) -> string -> string
 (** drop at most one layer of well-balanced first and last characters satisfying [drop] from the
    string; for instance, [strip_balanced ~drop:(function | 'a' | 'x' -> true | _ -> false) "xaabax"]
    returns "aaba" *)
+
+val assoc_of_yojson : Yojson.Basic.t -> src:string -> (string, Yojson.Basic.t) List.Assoc.t
+(** Verify we have a json object (or empty list) and return the corresponding assoc list.  Otherwise die with a message including src. *)
+
+val string_of_yojson : Yojson.Basic.t -> src:string -> string
+(** Verify we have a json string and return the corresponding ocaml string.  Otherwise die with a message including src. *)
+
+val string_list_of_yojson : Yojson.Basic.t -> src:string -> string list
+(** Verify we have a json list of strings and return the corresponding ocaml string list.  Otherwise die with a message including src. *)
+
+val yojson_lookup :
+     (string, Yojson.Basic.t) List.Assoc.t
+  -> string
+  -> src:string
+  -> f:(Yojson.Basic.t -> src:string -> 'a)
+  -> default:'a
+  -> 'a
+(** Lookup a json value on an assoc list.  If not present, returns default.  Otherwise returns (f json_value ~src) where src has element name appended. f is typically one of the above _of_yojson functions. *)
+
+val timeit : f:(unit -> 'a) -> 'a * int
+(** Returns the execution time of [f] in milliseconds together with its result *)
+
+val do_in_dir : dir:string -> f:(unit -> 'a) -> 'a
+(** executes [f] after cding into [dir] and then restores original cwd *)
+
+val get_available_memory_MB : unit -> int option
+(** On Linux systems, return [Some x] where [MemAvailable x] is in [/proc/meminfo].
+    Returns [None] in all other cases. *)
+
+val iter_infer_deps : project_root:string -> f:(string -> unit) -> string -> unit
+(** Parse each line of the given infer_deps.txt file (split on tabs, assume 3 elements per line) 
+    and run [f] on the third element.  [project_root] is an argument to avoid dependency cycles. *)

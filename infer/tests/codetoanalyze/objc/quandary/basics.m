@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -15,7 +15,7 @@
 + (void)notASink:(NSObject*)param;
 @end
 
-void callSinkDirectBad() {
+void FN_callSinkDirectBad() {
   NSObject* source = [InferTaint source];
   [InferTaint sink:source];
 }

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -29,11 +29,7 @@ let pp_loc_trace fmt l = PrettyPrintable.pp_collection ~pp_item:pp_loc_trace_ele
 
 let contains_exception loc_trace_elem =
   let pred nt =
-    match nt with
-    | Exception _ ->
-        true
-    | Condition _ | Procedure_start _ | Procedure_end _ ->
-        false
+    match nt with Exception _ -> true | Condition _ | Procedure_start _ | Procedure_end _ -> false
   in
   List.exists ~f:pred loc_trace_elem.lt_node_tags
 
@@ -101,8 +97,8 @@ type err_data =
   ; linters_def_file: string option
   ; doc_url: string option
   ; access: string option
-  ; extras: Jsonbug_t.extra option
-  (* NOTE: Please consider adding new fields as part of extras *) }
+  ; extras: Jsonbug_t.extra option (* NOTE: Please consider adding new fields as part of extras *)
+  }
 
 let compare_err_data err_data1 err_data2 = Location.compare err_data1.loc err_data2.loc
 

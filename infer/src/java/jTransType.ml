@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -51,23 +51,7 @@ let cast_type = function
       Typ.mk (Typ.Tint Typ.IShort)
 
 
-let const_type const =
-  match const with
-  | `String _ ->
-      JBasics.TObject (JBasics.TClass (JBasics.make_cn JConfig.string_cl))
-  | `Class _ ->
-      JBasics.TObject (JBasics.TClass (JBasics.make_cn JConfig.class_cl))
-  | `Double _ ->
-      JBasics.TBasic `Double
-  | `Int _ ->
-      JBasics.TBasic `Int
-  | `Float _ ->
-      JBasics.TBasic `Float
-  | `Long _ ->
-      JBasics.TBasic `Long
-  | `ANull ->
-      JConfig.obj_type
-
+let const_type const = JBir.type_of_expr (JBir.Const const)
 
 let typename_of_classname cn = Typ.Name.Java.from_string (JBasics.cn_name cn)
 
@@ -287,16 +271,14 @@ let add_model_fields program classpath_fields cn =
   try
     match JBasics.ClassMap.find cn (JClasspath.get_models program) with
     | Javalib.JClass _ as jclass ->
-        Javalib.cf_fold
-          (collect_models_class_fields classpath_field_map cn)
-          jclass classpath_fields
+        Javalib.cf_fold (collect_models_class_fields classpath_field_map cn) jclass classpath_fields
     | _ ->
         classpath_fields
   with Caml.Not_found -> classpath_fields
 
 
 let rec get_method_procname program tenv cn ms method_kind =
-  let _ : Typ.Struct.t = get_class_struct_typ program tenv cn in
+  let (_ : Typ.Struct.t) = get_class_struct_typ program tenv cn in
   let return_type_name, method_name, args_type_name = method_signature_names ms in
   let class_name = Typ.Name.Java.from_string (JBasics.cn_name cn) in
   let proc_name_java =
@@ -357,17 +339,15 @@ and get_class_struct_typ =
     | Some struct_typ ->
         struct_typ
     | None when JBasics.ClassSet.mem cn !seen ->
-        Tenv.mk_struct tenv name
+        Tenv.mk_struct ~dummy:true tenv name
     | None -> (
         seen := JBasics.ClassSet.add cn !seen ;
         match JClasspath.lookup_node cn program with
         | None ->
-            Tenv.mk_struct tenv name
+            Tenv.mk_struct ~dummy:true tenv name
         | Some node ->
             let create_super_list interface_names =
-              List.iter
-                ~f:(fun cn -> ignore (get_class_struct_typ program tenv cn))
-                interface_names ;
+              List.iter ~f:(fun cn -> ignore (get_class_struct_typ program tenv cn)) interface_names ;
               List.map ~f:typename_of_classname interface_names
             in
             let supers, fields, statics, annots =

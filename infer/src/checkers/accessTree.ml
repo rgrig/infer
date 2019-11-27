@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -16,7 +16,8 @@ module type S = sig
   module BaseMap = AccessPath.BaseMap
 
   type node = TraceDomain.t * tree
- and tree = Subtree of node AccessMap.t | Star
+
+  and tree = Subtree of node AccessMap.t | Star
 
   include AbstractDomain.WithBottom with type t = node BaseMap.t
 
@@ -176,7 +177,7 @@ module Make (TraceDomain : AbstractDomain.WithBottom) (Config : Config) = struct
   let rec access_tree_lteq ((lhs_trace, lhs_tree) as lhs) ((rhs_trace, rhs_tree) as rhs) =
     if phys_equal lhs rhs then true
     else
-      TraceDomain.( <= ) ~lhs:lhs_trace ~rhs:rhs_trace
+      TraceDomain.leq ~lhs:lhs_trace ~rhs:rhs_trace
       &&
       match (lhs_tree, rhs_tree) with
       | Subtree lhs_subtree, Subtree rhs_subtree ->
@@ -193,7 +194,7 @@ module Make (TraceDomain : AbstractDomain.WithBottom) (Config : Config) = struct
           false
 
 
-  let ( <= ) ~lhs ~rhs =
+  let leq ~lhs ~rhs =
     if phys_equal lhs rhs then true
     else
       BaseMap.for_all
@@ -295,9 +296,9 @@ module Make (TraceDomain : AbstractDomain.WithBottom) (Config : Config) = struct
                 try AccessMap.find access subtree with Caml.Not_found -> empty_normal_leaf
               in
               (* once we encounter a subtree rooted in an array access, we have to do weak updates in
-               the entire subtree. the reason: if I do x[i].f.g = <interesting trace>, then
-               x[j].f.g = <empty trace>, I don't want to overwrite <interesting trace>. instead, I
-               should get <interesting trace> |_| <empty trace> *)
+                 the entire subtree. the reason: if I do x[i].f.g = <interesting trace>, then
+                 x[j].f.g = <empty trace>, I don't want to overwrite <interesting trace>. instead, I
+                 should get <interesting trace> |_| <empty trace> *)
               let seen_array_access =
                 seen_array_access
                 ||
@@ -321,7 +322,8 @@ module Make (TraceDomain : AbstractDomain.WithBottom) (Config : Config) = struct
     let base, accesses = AccessPath.Abs.extract ap in
     let is_exact = AccessPath.Abs.is_exact ap in
     let base_node =
-      try BaseMap.find base tree with Caml.Not_found ->
+      try BaseMap.find base tree
+      with Caml.Not_found ->
         (* note: we interpret max_depth <= 0 as max_depth = 1 *)
         if Config.max_depth > 1 then empty_normal_leaf else empty_starred_leaf
     in

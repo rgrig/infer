@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,107 +9,17 @@ package codetoanalyze.java.litho;
 
 import com.facebook.litho.Column;
 import com.facebook.litho.Component;
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
-
-enum ResType {
-  SOME,
-  NONE
-}
-
-@Target({ElementType.PARAMETER, ElementType.FIELD})
-@Retention(RetentionPolicy.CLASS)
-@interface Prop {
-  ResType resType() default ResType.NONE;
-
-  boolean optional() default false;
-}
-
-class MyComponent extends Component {
-  @Prop Object prop1; // implicitly non-optional
-
-  @Prop(optional = true)
-  Object prop2; // explicitly optional
-
-  @Prop(optional = false)
-  Object prop3; // explicitly non-optional
-
-  Object nonProp;
-
-  public Builder create() {
-    return new Builder();
-  }
-
-  static class Builder extends Component.Builder {
-    MyComponent mMyComponent;
-
-    public Builder prop1(Object o) {
-      this.mMyComponent.prop1 = o;
-      return this;
-    }
-
-    public Builder prop2(Object o) {
-      this.mMyComponent.prop2 = o;
-      return this;
-    }
-
-    public Builder prop3(Object o) {
-      this.mMyComponent.prop3 = o;
-      return this;
-    }
-
-    public MyComponent build() {
-      return mMyComponent;
-    }
-  }
-}
-
-/**
- * using @Prop(resType = ..) allows you to set the Prop with any of .propname, .propnameRes, or
- * .propnameAttr
- */
-class ResPropComponent extends Component {
-
-  @Prop(resType = ResType.SOME)
-  Object prop; // implicitly non-optional with resType
-
-  public Builder create() {
-    return new Builder();
-  }
-
-  static class Builder extends Component.Builder {
-
-    ResPropComponent mResPropComponent;
-
-    public Builder prop(Object o) {
-      this.mResPropComponent.prop = o;
-      return this;
-    }
-
-    public Builder propRes(Object o) {
-      this.mResPropComponent.prop = o;
-      return this;
-    }
-
-    public Builder propAttr(Object o) {
-      this.mResPropComponent.prop = o;
-      return this;
-    }
-
-    public ResPropComponent build() {
-      return mResPropComponent;
-    }
-  }
-}
+import com.facebook.litho.MyLithoComponent;
+import java.util.ArrayList;
 
 public class RequiredProps {
 
   public MyComponent mMyComponent;
+  public MyLithoComponent mMyLithoComponent;
   public ResPropComponent mResPropComponent;
+  public VarArgPropComponent mVarArgPropComponent;
 
-  public MyComponent buildWithAllOk() {
+  public Component buildWithAllOk() {
     return mMyComponent
         .create()
         .prop1(new Object())
@@ -119,18 +29,27 @@ public class RequiredProps {
   }
 
   // prop 2 is optional
-  public MyComponent buildWithout2Ok() {
+  public Component buildWithout2Ok() {
     return mMyComponent.create().prop1(new Object()).prop3(new Object()).build();
   }
 
   // prop 1 is required
-  public MyComponent buildWithout1Bad() {
+  public Component buildWithout1Bad() {
     return mMyComponent.create().prop2(new Object()).prop3(new Object()).build();
   }
 
   // prop3 is required
-  public MyComponent buildWithout3Bad() {
+  public Component buildWithout3Bad() {
     return mMyComponent.create().prop1(new Object()).prop2(new Object()).build();
+  }
+
+  public Component buildWithCommonPropOk() {
+    return mMyComponent
+        .create()
+        .prop1(new Object())
+        .commonProp(new Object())
+        .prop3(new Object())
+        .build();
   }
 
   private static MyComponent.Builder setProp1(MyComponent.Builder builder) {
@@ -141,19 +60,19 @@ public class RequiredProps {
     return builder.prop3(new Object());
   }
 
-  public MyComponent setProp1InCalleeOk() {
+  public Component setProp1InCalleeOk() {
     return setProp1(mMyComponent.create().prop2(new Object())).prop3(new Object()).build();
   }
 
-  public MyComponent setProp3InCalleeOk() {
+  public Component setProp3InCalleeOk() {
     return setProp3(mMyComponent.create().prop1(new Object()).prop2(new Object())).build();
   }
 
-  public MyComponent setProp3InCalleeButForgetProp1Bad() {
+  public Component setProp3InCalleeButForgetProp1Bad() {
     return setProp3(mMyComponent.create()).prop2(new Object()).build();
   }
 
-  public MyComponent setRequiredOnOneBranchBad(boolean b) {
+  public Component setRequiredOnOneBranchBad(boolean b) {
     MyComponent.Builder builder = mMyComponent.create();
     if (b) {
       builder = builder.prop1(new Object());
@@ -161,7 +80,7 @@ public class RequiredProps {
     return builder.prop2(new Object()).prop3(new Object()).build();
   }
 
-  public MyComponent FP_setRequiredOnBothBranchesOk(boolean b) {
+  public Component setRequiredOnBothBranchesOk_FP(boolean b) {
     MyComponent.Builder builder = mMyComponent.create();
     if (b) {
       builder = builder.prop1(new Object());
@@ -171,19 +90,72 @@ public class RequiredProps {
     return builder.prop2(new Object()).prop3(new Object()).build();
   }
 
+  // current domain can't handle implicit calls like this
+  public Component setRequiredOnBothBranchesNoAssignOk_FP(boolean b) {
+    MyComponent.Builder builder = mMyComponent.create();
+    if (b) {
+      builder.prop1(new Object());
+    } else {
+      builder.prop1(new Object());
+    }
+    return builder.prop2(new Object()).prop3(new Object()).build();
+  }
+
+  // gets confused at cyclic dependency to builder when setting prop1
+  public Component setRequiredOk_FP(boolean b) {
+    MyComponent.Builder builder = mMyComponent.create();
+    builder = builder.prop1(new Object());
+    return builder.prop2(new Object()).prop3(new Object()).build();
+  }
+
+  // due to mutual recursion check, we break cycle at seen props
+  public Component doubleSetMissingBad_FN() {
+    Component.Builder builder =
+        mMyComponent.create().commonProp(new Object()).prop3(new Object()).commonProp(new Object());
+    return builder.build();
+  }
+
+  // due to mutual recursion check, we break cycle at seen props
+  public Component doubleSetCommonOk() {
+    Component.Builder builder =
+        mMyComponent
+            .create()
+            .prop1(new Object())
+            .commonProp(new Object())
+            .prop3(new Object())
+            .commonProp(new Object());
+    return builder.build();
+  }
+
+  // only missing prop3
+  public Component setRequiredOnBothBranchesMissingProp3Bad(boolean b) {
+    MyComponent.Builder builder = mMyComponent.create();
+    if (b) {
+      builder.prop1(new Object());
+    } else {
+      builder.prop1(new Object());
+    }
+    return builder.prop2(new Object()).build();
+  }
+
   // don't want to report here; want to report at clients that don't pass prop1
   private MyComponent buildSuffix(MyComponent.Builder builder) {
     return builder.prop2(new Object()).prop3(new Object()).build();
   }
 
   // shouldn't report here; prop 1 passed
-  public MyComponent callBuildSuffixWithRequiredOk() {
+  public Component callBuildSuffixWithRequiredOk() {
     return buildSuffix(mMyComponent.create().prop1(new Object()));
   }
 
   // should report here; forgot prop 1
-  public MyComponent callBuildSuffixWithoutRequiredBad() {
+  public Component callBuildSuffixWithoutRequiredBad() {
     return buildSuffix(mMyComponent.create());
+  }
+
+  public Object generalTypeWithout2Ok() {
+    Component.Builder builder = mMyComponent.create().prop1(new Object()).prop3(new Object());
+    return builder.build();
   }
 
   public Object generalTypeForgot3Bad() {
@@ -196,9 +168,15 @@ public class RequiredProps {
 
   public void buildWithColumnChildBad() {
     Column.Builder builder = Column.create();
-    MyComponent.Builder childBuilder = mMyComponent.create().prop1(new Object());
+    Component.Builder childBuilder = mMyComponent.create().prop1(new Object());
     // forgot prop 3, and builder.child() will invoke build() on childBuilder
     builder.child(childBuilder);
+  }
+
+  public Component buildWithColumnChildOk() {
+    return Column.create()
+        .child(mMyComponent.create().prop1(new Object()).prop3(new Object()))
+        .build();
   }
 
   public void buildPropResWithNormalOk() {
@@ -213,7 +191,92 @@ public class RequiredProps {
     mResPropComponent.create().propAttr(new Object()).build();
   }
 
+  public void buildPropResWithDipOk() {
+    mResPropComponent.create().propDip(new Object()).build();
+  }
+
+  public void buildPropResWithPxOk() {
+    mResPropComponent.create().propPx(new Object()).build();
+  }
+
+  public void buildPropResWithSpOk() {
+    mResPropComponent.create().propSp(new Object()).build();
+  }
+
   public void buildPropResMissingBad() {
     mResPropComponent.create().build();
+  }
+
+  public void buildPropVarArgNormalOk() {
+    mVarArgPropComponent.create().props(new ArrayList<Object>()).build();
+  }
+
+  public void buildPropVarArgElementOk() {
+    mVarArgPropComponent.create().prop(new Object()).build();
+  }
+
+  public void buildPropVarArgAttrElementOk() {
+    mVarArgPropComponent.create().propAttr(new Object()).build();
+  }
+
+  public void buildPropVarArgNormalAttrElementOk() {
+    mVarArgPropComponent.create().propsAttr(new ArrayList<Object>()).build();
+  }
+
+  public void buildPropVarArgMissingBad() {
+    mVarArgPropComponent.create().build();
+  }
+
+  public Component buildPropLithoMissingBothBad() {
+    return mMyLithoComponent.create().build();
+  }
+
+  public void buildPropLithoMissingOneBad() {
+    Column.create()
+        .child(mMyLithoComponent.create().prop1(new Object()).commonProp(new Object()))
+        .build();
+  }
+
+  public Component buildPropLithoOK() {
+    Component.Builder layoutBuilder =
+        mMyLithoComponent.create().prop1(new Object()).prop2(new Object());
+    return layoutBuilder.build();
+  }
+
+  public void castImpossibleOk_FP(Object o1) {
+    Component.Builder builder = mMyLithoComponent.create();
+    if (builder instanceof MyComponent.Builder)
+      ((MyComponent.Builder) builder)
+          .build(); // this branch will never be taken but we can't detect it yet
+  }
+
+  void castOk(Object o1) {
+    Component.Builder builder = mMyLithoComponent.create().prop1(new Object()).prop2(new Object());
+    if (builder instanceof MyLithoComponent.Builder)
+      ((MyLithoComponent.Builder) builder).build(); // this branch will be taken
+  }
+
+  Component.Builder createBuilder() {
+    return mMyLithoComponent.create();
+  }
+
+  void castMissingOneBad(Object o1) {
+    Component.Builder builder = createBuilder();
+    if (builder instanceof MyLithoComponent.Builder)
+      ((MyLithoComponent.Builder) builder).prop2(new Object()).build(); // this branch will be taken
+  }
+
+  void buildMissingProp3_FN() {
+    Component.Builder builder = mMyComponent.create();
+    ((MyLithoComponent.Builder) builder).prop1(new Object()).prop2(new Object()).build();
+  }
+
+  public class NonRequiredTreeProps {
+
+    public MyTreeComponent mMyTreeComponent;
+
+    public MyTreeComponent buildWithoutOk() {
+      return mMyTreeComponent.create().build();
+    }
   }
 }

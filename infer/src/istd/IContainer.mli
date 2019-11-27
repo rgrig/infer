@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -33,8 +33,7 @@ val rev_map_to_list : fold:('t, 'a, 'b list) Container.fold -> 't -> f:('a -> 'b
 val rev_filter_map_to_list :
   fold:('t, 'a, 'b list) Container.fold -> 't -> f:('a -> 'b option) -> 'b list
 
-val iter_consecutive :
-  fold:('t, 'a, 'a option) Container.fold -> 't -> f:('a -> 'a -> unit) -> unit
+val iter_consecutive : fold:('t, 'a, 'a option) Container.fold -> 't -> f:('a -> 'a -> unit) -> unit
 
 val pp_collection :
      fold:('t, 'a, 'a option) Container.fold
@@ -47,9 +46,6 @@ val filter :
   fold:('t, 'a, 'accum) Container.fold -> filter:('a -> bool) -> ('t, 'a, 'accum) Container.fold
 
 val map : f:('a -> 'b) -> ('t, 'a, 'accum) Container.fold -> ('t, 'b, 'accum) Container.fold
-
-val fold_of_pervasives_fold :
-  fold:(('a -> 'accum -> 'accum) -> 't -> 'accum -> 'accum) -> ('t, 'a, 'accum) Container.fold
 
 val fold_of_pervasives_map_fold :
      fold:(('key -> 'value -> 'accum -> 'accum) -> 't -> 'accum -> 'accum)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -99,6 +99,48 @@ int struct_inside_loop_ok(std::vector<int> numbers) {
     sum += a.f(number);
   }
   return sum;
+}
+
+int struct_inside_loop_break_ok(std::vector<int> numbers) {
+  int sum;
+  for (auto number : numbers) {
+    A a = getA();
+    if (number < 0) {
+      break;
+    }
+    sum += a.f(number);
+  }
+  return sum;
+}
+
+int struct_inside_loop_continue_ok(std::vector<int> numbers) {
+  int sum;
+  for (auto number : numbers) {
+    A a = getA();
+    if (number < 0) {
+      continue;
+    }
+    sum += a.f(number);
+  }
+  return sum;
+}
+
+int return_from_inner_scope_ok(bool b) {
+  {
+    A a = getA();
+    if (b) {
+      return;
+    }
+  }
+}
+
+void return_inside_single_branch_if_in_loop_ok() {
+  while (true) {
+    if (true) {
+      A a;
+      return;
+    }
+  }
 }
 
 struct UseAfterSelfDestruct {

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -111,7 +111,8 @@ module TransferFunctions (LConfig : LivenessConfig) (CFG : ProcCfg.S) = struct
     in
     let actuals = List.map actuals ~f:(fun (e, _) -> Exp.ignore_cast e) in
     match Exp.ignore_cast call_exp with
-    | Exp.Const (Cfun (Typ.Procname.ObjC_Cpp _ as pname)) when Typ.Procname.is_constructor pname -> (
+    | Exp.Const (Cfun (Typ.Procname.ObjC_Cpp _ as pname)) when Typ.Procname.is_constructor pname
+      -> (
       (* first actual passed to a C++ constructor is actually written, not read *)
       match actuals with
       | Exp.Lvar pvar :: exps ->
@@ -123,18 +124,18 @@ module TransferFunctions (LConfig : LivenessConfig) (CFG : ProcCfg.S) = struct
 
 
   let exec_instr astate _ _ = function
-    | Sil.Load (lhs_id, _, _, _) when Ident.is_none lhs_id ->
+    | Sil.Load {id= lhs_id} when Ident.is_none lhs_id ->
         (* dummy deref inserted by frontend--don't count as a read *)
         astate
-    | Sil.Load (lhs_id, rhs_exp, _, _) ->
+    | Sil.Load {id= lhs_id; e= rhs_exp} ->
         Domain.remove (Var.of_id lhs_id) astate |> exp_add_live rhs_exp
-    | Sil.Store (Lvar lhs_pvar, _, rhs_exp, _) ->
+    | Sil.Store {e1= Lvar lhs_pvar; e2= rhs_exp} ->
         let astate' =
           if is_always_in_scope lhs_pvar then astate (* never kill globals *)
           else Domain.remove (Var.of_pvar lhs_pvar) astate
         in
         exp_add_live rhs_exp astate'
-    | Sil.Store (lhs_exp, _, rhs_exp, _) ->
+    | Sil.Store {e1= lhs_exp; e2= rhs_exp} ->
         exp_add_live lhs_exp astate |> exp_add_live rhs_exp
     | Sil.Prune (exp, _, _, _) ->
         exp_add_live exp astate
@@ -156,7 +157,7 @@ module TransferFunctions (LConfig : LivenessConfig) (CFG : ProcCfg.S) = struct
         Domain.remove (Var.of_id ret_id) astate
         |> exp_add_live call_exp
         |> add_live_actuals actuals_to_read call_exp
-    | Sil.ExitScope _ | Abstract _ | Nullify _ ->
+    | Sil.Metadata _ ->
         astate
 
 
@@ -184,7 +185,7 @@ module CapturedByRefTransferFunctions (CFG : ProcCfg.S) = struct
   type extras = ProcData.no_extras
 
   let exec_instr astate _ _ instr =
-    List.fold (Sil.instr_get_exps instr)
+    List.fold (Sil.exps_of_instr instr)
       ~f:(fun acc exp ->
         Exp.fold_captured exp
           ~f:(fun acc exp ->
@@ -210,8 +211,10 @@ let get_captured_by_ref_invariant_map proc_desc proc_data =
   CapturedByRefAnalyzer.exec_cfg cfg proc_data ~initial:VarSet.empty
 
 
-let checker {Callbacks.tenv; summary; proc_desc} : Summary.t =
-  let proc_data = ProcData.make_default proc_desc tenv in
+let checker {Callbacks.exe_env; summary} : Summary.t =
+  let proc_desc = Summary.get_proc_desc summary in
+  let tenv = Exe_env.get_tenv exe_env (Summary.get_proc_name summary) in
+  let proc_data = ProcData.make_default summary tenv in
   let captured_by_ref_invariant_map = get_captured_by_ref_invariant_map proc_desc proc_data in
   let cfg = CFG.from_pdesc proc_desc in
   let invariant_map = CheckerAnalyzer.exec_cfg cfg proc_data ~initial:Domain.empty in
@@ -260,9 +263,8 @@ let checker {Callbacks.tenv; summary; proc_desc} : Summary.t =
     Reporting.log_error summary ~loc ~ltr IssueType.dead_store message
   in
   let report_dead_store live_vars captured_by_ref_vars = function
-    | Sil.Store (Lvar pvar, typ, rhs_exp, loc)
-      when should_report pvar typ live_vars captured_by_ref_vars && not (is_sentinel_exp rhs_exp)
-      ->
+    | Sil.Store {e1= Lvar pvar; typ; e2= rhs_exp; loc}
+      when should_report pvar typ live_vars captured_by_ref_vars && not (is_sentinel_exp rhs_exp) ->
         log_report pvar typ loc
     | Sil.Call (_, e_fun, (arg, typ) :: _, loc, _) -> (
       match (Exp.ignore_cast e_fun, Exp.ignore_cast arg) with

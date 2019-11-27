@@ -1,10 +1,14 @@
 /*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 package codetoanalyze.java.performance;
+
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 
 public class Loops {
 
@@ -76,5 +80,68 @@ public class Loops {
       }
     }
     return true;
+  }
+
+  static void linear(int x) {
+    for (int i = 0; i < x; i++) {}
+  }
+
+  static void unboundedSymbol() {
+    int infinite = 9;
+    for (int i = 0; i < 999; i++) {
+      infinite *= infinite;
+    }
+    linear(infinite);
+  }
+
+  void string_length_linear(String s) {
+    for (int i = 0; i < s.length(); i++) {}
+  }
+
+  void string_concat_linear(String s, String p) {
+    p = p.concat(s);
+    for (int i = 0; i < p.length(); i++) {}
+  }
+
+  void zeropad_linear_FN(String s, String p) {
+    // control variable for the loop is the result of equals which is
+    // in [0,1]. It should be p instead.
+    while (s.equals(p)) {
+      p = p.concat("0");
+    }
+  }
+
+  void charsequence_length_linear(CharSequence seq) {
+    for (int i = 0; i < seq.length(); i++) {}
+  }
+
+  void modeled_range_linear(FileChannel fc, ByteBuffer bb) throws IOException {
+    int i;
+    int offset = 0;
+    do {
+      int numBytesRead = fc.read(bb, offset);
+      if (numBytesRead == -1) {
+        break;
+      }
+      i = bb.getInt();
+      offset += 8;
+    } while (i != 0);
+  }
+
+  class MyLinkedList {
+    MyLinkedList next;
+
+    MyLinkedList getNext() {
+      return next;
+    }
+  }
+
+  void length_of_linked_list_linear_FP(MyLinkedList p) {
+    int n = 0;
+    while (p != null) {
+      n++;
+      p = p.getNext();
+    }
+    linear(n);
   }
 }

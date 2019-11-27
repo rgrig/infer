@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -84,7 +84,8 @@ end)
 let check_subtype =
   let subtMap = ref SubtypesMap.empty in
   fun tenv c1 c2 ->
-    ( try SubtypesMap.find (c1, c2) !subtMap with Caml.Not_found ->
+    ( try SubtypesMap.find (c1, c2) !subtMap
+      with Caml.Not_found ->
         let is_subt = check_subclass_tenv tenv c1 c2 in
         subtMap := SubtypesMap.add (c1, c2) is_subt !subtMap ;
         is_subt

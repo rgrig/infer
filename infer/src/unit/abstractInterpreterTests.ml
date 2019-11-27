@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -22,7 +22,7 @@ module PathCountDomain = struct
 
   let initial = make_path_count 1
 
-  let ( <= ) ~lhs ~rhs =
+  let leq ~lhs ~rhs =
     match (lhs, rhs) with
     | PathCount c1, PathCount c2 ->
         c1 <= c2
@@ -88,8 +88,7 @@ let tests =
         ; If (unknown_exp, [], [])
         ; invariant "4" ] )
     ; ("loop", [invariant "1"; While (unknown_exp, [invariant "T"]); invariant "T"])
-    ; ( "if_in_loop"
-      , [While (unknown_exp, [If (unknown_exp, [], []); invariant "T"]); invariant "T"] )
+    ; ("if_in_loop", [While (unknown_exp, [If (unknown_exp, [], []); invariant "T"]); invariant "T"])
     ; ( "nested_loop_visit"
       , [ invariant "1"
         ; While (unknown_exp, [invariant "T"; While (unknown_exp, [invariant "T"]); invariant "T"])

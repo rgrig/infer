@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -28,13 +28,19 @@ let infer_profile =
               <forceJavacCompilerUse>true</forceJavacCompilerUse>
               <fork>true</fork>
               <executable>%s</executable>
+              %s
             </configuration>
           </plugin>
         </plugins>
       </build>
     </profile>|}
        infer_profile_name
-       (Config.bin_dir ^/ InferCommand.infer_exe_name))
+       (Config.bin_dir ^/ InferCommand.infer_exe_name)
+       ( match Config.java_version with
+       | Some version when version >= 9 ->
+           Printf.sprintf "<release>%d</release>" version
+       | _ ->
+           "" ))
 
 
 let pom_worklist = ref [CLOpt.init_work_dir]
@@ -67,7 +73,7 @@ let add_infer_profile_to_xml dir maven_xml infer_xml =
             insert_infer_profile xml_out
         | [_] when not !found_profiles_tag ->
             (* closing the root tag but no <profiles> tag found, add
-                <profiles>[infer profile]</profiles> *)
+               <profiles>[infer profile]</profiles> *)
             Xmlm.output xml_out (`El_start (("", "profiles"), [])) ;
             found_profiles_tag := true ;
             (* do not add <profiles> again *)
@@ -131,7 +137,8 @@ let add_infer_profile mvn_pom infer_pom =
     in
     protect ~f:with_ic ~finally:(fun () -> In_channel.close ic)
   in
-  try Utils.with_file_out infer_pom ~f:with_oc with Xmlm.Error ((line, col), error) ->
+  try Utils.with_file_out infer_pom ~f:with_oc
+  with Xmlm.Error ((line, col), error) ->
     L.die ExternalError "%s:%d:%d: ERROR: %s" mvn_pom line col (Xmlm.error_message error)
 
 

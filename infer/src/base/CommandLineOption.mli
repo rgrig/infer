@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -101,6 +101,11 @@ val mk_string_list :
     An option "--[long]-reset" is automatically created that resets the list to [] when found on the
     command line.  *)
 
+val mk_string_map :
+     ?default:string String.Map.t
+  -> ?default_to_string:(string String.Map.t -> string)
+  -> string String.Map.t ref t
+
 val mk_path :
   default:string -> ?default_to_string:(string -> string) -> ?f:(string -> string) -> string ref t
 (** like [mk_string] but will resolve the string into an absolute path so that children processes
@@ -119,8 +124,7 @@ val mk_symbol :
 (** [mk_symbol long symbols] defines a command line flag [--long <symbol>] where [(<symbol>,_)] is
     an element of [symbols]. *)
 
-val mk_symbol_opt :
-  symbols:(string * 'a) list -> ?f:('a -> 'a) -> ?mk_reset:bool -> 'a option ref t
+val mk_symbol_opt : symbols:(string * 'a) list -> ?f:('a -> 'a) -> ?mk_reset:bool -> 'a option ref t
 (** [mk_symbol_opt] is similar to [mk_symbol] but defaults to [None]. If [mk_reset] is false then do not create an additional --[long]-reset option to reset the value of the option to [None]. *)
 
 val mk_symbol_seq :
@@ -129,7 +133,7 @@ val mk_symbol_seq :
     [<symbol sequence>] is a comma-separated sequence of [<symbol>]s such that [(<symbol>,_)] is an
     element of [symbols]. *)
 
-val mk_json : Yojson.Basic.json ref t
+val mk_json : Yojson.Basic.t ref t
 
 val mk_anon : unit -> string list ref
 (** [mk_anon ()] defines a [string list ref] of the anonymous command line arguments, in the reverse
@@ -206,6 +210,8 @@ val mk_subcommand :
 val args_env_var : string
 (** environment variable use to pass arguments from parent to child processes *)
 
+val strict_mode : bool
+
 val strict_mode_env_var : string
 
 val env_var_sep : char
@@ -242,13 +248,15 @@ val is_env_var_set : string -> bool
 (** [is_env_var_set var] is true if $[var]=1 *)
 
 val show_manual :
-     ?internal_section:string
+     ?scrub_defaults:bool
+  -> ?internal_section:string
   -> Cmdliner.Manpage.format
   -> command_doc
   -> InferCommand.t option
   -> unit
 (** Display the manual of [command] to the user, or [command_doc] if [command] is None. [format] is
-    used as for [Cmdliner.Manpage.print]. If [internal_section] is specified, add a section titled
-    [internal_section] about internal (hidden) options. *)
+   used as for [Cmdliner.Manpage.print]. If [internal_section] is specified, add a section titled
+   [internal_section] about internal (hidden) options. If [scrub_defaults] then do not print default
+   values for options. *)
 
 val keep_args_file : bool ref

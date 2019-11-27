@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -17,12 +17,12 @@ let tests =
     Cfg.create_proc_desc cfg
       (ProcAttributes.default (SourceFile.invalid __FILE__) Typ.Procname.empty_block)
   in
-  let dummy_instr1 = Sil.ExitScope ([], Location.dummy) in
-  let dummy_instr2 = Sil.Abstract Location.dummy in
+  let dummy_instr1 = Sil.skip_instr in
+  let dummy_instr2 = Sil.Metadata (Abstract Location.dummy) in
   let dummy_instr3 =
-    Sil.ExitScope ([Var.of_id (Ident.create_fresh Ident.knormal)], Location.dummy)
+    Sil.Metadata (ExitScope ([Var.of_id (Ident.create_fresh Ident.knormal)], Location.dummy))
   in
-  let dummy_instr4 = Sil.ExitScope ([], Location.dummy) in
+  let dummy_instr4 = Sil.skip_instr in
   let instrs1 = [dummy_instr1; dummy_instr2] in
   let instrs2 = [dummy_instr3] in
   let instrs3 = [dummy_instr4] in
@@ -37,9 +37,9 @@ let tests =
   Procdesc.set_start_node test_pdesc n1 ;
   (* let -> represent normal transitions and -*-> represent exceptional transitions *)
   (* creating graph n1 -> n2, n1 -*-> n3, n2 -> n4, n2 -*-> n3, n3 -> n4 , n3 -*> n4 *)
-  Procdesc.node_set_succs_exn test_pdesc n1 [n2] [n3] ;
-  Procdesc.node_set_succs_exn test_pdesc n2 [n4] [n3] ;
-  Procdesc.node_set_succs_exn test_pdesc n3 [n4] [n4] ;
+  Procdesc.node_set_succs test_pdesc n1 ~normal:[n2] ~exn:[n3] ;
+  Procdesc.node_set_succs test_pdesc n2 ~normal:[n4] ~exn:[n3] ;
+  Procdesc.node_set_succs test_pdesc n3 ~normal:[n4] ~exn:[n4] ;
   let normal_proc_cfg = ProcCfg.Normal.from_pdesc test_pdesc in
   let exceptional_proc_cfg = ProcCfg.Exceptional.from_pdesc test_pdesc in
   let backward_proc_cfg = BackwardCfg.from_pdesc test_pdesc in
@@ -47,7 +47,7 @@ let tests =
   let open OUnit2 in
   let cmp l1 l2 =
     let sort = List.sort ~compare:Procdesc.Node.compare in
-    List.equal ~equal:Procdesc.Node.equal (sort l1) (sort l2)
+    List.equal Procdesc.Node.equal (sort l1) (sort l2)
   in
   let pp_diff fmt (actual, expected) =
     let pp_sep fmt _ = F.pp_print_char fmt ',' in
@@ -140,10 +140,7 @@ let tests =
     ; ("exn_succs_n2", ProcCfg.Exceptional.fold_exceptional_succs exceptional_proc_cfg, n2, [n3])
     ; ("exn_succs_n3", ProcCfg.Exceptional.fold_exceptional_succs exceptional_proc_cfg, n3, [n4])
     ; (* test exceptional pred links *)
-      ( "exn_preds_n3"
-      , ProcCfg.Exceptional.fold_exceptional_preds exceptional_proc_cfg
-      , n3
-      , [n2; n1] )
+      ("exn_preds_n3", ProcCfg.Exceptional.fold_exceptional_preds exceptional_proc_cfg, n3, [n2; n1])
     ; (* succs should return both normal and exceptional successors *)
       ("exn_all_succs_n1", ProcCfg.Exceptional.fold_succs exceptional_proc_cfg, n1, [n3; n2])
     ; (* but, should not return duplicates *)

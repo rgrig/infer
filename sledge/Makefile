@@ -1,4 +1,4 @@
-# Copyright (c) 2018-present, Facebook, Inc.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -6,14 +6,31 @@
 .PHONY: default
 default: exes
 
-DUNEINS=$(shell find src -name dune.in)
-DUNES=$(patsubst %.in,%,$(DUNEINS))
+EXES = src/sledge
+INSTALLS = sledge
+FMTS = @_build/dbg/src/fmt
+
+DBG_TARGETS = $(patsubst %,_build/dbg/%.exe,$(EXES)) $(patsubst %,_build/dbg/%.install,$(INSTALLS)) _build/dbg/sledge-help.txt
+
+TARGETS = $(DBG_TARGETS) $(subst dbg,dbg-opt,$(DBG_TARGETS)) $(subst dbg,opt,$(DBG_TARGETS))
+
+dune_build_dbg = dune build $(DBG_TARGETS)
+dune_install_dbg = dune install --context=dbg --prefix=_build/_install/dbg sledge 2>/dev/null
+
+dune_build_dbg_opt = $(subst dbg,dbg-opt,$(dune_build_dbg))
+dune_install_dbg_opt = $(subst dbg,dbg-opt,$(dune_install_dbg))
+
+dune_build_opt = $(subst dbg,opt,$(dune_build_dbg))
+dune_install_opt = $(subst dbg,opt,$(dune_install_dbg))
+
+DUNEINS = $(shell find src model -name dune.in)
+DUNES = $(patsubst %.in,%,$(DUNEINS))
 
 .PHONY: dunes
 dunes: $(DUNES)
 
 %/dune: dune-common.in %/dune.in
-	@cat $+ > $@
+	cat $+ > $@
 
 .PHONY: setup
 setup: dunes
@@ -24,32 +41,46 @@ check: setup
 
 .PHONY: exes
 exes: setup
-	dune build _build/dev/src/sledge.exe _build/release/src/sledge.exe _build/dev/sledge.install _build/release/sledge.install
+	dune build $(TARGETS)
+	$(dune_install_dbg)
+	$(dune_install_dbg_opt)
+	$(dune_install_opt)
 
 .PHONY: dbg
 dbg: setup
-	dune build _build/dev/src/sledge.exe _build/dev/sledge.install
+	$(dune_build_dbg)
+	$(dune_install_dbg)
+
+.PHONY: do
+do: setup
+	$(dune_build_dbg_opt)
+	$(dune_install_dbg_opt)
 
 .PHONY: opt
 opt: setup
-	dune build _build/release/src/sledge.exe _build/release/sledge.install
+	$(dune_build_opt)
+	$(dune_install_opt)
 
 .PHONY: watch
 watch: setup
-	dune build --watch _build/dev/src/sledge.exe _build/release/src/sledge.exe
+	dune build --watch $(TARGETS)
 
 .PHONY: test
-test:
-	dune build @_build/dev/runtest --auto-promote
+test: setup
+	dune build @_build/dbg/runtest --auto-promote
 
-BISECT_DIR=$(CURDIR)/_coverage/out
+.PHONY: ci-test
+ci-test: setup
+	dune build @_build/dbg/runtest
+
+BISECT_DIR = $(CURDIR)/_coverage/out
 
 .PHONY: coverage
 coverage: setup
-	@rm -rf _coverage
-	@mkdir -p $(BISECT_DIR)
-	@BISECT_FILE=$(BISECT_DIR)/bisect dune build --force @_build/coverage/runtest
-	@find $(BISECT_DIR) -type f | xargs bisect-ppx-report -I _build/coverage/ -text _coverage/summary.txt -html _coverage/
+	rm -rf _coverage
+	mkdir -p $(BISECT_DIR)
+	BISECT_FILE=$(BISECT_DIR)/bisect dune build --force @_build/coverage/runtest
+	find $(BISECT_DIR) -type f | xargs bisect-ppx-report -I _build/coverage/ -text _coverage/summary.txt -html _coverage/
 	@echo "open _coverage/index.html"
 
 .PHONY: clean
@@ -59,9 +90,10 @@ clean:
 
 .PHONY: fmt
 fmt:
-	dune build @_build/dev/src/fmt --auto-promote
-	ocamlformat -i src/version.ml.in $(DUNEINS)
+	dune build $(FMTS) --auto-promote
+	ocamlformat -i $(DUNEINS)
 	clang-format -i model/llair_intrinsics.h model/cxxabi.cpp
+	${MAKE} -C test fmt
 
 # print any variable for Makefile debugging
 print-%:

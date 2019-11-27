@@ -1,13 +1,14 @@
 /*
  * Copyright (c) 2016-present, Programming Research Laboratory (ROPAS)
  *                             Seoul National University, Korea
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
 #include <stdlib.h>
+#include <stdarg.h>
 
 struct S {
   int field;
@@ -140,4 +141,42 @@ void call_call_access_index_4_on_S3_Bad() {
   struct S3 s;
   s.ptr = malloc(sizeof(int) * 4);
   call_access_index_4_on_S3(&s);
+}
+
+void va_arg_int(int* a, ...) {
+  va_list args;
+  va_start(args, a);
+  int i = va_arg(args, int);
+  a[i] = 0;
+  va_end(args);
+}
+
+void call_va_arg_int_Good_FP() {
+  int a[10];
+  va_arg_int(a, 5);
+}
+
+void call_va_arg_int_Bad() {
+  int a[10];
+  va_arg_int(a, 10);
+}
+
+struct S* id_S(struct S* r) {
+  return r;
+}
+
+void call_id_S_Good_FP(struct S p) {
+  int a[10];
+  struct S* q = id_S(&p);
+  if (q == 0) {
+    a[10] = 0; // should be unreachable
+  }
+}
+
+void call_id_S_Bad(struct S p) {
+  int a[10];
+  struct S* q = id_S(&p);
+  if (q != 0) {
+    a[10] = 0; // should be reachable
+  }
 }

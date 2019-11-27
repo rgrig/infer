@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -137,3 +137,7 @@ void array_rev_iter_Bad() {
   }
   a[a[0]] = 0;
 }
+
+void malloc_zero_Bad() { int* a = (int*)malloc(sizeof(int) * 0); }
+
+void new_array_zero_Good() { int* a = new int[0]; }

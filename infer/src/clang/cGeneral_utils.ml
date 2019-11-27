@@ -1,11 +1,12 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
+module F = Format
 
 (** General utility functions such as functions on lists *)
 
@@ -86,11 +87,11 @@ let get_var_name_mangled decl_info name_info var_decl_info =
     | "", Some index ->
         "__param_" ^ string_of_int index
     | "", None ->
-        CFrontend_config.incorrect_assumption __POS__ decl_info.Clang_ast_t.di_source_range
+        CFrontend_errors.incorrect_assumption __POS__ decl_info.Clang_ast_t.di_source_range
           "Got both empty clang_name and None for param_idx in get_var_name_mangled (%a) (%a)"
-          (Pp.to_string ~f:Clang_ast_j.string_of_named_decl_info)
+          (Pp.of_string ~f:Clang_ast_j.string_of_named_decl_info)
           name_info
-          (Pp.to_string ~f:Clang_ast_j.string_of_var_decl_info)
+          (Pp.of_string ~f:Clang_ast_j.string_of_var_decl_info)
           var_decl_info
     | _ ->
         clang_name
@@ -131,8 +132,7 @@ let mk_sil_global_var {CFrontend_config.source_file} ?(mk_name = fun _ x -> x) d
              None )
     |> Option.value_map ~default:true ~f:(function
          | Clang_ast_t.CXXRecordDecl (_, _, _, _, _, _, _, {xrdi_is_pod})
-         | Clang_ast_t.ClassTemplateSpecializationDecl (_, _, _, _, _, _, _, {xrdi_is_pod}, _, _)
-           ->
+         | Clang_ast_t.ClassTemplateSpecializationDecl (_, _, _, _, _, _, _, {xrdi_is_pod}, _, _) ->
              xrdi_is_pod
          | _ ->
              true )
@@ -141,7 +141,7 @@ let mk_sil_global_var {CFrontend_config.source_file} ?(mk_name = fun _ x -> x) d
     var_decl_info.Clang_ast_t.vdi_is_global
     (* only top level declarations are really have file scope, static field members have a global scope *)
     && (not var_decl_info.Clang_ast_t.vdi_is_static_data_member)
-    && match var_decl_info.Clang_ast_t.vdi_storage_class with Some "static" -> true | _ -> false
+    && var_decl_info.Clang_ast_t.vdi_is_static
   in
   Pvar.mk_global ~is_constexpr ~is_ice ~is_pod
     ~is_static_local:var_decl_info.Clang_ast_t.vdi_is_static_local ~is_static_global
@@ -151,15 +151,14 @@ let mk_sil_global_var {CFrontend_config.source_file} ?(mk_name = fun _ x -> x) d
 let mk_sil_var trans_unit_ctx named_decl_info decl_info_qual_type_opt procname outer_procname =
   match decl_info_qual_type_opt with
   | Some (decl_info, qt, var_decl_info, should_be_mangled) ->
-      let name_string, simple_name =
-        get_var_name_mangled decl_info named_decl_info var_decl_info
-      in
+      let name_string, simple_name = get_var_name_mangled decl_info named_decl_info var_decl_info in
       if var_decl_info.Clang_ast_t.vdi_is_global then
         let mk_name =
           if var_decl_info.Clang_ast_t.vdi_is_static_local then
             Some
               (fun name_string _ ->
-                Mangled.from_string (Typ.Procname.to_string outer_procname ^ "." ^ name_string) )
+                Mangled.from_string (F.asprintf "%a.%s" Typ.Procname.pp outer_procname name_string)
+                )
           else None
         in
         mk_sil_global_var trans_unit_ctx ?mk_name decl_info named_decl_info var_decl_info qt

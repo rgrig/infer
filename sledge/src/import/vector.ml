@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -17,12 +17,13 @@ let a (v : 'a t) : 'a array = Caml.Obj.magic v
 let _vl (al : 'a array list) : 'a t list = Caml.Obj.magic al
 let al (vl : 'a t list) : 'a array list = Caml.Obj.magic vl
 let compare cmp x y = Array.compare cmp (a x) (a y)
+let equal cmp x y = Array.equal cmp (a x) (a y)
 let hash_fold_t f s x = Hash.Builtin.hash_fold_array_frozen f s (a x)
 let t_of_sexp a_of_sexp s = v (Array.t_of_sexp a_of_sexp s)
 let sexp_of_t sexp_of_a x = Array.sexp_of_t sexp_of_a (a x)
 
 module Infix = struct
-  type +'a vector = 'a t [@@deriving compare, hash, sexp]
+  type +'a vector = 'a t [@@deriving compare, equal, hash, sexp]
 end
 
 let concat_map x ~f = v (Array.concat_map (a x) ~f:(fun y -> a (f y)))
@@ -69,10 +70,24 @@ let map_preserving_phys_equal xs ~f =
 
 let mapi x ~f = v (Array.mapi (a x) ~f)
 let map2_exn x y ~f = v (Array.map2_exn (a x) (a y) ~f)
+let map_inplace x ~f = Array.map_inplace (a x) ~f
+
+let fold_map x ~init ~f =
+  let s, x = Array.fold_map (a x) ~init ~f in
+  (s, v x)
+
 let concat xs = v (Array.concat (al xs))
+let copy x = v (Array.copy (a x))
+let of_ x = v [|x|]
 let of_array = v
 let of_list x = v (Array.of_list x)
 let of_list_rev x = v (Array.of_list_rev x)
 let of_option x = v (Option.to_array x)
+let reduce_exn x ~f = Array.reduce_exn (a x) ~f
+
+let unzip x =
+  let y, z = Array.unzip (a x) in
+  (v y, v z)
+
 let to_list x = Array.to_list (a x)
 let to_array = a

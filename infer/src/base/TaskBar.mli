@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -25,11 +25,8 @@ val set_tasks_total : t -> int -> unit
 val tasks_done_reset : t -> unit
 (** record that 0 tasks have been completed so far *)
 
-val tasks_done_add : t -> int -> unit
-(** record that a number of tasks have been completed *)
+val set_remaining_tasks : t -> int -> unit
+(** set the number of tasks remaining to complete *)
 
 val finish : t -> unit
 (** tear down the task bar and ready the terminal for more output *)
-
-val is_interactive : t -> bool
-(** does the task bar expect periodic refresh? *)

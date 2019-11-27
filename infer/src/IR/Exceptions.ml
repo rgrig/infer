@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -42,6 +42,8 @@ exception Array_out_of_bounds_l3 of Localise.error_desc * L.ocaml_pos
 exception Array_of_pointsto of L.ocaml_pos
 
 exception Bad_footprint of L.ocaml_pos
+
+exception Biabd_use_after_free of Localise.error_desc * L.ocaml_pos
 
 exception Cannot_star of L.ocaml_pos
 
@@ -130,8 +132,6 @@ exception Unknown_proc
 
 exception Unsafe_guarded_by_access of Localise.error_desc * L.ocaml_pos
 
-exception Use_after_free of Localise.error_desc * L.ocaml_pos
-
 exception Wrong_argument_number of L.ocaml_pos
 
 type t =
@@ -203,6 +203,13 @@ let recognize_exception exn =
       ; visibility= Exn_developer
       ; severity= None
       ; category= Nocat }
+  | Biabd_use_after_free (desc, ocaml_pos) ->
+      { name= IssueType.biabd_use_after_free
+      ; description= desc
+      ; ocaml_pos= Some ocaml_pos
+      ; visibility= Exn_user
+      ; severity= None
+      ; category= Prover }
   | Cannot_star ocaml_pos ->
       { name= IssueType.cannot_star
       ; description= Localise.no_desc
@@ -240,7 +247,7 @@ let recognize_exception exn =
       ; severity= None
       ; category= Nocat }
   | Custom_error (error_msg, desc) ->
-      { name= IssueType.from_string error_msg
+      { name= IssueType.register_from_string error_msg
       ; description= desc
       ; ocaml_pos= None
       ; visibility= Exn_user
@@ -367,7 +374,7 @@ let recognize_exception exn =
       ; category= Nocat }
   | Java_runtime_exception (exn_name, _, desc) ->
       let exn_str = Typ.Name.name exn_name in
-      { name= IssueType.from_string exn_str
+      { name= IssueType.register_from_string exn_str
       ; description= desc
       ; ocaml_pos= None
       ; visibility= Exn_user
@@ -537,13 +544,6 @@ let recognize_exception exn =
       ; category= Nocat }
   | Unsafe_guarded_by_access (desc, ocaml_pos) ->
       { name= IssueType.unsafe_guarded_by_access
-      ; description= desc
-      ; ocaml_pos= Some ocaml_pos
-      ; visibility= Exn_user
-      ; severity= None
-      ; category= Prover }
-  | Use_after_free (desc, ocaml_pos) ->
-      { name= IssueType.use_after_free
       ; description= desc
       ; ocaml_pos= Some ocaml_pos
       ; visibility= Exn_user

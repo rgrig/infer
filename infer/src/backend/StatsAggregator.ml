@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -29,7 +29,7 @@ let find_json_files_in_dir dir =
     let json_regex = Str.regexp_case_fold ".*\\.json$" in
     (not (Str.string_match json_files_to_ignore_regex path 0))
     && Str.string_match json_regex path 0
-    && Polymorphic_compare.( = ) s.st_kind Unix.S_REG
+    && Poly.equal s.st_kind Unix.S_REG
   in
   match dir_exists dir with
   | true ->
@@ -86,8 +86,7 @@ let collect_all_stats_files () =
             let buck_out_parent = Filename.concat p Filename.parent_dir_name in
             let targets_files =
               List.map
-                ~f:(fun (t, p) ->
-                  (t, find_stats_files_in_dir (concatenate_paths buck_out_parent p)) )
+                ~f:(fun (t, p) -> (t, find_stats_files_in_dir (concatenate_paths buck_out_parent p)))
                 r
             in
             Ok (Buck_out targets_files)
@@ -108,9 +107,9 @@ let aggregate_stats_files paths =
 
 
 type json_aggregated_stats =
-  { frontend_json_data: Yojson.Basic.json option
-  ; backend_json_data: Yojson.Basic.json option
-  ; reporting_json_data: Yojson.Basic.json option }
+  { frontend_json_data: Yojson.Basic.t option
+  ; backend_json_data: Yojson.Basic.t option
+  ; reporting_json_data: Yojson.Basic.t option }
 
 let aggregate_all_stats origin =
   let accumulate_paths acc paths =

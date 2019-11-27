@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -16,17 +16,14 @@ val database_fullpath : string
 val schema_hum : string
 (**  some human-readable string describing the tables *)
 
-val get_database : unit -> Sqlite3.db
-(** The results database. You should always use this function to access the database, as the connection to it may change during the execution (see [new_database_connection]). *)
+val create_tables : ?prefix:string -> Sqlite3.db -> unit
 
-val reset_capture_tables : unit -> unit
-(** zero out the tables associated with capture data *)
+val get_database : unit -> Sqlite3.db
+(** The results database. You should always use this function to access the database, as the
+    connection to it may change during the execution (see [new_database_connection]). *)
 
 val new_database_connection : unit -> unit
 (** Closes the previous connection to the database (if any), and opens a new one. Needed after calls to fork(2). *)
-
-val db_canonicalize : unit -> unit
-(** put the database on disk in deterministic form *)
 
 val db_close : unit -> unit
 (** close the current connection to the database *)

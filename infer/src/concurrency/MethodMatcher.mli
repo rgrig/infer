@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,7 +7,7 @@
 
 open! IStd
 
-(** pattern matcher for Java/C++ methods 
+(** pattern matcher for Java/C++ methods
     NB matching is modulo template arguments in C++ classes and functions *)
 type t = Tenv.t -> Typ.Procname.t -> HilExp.t list -> bool
 
@@ -25,7 +25,7 @@ val default : record
 val of_record : record -> t
 (** make a matcher out of a record; optional values use defaults *)
 
-val of_json : Yojson.Basic.json -> t
+val of_json : Yojson.Basic.t -> t
 (** Parse a JSon object into a matcher.  The Json object must be a list of records, each
     corresponding to a single matcher.  Each record must have a ["classname"] field with a [string]
     value, and a ["methods"] field with a list of strings.  The record may also have boolean

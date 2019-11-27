@@ -1,3 +1,10 @@
+* overall
+** rename accumulators from [z] to [s] for "state"
+* cli
+** find a better naming convention than .llair and .llair.txt
+** add a command to generate text llair directly from bitcode
+- maybe `sledge llvm disassemble`?
+* config
 * llvm
 * import
 ** consider adding set ops that operate on a set and the domain of a map
@@ -12,27 +19,17 @@ copy it to the left arg of |> and to the arg of Trace.retn
 rather than nearest enclosing
 * modeling
 ** translate memset to store, and remove memset inst
-** change translation of `invoke _Znwm` to possibly throw
+** change translation of `invoke _Znwm` (operator new) to possibly throw
+depends on [[*generalize specs to express throwing exceptions][generalize specs to express throwing exceptions]]
 ** revise spec of strlen to account for non-max length strings
-** convert strlen inst into a primitive to return the end of the block containing a pointer, and model strlen in code
+- consider an intrinsic to return the end of the block containing a pointer
 * llair
-** when Xor exps have types, simplify e xor e to 0
+** simplify combinations of mul and div, e.g. x * (y / z) ==> (x * y) / z
+** ? add Not exp and represent e.g. Dq as Not Eq
+to strengthen equality propagation power
 ** normalize polynomial equations by dividing coefficients by their gcd
-** treat Typ.ptr as an integer of some particular size (i.e. ptr = intptr)
-- normalizing e.g. p - q to the polynomial p + (-1 * q) forces this interpretation of types
-- options are to handle Pointer _ as Integer {bits= 64} everywhere, or
-- to remove Pointer and just use Integer
-- keeping Pointer makes Typ.equal finer than semantically justified, but may be unproblematic and otherwise worthwhile for reporting/debugging
-** ? remove src typ from Convert
 ** add config to pp e.g. Exp.t as sexps
 ** add check for variable non-occurrence to Exp.rename
-** define version of map that transforms args of Struct_rec
-- keep a set of seen Struct_rec exps to avoid divergence
-- | AppN {op; args; loc} ->
-      let op' = f op in
-      let args' = Vector.map_preserving_phys_equal args ~f in
-      if op' == op && args' == args then e
-      else AppN {op= op'; args= args'; loc}
 ** define Label module for Exp.Label and Llair.label
 - to unify how functions and blocks are named
 - the Exp.label construction in Control.exec_term Iswitch is unwieldy
@@ -75,65 +72,30 @@ let freshen x ~wrt =
 #+END_SRC
 ** ? rename loc to pos for source locations, to avoid clash with logic loc
 ** ? expose the roots computed by Llair.mk
-** ? types
-- could add types to Exp constructors, indicating the types at which the operation interprets its arguments
-  + pros
-    * could enforce well-typedness modulo castability
-      - quite weak constraint, but might catch some bugs
-      - not castable:
-        + Bytes <-> (Function | Opaque | Memory)
-        + between (Int | Float | Array) when prim_bit_size different
-        + Pointer <-> (Function | Tuple | Struct | Opaque | Memory)
-        + between (Function | Tuple | Struct | Opaque | Memory)
-    * perhaps helpful when debugging
-    * needed for correct semantics
-      - where size of integer and floating point numbers matters (overflow behavior and interpretation of conversions)
-  + cons
-    - perf: increases size of representation of Exp, perhaps a lot
-    - code complexity: need to plumb through target-specific data in order to e.g. be able to create equalities at intptr type
-- instructions and globals could use accurate types to replace len fields with static sizeof type
-- load instructions would need accurate types on reg to create equalities between it and its value in Exec
-- memcpy and memmov would need types to create equality between src and dst in Exec
-- formals would need types, to create equalities between formals and actuals in Domain
-- types could be useful for approximate human-readable printing for general expressions
-  + to print p+o as p.f, will likely need to consult what p is equal to, to find some meaningful type, and it could easily take much more work than this to produce reliably readable results
-- target-specific types and layout
-  + change Typ.target into a separate module
-  + construct an instance in frontend as first step
-  + use it during translation
-  + return it as part of program
-  + pass it from Control to Domain, etc.
-- function types could include the types of throw continuation args
+** use type info to print e.g. p+o as p.f
+will likely need to consult what p is equal to, to find some meaningful type, and it could easily take much more work than this to produce reliably readable results
+** do not hardcode target-specific types and layout
+- add a target module
+- construct an instance in frontend as first step
+- use it during translation
+- return it as part of program
+- pass it from Control to Domain, etc.
+** function types could include the types of throw continuation args
 but they are currently the same for all functions: i8*
-** ? change blocks to take all free variables as args
-+ currently the scope of an identifier bound by e.g. Load is the continuation of the inst as well as all the conts that it dominates, this is somewhat messy
-+ build a table from blocks to conts
-+ build a table from blocks to free vars
-+ need a fixed-point computation for blocks to vars table
-+ to xlate a block
-  - get the terminator
-  - if all the destination blocks except the current block are already in the table
-    * then
-      - xlate block itself like now
-        + when get to the terminal
-        + look up free vars vector of the jump destinaton in table
-        + map over the vector
-          * if the var is the name of a PHI instr
-            - find and translate the arg for the src block of the jmp instr
-              use the find_map of find_jump_args
-          * else use the var
-        + use this vector for the jump args
-      - compute the free vars of its code
-      - use this vector for the cont params
-      - add free vars to table
-      - add block to cont mapping to table
-    * else recurse over the destination blocks except the current block
-+ after entry block (and recursively everything reachable from it) is xlated, map over the function block list looking up from the table to get order of conts to match order of blocks
 ** ? format #line directives in programs
+** find a way to avoid the manually generated sexp functions in Llair
+** change Abort from an inst to a term
+** change string in Llair.functions to some informative type
+main constraint is that these uses of string need to be compatible with the "name" of a global
+** clarify typ arg of Exp constructors
+change constructor functions to not take the Typ.t as a separate arg, but to take a pair of an Exp.t and a Typ.t to indicate what the Typ.t refers to
+** change function Call arguments to always be variables
 * frontend
+** make filenames in debug locations relative, and do something with model and system header paths
+** check if freturn and fthrow reg names in frontend can clash
 ** ? translate PtrToInt and IntToPtr as cast when sizes match
 ** use llvm.lifetime.{start,end} to determine where to (alloc and?) free locals
-** hoist alloca's to the beginning of the entry block whenever possible
+** hoist alloca's to the beginning of the entry block whenever they dominate the return instr
 ** clean up translation of intrinsics
 separation between xlate_intrinsic (which translates an intrinsic function name to an expression constructor) and the Call case of xlate_instr (which translates calls to intrinsic functions to instructions) is not clear
 ** extract struct field names from llvm debug info
@@ -141,38 +103,39 @@ separation between xlate_intrinsic (which translates an intrinsic function name 
 - remove unreachable blocks
 - combine blocks with cmnd= []; term= Unreachable into one
 ** support variadic functions
-- lower by implementing in terms of the core
-- implement the va_list type as a pair or pointers into a stack represented as a linked-list, one pointer to the current element and one to the head
-- a call to a variadic function pushes the args in reverse order, so that the first arg is at the top of the stack, and passes a pointer to the top as the last arg to the callee
-- va_start intrinsic returns a pointer to the first va arg, by just projecting the current pointer from the last arg
-- va_arg instruction returns the current va arg using argument va_list pointer to the stack, and sets the argument va_list current pointer to the next stack element
-- va_copy is just a pointer copy of the source to destination va_list arguments, creating another pointer into the stack of va args, the head pointer of copies is null
-- va_end deallocates the list starting from the head pointer
+- nothing prevents the compiler from generating code that directly manipulates the target-specific va_list struct, and it appears to do so at least for amd64, so the only safe approach is to use the same representation:
+  #+BEGIN_SRC C
+  typedef struct {
+     unsigned int gp_offset;
+     unsigned int fp_offset;
+     void *overflow_arg_area;
+     void *reg_save_area;
+  } va_list[1];
+  #+END_SRC
 ** support dynamic sized stack allocation (alloca in non-entry blocks) 
 - lower by implementing in terms of the core
 - add a linked list of stack slots data structure
 - each element contains
   + a pointer to some memory allocated for that slot's contents
   + a pointer to the next older slot
-  + a pointer to the beginning of the function's stack frame
-- add a global variable that always points to the head of the stack
-- alloca in non-entry blocks adds an element and stores the result of alloc in it, sets next, and uses the frame pointer of the previous head
-- function call adds a 'frame sentinel' element whose frame pointer points to itself, slot pointer is null (but used for va_arg below)
-- function return (and other popping terminators) traverses the stack, popping elements, calling free on the slot pointers, until the element pointed to by the frame pointer is encountered
+- add a local variable 'top' to each function with a non-entry alloca; that points to a pointer that always points to the head of the stack; initially NULL
+- alloca in non-entry blocks adds an element and stores the result of alloc in it, sets next to contents of 'top', and stores result into 'top'
+- function return (and other popping terminators) traverses the stack, popping elements, calling free on the slot pointers, until finding NULL in next
 - stacksave intrinsic returns a pointer to a stack element
 - stackrestore intrinsic pops the stack like return but only back to the argument pointer
 ** handle inline asm enough to over-approximate control-flow
 - inline asm can take addresses of blocks as args, that can be jumped to
 - treating inline asm conservatively requires considering these control flows
 ** support missing intrinsics
+** try to extract scope for `ConstantExpr` and `ConstantPointerNull` value types
 ** support vector operations
 - by lowering into multiple scalar operations
 - most cases handled by Frontend.transform
 - tests have a few exceptions, possibly for only unrealistic code
 ** support multiple address spaces
 - need to, at least, treat addrspacecast as converting between pointer types of different sizes
-** combine scan_locs, scan_names, and scan_types into a single pass
 ** exceptions
+- operator new should possibly throw
 - is it correct to translate landingpad clauses not matching to unreachable, or should the exception be re-thrown
 - check suspicious translation of landingpads
   The translation of landingpads with cleanup and other clauses ignores the other clauses. This seems suspicious, is this semantics correct?
@@ -212,18 +175,38 @@ separation between xlate_intrinsic (which translates an intrinsic function name 
 ** ? remove Exp.Nondet, replace with free variables
 it is not obvious whether it will be simpler to use free variables instead of Nondet in the frontend, or to treat Nondet as a single-occurrence existential variable in the analyzer
 ** llvm bugs?
+- `opt -S -ipsccp llvm/Transforms/SimplifyCFG/indirectbr.ll` crashes, which makes sledge crash in the same way because it calls `Llvm_ipo.add_ipsccp`
+- Calling `size_in_bits` on `%struct.__sFILE = type { %struct.__sFILE }` from llvm/Verifier/recursive-struct-param.ll crashes even though `type_is_sized` holds
 - Why aren't shufflevector instructions with zeroinitializer masks eliminated by the scalarizer pass?
-* congruence
-** ? assert exps in formulas are in the carrier
+* term
+** rename 'simplification' to 'normalization' and 'simp' to 'norm' for consistency with Equality
+** should Add and Mul have an Ap form like ApN
+with a corresponding norm function to use in the exposed interface and e.g. map?
+** refactor Term so that the representation type is private
+for all of the module except for the normalization functions, to ensure with the type system that everything passed out of the external interface has been checked to satisfy the invariant
+** try only after getting rid of redundant type definitions due to Base containers
+* equality
+** treat disequalities in Equality
+** should handle equality and disequality simplification
+- equalities of equalities to integers currently handled by Sh.pure
+- doing it in Exp leads to violations of the subexp assertion on app1
+** optimize: change Cls.t and Use.t from a list to an unbalanced tree data structure
+- only need empty, add, union, map, fold, fold_map to be fast, so no need for balancing
+- detecting duplicates probably not worth the time since if any occur, the only cost is adding a redundant equation to pnd which will be quickly processed
+** optimize: when called from extend, norm_extend calls norm unnecessarily
+** revise mli to two sections, one for a "relation" api (with merge, mem/check, etc) and one for a "formula" api (with and_, or_, etc.)
+** ? assert terms in formulas are in the carrier
 us and xs, or just fv?
 ** strengthen invariant
 ** optimize: combine use and cls into one map
 since they (could) have the same domain
 ** optimize: can identity mappings in lkp be removed?
+** ? maybe need Mul terms in carrier due to non-linear to linear abstraction
 * symbolic heap
-** NEXT normalize conditional exps to disjunction
-** Congruence should handle equalities of equalities to integers
-currently handled by Sh.pure
+** the way that Sh normalization is done needs to be overhauled, need more pure consequences
+** expose and use Sh.stars
+** ? rename 'cong' to 'eqr'
+** ? rename 'canon' to 'norm'
 ** normalize exps in terms of reps
 - add operation to normalize by rewriting in terms of reps
 - check for unsat
@@ -281,13 +264,26 @@ unnecessarily, e.g. freshening, etc.
 ** solve more existential equations in excise_exp
 If sub.pure contains an equation involving an existential, add equation to min, remove the var from xs, continue. If all pure atoms normalize to true, added equations induce good existential witnesses, and excise will return them as part of min.
 * symbolic execution
+** change function call to use substitution instead of conjoining equalities to pass args
+depends on [[*change function Call arguments to always be variables][change function Call arguments to always be variables]]
 ** narrow scope of existentials in specs
 in calls to exec_spec, only vars in post need appear in xs, others can be existential in foot
+** generalize specs to express throwing exceptions
 * domain
 ** implement resolve_virtual to not skip virtual calls
 ** consider lazy renaming
 - instead of eagerly constructing renaming substitutions, traverse the formula and lazily construct the renaming substitution map
 - may be better in case there are many variables that do not occur in the formula
+* relation
+** refactor lifting in Domain to use something like
+type 'a with_entry = {entry: State_domain.t; current: 'a}
+type t = State_domain.t with_entry
+type from_call = State_domain.from_call with_entry
+* used globals
+** consider moving used globals info from exec_opts to a field of func
+* intervals
+** do something smarter with intrinsics
+** implement summarization
 * control
 ** change Depths.t from environment- to state-like treatment
 - currently each waiting state has an associated depths map
@@ -299,123 +295,11 @@ in calls to exec_spec, only vars in post need appear in xs, others can be existe
 ** change Work.run to move Domain.join into ~f
 ** canonicalize renamings in stacks
 It seems possible that two edges will be distinct only due to differences between choice of fresh variable names for shadowed variables. It is not obvious that this could not lead to an infinite number of Edge.t values even without recursion. Using predictable names for local variables, such as a pair of the declared name and the depth of the stack, would avoid these difficulties.
-* config
-** move Control.bound to Config
 * build
 ** adapt infer's dead code detection
+- this does not work easily, due at least to issues with wrapped libraries
+* test
+** ban #include from test code
+tests can be sensitive to different system headers
 * optimization
 ** Control uses Var.Set for locals, but could benefit from a set with constant-time union
-* roadmap
-** lazy tracing
-- define a [Trace.t], move global [fs] into it, and thread through code
-- add a parent-pointing tree/dag of printing thunks to [Trace.t]
-- use "event" and "history" terminology
-- change from immediately printing to creating a closure that prints when called, and add it to the dag
-- add [fork] and [join] operations on [Trace.t]
-- use [Trace.fork] in [Control.exec_term], and [Trace.join] in sync with [Domain.join] (in [Control.Work.run] or wherever)
-- add a form of "terminal" trace events, which prints all the ancestor events
-- change [Report] (and elsewhere?) to use Trace.terminal
-- support ex postfacto trace exploration
-  + add a global list of terminals
-  + add to terminals list instead of eagerly printing ancestors of terminals
-  + dump/Marshal trace state at exit
-  + add subcommand for querying dumped traces
-    - list terminals
-    - print ancestors of given terminal
-  + support changing enabled status ex postfacto
-    - record module and function names with printing thunks
-    - when printing, recheck [enabled]
-- support incrementally writing trace data to file
-- support incrementally printing history as requested, in reverse
-- ? support more advanced queries
-** parallelize frontend
-- make a scan_types pass over all types to populate anon_struct_name, and change struct_name to only find, not add
-  see http://llvm.org/doxygen/ValueEnumerator_8cpp_source.html#l00321
-- [Trace.fork] a trace for each function
-- replace calls to fold_left_globals and fold_left_functions with calls to parmap
-- memo_type and memo_value could be put in shared memory instead
-  + better sharing (as much as with sequential translation)
-  + all their contents will live forever anyway
-  + would need to handle concurrent accesses
-  + maybe better to put entire Llair.t into shared memory
-  + ? shared memory = reancient + locks
-** parallelize backend
-- change exec_* functions to instead of transforming the worklist, to return the new jobs (each job is an edge, depth(s?), and state)
-  + also, change tracing so that they return new events rather than transform the whole event dag
-- adapt infer's ProcessPool
-  + When a worker finishes its task, it writes to the "up" pipe, a message indicating that it is done, which includes the worker's id and a list of discovered jobs. Then it reads another task from its "down" pipe, which might block. Maybe it should do a slice of gc before reading.
-  + The orc sits in a select waiting for the "up" pipe to be non-empty. Once it receives a message that a worker has finished, it reads responses from the "up" pipe, adding the jobs sent by the workers to the queue and add the now-idle workers to the back of the queue. When the "up" pipe is empty, it iterates through the idle workers, popping the next task from the queue and writing it to the worker's "down" pipe. Then the orc loops back to waiting on the "up" pipe. If the queue empties while there are still idle workers, keep the queue and add to it on the next finish message. Maybe the orc should check the "up" pipe between writes to worker "down" pipes.
-  + Actually, repeatedly pop all the jobs for the same block from the queue, and send the list of states to the worker to join and execute from.
-  + Currently in infer the operation of selecting the task to send to the child is trivial, but IIUC it does not have to be, and the list of tasks does not need to be computed beforehand. So, leaving the basic communication structure the same, it does not seem like a big change to extend the messages from worker to orc to also include a list of tasks to add to the queue, and to have the orc receive them, add them to a priority queue, pop the highest priority task from the queue and send it to the worker. Plus some check to see if there was an idle worker that could be given one of the tasks just returned to the orc.
-- initial inefficient version
-  + communicate blocks
-    - by forking workers after frontend finishes, thereby giving each worker a copy of the program
-    - then passing block parent name/index and block index
-      + but could instead, with some manual serialization code, pass blocks to/from workers over pipes
-    - receiver must perform a lookup to find their local copy
-  + communicate states using Marshal
-    - likely to be slow
-    - will proactively lose sharing of the representation
-  + communicate trace events by forcing printing thunks to strings
-- optimize by storing program in shared memory (reancient?)
-  + don't need to finish translation before starting analysis
-  + pass block address in reancient heap instead of indices
-  + receiver no longer needs to perform a lookup
-  + saves memory, and time to copy it, and time to futilely GC it in all workers
-- optimize by communicating states without Marshal
-  + could store them in a reancient heap and then communicate their index
-    - probably fast, but leaky
-  + could use a reancient heap for each worker, where it would store its jobs, until there is not enough space, at which point it would delete the heap and allocate a new one, passing the heap to the orc over the pipe
-    - this would need make a deep copy of every entry, or else deleting the heap is unsafe since there could be sharing between entries
-  + could perhaps have immortal heap of states appearing in function specs, try to keep sharing between communicated states and immortal ones, and take advantage of how Marshal won't follow pointers out of the GC heap to make communicated states small
-  + really ought to have a global hash-cons structure which workers add states to in order to communicate them
-  + check what flow/hack/zonc do
-    see fbcode/hphp/hack/src/heap/hh_shared.c
-  + store trace events in shared memory
-    - to avoid forcing them eagerly
-    - need a way to Marshal them from shared memory to write to file
-      + perhaps serially at exit: copy to GC heap and Marshal as normal
-      + perhaps incrementally copy oldest events from shared memory and Marshal to file
-** relax global topological ordering
-:PROPERTIES:
-:ID:       6D6A0AF5-F68F-4726-95E5-178145A4CB9B
-:END:
-- needed for lazy translation and bottom-up analysis
-- compute call graph (perhaps from ThinLTO info)
-- topsort call graph (callee smaller number than caller)
-  + possible alternative might be to translate functions leaving their sort_index unset
-  + then set it when first encountered during analysis
-  + this relies on the assumption that the analysis will perform an appropriately ordered search
-  + this assumption needs to be checked
-  + this is probably only applicable for top-down analysis
-- add sort_index field to func like block
-- change to topsort blocks intraprocedurally
-- change priority queue to use lexicographically sorted pair of func and block indices, that is, (block.parent.sort_index, block.sort_index)
-- if intraprocedural top orders are insufficient
-  + change use of block sort_index for priority in queue
-  + instead of choosing a total order (represented by ints), represent the partial order itself
-  + build a graph with blocks as vertices and edges for non-retreating jumps
-  + then a < b iff there is a path from a to b
-  + perhaps keep the graph transitively-closed, and then a < b iff b is a successor of a
-  + extending such a graph can only add new ordering relationships, never change existing ones, the partial order is stable under extension, so translating code while analyzing will not break the queue
-  + is Fheap compatible with a partial order, rather than a total order?
-  + when adding just-translated code, need to add edges for all existing (non-retreating?) Call sites of added functions: will need to index them
-** lazy translation
-- need to [[id:6D6A0AF5-F68F-4726-95E5-178145A4CB9B][generalize to partial weak topological order]] to enable adding code during analysis without breaking the priority queue
-- translate function when analyzing a Call to a declared but untranslated function
-- if in ThinLTO mode, will need to worry about finding/loading bitcode: will need an index from function names to bitcode modules where they are defined (ThinLTO should have this info)
-** summarization
-- ? standard over-approximation, or something more in tune with refutation
-- ? procedures
-- ? code segments between function entry and call sites
-- common points:
-  + summary includes
-    - precondition
-    - postcondition
-    - depth for which summary is "sound" assuming every worklist item has higher depth
-  + a summary for a given pre and depth may be incomplete (if there is an item in the worklist)
-  + a summary for a pre and depth may be extended with another for the same pre and depth, by disjoining the posts
-** differential analysis
-** start-anywhere/bottom-up analysis
-** non-dnf solver
-** arithmetic constraints

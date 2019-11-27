@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -192,4 +192,19 @@ int test_switch11() {
       printf("(0)HELLO WORLD!");
   }
   return 0;
+}
+
+int switch_gnu_range(char c) {
+  int i;
+  switch (c) {
+    case 'a' ... 'f':
+      return 0;
+      break;
+    case '0' ... /* some long comment to make the end of the range on the next
+                    line */
+        '9':
+      i = atoi(c);
+      break;
+  }
+  return i;
 }

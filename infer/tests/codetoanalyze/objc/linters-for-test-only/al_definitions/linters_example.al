@@ -1,4 +1,4 @@
-// Copyright (c) 2018-present, Facebook, Inc.
+// Copyright (c) Facebook, Inc. and its affiliates.
 //
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
@@ -808,4 +808,107 @@ DEFINE-CHECKER TEST_IS_RECEIVER_SUPER = {
 
   SET message = "This node is a method call to 'super'.";
 
+};
+
+DEFINE-CHECKER CONST_NAMING = {
+  SET report_when = WHEN
+        is_qual_type_const()
+    HOLDS-IN-NODE VarDecl;
+
+  SET message = "That's a const";
+};
+
+DEFINE-CHECKER UNNECESSARY_OBJC_INSTANCE_METHOD = {
+
+  LET is_in_implementation =
+    is_in_objc_implementation_named(REGEXP(".*")) OR
+    is_in_objc_category_implementation_named(REGEXP(".*"));
+
+
+ LET dereference_self =
+      declaration_ref_name(REGEXP("self")) HOLDS-EVENTUALLY;
+
+LET  dereference_self_in_opaque_value_expr =
+          IN-NODE OpaqueValueExpr WITH-TRANSITION SourceExpr
+           (dereference_self)
+          HOLDS-EVENTUALLY;
+
+LET dereference_self_in_method_decl =
+           IN-NODE ObjCMethodDecl WITH-TRANSITION Body
+           (dereference_self  OR dereference_self_in_opaque_value_expr)
+           HOLDS-EVENTUALLY;
+
+  LET is_private_method =
+    declaration_has_name(REGEXP("^_")) AND
+    NOT is_objc_method_exposed AND
+    (NOT dereference_self_in_method_decl)
+    AND is_in_implementation;
+
+
+
+  SET report_when =
+    WHEN
+    is_private_method
+    HOLDS-IN-NODE ObjCMethodDecl;
+
+
+  SET name = "Unnecessary Objective-C Method";
+  SET message = "This is an unnecessary Objective-C Method";
+  SET severity = "ERROR";
+  SET mode = "ON";
+};
+
+DEFINE-CHECKER TEST_UNAVAILABLE_ATTR = {
+
+  SET report_when =
+     has_unavailable_attribute;
+
+  SET message = "This node has unavailable attribute";
+
+};
+
+DEFINE-CHECKER TEST_IS_OPTIONAL_METHOD = {
+
+  SET report_when =
+  WHEN
+     is_optional_objc_method
+  HOLDS-IN-NODE ObjCMethodDecl;
+
+  SET message = "This is an optional method";
+
+};
+
+DEFINE-CHECKER IVAR_CAPTURED_IN_OBJC_BLOCK = {
+		SET report_when =
+ 			WHEN
+				objc_block_is_capturing_var_of_type("Ivars*")
+ 			HOLDS-IN-NODE BlockDecl;
+
+	  SET message = "Found ivar of a given type captured in block";
+    SET severity = "ERROR";
+		SET mode = "ON";
+	};
+
+DEFINE-CHECKER CALLS_TO_FUNCTIONS_WITH_CREATE_FUNCTION_PARAMETERS = {
+LET is_create_method_parameter = HOLDS-NEXT WITH-TRANSITION Parameters 
+    (call_function(REGEXP(".*Create.*")) AND has_type("REGEXP('C.*Ref')"));
+SET report_when =
+    WHEN
+      is_create_method_parameter
+        HOLDS-IN-NODE CallExpr;
+};
+
+DEFINE-CHECKER CLASS_AND_VAR = {
+  LET global_var_exists =
+  is_node("VarDecl");
+
+	 LET var_decl =
+	  		(HOLDS-NEXT WITH-TRANSITION Sibling
+        (global_var_exists()));
+
+   SET report_when =
+   WHEN var_decl() AND declaration_has_name("SiblingExample")
+   HOLDS-IN-NODE  ObjCInterfaceDecl;
+
+	 SET message = "Found a global var next to a class";
 };

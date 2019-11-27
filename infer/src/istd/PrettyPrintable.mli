@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -121,6 +121,8 @@ end
 module type PPMap = sig
   include Caml.Map.S
 
+  val fold_map : 'a t -> init:'b -> f:('b -> 'a -> 'b * 'c) -> 'b * 'c t
+
   val is_singleton_or_more : 'a t -> (key * 'a) IContainer.singleton_or_more
 
   val pp_key : F.formatter -> key -> unit
@@ -140,5 +142,51 @@ module MakePPSet (Ord : PrintableOrderedType) : PPSet with type elt = Ord.t
 
 module MakePPMap (Ord : PrintableOrderedType) : PPMap with type key = Ord.t
 
+module PPMonoMapOfPPMap (M : PPMap) (Val : PrintableType) :
+  PPMonoMap with type key = M.key and type value = Val.t and type t = Val.t M.t
+
 module MakePPMonoMap (Ord : PrintableOrderedType) (Val : PrintableType) :
   PPMonoMap with type key = Ord.t and type value = Val.t
+
+module type PrintableRankedType = sig
+  include PrintableType
+
+  val equal : t -> t -> bool
+
+  val to_rank : t -> int
+end
+
+(** set where at most one element of a given rank can be present *)
+module type PPUniqRankSet = sig
+  type t
+
+  type elt
+
+  val add : t -> elt -> t
+
+  val empty : t
+
+  val equal : t -> t -> bool
+
+  val find_rank : t -> int -> elt option
+
+  val fold : t -> init:'accum -> f:('accum -> elt -> 'accum) -> 'accum
+
+  val is_empty : t -> bool
+
+  val is_singleton : t -> bool
+
+  val is_subset : t -> of_:t -> bool
+
+  val map : t -> f:(elt -> elt) -> t
+
+  val singleton : elt -> t
+
+  val union_prefer_left : t -> t -> t
+  (** in case an element with the same rank is present both in [lhs] and [rhs], keep the one from
+     [lhs] in [union_prefer_left lhs rhs] *)
+
+  val pp : ?print_rank:bool -> F.formatter -> t -> unit
+end
+
+module MakePPUniqRankSet (Val : PrintableRankedType) : PPUniqRankSet with type elt = Val.t

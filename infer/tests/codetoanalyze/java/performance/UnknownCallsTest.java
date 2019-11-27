@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -18,9 +18,9 @@ class UnknownCallsTest {
     for (int i = 0; i < length; ++i) {}
   }
 
-  // call to JSONArray.length is not modeled, hence the result will
-  // not be invariant. Therefore we get quadratic bound.
-  public void jsonArray_quadratic(JSONArray jsonArray) {
+  public void jsonArray_constant() {
+    JSONArray jsonArray = new JSONArray();
+    jsonArray.put(1);
     for (int i = 0; i < jsonArray.length(); ++i) {}
   }
 
@@ -34,13 +34,12 @@ class UnknownCallsTest {
     return 0;
   }
 
-  // Expected: Max(Math,min(...), InputStream.read(....)) but we get T
+  // Expected: linear
   public int read_max_cost(
       InputStream in, byte[] buffer, int byteOffset, int byteCount, ArrayList<Integer> list)
       throws IOException {
     int maxBytesToRead = Math.min(byteCount, mBytesToRead);
     int bytesRead = in.read(buffer, byteOffset, maxBytesToRead);
-    // after the join, we get maxBytesToRead in [0, +oo]. Hence, the loop gets T
     if (bytesRead > 0) {
       maxBytesToRead = bytesRead + 1;
     }
@@ -62,5 +61,36 @@ class UnknownCallsTest {
     for (int i = 0; i < list.size(); i++) {
       list.get(i).hashCode();
     }
+  }
+
+  int throw_exception() {
+    throw new IllegalStateException();
+  }
+
+  void call_throw_exception_linear() {
+    for (int i = 0; i < throw_exception(); i++) {}
+  }
+
+  boolean unknown_bool;
+
+  int may_throw_exception() {
+    if (unknown_bool) {
+      throw new IllegalStateException();
+    } else {
+      return 10;
+    }
+  }
+
+  void call_may_throw_exception_constant() {
+    for (int i = 0; i < may_throw_exception(); i++) {}
+  }
+
+  abstract class AbstractC {
+    abstract int[] abstract_func();
+  }
+
+  void call_concrete_func_linear(AbstractC x) {
+    int[] a = x.abstract_func();
+    for (int i = 0; i < a.length; i++) {}
   }
 }

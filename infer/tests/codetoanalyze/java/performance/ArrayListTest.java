@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 
 public class ArrayListTest {
@@ -42,15 +43,22 @@ public class ArrayListTest {
     list.add(4, 666);
   }
 
-  // we can't set the size of the list to 10 because it depends on how
-  // many times the loop is executed.Should be fixed once we have
-  // relational domain working.
-  public void arraylist_add_in_loop_FP() {
+  public void arraylist_add_in_loop() {
     ArrayList<Integer> list = new ArrayList<Integer>();
     for (int i = 0; i < 10; ++i) {
       list.add(i);
     }
     for (int i = 0, size = list.size(); i < size; ++i) {}
+  }
+
+  public void arraylist_add_in_nested_loop_constant() {
+    for (int j = 0; j < 10; j++) {
+      ArrayList<Integer> list = new ArrayList<Integer>();
+      for (int i = 0; i < 10; ++i) {
+        list.add(i);
+      }
+      for (int i = 0, size = list.size(); i < size; ++i) {}
+    }
   }
 
   public void arraylist_add_in_loop_ok() {
@@ -153,10 +161,7 @@ public class ArrayListTest {
     list.get(1);
   }
 
-  // we can't set the size of the list to 10 because it depends on how
-  // many times the loop is executed. Should be fixed once we have
-  // relational domain working.
-  public void arraylist_remove_in_loop_Good_FP() {
+  public void arraylist_remove_in_loop_Good() {
     ArrayList<Integer> list = new ArrayList<Integer>();
     for (int i = 0; i < 10; ++i) {
       list.add(i);
@@ -186,8 +191,8 @@ public class ArrayListTest {
     }
   }
 
-  // Control vars include element which is some intValue and list
-  // length. Hence, we get quadratic bound.
+  // Control vars include element which is some intValue and list length.  The result of intValue
+  // depends on the list element.  O(list.length x (-list.elements + 11))
   // Simplified version of real code https://fburl.com/a3gge1b7
   public boolean iterate_over_arraylist_shortcut_FP(ArrayList<Integer> list) {
     for (Integer element : list) {
@@ -220,5 +225,131 @@ public class ArrayListTest {
       }
     }
     return false;
+  }
+
+  void constructor_linear(ArrayList<String> list) {
+    ArrayList<String> slist = new ArrayList<>(list);
+    for (int i = 0; i < slist.size(); i++) {}
+  }
+
+  void constructor_modify(ArrayList<String> list) {
+    // copying the reference here, so any change made to slist will
+    // affect list
+    ArrayList<String> slist = new ArrayList<>(list);
+    slist.add("a");
+    slist.add("b");
+    slist.add("c");
+    slist.add("d");
+    for (int i = 0; i < list.size(); i++) {}
+  }
+
+  void constructor_add_all(ArrayList<String> list, ArrayList<String> l) {
+    ArrayList<String> slist = new ArrayList<>(list);
+    slist.addAll(l); // increments the size of both list and slist by
+    // l.length
+    for (int i = 0; i < list.size(); i++) {}
+  }
+
+  void constructor_add_all_sym(ArrayList<String> list, ArrayList<String> l) {
+    ArrayList<String> slist = new ArrayList<>(list);
+    list.addAll(l); // increments the size of both list and slist by
+    // l.length
+    for (int i = 0; i < slist.size(); i++) {}
+  }
+
+  void sort_comparator_nlogn(ArrayList<Person> people) {
+    java.util.Collections.sort(people, new LexicographicComparator());
+  }
+
+  Person max_linear(ArrayList<Person> people) {
+    return java.util.Collections.max(people, new LexicographicComparator());
+  }
+
+  void empty_list_constant(int k) {
+    // create an empty list with initial capacity k, which is ignored
+    ArrayList<Integer> x = new ArrayList<Integer>(k);
+    for (int i = 0; i < x.size(); i++) {}
+  }
+
+  void json_array_constructor_linear(ArrayList<Integer> arr) {
+    try {
+      org.json.JSONArray jArray = new org.json.JSONArray(arr);
+      for (int i = 0; i < jArray.length(); i++) {}
+    } catch (Exception e) {
+
+    }
+  }
+
+  void linear(int i, ArrayList<Integer> a) {
+    while (a.size() >= i) {
+      a.remove(0);
+    }
+  }
+
+  class Elt {
+    boolean b;
+
+    public boolean get_boolean() {
+      return b;
+    }
+  }
+
+  ArrayList<Elt> arr = new ArrayList();
+
+  void boolean_control_var_linear() {
+    for (int i = 0; i < arr.size(); i++) {
+      if (!arr.get(i).get_boolean()) {
+        break;
+      }
+    }
+  }
+
+  public static HashMap<Integer, Integer> init_with_put_linear(ArrayList<Integer> a) {
+    HashMap<Integer, Integer> m = new HashMap<>();
+    for (Integer i : a) {
+      m.put(i, i);
+    }
+    return m;
+  }
+
+  public static void call_init_with_put_linear(ArrayList<Integer> a) {
+    HashMap<Integer, Integer> m = init_with_put_linear(a);
+    for (HashMap.Entry<Integer, Integer> e : m.entrySet()) {}
+  }
+
+  boolean unknown_bool;
+
+  void id(ArrayList<Integer> a) {
+    a.add(0);
+    a.remove(0);
+  }
+
+  void substitute_array_block_linear(ArrayList<Integer> a, ArrayList<Integer> b) {
+    ArrayList<Integer> c;
+    if (unknown_bool) {
+      c = a;
+    } else {
+      c = b;
+    }
+    id(c);
+    iterate_over_arraylist(a);
+  }
+}
+
+class LexicographicComparator implements java.util.Comparator<Person> {
+  @Override
+  public int compare(Person a, Person b) {
+    return a.name.compareToIgnoreCase(b.name);
+  }
+}
+
+class Person {
+
+  String name;
+  int age;
+
+  Person(String n, int a) {
+    name = n;
+    age = a;
   }
 }

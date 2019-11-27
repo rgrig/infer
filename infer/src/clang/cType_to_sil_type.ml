@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -100,10 +100,11 @@ let rec build_array_type translate_decl tenv (qual_type : Clang_ast_t.qual_type)
 
 
 and type_desc_of_attr_type translate_decl tenv type_info attr_info =
-  match type_info.Clang_ast_t.ti_desugared_type with
+  let open Clang_ast_t in
+  match type_info.ti_desugared_type with
   | Some type_ptr -> (
     match CAst_utils.get_type type_ptr with
-    | Some (Clang_ast_t.ObjCObjectPointerType (_, qual_type)) ->
+    | Some (ObjCObjectPointerType (_, qual_type)) ->
         let typ = qual_type_to_sil_type translate_decl tenv qual_type in
         Typ.Tptr (typ, pointer_attribute_of_objc_attribute attr_info)
     | _ ->
@@ -137,7 +138,7 @@ and type_desc_of_c_type translate_decl tenv c_type : Typ.desc =
   | ConstantArrayType (_, {arti_element_type; arti_stride}, n) ->
       build_array_type translate_decl tenv arti_element_type (Some n) arti_stride
   | FunctionProtoType _ | FunctionNoProtoType _ ->
-      Typ.Tfun {no_return= false}
+      Typ.Tfun
   | ParenType (_, qual_type) ->
       (qual_type_to_sil_type translate_decl tenv qual_type).Typ.desc
   | DecayedType (_, qual_type) ->

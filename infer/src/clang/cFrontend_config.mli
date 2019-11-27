@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -15,38 +15,10 @@ val string_of_clang_lang : clang_lang -> string
 
 val equal_clang_lang : clang_lang -> clang_lang -> bool
 
-type exception_details =
-  { msg: string
-  ; position: Logging.ocaml_pos
-  ; source_range: Clang_ast_t.source_range
-  ; ast_node: string option }
-
-exception Unimplemented of exception_details
-
-val unimplemented :
-     Logging.ocaml_pos
-  -> Clang_ast_t.source_range
-  -> ?ast_node:string
-  -> ('a, Format.formatter, unit, _) format4
-  -> 'a
-(** Raise Unimplemented. This is caught at the level of translating a method and makes the frontend
-    give up on that method. *)
-
-exception IncorrectAssumption of exception_details
-
-val incorrect_assumption :
-     Logging.ocaml_pos
-  -> Clang_ast_t.source_range
-  -> ?ast_node:string
-  -> ('a, Format.formatter, unit, _) format4
-  -> 'a
-(** Used to mark places in the frontend that incorrectly assume something to be
-    impossible. TODO(t21762295) get rid of all instances of this. *)
-
 type translation_unit_context =
   {lang: clang_lang; source_file: SourceFile.t; integer_type_widths: Typ.IntegerWidths.t}
 
-exception Invalid_declaration
+type decl_trans_context = [`DeclTraversal | `Translation]
 
 (** Constants *)
 

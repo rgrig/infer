@@ -1,12 +1,15 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 
-(** The Smallfoot Intermediate Language: Expressions *)
+(** The Smallfoot Intermediate Language: Expressions
+
+NOTE: For doing substitutionson expressions, there are some functions in [Sil].
+*)
 
 open! IStd
 module F = Format
@@ -44,14 +47,14 @@ and t =
 val equal : t -> t -> bool
 (** Equality for expressions. *)
 
-(** Set of expressions. *)
 module Set : Caml.Set.S with type elt = t
+(** Set of expressions. *)
 
-(** Map with expression keys. *)
 module Map : Caml.Map.S with type key = t
+(** Map with expression keys. *)
 
-(** Hashtable with expression keys. *)
 module Hash : Caml.Hashtbl.S with type key = t
+(** Hashtable with expression keys. *)
 
 val is_null_literal : t -> bool
 
@@ -59,6 +62,8 @@ val is_this : t -> bool
 (** return true if [exp] is the special this/self expression *)
 
 val is_zero : t -> bool
+
+val is_const : t -> bool
 
 (** {2 Utility Functions for Expressions} *)
 
@@ -113,6 +118,9 @@ val le : t -> t -> t
 val lt : t -> t -> t
 (** Create expression [e1 < e2] *)
 
+val and_nary : t list -> t
+(** Create expression [e1 && e2 && e3 && ...] *)
+
 val free_vars : t -> Ident.t Sequence.t
 (** all the idents appearing in the expression *)
 
@@ -123,6 +131,10 @@ val ident_mem : t -> Ident.t -> bool
 
 val program_vars : t -> Pvar.t Sequence.t
 (** all the program variables appearing in the expression *)
+
+val rename_pvars : f:(string -> string) -> t -> t
+(** Rename all Pvars according to the function [f]. WARNING: You want to rename pvars before you
+combine expressions from different symbolic states, which you RARELY want to.*)
 
 val fold_captured : f:('a -> t -> 'a) -> t -> 'a -> 'a
 (** Fold over the expressions captured by this expression. *)
@@ -143,3 +155,7 @@ val zero_of_type_exn : Typ.t -> t
 val ignore_cast : t -> t
 
 val ignore_integer_cast : t -> t
+
+val get_java_class_initializer :
+  Tenv.t -> t -> (Typ.Procname.t * Pvar.t * Typ.Fieldname.t * Typ.t) option
+(** Returns the class initializer of the given expression in Java *)

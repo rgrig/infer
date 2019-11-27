@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -55,10 +55,7 @@ val ikind_is_unsigned : ikind -> bool
 (** Check whether the integer kind is unsigned *)
 
 (** Kinds of floating-point numbers *)
-type fkind =
-  | FFloat  (** [float] *)
-  | FDouble  (** [double] *)
-  | FLongDouble  (** [long double] *)
+type fkind = FFloat  (** [float] *) | FDouble  (** [double] *) | FLongDouble  (** [long double] *)
 [@@deriving compare]
 
 (** kind of pointer *)
@@ -95,7 +92,7 @@ and desc =
   | Tint of ikind  (** integer type *)
   | Tfloat of fkind  (** float type *)
   | Tvoid  (** void type *)
-  | Tfun of {no_return: bool}  (** function type with noreturn attribute *)
+  | Tfun  (** function type *)
   | Tptr of t * ptr_kind  (** pointer type *)
   | Tstruct of name  (** structured value type name *)
   | TVar of string  (** type variable (ie. C++ template variables) *)
@@ -150,12 +147,18 @@ val get_ikind_opt : t -> ikind option
 val size_t : ikind
 (** ikind of size_t *)
 
+val is_weak_pointer : t -> bool
+
+val is_strong_pointer : t -> bool
+
 module Name : sig
   (** Named types. *)
   type t = name [@@deriving compare]
 
   val equal : t -> t -> bool
   (** Equality for typenames *)
+
+  val hash : t -> int
 
   val to_string : t -> string
   (** convert the typename to a string *)
@@ -199,6 +202,8 @@ module Name : sig
 
       val java_lang_string : t
 
+      val void : t
+
       val package : t -> string option
 
       val type_name : t -> string
@@ -228,6 +233,8 @@ module Name : sig
     val java_io_serializable : t
 
     val java_lang_cloneable : t
+
+    val java_lang_class : t
   end
 
   module Cpp : sig
@@ -254,6 +261,8 @@ val equal : t -> t -> bool
 (** Equality for types. *)
 
 val equal_desc : desc -> desc -> bool
+
+val equal_name : name -> name -> bool
 
 val equal_quals : type_quals -> type_quals -> bool
 
@@ -346,13 +355,13 @@ module Procname : sig
     (** Replace the method of a java procname. *)
 
     val get_class_name : t -> string
-    (** Return the class name of a java procedure name. *)
+    (** Return the fully qualified class name of a java procedure name (package + class name) *)
 
     val get_class_type_name : t -> Name.t
     (** Return the class name as a typename of a java procedure name. *)
 
     val get_simple_class_name : t -> string
-    (** Return the simple class name of a java procedure name. *)
+    (** Return the simple class name of a java procedure name (i.e. name without the package info). *)
 
     val get_package : t -> string option
     (** Return the package name of a java procedure name. *)
@@ -365,6 +374,9 @@ module Procname : sig
 
     val get_return_typ : t -> typ
     (** Return the return type of [pname_java]. return Tvoid if there's no return type *)
+
+    val is_constructor : t -> bool
+    (** Whether the method is constructor *)
 
     val is_access_method : t -> bool
     (** Check if the procedure name is an acess method (e.g. access$100 used to
@@ -433,8 +445,7 @@ being the name of the struct, [None] means the parameter is of some other type. 
       ; template_args: template_spec_info }
     [@@deriving compare]
 
-    val make :
-      Name.t -> string -> kind -> template_spec_info -> Parameter.clang_parameter list -> t
+    val make : Name.t -> string -> kind -> template_spec_info -> Parameter.clang_parameter list -> t
     (** Create an objc procedure name from a class_name and method_name. *)
 
     val get_class_name : t -> string
@@ -519,16 +530,20 @@ being the name of the struct, [None] means the parameter is of some other type. 
 
   val parameter_of_name : t -> Name.t -> Parameter.t
 
+  val is_java_access_method : t -> bool
+
+  val is_java_class_initializer : t -> bool
+
   val is_objc_method : t -> bool
 
-  (** Hash tables with proc names as keys. *)
   module Hash : Caml.Hashtbl.S with type key = t
+  (** Hash tables with proc names as keys. *)
 
-  (** Maps from proc names. *)
   module Map : PrettyPrintable.PPMap with type key = t
+  (** Maps from proc names. *)
 
-  (** Sets of proc names. *)
   module Set : PrettyPrintable.PPSet with type elt = t
+  (** Sets of proc names. *)
 
   module SQLite : sig
     val serialize : t -> Sqlite3.Data.t
@@ -551,9 +566,6 @@ being the name of the struct, [None] means the parameter is of some other type. 
 
   val is_objc_block : t -> bool
   (** Return whether the procname is a block procname. *)
-
-  val hash_pname : t -> int
-  (** Hash function for procname. *)
 
   val is_c_method : t -> bool
   (** Return true this is an Objective-C/C++ method name. *)
@@ -581,7 +593,13 @@ being the name of the struct, [None] means the parameter is of some other type. 
       initializer, None otherwise. *)
 
   val pp : Format.formatter -> t -> unit
-  (** Pretty print a proc name. *)
+  (** Pretty print a proc name for the user to see. *)
+
+  val to_string : t -> string
+  (** Convert a proc name into a string for the user to see. *)
+
+  val describe : Format.formatter -> t -> unit
+  (** to use in user messages *)
 
   val replace_class : t -> Name.t -> t
   (** Replace the class name component of a procedure name.
@@ -589,17 +607,20 @@ being the name of the struct, [None] means the parameter is of some other type. 
 
   val is_method_in_objc_protocol : t -> bool
 
-  val to_string : t -> string
-  (** Convert a proc name to a string for the user to see. *)
+  val pp_simplified_string : ?withclass:bool -> F.formatter -> t -> unit
+  (** Pretty print a proc name as an easy string for the user to see in an IDE. *)
 
   val to_simplified_string : ?withclass:bool -> t -> string
-  (** Convert a proc name into a easy string for the user to see in an IDE. *)
+  (** Convert a proc name into an easy string for the user to see in an IDE. *)
 
   val from_string_c_fun : string -> t
   (** Convert a string to a c function name. *)
 
   val hashable_name : t -> string
-  (** Print the procedure name in a format suitable for computing the bug hash *)
+  (** Convert the procedure name in a format suitable for computing the bug hash. *)
+
+  val pp_unique_id : F.formatter -> t -> unit
+  (** Print a proc name as a unique identifier. *)
 
   val to_unique_id : t -> string
   (** Convert a proc name into a unique identifier. *)
@@ -618,11 +639,13 @@ module Fieldname : sig
   val equal : t -> t -> bool
   (** Equality for field names. *)
 
-  (** Set for fieldnames *)
-  module Set : Caml.Set.S with type elt = t
+  val is_java : t -> bool
 
-  (** Map for fieldnames *)
+  module Set : Caml.Set.S with type elt = t
+  (** Set for fieldnames *)
+
   module Map : Caml.Map.S with type key = t
+  (** Map for fieldnames *)
 
   module Clang : sig
     val from_class_name : Name.t -> string -> t
@@ -676,7 +699,8 @@ module Struct : sig
     ; supers: Name.t list  (** supers *)
     ; methods: Procname.t list  (** methods defined *)
     ; exported_objc_methods: Procname.t list  (** methods in ObjC interface, subset of [methods] *)
-    ; annots: Annot.Item.t  (** annotations *) }
+    ; annots: Annot.Item.t  (** annotations *)
+    ; dummy: bool  (** dummy struct for class including static method *) }
 
   type lookup = Name.t -> t option
 
@@ -693,6 +717,7 @@ module Struct : sig
     -> ?exported_objc_methods:Procname.t list
     -> ?supers:Name.t list
     -> ?annots:Annot.Item.t
+    -> ?dummy:bool
     -> unit
     -> t
   (** Construct a struct_typ, normalizing field types *)
@@ -707,4 +732,6 @@ module Struct : sig
   val get_field_type_and_annotation :
     lookup:lookup -> Fieldname.t -> typ -> (typ * Annot.Item.t) option
   (** Return the type of the field [fn] and its annotation, None if [typ] has no field named [fn] *)
+
+  val is_dummy : t -> bool
 end

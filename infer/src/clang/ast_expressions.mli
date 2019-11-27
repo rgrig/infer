@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -25,6 +25,8 @@ val create_implicit_cast_expr : stmt_info -> stmt list -> qual_type -> cast_kind
 
 val make_obj_c_message_expr_info_class :
   string -> Typ.Name.t -> pointer option -> obj_c_message_expr_info
+
+val make_function_call : stmt_info -> string -> stmt list -> stmt
 
 val trans_with_conditional : stmt_info -> expr_info -> stmt list -> stmt
 (** We translate an expression with a conditional

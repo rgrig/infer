@@ -1,6 +1,6 @@
 #!/usr/bin/env python2.7
 
-# Copyright (c) 2013-present, Facebook, Inc.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -24,9 +24,6 @@ import zipfile
 
 from inferlib import config, issues, utils
 
-DEFAULT_BUCK_OUT = os.path.join(utils.decode(os.getcwd()), 'buck-out')
-DEFAULT_BUCK_OUT_GEN = os.path.join(DEFAULT_BUCK_OUT, 'gen')
-
 INFER_JSON_REPORT = os.path.join(config.BUCK_INFER_OUT,
                                  config.JSON_REPORT_FILENAME)
 
@@ -35,7 +32,7 @@ INFER_JSON_COSTS_REPORT = os.path.join(config.BUCK_INFER_OUT,
 
 INFER_SCRIPT_NAME = 'infer_wrapper.py'
 INFER_SCRIPT = """\
-#!/usr/bin/env {python_executable}
+#!/usr/bin/env python2.7
 import subprocess
 import sys
 
@@ -73,7 +70,6 @@ def prepare_build(args):
         logging.info('Creating %s' % infer_script_path)
         infer_script.write(
             utils.encode(INFER_SCRIPT.format(
-                python_executable=sys.executable,
                 infer_command=infer_command)))
 
     st = os.stat(infer_script_path)
@@ -129,8 +125,10 @@ def get_output_jars(buck_args, targets):
     else:
         targets_output = subprocess.check_output(
             ['buck', 'targets', '--show-output'] + targets)
-        targets_jars = [entry.split()[1] for entry in
-                        targets_output.decode().strip().split('\n')]
+        parsed_output = (
+            entry.split()
+            for entry in targets_output.decode().strip().split('\n'))
+        targets_jars = (p[1] for p in parsed_output if len(p) > 1)
     return filter(os.path.isfile, targets_jars)
 
 

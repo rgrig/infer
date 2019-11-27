@@ -1,7 +1,7 @@
 (*
  * Copyright (c) 2016-present, Programming Research Laboratory (ROPAS)
  *                             Seoul National University, Korea
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -23,11 +23,7 @@ module Trace = BufferOverrunTrace
 module Payload = SummaryPayload.Make (struct
   type t = BufferOverrunCheckerSummary.t
 
-  let update_payloads astate (payloads : Payloads.t) =
-    {payloads with buffer_overrun_checker= Some astate}
-
-
-  let of_payloads (payloads : Payloads.t) = payloads.buffer_overrun_checker
+  let field = Payloads.Fields.buffer_overrun_checker
 end)
 
 module UnusedBranch = struct
@@ -37,8 +33,8 @@ module UnusedBranch = struct
     let desc =
       let err_desc =
         let i = match condition with Exp.Const (Const.Cint i) -> i | _ -> IntLit.zero in
-        Errdesc.explain_condition_always_true_false tenv i condition
-          (CFG.Node.underlying_node node) location
+        Errdesc.explain_condition_always_true_false tenv i condition (CFG.Node.underlying_node node)
+          location
       in
       F.asprintf "%a" Localise.pp_error_desc err_desc
     in
@@ -92,7 +88,7 @@ module ExitStatement = struct
   (* check that we are the last significant instruction
      * of a procedure (no more significant instruction)
      * or of a block (goes directly to a node with multiple predecessors)
-     *)
+  *)
   let rec is_end_of_block_or_procedure (cfg : CFG.t) node rem_instrs =
     Instrs.for_all rem_instrs ~f:Sil.instr_is_auxiliary
     &&
@@ -120,7 +116,7 @@ let add_unreachable_code (cfg : CFG.t) (node : CFG.Node.t) instr rem_instrs (che
          && ExitStatement.is_end_of_block_or_procedure cfg node rem_instrs ->
       checks
   | _ ->
-      let location = Sil.instr_get_loc instr in
+      let location = Sil.location_of_instr instr in
       let unreachable_statement = UnreachableStatement.{location} in
       {checks with unreachable_statements= unreachable_statement :: checks.unreachable_statements}
 
@@ -196,8 +192,8 @@ let check_expr_for_array_access :
       let idx, idx_sym_exp = (Dom.Val.Itv.zero, Some Relation.SymExp.zero) in
       let relation = Dom.Mem.get_relation mem in
       let latest_prune = Dom.Mem.get_latest_prune mem in
-      BoUtils.Check.array_access ~arr ~idx ~idx_sym_exp ~relation ~is_plus:true
-        ~last_included:false ~latest_prune location cond_set
+      BoUtils.Check.array_access ~arr ~idx ~idx_sym_exp ~relation ~is_plus:true ~last_included:false
+        ~latest_prune location cond_set
   | Exp.BinOp (bop, e1, e2) ->
       check_binop integer_type_widths ~bop ~e1 ~e2 location mem cond_set
   | _ ->
@@ -206,6 +202,8 @@ let check_expr_for_array_access :
 
 let check_binop_for_integer_overflow integer_type_widths bop ~lhs ~rhs location mem cond_set =
   match bop with
+  | Binop.MinusA (Some typ) when Typ.ikind_is_unsigned typ && Exp.is_zero lhs && Exp.is_const rhs ->
+      cond_set
   | Binop.PlusA (Some _) | Binop.MinusA (Some _) | Binop.Mult (Some _) ->
       let lhs_v = Sem.eval integer_type_widths lhs mem in
       let rhs_v = Sem.eval integer_type_widths rhs mem in
@@ -254,21 +252,21 @@ let instantiate_cond :
  fun tenv integer_type_widths callee_pname callee_formals params caller_mem callee_exit_mem
      callee_cond location ->
   let rel_subst_map =
-    Sem.get_subst_map tenv integer_type_widths callee_formals params caller_mem callee_exit_mem
+    Option.value_map Config.bo_relational_domain ~default:Relation.SubstMap.empty ~f:(fun _ ->
+        Sem.get_subst_map tenv integer_type_widths callee_formals params caller_mem callee_exit_mem
+    )
   in
   let caller_rel = Dom.Mem.get_relation caller_mem in
-  let eval_sym_trace =
-    Sem.mk_eval_sym_trace integer_type_widths callee_formals params caller_mem
-  in
+  let eval_sym_trace = Sem.mk_eval_sym_trace integer_type_widths callee_formals params caller_mem in
   let latest_prune = Dom.Mem.get_latest_prune caller_mem in
   PO.ConditionSet.subst callee_cond eval_sym_trace rel_subst_map caller_rel callee_pname location
     latest_prune
 
 
+type checks_summary = BufferOverrunCheckerSummary.t
+
 type get_proc_summary =
-     Typ.Procname.t
-  -> (BufferOverrunAnalysisSummary.t * BufferOverrunCheckerSummary.t * (Pvar.t * Typ.t) list)
-     option
+  Typ.Procname.t -> (BufferOverrunAnalysisSummary.t * (Pvar.t * Typ.t) list * checks_summary) option
 
 let check_instr :
        get_proc_summary
@@ -282,11 +280,11 @@ let check_instr :
     -> PO.ConditionSet.checked_t =
  fun get_proc_summary pdesc tenv integer_type_widths node instr mem cond_set ->
   match instr with
-  | Sil.Load (_, exp, _, location) ->
+  | Sil.Load {e= exp; loc= location} ->
       cond_set
       |> check_expr_for_array_access integer_type_widths exp location mem
       |> check_expr_for_integer_overflow integer_type_widths exp location mem
-  | Sil.Store (lexp, _, rexp, location) ->
+  | Sil.Store {e1= lexp; e2= rexp; loc= location} ->
       cond_set
       |> check_expr_for_array_access integer_type_widths lexp location mem
       |> check_expr_for_integer_overflow integer_type_widths lexp location mem
@@ -296,7 +294,11 @@ let check_instr :
         List.fold params ~init:cond_set ~f:(fun cond_set (exp, _) ->
             check_expr_for_integer_overflow integer_type_widths exp location mem cond_set )
       in
-      match Models.Call.dispatch tenv callee_pname params with
+      let fun_arg_list =
+        List.map params ~f:(fun (exp, typ) ->
+            ProcnameDispatcher.Call.FuncArg.{exp; typ; arg_payload= ()} )
+      in
+      match Models.Call.dispatch tenv callee_pname fun_arg_list with
       | Some {Models.check} ->
           let model_env =
             let node_hash = CFG.Node.hash node in
@@ -306,7 +308,7 @@ let check_instr :
           check model_env mem cond_set
       | None -> (
         match get_proc_summary callee_pname with
-        | Some (callee_mem, callee_condset, callee_formals) ->
+        | Some (callee_mem, callee_formals, callee_condset) ->
             instantiate_cond tenv integer_type_widths callee_pname callee_formals params mem
               callee_mem callee_condset location
             |> PO.ConditionSet.join cond_set
@@ -343,15 +345,14 @@ let check_instrs :
   match state with
   | _ when Instrs.is_empty instrs ->
       checks
-  | {AbstractInterpreter.State.pre= Bottom} ->
+  | {AbstractInterpreter.State.pre= Bottom | ExcRaised} ->
       checks
   | {AbstractInterpreter.State.pre= NonBottom _ as pre; post} ->
-      if Instrs.nth_exists instrs 1 then
-        L.(die InternalError) "Did not expect several instructions" ;
+      if Instrs.nth_exists instrs 1 then L.(die InternalError) "Did not expect several instructions" ;
       let instr = Instrs.nth_exn instrs 0 in
       let checks =
         match post with
-        | Bottom ->
+        | Bottom | ExcRaised ->
             add_unreachable_code cfg node instr Instrs.empty checks
         | NonBottom _ ->
             checks
@@ -398,10 +399,8 @@ let compute_checks :
     ~init:Checks.empty
 
 
-type checks_summary = PO.ConditionSet.summary_t
-
-let report_errors : Tenv.t -> Summary.t -> checks -> unit =
- fun tenv summary {cond_set; unused_branches; unreachable_statements} ->
+let report_errors : Tenv.t -> checks -> Summary.t -> unit =
+ fun tenv {cond_set; unused_branches; unreachable_statements} summary ->
   UnusedBranches.report tenv summary unused_branches ;
   UnreachableStatements.report summary unreachable_statements ;
   let report cond trace issue_type =
@@ -417,42 +416,43 @@ let report_errors : Tenv.t -> Summary.t -> checks -> unit =
   PO.ConditionSet.report_errors ~report cond_set
 
 
-let checks_summary : BufferOverrunAnalysis.local_decls -> checks -> checks_summary =
+let get_checks_summary : BufferOverrunAnalysis.local_decls -> checks -> checks_summary =
  fun locals
-     Checks.({ cond_set
-             ; unused_branches= _ (* intra-procedural *)
-             ; unreachable_statements= _ (* intra-procedural *) }) ->
-  PO.ConditionSet.for_summary ~forget_locs:locals cond_set
+     Checks.
+       { cond_set
+       ; unused_branches= _ (* intra-procedural *)
+       ; unreachable_statements= _ (* intra-procedural *) } ->
+  PO.ConditionSet.for_summary ~relation_forget_locs:locals cond_set
 
 
 let checker : Callbacks.proc_callback_args -> Summary.t =
- fun {proc_desc; tenv; integer_type_widths; summary} ->
+ fun {exe_env; summary} ->
+  let proc_desc = Summary.get_proc_desc summary in
+  let proc_name = Summary.get_proc_name summary in
+  let tenv = Exe_env.get_tenv exe_env proc_name in
+  let integer_type_widths = Exe_env.get_integer_type_widths exe_env proc_name in
   let inv_map =
-    BufferOverrunAnalysis.cached_compute_invariant_map proc_desc tenv integer_type_widths
+    BufferOverrunAnalysis.cached_compute_invariant_map summary tenv integer_type_widths
   in
   let underlying_exit_node = Procdesc.get_exit_node proc_desc in
   let pp_name f = F.pp_print_string f "bufferoverrun check" in
-  NodePrinter.start_session ~pp_name underlying_exit_node ;
-  let summary =
-    let cfg = CFG.from_pdesc proc_desc in
-    let checks =
-      let get_proc_summary callee_pname =
-        Ondemand.analyze_proc_name ~caller_pdesc:proc_desc callee_pname
-        |> Option.bind ~f:(fun summary ->
-               let analysis_payload = BufferOverrunAnalysis.Payload.of_summary summary in
-               let checker_payload = Payload.of_summary summary in
-               Option.map2 analysis_payload checker_payload
-                 ~f:(fun analysis_payload checker_payload ->
-                   ( analysis_payload
-                   , checker_payload
-                   , Summary.get_proc_desc summary |> Procdesc.get_pvar_formals ) ) )
+  NodePrinter.with_session ~pp_name underlying_exit_node ~f:(fun () ->
+      let cfg = CFG.from_pdesc proc_desc in
+      let checks =
+        let get_proc_summary callee_pname =
+          Ondemand.analyze_proc_name ~caller_summary:summary callee_pname
+          |> Option.bind ~f:(fun summary ->
+                 let analysis_payload = BufferOverrunAnalysis.Payload.of_summary summary in
+                 let checker_payload = Payload.of_summary summary in
+                 Option.map2 analysis_payload checker_payload
+                   ~f:(fun analysis_payload checker_payload ->
+                     ( analysis_payload
+                     , Summary.get_proc_desc summary |> Procdesc.get_pvar_formals
+                     , checker_payload ) ) )
+        in
+        compute_checks get_proc_summary proc_desc tenv integer_type_widths cfg inv_map
       in
-      compute_checks get_proc_summary proc_desc tenv integer_type_widths cfg inv_map
-    in
-    report_errors tenv summary checks ;
-    let locals = BufferOverrunAnalysis.get_local_decls proc_desc in
-    let cond_set = checks_summary locals checks in
-    Payload.update_summary cond_set summary
-  in
-  NodePrinter.finish_session underlying_exit_node ;
-  summary
+      report_errors tenv checks summary ;
+      let locals = BufferOverrunAnalysis.get_local_decls proc_desc in
+      let cond_set = get_checks_summary locals checks in
+      Payload.update_summary cond_set summary )

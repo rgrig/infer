@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2016-present, Programming Research Laboratory (ROPAS)
  *                             Seoul National University, Korea
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -57,4 +57,15 @@ void join_minmax_with_sum_signed_Good_FP(int x, int y) {
     i++;
   }
   a[i] = 2;
+}
+
+void preciser_widen_Good(int x) {
+  int idx = 0;
+  int arr[10];
+  while (idx < 10) {
+    arr[idx] = 0;
+    if (unknown()) {
+      idx = x;
+    }
+  }
 }

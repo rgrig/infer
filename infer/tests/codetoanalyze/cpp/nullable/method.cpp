@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -145,5 +145,26 @@ void dereferenceOfAliasesCheckedForNullOkay(T* t) {
   T* r = s;
   if (r != nullptr) {
     s->doSomething();
+  }
+}
+
+void pointerTestOkay(T* t) {
+  T* p = t->mayReturnNullObject();
+  if (p) {
+    p->doSomething();
+  }
+}
+
+void pointerTestBad(T* t) {
+  T* p = t->mayReturnNullObject();
+  if (p) {
+    // ...
+  }
+  p->doSomething();
+}
+
+void methodTestedForNullOkay(T* t) {
+  if (t->mayReturnNullObject()) {
+    t->mayReturnNullObject()->doSomething();
   }
 }

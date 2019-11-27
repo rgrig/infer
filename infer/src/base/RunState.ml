@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -47,8 +47,7 @@ let load_and_validate () =
              "'%s' already exists but it is not an empty directory and it does not look like an \
               infer results directory:\n\
              \  %s\n\
-              Was it created using an older version of infer?"
-             Config.results_dir err_msg) )
+              Was it created using an older version of infer?" Config.results_dir err_msg) )
       msg
   in
   if Sys.file_exists state_file_path <> `Yes then

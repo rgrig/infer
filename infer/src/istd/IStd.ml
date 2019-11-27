@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -26,6 +26,12 @@ let invalid_argf _ : [`use_Logging_die_instead] = assert false
 
 let exit = `In_general_prefer_using_Logging_exit_over_Pervasives_exit
 
+(* prevent merlin et al. from showing ['a sexp_list] everywhere a list type is used *)
+type 'a list = 'a sexp_list
+
+(* prevent merlin et al. from showing ['a sexp_option] everywhere an option type is used *)
+type 'a option = 'a sexp_option
+
 [@@@warning "+32"]
 
 module ANSITerminal : module type of ANSITerminal = struct
@@ -33,13 +39,9 @@ module ANSITerminal : module type of ANSITerminal = struct
 
   (* more careful about when the channel is connected to a tty *)
 
-  let print_string =
-    if Unix.(isatty stdout) then print_string else fun _ -> Pervasives.print_string
+  let print_string = if Unix.(isatty stdout) then print_string else fun _ -> Pervasives.print_string
 
-
-  let prerr_string =
-    if Unix.(isatty stderr) then prerr_string else fun _ -> Pervasives.prerr_string
-
+  let prerr_string = if Unix.(isatty stderr) then prerr_string else fun _ -> Pervasives.prerr_string
 
   let printf styles fmt = Format.ksprintf (fun s -> print_string styles s) fmt
 

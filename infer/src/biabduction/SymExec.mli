@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -28,7 +28,7 @@ val instrs :
      ?mask_errors:bool
   -> Exe_env.t
   -> Tenv.t
-  -> Procdesc.t
+  -> Summary.t
   -> Instrs.not_reversed_t
   -> (Prop.normal Prop.t * Paths.Path.t) list
   -> (Prop.normal Prop.t * Paths.Path.t) list

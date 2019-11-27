@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -17,9 +17,7 @@ module NodeKey = struct
   let to_string = Caml.Digest.to_hex
 
   let compute node ~simple_key ~succs ~preds =
-    let v =
-      (simple_key node, List.rev_map ~f:simple_key succs, List.rev_map ~f:simple_key preds)
-    in
+    let v = (simple_key node, List.rev_map ~f:simple_key succs, List.rev_map ~f:simple_key preds) in
     Utils.better_hash v
 
 
@@ -31,6 +29,33 @@ module Node = struct
   type id = int [@@deriving compare]
 
   let equal_id = [%compare.equal: id]
+
+  type destruction_kind =
+    | DestrBreakStmt
+    | DestrContinueStmt
+    | DestrFields
+    | DestrReturnStmt
+    | DestrScope
+    | DestrTemporariesCleanup
+    | DestrVirtualBase
+  [@@deriving compare]
+
+  let string_of_destruction_kind = function
+    | DestrBreakStmt ->
+        "break"
+    | DestrContinueStmt ->
+        "continue"
+    | DestrFields ->
+        "fields"
+    | DestrReturnStmt ->
+        "return"
+    | DestrScope ->
+        "Scope"
+    | DestrTemporariesCleanup ->
+        "temporaries cleanup"
+    | DestrVirtualBase ->
+        "virtual base"
+
 
   type stmt_nodekind =
     | AssertionFailure
@@ -48,9 +73,10 @@ module Node = struct
     | CXXTypeidExpr
     | DeclStmt
     | DefineBody
-    | Destruction
+    | Destruction of destruction_kind
     | ExceptionHandler
     | ExceptionsSink
+    | ExprWithCleanups
     | FallbackNode
     | FinallyBranch
     | GCCAsmStmt
@@ -65,6 +91,7 @@ module Node = struct
     | ObjCCPPThrow
     | OutOfBound
     | ReturnStmt
+    | Scope of string
     | Skip of string
     | SwitchStmt
     | ThisNotNull
@@ -187,7 +214,7 @@ module Node = struct
 
   (** Get the source location of the last instruction in the node *)
   let get_last_loc n =
-    n |> get_instrs |> Instrs.last |> Option.value_map ~f:Sil.instr_get_loc ~default:n.loc
+    n |> get_instrs |> Instrs.last |> Option.value_map ~f:Sil.location_of_instr ~default:n.loc
 
 
   let find_in_node_or_preds =
@@ -228,6 +255,15 @@ module Node = struct
       true )
 
 
+  (** Like [replace_instrs], but 1 instr gets replaced by 0, 1, or more instructions. *)
+  let replace_instrs_by node ~f =
+    let instrs' = Instrs.concat_map_changed ~equal:phys_equal node.instrs ~f:(f node) in
+    if phys_equal instrs' node.instrs then false
+    else (
+      node.instrs <- instrs' ;
+      true )
+
+
   let pp_stmt fmt = function
     | AssertionFailure ->
         F.pp_print_string fmt "Assertion failure"
@@ -259,12 +295,14 @@ module Node = struct
         F.pp_print_string fmt "DeclStmt"
     | DefineBody ->
         F.pp_print_string fmt "define_body"
-    | Destruction ->
-        F.pp_print_string fmt "Destruction"
+    | Destruction kind ->
+        F.fprintf fmt "Destruction(%s)" (string_of_destruction_kind kind)
     | ExceptionHandler ->
         F.pp_print_string fmt "exception handler"
     | ExceptionsSink ->
         F.pp_print_string fmt "exceptions sink"
+    | ExprWithCleanups ->
+        F.pp_print_string fmt "ExprWithCleanups"
     | FallbackNode ->
         F.pp_print_string fmt "Fallback node"
     | FinallyBranch ->
@@ -293,6 +331,8 @@ module Node = struct
         F.pp_print_string fmt "Out of bound"
     | ReturnStmt ->
         F.pp_print_string fmt "Return Stmt"
+    | Scope descr ->
+        F.fprintf fmt "Scope(%s)" descr
     | Skip reason ->
         F.pp_print_string fmt reason
     | SwitchStmt ->
@@ -309,11 +349,7 @@ module Node = struct
 
   let pp_instrs ~highlight pe0 f node =
     let pe =
-      match highlight with
-      | None ->
-          pe0
-      | Some instr ->
-          Pp.extend_colormap pe0 (Obj.repr instr) Red
+      match highlight with None -> pe0 | Some instr -> Pp.extend_colormap pe0 (Obj.repr instr) Red
     in
     Instrs.pp pe f (get_instrs node)
 
@@ -360,26 +396,17 @@ module Node = struct
   (** simple key for a node: just look at the instructions *)
   let simple_key node =
     let add_instr instr =
-      if Sil.instr_is_auxiliary instr then None
-      else
-        let instr_key =
-          match instr with
-          | Sil.Load _ ->
-              1
-          | Sil.Store _ ->
-              2
-          | Sil.Prune _ ->
-              3
-          | Sil.Call _ ->
-              4
-          | Sil.Nullify _ ->
-              5
-          | Sil.Abstract _ ->
-              6
-          | Sil.ExitScope _ ->
-              7
-        in
-        Some instr_key
+      match instr with
+      | Sil.Load _ ->
+          Some 1
+      | Sil.Store _ ->
+          Some 2
+      | Sil.Prune _ ->
+          Some 3
+      | Sil.Call _ ->
+          Some 4
+      | Sil.Metadata _ ->
+          None
     in
     get_instrs node
     |> IContainer.rev_filter_map_to_list ~fold:Instrs.fold ~f:add_instr
@@ -395,17 +422,17 @@ end
 
 (* =============== END of module Node =============== *)
 
-(** Map over nodes *)
 module NodeMap = Caml.Map.Make (Node)
+(** Map over nodes *)
 
-(** Hash table with nodes as keys. *)
 module NodeHash = Hashtbl.Make (Node)
+(** Hash table with nodes as keys. *)
 
-(** Set of nodes. *)
 module NodeSet = Node.NodeSet
+(** Set of nodes. *)
 
-(** Map with node id keys. *)
 module IdMap = Node.IdMap
+(** Map with node id keys. *)
 
 (** procedure description *)
 type t =
@@ -443,11 +470,6 @@ let compute_distance_to_exit_node pdesc =
   in
   mark_distance 0 [exit_node]
 
-
-(** check or indicate if we have performed preanalysis on the CFG *)
-let did_preanalysis pdesc = pdesc.attributes.did_preanalysis
-
-let signal_did_preanalysis pdesc = (pdesc.attributes).did_preanalysis <- true
 
 let get_attributes pdesc = pdesc.attributes
 
@@ -510,6 +532,18 @@ let fold_instrs pdesc ~init ~f =
   fold_nodes ~f:fold_node ~init pdesc
 
 
+let get_static_callees pdesc =
+  let callees =
+    fold_instrs pdesc ~init:Typ.Procname.Set.empty ~f:(fun acc _node instr ->
+        match instr with
+        | Sil.Call (_, Exp.Const (Const.Cfun callee_pn), _, _, _) ->
+            Typ.Procname.Set.add callee_pn acc
+        | _ ->
+            acc )
+  in
+  Typ.Procname.Set.remove (get_proc_name pdesc) callees |> Typ.Procname.Set.elements
+
+
 let find_map_nodes pdesc ~f = List.find_map ~f (get_nodes pdesc)
 
 let find_map_instrs pdesc ~f =
@@ -517,11 +551,20 @@ let find_map_instrs pdesc ~f =
   find_map_nodes ~f:find_map_node pdesc
 
 
-let replace_instrs pdesc ~f =
-  let f updated node =
-    Node.replace_instrs ~f node || (* do not short-circuit [Node.replace_instrs] *) updated
-  in
+let update_nodes pdesc ~(update : Node.t -> bool) : bool =
+  let f acc node = update node || acc in
+  (* do not shortcut call to [update] *)
   fold_nodes pdesc ~init:false ~f
+
+
+let replace_instrs pdesc ~f =
+  let update node = Node.replace_instrs ~f node in
+  update_nodes pdesc ~update
+
+
+let replace_instrs_by pdesc ~f =
+  let update node = Node.replace_instrs_by ~f node in
+  update_nodes pdesc ~update
 
 
 (** fold between two nodes or until we reach a branching structure *)
@@ -545,17 +588,19 @@ let set_exit_node pdesc node = pdesc.exit_node <- node
 let set_start_node pdesc node = pdesc.start_node <- node
 
 (** Append the locals to the list of local variables *)
-let append_locals pdesc new_locals =
-  (pdesc.attributes).locals <- pdesc.attributes.locals @ new_locals
-
-
-let set_succs_exn_only (node : Node.t) exn = node.exn <- exn
+let append_locals pdesc new_locals = pdesc.attributes.locals <- pdesc.attributes.locals @ new_locals
 
 (** Set the successor nodes and exception nodes, and build predecessor links *)
-let set_succs_exn_base (node : Node.t) succs exn =
-  node.succs <- succs ;
-  node.exn <- exn ;
-  List.iter ~f:(fun (n : Node.t) -> n.preds <- node :: n.preds) succs
+let set_succs (node : Node.t) ~normal:succs_opt ~exn:exn_opt =
+  let remove_pred pred_node (from_node : Node.t) =
+    from_node.preds <- List.filter from_node.preds ~f:(fun pred -> not (Node.equal pred pred_node))
+  in
+  let add_pred pred_node (to_node : Node.t) = to_node.preds <- pred_node :: to_node.preds in
+  Option.iter succs_opt ~f:(fun new_succs ->
+      List.iter node.succs ~f:(remove_pred node) ;
+      List.iter new_succs ~f:(add_pred node) ;
+      node.succs <- new_succs ) ;
+  Option.iter exn_opt ~f:(fun exn -> node.exn <- exn)
 
 
 (** Create a new cfg node *)
@@ -585,15 +630,15 @@ let create_node pdesc loc kind instrs =
 (** Set the successor and exception nodes.
     If this is a join node right before the exit node, add an extra node in the middle,
     otherwise nullify and abstract instructions cannot be added after a conditional. *)
-let node_set_succs_exn pdesc (node : Node.t) succs exn =
+let node_set_succs pdesc (node : Node.t) ~normal:succs ~exn =
   match (node.kind, succs) with
   | Join_node, [({Node.kind= Exit_node} as exit_node)] ->
       let kind = Node.Stmt_node BetweenJoinAndExit in
       let node' = create_node_from_not_reversed pdesc node.loc kind node.instrs in
-      set_succs_exn_base node [node'] exn ;
-      set_succs_exn_base node' [exit_node] exn
+      set_succs node ~normal:(Some [node']) ~exn:(Some exn) ;
+      set_succs node' ~normal:(Some [exit_node]) ~exn:(Some exn)
   | _ ->
-      set_succs_exn_base node succs exn
+      set_succs node ~normal:(Some succs) ~exn:(Some exn)
 
 
 module PreProcCfg = struct
@@ -622,7 +667,7 @@ let get_wto pdesc =
       wto
   | None ->
       let wto = WTO.make pdesc in
-      let _ : int =
+      let (_ : int) =
         WeakTopologicalOrder.Partition.fold_nodes wto ~init:0 ~f:(fun idx node ->
             node.Node.wto_index <- idx ;
             idx + 1 )
@@ -696,18 +741,17 @@ let pp_objc_accessor fmt accessor =
 let pp_signature fmt pdesc =
   let attributes = get_attributes pdesc in
   let pname = get_proc_name pdesc in
-  let pname_string = Typ.Procname.to_string pname in
   let defined_string = match is_defined pdesc with true -> "defined" | false -> "undefined" in
-  Format.fprintf fmt "@[%s [%s, Return type: %s, %aFormals: %a, Locals: %a" pname_string
-    defined_string
-    (Typ.to_string (get_ret_type pdesc))
-    pp_objc_accessor attributes.ProcAttributes.objc_accessor pp_variable_list (get_formals pdesc)
-    pp_locals_list (get_locals pdesc) ;
+  Format.fprintf fmt "@[%a [%s, Return type: %a, %aFormals: %a, Locals: %a" Typ.Procname.pp pname
+    defined_string (Typ.pp_full Pp.text) (get_ret_type pdesc) pp_objc_accessor
+    attributes.ProcAttributes.objc_accessor pp_variable_list (get_formals pdesc) pp_locals_list
+    (get_locals pdesc) ;
   if not (List.is_empty (get_captured pdesc)) then
     Format.fprintf fmt ", Captured: %a" pp_variable_list (get_captured pdesc) ;
   let method_annotation = attributes.ProcAttributes.method_annotation in
-  if not (Annot.Method.is_empty method_annotation) then
-    Format.fprintf fmt ", Annotation: %a" (Annot.Method.pp pname_string) method_annotation ;
+  ( if not (Annot.Method.is_empty method_annotation) then
+    let pname_string = Typ.Procname.to_string pname in
+    Format.fprintf fmt ", Annotation: %a" (Annot.Method.pp pname_string) method_annotation ) ;
   Format.fprintf fmt "]@]@;"
 
 
@@ -758,7 +802,7 @@ let is_connected proc_desc =
   let is_exit_node n = match Node.get_kind n with Node.Exit_node -> true | _ -> false in
   let is_between_join_and_exit_node n =
     match Node.get_kind n with
-    | Node.Stmt_node BetweenJoinAndExit | Node.Stmt_node Destruction -> (
+    | Node.Stmt_node (BetweenJoinAndExit | Destruction _) -> (
       match Node.get_succs n with [n'] when is_exit_node n' -> true | _ -> false )
     | _ ->
         false
@@ -789,10 +833,10 @@ let is_connected proc_desc =
         if List.is_empty succs || List.is_empty preds then Error `Other else Ok ()
     | Node.Join_node ->
         (* Join node has the exception that it may be without predecessors
-         and pointing to between_join_and_exit which points to an exit node.
-         This happens when the if branches end with a return.
-         Nested if statements, where all branches have return statements,
-         introduce a sequence of join nodes *)
+           and pointing to between_join_and_exit which points to an exit node.
+           This happens when the if branches end with a return.
+           Nested if statements, where all branches have return statements,
+           introduce a sequence of join nodes *)
         if
           (List.is_empty preds && not (is_consecutive_join_nodes n NodeSet.empty))
           || ((not (List.is_empty preds)) && List.is_empty succs)
@@ -818,7 +862,7 @@ let is_connected proc_desc =
       error
 
 
-module SQLite = SqliteUtils.MarshalledNullableData (struct
+module SQLite = SqliteUtils.MarshalledNullableDataNOTForComparison (struct
   type nonrec t = t
 end)
 

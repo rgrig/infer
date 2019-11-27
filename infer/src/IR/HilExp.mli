@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -17,6 +17,8 @@ module Access : sig
   [@@deriving compare]
 
   val pp : (Format.formatter -> 'array_index -> unit) -> Format.formatter -> 'array_index t -> unit
+
+  val is_field_or_array_access : 'a t -> bool
 end
 
 type t =
@@ -41,6 +43,8 @@ and access_expression = private
 [@@deriving compare]
 
 module AccessExpression : sig
+  val of_id : Ident.t -> Typ.t -> access_expression [@@warning "-32"]
+
   val base : AccessPath.base -> access_expression
 
   val field_offset : access_expression -> Typ.Fieldname.t -> access_expression
@@ -50,15 +54,13 @@ module AccessExpression : sig
   val dereference : access_expression -> access_expression
   (** guarantees that we never build [Dereference (AddressOf t)] expressions: these become [t] *)
 
-  val to_accesses_fold :
-       access_expression
-    -> init:'accum
-    -> f_array_offset:('accum -> t option -> 'accum * 'array_index)
-    -> 'accum * AccessPath.base * 'array_index Access.t list
+  val address_of : access_expression -> access_expression option
+    [@@warning "-32"]
+  (** address_of doesn't always make sense, eg [address_of (Dereference t)] is [None] *)
+
+  val address_of_base : AccessPath.base -> access_expression [@@warning "-32"]
 
   val to_access_path : access_expression -> AccessPath.t
-
-  val to_access_paths : access_expression list -> AccessPath.t list
 
   val get_base : access_expression -> AccessPath.base
 
@@ -72,6 +74,19 @@ module AccessExpression : sig
   val pp : Format.formatter -> access_expression -> unit
 
   val equal : access_expression -> access_expression -> bool
+
+  val to_accesses : access_expression -> access_expression * t option Access.t list
+  (** return the base and a list of accesses equivalent to the input expression *)
+
+  val add_access : access_expression -> t option Access.t -> access_expression option
+
+  val truncate : access_expression -> (access_expression * t option Access.t) option
+  (** remove and return the prefix and the last access of the expression if it's a base;
+      otherwise return None *)
+
+  val append : onto:access_expression -> access_expression -> access_expression option
+  (** [append ~onto y] replaces the base of [y] with [onto] itself; this makes sense if no 
+     [Dereference (AddressOf _)] instances are introduced *)
 
   type nonrec t = access_expression = private
     | Base of AccessPath.base
@@ -108,4 +123,18 @@ val is_int_zero : t -> bool
 
 val eval : t -> Const.t option
 
+val eval_boolean_exp : AccessExpression.t -> t -> bool option
+(** [eval_boolean_exp var exp] returns [Some bool_value] if the given boolean expression [exp] 
+    evaluates to [bool_value] when [var] is set to true.  Return None if it has free variables 
+    that stop us from evaluating it, or is not a boolean expression. *)
+
 val ignore_cast : t -> t
+
+val access_expr_of_exp :
+     include_array_indexes:bool
+  -> f_resolve_id:(Var.t -> AccessExpression.t option)
+  -> Exp.t
+  -> Typ.t
+  -> access_expression option
+(** best effort translating a SIL expression to an access path, not semantics preserving in
+    particular in the presence of pointer arithmetic *)

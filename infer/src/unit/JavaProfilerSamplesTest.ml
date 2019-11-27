@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,7 +7,7 @@
 
 open! IStd
 open OUnit2
-module T = JavaProfilerSamples.JNI.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY
+module T = JProcname.JNI.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY
 
 let mk_split (pkg, typ) = Typ.Name.Java.Split.make ?package:pkg typ
 
@@ -62,7 +62,7 @@ let test_jni_parse_str_with_valid_input =
       Format.fprintf fmt "Expected: '%a', found: '%a'" (Format.pp_print_list T.pp) expected
         (Format.pp_print_list T.pp) actual
     in
-    assert_equal ~cmp:(List.equal ~equal:T.equal) ~pp_diff expected found
+    assert_equal ~cmp:(List.equal T.equal) ~pp_diff expected found
   in
   [ ( "test_jni_parse_str_with_method_signature"
     , "(IZLjava/lang/String;)[C"
@@ -100,7 +100,7 @@ let test_jni_parse_str_with_valid_input =
                    )) ]
           , Void ) ] )
   ; ( "test_jni_parse_str_with_empty_method_signature"
-    , JavaProfilerSamples.JNI.void_method_with_no_arguments
+    , JProcname.JNI.void_method_with_no_arguments
     , T.[Method ([], Void)] )
   ; ("test_jni_parse_str_with_empty_input", "", []) ]
   |> List.map ~f:(fun (name, test_input, expected_output) ->
@@ -160,27 +160,25 @@ let test_jni_to_java_type_with_invalid_input =
 let test_from_json_string_with_valid_input =
   let create_test input expected ~use_signature _ =
     let found = JavaProfilerSamples.from_json_string input ~use_signature in
-    assert_equal
-      ~cmp:(List.equal ~equal:JavaProfilerSamples.equal_labeled_profiler_sample)
-      expected found
+    assert_equal ~cmp:(List.equal JavaProfilerSamples.equal_labeled_profiler_sample) expected found
   in
   let input1 = "[{\"test\": \"label1\",\"methods\": []}]" in
-  let expected1 = [("label1", JavaProfilerSamples.ProfilerSample.of_list [])] in
+  let expected1 = [("label1", Typ.Procname.Set.of_list [])] in
   let input2 =
     Printf.sprintf
-      "[{\"foo\":{},\"test\": \"label1\",\"methods\": [{\"class\": \"ggg.hhh.Iii\", \"boo\": \
-       \"\", \"method\": \"<clinit>\", \"signature\": \"(Ljava/lang/String;[IJ)V\",\"wat\": \
+      "[{\"foo\":{},\"test\": \"label1\",\"methods\": [{\"class\": \"ggg.hhh.Iii\", \"boo\": \"\", \
+       \"method\": \"<clinit>\", \"signature\": \"(Ljava/lang/String;[IJ)V\",\"wat\": \
        \"\"},{\"class\": \"lll.mmm.Nnn\",\"boo\": \"\",\"method\": \"<init>\",\"signature\": \
        \"(Ljava/lang/String;[IJ)V\",\"wat\": \"\"}]},{\"boo\":\"aaa\",\"test\": \
        \"label2\",\"methods\": [{\"class\": \"aaa.bbb.Ccc\",\"boo\": \"\",\"method\": \
        \"methodOne\",\"signature\": \"%s\",\"wat\": \"\"},{\"class\": \"ddd.eee.Fff\",\"boo\": \
        \"\",\"method\": \"methodTwo\",\"signature\": \"(Ljava/lang/String;[IJ)[[C\",\"wat\": \
        \"\"}]}]"
-      JavaProfilerSamples.JNI.void_method_with_no_arguments
+      JProcname.JNI.void_method_with_no_arguments
   in
   let expected2 =
     [ ( "label1"
-      , JavaProfilerSamples.ProfilerSample.of_list
+      , Typ.Procname.Set.of_list
           [ Typ.Procname.(
               Java
                 (Java.make
@@ -200,7 +198,7 @@ let test_from_json_string_with_valid_input =
                    ; mk_split (None, "long") ]
                    Java.Non_Static)) ] )
     ; ( "label2"
-      , JavaProfilerSamples.ProfilerSample.of_list
+      , Typ.Procname.Set.of_list
           [ Typ.Procname.(
               Java
                 (Java.make
@@ -220,7 +218,7 @@ let test_from_json_string_with_valid_input =
   in
   let expected3 =
     [ ( "label1"
-      , JavaProfilerSamples.ProfilerSample.of_list
+      , Typ.Procname.Set.of_list
           [ Typ.Procname.(
               Java
                 (Java.make
@@ -232,7 +230,7 @@ let test_from_json_string_with_valid_input =
                    (Typ.Name.Java.from_string "ggg.hhh.Iii")
                    None "<clinit>" [] Java.Non_Static)) ] )
     ; ( "label2"
-      , JavaProfilerSamples.ProfilerSample.of_list
+      , Typ.Procname.Set.of_list
           [ Typ.Procname.(
               Java
                 (Java.make
@@ -266,7 +264,7 @@ let test_from_json_string_with_invalid_input =
     , Printf.sprintf
         "{\"whatever\": {}, \"methods\": [{\"class\": \"aaa.bbb.Ccc\", \"boo\": \"\", \"method\": \
          \"methodOne\", \"signature\": \"%s\"}], \"foo\": {}}"
-        JavaProfilerSamples.JNI.void_method_with_no_arguments
+        JProcname.JNI.void_method_with_no_arguments
     , Yojson.Json_error
         "Line 1, bytes 0-33:\nExpected '[' but found '{\"whatever\": {}, \"methods\": [{\"cl'" )
   ; ( "test_from_json_string_3"

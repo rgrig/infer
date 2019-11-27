@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -13,8 +13,8 @@ open! IStd
 module type S = sig
   module CFG : ProcCfg.S
 
-  (** abstract domain whose state we propagate *)
   module Domain : AbstractDomain.S
+  (** abstract domain whose state we propagate *)
 
   (** read-only extra state (results of previous analyses, globals, etc.) *)
   type extras
@@ -39,10 +39,7 @@ end
 
 module type DisjunctiveConfig = sig
   val join_policy :
-    [ `JoinAfter of int
-      (** when the set of disjuncts gets bigger than [n] the underlying domain's join is called to
-       collapse them into one state *)
-    | `UnderApproximateAfter of int
+    [ `UnderApproximateAfter of int
       (** When the set of disjuncts gets bigger than [n] then just stop adding new states to it,
          drop any further states on the floor. This corresponds to an under-approximation/bounded
          approach. *)
@@ -54,31 +51,31 @@ end
 module type DisjReady = sig
   module CFG : ProcCfg.S
 
-  module Domain : AbstractDomain.S
-
-  module DisjunctiveDomain : Caml.Set.S with type elt = Domain.t
+  module Domain : AbstractDomain.NoJoin
 
   type extras
 
-  type instr
-
-  val exec_instr : Domain.t -> extras ProcData.t -> CFG.Node.t -> instr -> DisjunctiveDomain.t
+  val exec_instr : Domain.t -> extras ProcData.t -> CFG.Node.t -> Sil.instr -> Domain.t list
 
   val pp_session_name : CFG.Node.t -> Format.formatter -> unit
-end
-
-module type HILDisjReady = sig
-  include DisjReady with type instr := HilInstr.t
 end
 
 (** In the disjunctive interpreter, the domain is a set of abstract states representing a
    disjunction between these states. The transfer functions are executed on each state in the
    disjunct independently. The join on the disjunctive state is governed by the policy described in
    [DConfig]. *)
-module MakeHILDisjunctive (TransferFunctions : HILDisjReady) (DConfig : DisjunctiveConfig) : sig
+module MakeDisjunctive (TransferFunctions : DisjReady) (DConfig : DisjunctiveConfig) : sig
+  module Disjuncts : sig
+    type t
+
+    val singleton : TransferFunctions.Domain.t -> t
+
+    val elements : t -> TransferFunctions.Domain.t list [@@warning "-32"]
+  end
+
   include
-    HIL
-    with type extras = TransferFunctions.extras
-     and module CFG = TransferFunctions.CFG
-     and type Domain.t = TransferFunctions.DisjunctiveDomain.t
+    SIL
+      with type extras = TransferFunctions.extras
+       and module CFG = TransferFunctions.CFG
+       and type Domain.t = Disjuncts.t
 end

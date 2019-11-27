@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -134,4 +134,14 @@ void sizeof_expr_ok(void) {
     p->age = 42;
   }
   free(p);
+}
+
+void __attribute__((noreturn)) will_not_return();
+
+void unreachable_null_ok() {
+  int* p = NULL;
+  if (p == NULL) {
+    will_not_return();
+  }
+  *p = 42;
 }

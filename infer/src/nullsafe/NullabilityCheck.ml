@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -18,7 +18,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   module CFG = CFG
   module Domain = Domain
 
-  type extras = Summary.t
+  type extras = unit
 
   let rec is_pointer_subtype tenv typ1 typ2 =
     match (typ1.Typ.desc, typ2.Typ.desc) with
@@ -41,7 +41,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           ~f:(fun attributes ->
             ClangMethodKind.equal attributes.ProcAttributes.clang_method_kind
               ClangMethodKind.CPP_INSTANCE )
-          (Summary.proc_resolve_attributes callee_pname)
+          (Summary.OnDisk.proc_resolve_attributes callee_pname)
 
 
   let is_objc_instance_method callee_pname =
@@ -49,7 +49,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       ~f:(fun attributes ->
         ClangMethodKind.equal attributes.ProcAttributes.clang_method_kind
           ClangMethodKind.OBJC_INSTANCE )
-      (Summary.proc_resolve_attributes callee_pname)
+      (Summary.OnDisk.proc_resolve_attributes callee_pname)
 
 
   let is_blacklisted_method : Typ.Procname.t -> bool =
@@ -60,7 +60,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
 
   let container_method_regex =
-    Str.regexp @@ "^\\(NS.*_\\(arrayByAddingObject\\|arrayWithObjects\\|"
+    Str.regexp @@ "^\\(NS.*::\\(arrayByAddingObject\\|arrayWithObjects\\|"
     ^ "dictionaryWithObjects\\|dictionaryWithObjectsAndKeys\\|initWithObjectsAndKeys\\|"
     ^ "addObject\\|insertObject\\|setObject\\|"
     ^ "stringWithUTF8String\\|stringWithString\\|initWithFormat\\|stringByAppendingString\\):\\|"
@@ -73,6 +73,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
 
   let is_conflicting_report summary report_location =
+    (* FIXME(T54950303) replace use of filtering with deduplicate *)
     if not Config.filtering then false
     else
       Errlog.fold
@@ -91,20 +92,20 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   let lookup_local_attributes = function
     | Typ.Procname.Java _ as pname ->
         (* Looking up the attribute according to the classpath *)
-        Summary.proc_resolve_attributes pname
+        Summary.OnDisk.proc_resolve_attributes pname
     | pname ->
         (* Looking up the attributes locally, i.e. either from the file of from the includes *)
         Option.map ~f:Procdesc.get_attributes (Ondemand.get_proc_desc pname)
 
 
-  let report_nullable_dereference ap call_sites {ProcData.pdesc; extras} loc =
-    let summary = extras in
+  let report_nullable_dereference ap call_sites {ProcData.summary} loc =
     if is_conflicting_report summary loc then ()
     else
-      let pname = Procdesc.get_proc_name pdesc in
+      let pname = Summary.get_proc_name summary in
       let annotation = Localise.nullable_annotation_name pname in
       let call_site =
-        try CallSites.min_elt call_sites with Caml.Not_found ->
+        try CallSites.min_elt call_sites
+        with Caml.Not_found ->
           L.(die InternalError)
             "Expecting a least one element in the set of call sites when analyzing %a"
             Typ.Procname.pp pname
@@ -123,8 +124,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         if is_direct_dereference then
           (* direct dereference without intermediate variable *)
           F.asprintf
-            "The return value of %s is annotated with %a and is dereferenced without being \
-             checked for null at %a"
+            "The return value of %s is annotated with %a and is dereferenced without being checked \
+             for null at %a"
             (MF.monospaced_to_string simplified_pname)
             MF.pp_monospaced annotation Location.pp loc
         else
@@ -170,7 +171,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         in
         dereference_site :: with_assignment_site
       in
-      Reporting.log_error summary ~loc ~ltr:trace IssueType.nullable_dereference message
+      Reporting.log_error summary ~loc ~ltr:trace IssueType.nullsafe_nullable_dereference message
 
 
   let add_nullable_ap ap call_sites (aps, pnames) = (NullableAP.add ap call_sites aps, pnames)
@@ -205,7 +206,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
 
   let rec longest_nullable_prefix ap ((nullable_aps, _) as astate) =
-    try Some (ap, NullableAP.find ap nullable_aps) with Caml.Not_found -> (
+    try Some (ap, NullableAP.find ap nullable_aps)
+    with Caml.Not_found -> (
       match ap with
       | _, [] ->
           None
@@ -240,7 +242,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       (* the rhs has type int when assigning the lhs to null *)
       if HilExp.is_null_literal rhs then true
         (* the lhs and rhs have the same type in the case of pointer assignment
-         but the types are different when assigning the pointee *)
+           but the types are different when assigning the pointee *)
       else
         match (AccessPath.get_typ lhs tenv, HilExp.get_typ tenv rhs) with
         (* defensive assumption when the types are not known *)
@@ -271,11 +273,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       when is_non_objc_instance_method callee_pname ->
         check_ap proc_data loc (HilExp.AccessExpression.to_access_path receiver) astate
     | Call
-        ( ((_, ret_typ) as ret_var)
-        , Direct callee_pname
-        , HilExp.AccessExpression receiver :: _
-        , _
-        , _ )
+        (((_, ret_typ) as ret_var), Direct callee_pname, HilExp.AccessExpression receiver :: _, _, _)
       when Typ.is_pointer ret_typ && is_objc_instance_method callee_pname -> (
       match longest_nullable_prefix (HilExp.AccessExpression.to_access_path receiver) astate with
       | None ->
@@ -335,8 +333,9 @@ end
 
 module Analyzer = LowerHil.MakeAbstractInterpreter (TransferFunctions (ProcCfg.Exceptional))
 
-let checker {Callbacks.summary; proc_desc; tenv} =
+let checker {Callbacks.summary; exe_env} =
   let initial = (NullableAP.empty, NullCheckedPname.empty) in
-  let proc_data = ProcData.make proc_desc tenv summary in
+  let tenv = Exe_env.get_tenv exe_env (Summary.get_proc_name summary) in
+  let proc_data = ProcData.make summary tenv () in
   ignore (Analyzer.compute_post proc_data ~initial) ;
   summary

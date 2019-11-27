@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -193,7 +193,7 @@ int ok10() {
   return 1;
 }
 
-void FN_capture_read_bad() {
+void capture_read_bad() {
   int x;
   [x]() {
     int y = x;
@@ -257,7 +257,7 @@ int warning_when_throw_in_other_branch_bad(int t) {
 
 [[noreturn]] void noreturn_function() {}
 
-int FP_no_warning_noreturn_callee_ok(bool t) {
+int no_warning_noreturn_callee_ok(bool t) {
   int x;
   if (t) {
     x = 2;
@@ -329,4 +329,9 @@ void FN_call_to_maybe_uninit_fn_ptr_bad(bool nondet) {
   if (nondet)
     f = use_square_ok1;
   f();
+}
+
+void use_uninit_in_expr_bad() {
+  int x;
+  int y = x + 2;
 }

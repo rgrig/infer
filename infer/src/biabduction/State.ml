@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -21,7 +21,7 @@ type failure_stats =
     mutable node_ok: int
   ; (* number of node successes (i.e. no instruction failures) *)
     mutable first_failure: (Location.t * Procdesc.Node.t * int * Errlog.loc_trace * exn) option
-  (* exception at the first failure *) }
+        (* exception at the first failure *) }
 
 module NodeHash = Procdesc.NodeHash
 
@@ -67,7 +67,8 @@ let reset_diverging_states_node () = !gs.diverging_states_node <- Paths.PathSet.
 let reset () = gs := initial ()
 
 let get_failure_stats node =
-  try NodeHash.find !gs.failure_map node with Caml.Not_found ->
+  try NodeHash.find !gs.failure_map node
+  with Caml.Not_found ->
     let fs = {instr_fail= 0; instr_ok= 0; node_fail= 0; node_ok= 0; first_failure= None} in
     NodeHash.add !gs.failure_map node fs ;
     fs
@@ -91,19 +92,19 @@ let get_node () = !gs.last_node
 let get_loc_exn () =
   match !gs.last_instr with
   | Some instr ->
-      Sil.instr_get_loc instr
+      Sil.location_of_instr instr
   | None ->
       get_node_exn () |> Procdesc.Node.get_loc
 
 
 let get_loc () =
-  match !gs.last_instr with Some instr -> Some (Sil.instr_get_loc instr) | None -> None
+  match !gs.last_instr with Some instr -> Some (Sil.location_of_instr instr) | None -> None
 
 
 (** normalize the list of instructions by renaming let-bound ids *)
 let instrs_normalize instrs =
   let bound_ids =
-    let do_instr = function Sil.Load (id, _, _, _) -> Some id | _ -> None in
+    let do_instr = function Sil.Load {id} -> Some id | _ -> None in
     IContainer.rev_filter_map_to_list ~fold:Instrs.fold ~f:do_instr instrs
   in
   let subst =
@@ -155,7 +156,7 @@ let mk_find_duplicate_nodes : Procdesc.t -> Procdesc.Node.t -> Procdesc.NodeSet.
         let s = M.find (get_key node) map in
         let node_normalized_instrs = Procdesc.NodeMap.find node s in
         let collect_duplicates node' normalized_instrs' nset =
-          if List.equal ~equal:Sil.equal_instr node_normalized_instrs normalized_instrs' then
+          if List.equal Sil.equal_instr node_normalized_instrs normalized_instrs' then
             Procdesc.NodeSet.add node' nset
           else nset
         in
@@ -259,12 +260,7 @@ let mark_instr_fail exn =
 
 
 type log_issue =
-     Typ.Procname.t
-  -> ?node:Procdesc.Node.t
-  -> ?loc:Location.t
-  -> ?ltr:Errlog.loc_trace
-  -> exn
-  -> unit
+  Typ.Procname.t -> ?node:Procdesc.Node.t -> ?loc:Location.t -> ?ltr:Errlog.loc_trace -> exn -> unit
 
 let process_execution_failures (log_issue : log_issue) pname =
   let do_failure _ fs =

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -127,7 +127,7 @@ let check_printf_args_ok tenv (node : Procdesc.Node.t) (instr : Sil.instr)
     match nvar with
     | Exp.Var nid ->
         Instrs.find_map instrs ~f:(function
-          | Sil.Load (id, Exp.Lvar iv, _, _) when Ident.equal id nid ->
+          | Sil.Load {id; e= Exp.Lvar iv} when Ident.equal id nid ->
               Some iv
           | _ ->
               None )
@@ -169,8 +169,10 @@ let check_printf_args_ok tenv (node : Procdesc.Node.t) (instr : Sil.instr)
       ()
 
 
-let callback_printf_args {Callbacks.tenv; proc_desc; summary} : Summary.t =
+let callback_printf_args {Callbacks.exe_env; summary} : Summary.t =
+  let proc_desc = Summary.get_proc_desc summary in
   let proc_name = Procdesc.get_proc_name proc_desc in
+  let tenv = Exe_env.get_tenv exe_env proc_name in
   Procdesc.iter_instrs
     (fun n i -> check_printf_args_ok tenv n i proc_name proc_desc summary)
     proc_desc ;

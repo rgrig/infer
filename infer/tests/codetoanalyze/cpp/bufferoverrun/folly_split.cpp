@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -42,13 +42,13 @@ void splitTo(const Delim& delimiter,
 } // namespace folly
 
 namespace folly_split {
-std::string do_not_ignore_empty_Good(const std::string& s) {
+std::string FP_do_not_ignore_empty_Good(const std::string& s) {
   std::vector<std::string> v;
   folly::split("delimiter", s, v);
   return v[0];
 }
 
-std::string do_not_ignore_empty2_Good(const std::string& s) {
+std::string FP_do_not_ignore_empty2_Good(const std::string& s) {
   std::vector<std::string> v;
   folly::split("delimiter", s, v, false);
   return v[0];

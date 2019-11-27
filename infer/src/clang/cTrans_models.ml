@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -104,9 +104,8 @@ let get_predefined_ms_is_kind_of_class class_name method_name mk_procname =
   let name = Mangled.from_string CFrontend_config.self in
   let params = [CMethodSignature.mk_param_type name class_type] in
   let bool_type = CType_to_sil_type.type_of_builtin_type_kind `Bool in
-  get_predefined_ms_method condition class_name method_name
-    Typ.Procname.ObjC_Cpp.ObjCInstanceMethod mk_procname params (bool_type, Annot.Item.empty) []
-    (Some BuiltinDecl.__instanceof)
+  get_predefined_ms_method condition class_name method_name Typ.Procname.ObjC_Cpp.ObjCInstanceMethod
+    mk_procname params (bool_type, Annot.Item.empty) [] (Some BuiltinDecl.__instanceof)
 
 
 let get_predefined_model_method_signature class_name method_name mk_procname =

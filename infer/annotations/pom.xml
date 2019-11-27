@@ -3,10 +3,15 @@
 
   <groupId>com.facebook.infer.annotation</groupId>
   <artifactId>infer-annotation</artifactId>
-  <version>0.10.0.3-SNAPSHOT</version>
+  <version>0.17.1-SNAPSHOT</version>
   <packaging>jar</packaging>
   <description>Annotations for the Infer static analyzer</description>
   <url>http://fbinfer.com/</url>
+
+   <properties>
+     <maven.compiler.source>1.7</maven.compiler.source>
+     <maven.compiler.target>1.7</maven.compiler.target>
+   </properties>
 
   <licenses>
     <license>
@@ -18,9 +23,9 @@
 
   <scm>
     <connection>scm:git:git@github.com:facebook/infer.git</connection>
-    <developerConnection>scm:git:git@github.com:faceook/infer.git</developerConnection>
-    <url>https://github.com/facebook/infer/</url>
-    <tag>infer-annotations-0.10.0.3</tag>
+    <developerConnection>scm:git:git@github.com:facebook/infer.git</developerConnection>
+    <url>https://github.com/facebook/infer</url>
+    <tag>infer-annotation-0.17.0</tag>
   </scm>
 
   <developers>

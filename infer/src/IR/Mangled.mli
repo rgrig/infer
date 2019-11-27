@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -39,8 +39,11 @@ val self : t [@@warning "-32"]
 
 val is_self : t -> bool
 
-(** Set of Mangled. *)
-module Set : Caml.Set.S with type elt = t
+val rename : f:(string -> string) -> t -> t
+(** Maps over both the plain and the mangled components. *)
 
-(** Map with Mangled as key *)
+module Set : Caml.Set.S with type elt = t
+(** Set of Mangled. *)
+
 module Map : Caml.Map.S with type key = t
+(** Map with Mangled as key *)

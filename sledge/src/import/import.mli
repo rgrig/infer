@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -12,28 +12,30 @@ include module type of (
     sig
       include
         (module type of Base
-        (* extended below, remove *)
-        with module Invariant := Base.Invariant
-         and module List := Base.List
-         and module Map := Base.Map
-         and module Option := Base.Option
-         and module Result := Base.Result
-         and module Set := Base.Set
-        (* prematurely deprecated, remove and use Stdlib instead *)
-         and module Filename := Base.Filename
-         and module Format := Base.Format
-         and module Marshal := Base.Marshal
-         and module Scanf := Base.Scanf
-         and type ('ok, 'err) result := ('ok, 'err) Base.result)
-      [@warning "-3"]
+          (* extended below, remove *)
+          with module Array := Base.Array
+           and module Invariant := Base.Invariant
+           and module List := Base.List
+           and module Map := Base.Map
+           and module Option := Base.Option
+           and module Result := Base.Result
+           and module Set := Base.Set
+          (* prematurely deprecated, remove and use Stdlib instead *)
+           and module Filename := Base.Filename
+           and module Format := Base.Format
+           and module Marshal := Base.Marshal
+           and module Scanf := Base.Scanf
+           and type ('ok, 'err) result := ('ok, 'err) Base.result
+         [@warning "-3"])
     end )
 
 (* undeprecate *)
 
 external ( == ) : 'a -> 'a -> bool = "%eq"
+external ( != ) : 'a -> 'a -> bool = "%noteq"
 
 include module type of Stdio
-module Fheap = Core_kernel.Fheap
+module Command = Core.Command
 module Hash_queue = Core_kernel.Hash_queue
 
 (** Tuple operations *)
@@ -77,7 +79,12 @@ type ('a, 'b) fmt = ('a, Formatter.t, unit, 'b) format4
 
 exception Unimplemented of string
 
-val warn : ('a, unit) fmt -> 'a
+val raisef : ?margin:int -> (string -> exn) -> ('a, unit -> _) fmt -> 'a
+(** Take a function from a string message to an exception, and a format
+    string with the additional arguments it specifies, and then call the
+    function on the formatted string and raise the returned exception. *)
+
+val warn : ('a, unit -> unit) fmt -> 'a
 (** Issue a warning for a survivable problem. *)
 
 val todo : ('a, unit -> _) fmt -> 'a
@@ -90,10 +97,6 @@ val assertf : bool -> ('a, unit -> unit) fmt -> 'a
 
 val checkf : bool -> ('a, unit -> bool) fmt -> 'a
 (** As [assertf] but returns the argument bool. *)
-
-val fail : ('a, unit -> _) fmt -> 'a
-(** Raise a [Failure] exception indicating a fatal error not covered by
-    [assertf], [checkf], or [todo]. *)
 
 val check : ('a -> unit) -> 'a -> 'a
 (** Assert that function does not raise on argument, and return argument. *)
@@ -132,6 +135,8 @@ module List : sig
     -> 'a list pp
   (** Pretty-print a list. *)
 
+  val pop_exn : 'a list -> 'a * 'a list
+
   val find_map_remove :
     'a list -> f:('a -> 'b option) -> ('b * 'a list) option
 
@@ -155,10 +160,20 @@ module List : sig
 
   val remove : 'a list -> 'a -> 'a list option
   val rev_init : int -> f:(int -> 'a) -> 'a list
+
+  val symmetric_diff :
+    compare:('a -> 'a -> int) -> 'a t -> 'a t -> ('a, 'a) Either.t t
 end
 
 module Map : sig
   include module type of Base.Map
+
+  val equal_m__t :
+       (module Compare_m)
+    -> ('v -> 'v -> bool)
+    -> ('k, 'v, 'c) t
+    -> ('k, 'v, 'c) t
+    -> bool
 
   val find_and_remove_exn : ('k, 'v, 'c) t -> 'k -> 'v * ('k, 'v, 'c) t
   val find_and_remove : ('k, 'v, 'c) t -> 'k -> ('v * ('k, 'v, 'c) t) option
@@ -198,8 +213,13 @@ module Set : sig
 
   type ('e, 'c) tree
 
+  val equal_m__t :
+    (module Compare_m) -> ('elt, 'cmp) t -> ('elt, 'cmp) t -> bool
+
   val pp : 'e pp -> ('e, 'c) t pp
   val disjoint : ('e, 'c) t -> ('e, 'c) t -> bool
+  val add_option : 'e option -> ('e, 'c) t -> ('e, 'c) t
+  val add_list : 'e list -> ('e, 'c) t -> ('e, 'c) t
 
   val diff_inter_diff :
     ('e, 'c) t -> ('e, 'c) t -> ('e, 'c) t * ('e, 'c) t * ('e, 'c) t
@@ -209,10 +229,42 @@ module Set : sig
   val to_tree : ('e, 'c) t -> ('e, 'c) tree
 end
 
-module Z : sig
-  include module type of Z
+module Qset : sig
+  include module type of Qset
 
+  val pp : (unit, unit) fmt -> ('a * Q.t) pp -> ('a, _) t pp
+end
+
+module Array : sig
+  include module type of Base.Array
+
+  val pp : (unit, unit) fmt -> 'a pp -> 'a array pp
+end
+
+module Q : sig
+  include module type of struct include Q end
+
+  val of_z : Z.t -> t
+  val compare : t -> t -> int
+  val hash : t -> int
   val hash_fold_t : t Hash.folder
   val t_of_sexp : Sexp.t -> t
   val sexp_of_t : t -> Sexp.t
+  val pp : t pp
+end
+
+module Z : sig
+  include module type of struct include Z end
+
+  val compare : t -> t -> int
+  val hash : t -> int
+  val hash_fold_t : t Hash.folder
+  val t_of_sexp : Sexp.t -> t
+  val sexp_of_t : t -> Sexp.t
+  val pp : t pp
+  val true_ : t
+  val false_ : t
+  val of_bool : bool -> t
+  val is_true : t -> bool
+  val is_false : t -> bool
 end

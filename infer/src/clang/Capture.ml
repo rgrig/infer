@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -22,17 +22,15 @@ let validate_decl_from_channel chan =
     Clang_ast_b.read_decl chan
 
 
+(**FIXME(T54413835): Make the perf stats in the frontend work when one runs more than one frontend action *)
 let register_perf_stats_report source_file =
   let stats_type =
-    match (Config.capture, Config.linters) with
-    | true, true ->
-        PerfStats.ClangFrontendLinters source_file
-    | true, false ->
-        PerfStats.ClangFrontend source_file
-    | false, true ->
-        PerfStats.ClangLinters source_file
-    | false, false ->
-        Logging.(die UserError) "Clang frontend should be run in capture and/or linters mode."
+    if Config.capture then PerfStats.ClangFrontend source_file
+    else if Config.linters then PerfStats.ClangLinters source_file
+    else if Config.process_clang_ast then PerfStats.ClangProcessAST source_file
+    else
+      Logging.(die UserError)
+        "Clang frontend should be run in capture, linters or process AST mode."
   in
   PerfStats.register_report_at_exit stats_type
 
@@ -95,13 +93,13 @@ let run_clang_frontend ast_source =
         Format.fprintf fmt "stdin of %a" SourceFile.pp trans_unit_ctx.CFrontend_config.source_file
   in
   ClangPointers.populate_all_tables ast_decl ;
-  L.(debug Capture Quiet) "Clang frontend action is %s@\n" Config.clang_frontend_action_string ;
   L.(debug Capture Medium)
-    "Start %s of AST from %a@\n" Config.clang_frontend_action_string pp_ast_filename ast_source ;
-  if Config.linters then CFrontend_checkers_main.do_frontend_checks trans_unit_ctx ast_decl ;
+    "Start %s the AST of %a@\n" Config.clang_frontend_action_string pp_ast_filename ast_source ;
+  if Config.linters then AL.do_frontend_checks trans_unit_ctx ast_decl ;
+  if Config.process_clang_ast then ProcessAST.process_ast trans_unit_ctx ast_decl ;
   if Config.capture then CFrontend.do_source_file trans_unit_ctx ast_decl ;
   L.(debug Capture Medium)
-    "End %s of AST file %a... OK!@\n" Config.clang_frontend_action_string pp_ast_filename
+    "End %s the AST of file %a... OK!@\n" Config.clang_frontend_action_string pp_ast_filename
     ast_source ;
   print_elapsed ()
 
@@ -115,7 +113,8 @@ let run_clang_frontend ast_source =
 
 
 let run_and_validate_clang_frontend ast_source =
-  try run_clang_frontend ast_source with exc ->
+  try run_clang_frontend ast_source
+  with exc ->
     IExn.reraise_if exc ~f:(fun () -> not Config.keep_going) ;
     L.internal_error "ERROR RUNNING CAPTURE: %a@\n%s@\n" Exn.pp exc (Printexc.get_backtrace ())
 
@@ -184,8 +183,7 @@ let cc1_capture clang_cmd =
   else if
     Config.skip_analysis_in_path_skips_compilation && CLocation.is_file_blacklisted source_path
   then (
-    L.(debug Capture Quiet)
-      "@\n Skip compilation and analysis of source file %s@\n@\n" source_path ;
+    L.(debug Capture Quiet) "@\n Skip compilation and analysis of source file %s@\n@\n" source_path ;
     () )
   else
     match Config.clang_biniou_file with

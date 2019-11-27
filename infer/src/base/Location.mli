@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -35,3 +35,5 @@ val pp_file_pos : Format.formatter -> t -> unit
 (** Pretty print a file-position of a location *)
 
 val pp_range : Format.formatter -> t * t -> unit
+
+module Map : PrettyPrintable.PPMap with type key = t

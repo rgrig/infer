@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -44,8 +44,7 @@ let should_do_frontend_check translation_unit (loc_start, _) =
     translate the headers that are part of the project. However, in testing mode, we don't want to
     translate the headers because the dot files in the frontend tests should contain nothing else
     than the source file to avoid conflicts between different versions of the libraries. *)
-let should_translate translation_unit (loc_start, loc_end) decl_trans_context ~translate_when_used
-    =
+let should_translate translation_unit (loc_start, loc_end) decl_trans_context ~translate_when_used =
   let map_file_of pred loc =
     match Option.map ~f:SourceFile.from_abs_path loc.Clang_ast_t.sl_file with
     | Some f ->
@@ -65,13 +64,11 @@ let should_translate translation_unit (loc_start, loc_end) decl_trans_context ~t
   let file_in_project =
     map_file_of source_file_in_project loc_end || map_file_of source_file_in_project loc_start
   in
-  let translate_on_demand = translate_when_used || file_in_project || Config.models_mode in
-  let file_in_models =
-    map_file_of SourceFile.is_cpp_model loc_end || map_file_of SourceFile.is_cpp_model loc_start
+  let translate_on_demand =
+    translate_when_used || file_in_project || Config.biabduction_models_mode
   in
   map_file_of equal_current_source loc_end
   || map_file_of equal_current_source loc_start
-  || file_in_models
   || (Config.cxx && map_file_of equal_header_of_current_source loc_start)
   || Config.cxx
      && decl_trans_context = `Translation
@@ -99,3 +96,10 @@ let location_of_source_range ?(pick_location = `Start) default_source_file sourc
 
 let location_of_stmt_info default_source_file stmt_info =
   location_of_source_range default_source_file stmt_info.Clang_ast_t.si_source_range
+
+
+let location_of_decl_info default_source_file decl_info =
+  ( location_of_source_range ~pick_location:`Start default_source_file
+      decl_info.Clang_ast_t.di_source_range
+  , location_of_source_range ~pick_location:`End default_source_file
+      decl_info.Clang_ast_t.di_source_range )

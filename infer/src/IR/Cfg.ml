@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -33,7 +33,10 @@ let get_all_defined_proc_names cfg =
 (** Create a new procdesc *)
 let create_proc_desc cfg (proc_attributes : ProcAttributes.t) =
   let pdesc = Procdesc.from_proc_attributes proc_attributes in
-  Typ.Procname.Hash.add cfg proc_attributes.proc_name pdesc ;
+  let pname = proc_attributes.proc_name in
+  if Typ.Procname.Hash.mem cfg pname then
+    L.die InternalError "Creating two procdescs for the same procname." ;
+  Typ.Procname.Hash.add cfg pname pdesc ;
   pdesc
 
 
@@ -68,20 +71,29 @@ let inline_synthetic_method ((ret_id, _) as ret) etl pdesc loc_call : Sil.instr 
   in
   let do_instr instr =
     match (instr, etl) with
-    | Sil.Load (_, Exp.Lfield (Exp.Var _, fn, ft), bt, _), [(* getter for fields *) (e1, _)] ->
-        let instr' = Sil.Load (ret_id, Exp.Lfield (e1, fn, ft), bt, loc_call) in
-        found instr instr'
-    | Sil.Load (_, Exp.Lfield (Exp.Lvar pvar, fn, ft), bt, _), [] when Pvar.is_global pvar ->
-        (* getter for static fields *)
-        let instr' = Sil.Load (ret_id, Exp.Lfield (Exp.Lvar pvar, fn, ft), bt, loc_call) in
-        found instr instr'
-    | Sil.Store (Exp.Lfield (_, fn, ft), bt, _, _), [(* setter for fields *) (e1, _); (e2, _)] ->
-        let instr' = Sil.Store (Exp.Lfield (e1, fn, ft), bt, e2, loc_call) in
-        found instr instr'
-    | Sil.Store (Exp.Lfield (Exp.Lvar pvar, fn, ft), bt, _, _), [(e1, _)] when Pvar.is_global pvar
+    | Sil.Load {e= Exp.Lfield (Exp.Var _, fn, ft); root_typ; typ}, [(* getter for fields *) (e1, _)]
       ->
+        let instr' =
+          Sil.Load {id= ret_id; e= Exp.Lfield (e1, fn, ft); root_typ; typ; loc= loc_call}
+        in
+        found instr instr'
+    | Sil.Load {e= Exp.Lfield (Exp.Lvar pvar, fn, ft); root_typ; typ}, [] when Pvar.is_global pvar
+      ->
+        (* getter for static fields *)
+        let instr' =
+          Sil.Load {id= ret_id; e= Exp.Lfield (Exp.Lvar pvar, fn, ft); root_typ; typ; loc= loc_call}
+        in
+        found instr instr'
+    | ( Sil.Store {e1= Exp.Lfield (_, fn, ft); root_typ; typ}
+      , [(* setter for fields *) (e1, _); (e2, _)] ) ->
+        let instr' = Sil.Store {e1= Exp.Lfield (e1, fn, ft); root_typ; typ; e2; loc= loc_call} in
+        found instr instr'
+    | Sil.Store {e1= Exp.Lfield (Exp.Lvar pvar, fn, ft); root_typ; typ}, [(e1, _)]
+      when Pvar.is_global pvar ->
         (* setter for static fields *)
-        let instr' = Sil.Store (Exp.Lfield (Exp.Lvar pvar, fn, ft), bt, e1, loc_call) in
+        let instr' =
+          Sil.Store {e1= Exp.Lfield (Exp.Lvar pvar, fn, ft); root_typ; typ; e2= e1; loc= loc_call}
+        in
         found instr instr'
     | Sil.Call (_, Exp.Const (Const.Cfun pn), etl', _, cf), _
       when Int.equal (List.length etl') (List.length etl) ->

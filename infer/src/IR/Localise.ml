@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -105,9 +105,7 @@ let get_value_line_tag tags =
     let value = snd (List.find_exn ~f:(fun (tag, _) -> String.equal tag Tags.value) tags) in
     let line = snd (List.find_exn ~f:(fun (tag, _) -> String.equal tag Tags.line) tags) in
     Some [value; line]
-  with
-  | Not_found_s _ | Caml.Not_found ->
-      None
+  with Not_found_s _ | Caml.Not_found -> None
 
 
 (** extract from desc a value on which to apply polymorphic hash and equality *)
@@ -182,9 +180,11 @@ let deref_str_null_ proc_name_opt problem_str_ =
   {tags= Tags.create (); value_pre= Some (pointer_or_object ()); value_post= None; problem_str}
 
 
+let could_be_null_and_prefix = "could be null and "
+
 (** dereference strings for null dereference *)
 let deref_str_null proc_name_opt =
-  let problem_str = "could be null and is dereferenced" in
+  let problem_str = could_be_null_and_prefix ^ "is dereferenced" in
   deref_str_null_ proc_name_opt problem_str
 
 
@@ -197,17 +197,7 @@ let access_str_empty proc_name_opt =
 let deref_str_nullable proc_name_opt nullable_obj_str =
   let tags = Tags.create () in
   Tags.update tags Tags.nullable_src nullable_obj_str ;
-  (* to be completed once we know if the deref'd expression is directly or transitively @Nullable*)
-  let problem_str = "" in
-  deref_str_null_ proc_name_opt problem_str
-
-
-(** dereference strings for null dereference due to weak captured variable in block *)
-let deref_str_weak_variable_in_block proc_name_opt nullable_obj_str =
-  let tags = Tags.create () in
-  Tags.update tags Tags.weak_captured_var_src nullable_obj_str ;
-  let problem_str = "" in
-  deref_str_null_ proc_name_opt problem_str
+  deref_str_null proc_name_opt
 
 
 (** dereference strings for nonterminal nil arguments in c/objc variadic methods *)
@@ -319,15 +309,6 @@ let deref_str_array_bound size_opt index_opt =
   ; problem_str= "could be accessed with " ^ index_str ^ " out of bounds" }
 
 
-(** Java unchecked exceptions errors *)
-let java_unchecked_exn_desc proc_name exn_name pre_str : error_desc =
-  { no_desc with
-    descriptions=
-      [ MF.monospaced_to_string (Typ.Procname.to_string proc_name)
-      ; "can throw " ^ MF.monospaced_to_string (Typ.Name.name exn_name)
-      ; "whenever " ^ pre_str ] }
-
-
 let desc_unsafe_guarded_by_access accessed_fld guarded_by_str loc =
   let line_info = at_line (Tags.create ()) loc in
   let accessed_fld_str = Typ.Fieldname.to_string accessed_fld in
@@ -339,8 +320,8 @@ let desc_unsafe_guarded_by_access accessed_fld guarded_by_str loc =
     Format.asprintf
       "The field %a is annotated with %a, but the lock %a is not held during the access to the \
        field %s. Since the current method is non-private, it can be called from outside the \
-       current class without synchronization. Consider wrapping the access in a %s block or \
-       making the method private."
+       current class without synchronization. Consider wrapping the access in a %s block or making \
+       the method private."
       MF.pp_monospaced accessed_fld_str MF.pp_monospaced annot_str MF.pp_monospaced guarded_by_str
       line_info syncronized_str
   in
@@ -416,7 +397,11 @@ let dereference_string proc_name deref_str value_str access_opt loc =
             ^ MF.monospaced_to_string weak_var_str
             ^ ", a weak pointer captured in the block, and is dereferenced without a null check"
       | None, None ->
-          deref_str.problem_str
+          (* hack to avoid dumb message "null could be null" *)
+          if String.equal value_str "null" then
+            String.chop_prefix deref_str.problem_str ~prefix:could_be_null_and_prefix
+            |> Option.value ~default:deref_str.problem_str
+          else deref_str.problem_str
     in
     [problem_str ^ " " ^ at_line tags loc]
   in
@@ -476,8 +461,7 @@ let desc_allocation_mismatch alloc dealloc =
   let using (primitive_pname, called_pname, loc) =
     let by_call =
       if Typ.Procname.equal primitive_pname called_pname then ""
-      else
-        " by call to " ^ MF.monospaced_to_string (Typ.Procname.to_simplified_string called_pname)
+      else " by call to " ^ MF.monospaced_to_string (Typ.Procname.to_simplified_string called_pname)
     in
     "using "
     ^ MF.monospaced_to_string (Typ.Procname.to_simplified_string primitive_pname)
@@ -571,7 +555,7 @@ let desc_frontend_warning desc sugg_opt loc =
   let tags = Tags.create () in
   let sugg = match sugg_opt with Some sugg -> sugg | None -> "" in
   (* If the description ends in a period, we remove it because the sentence continues with
-  "at line ..." *)
+     "at line ..." *)
   let desc = match String.chop_suffix ~suffix:"." desc with Some desc -> desc | None -> desc in
   let description = Format.sprintf "%s %s. %s" desc (at_line tags loc) sugg in
   {no_desc with descriptions= [description]; tags= !tags}
@@ -630,7 +614,8 @@ let desc_leak hpred_type_opt value_str_opt resource_opt resource_action_opt loc 
     match bucket_opt with Some bucket when Config.show_buckets -> bucket | _ -> ""
   in
   { no_desc with
-    descriptions= (bucket_str :: xxx_allocated_to) @ by_call_to @ is_not_rxxx_after; tags= !tags }
+    descriptions= (bucket_str :: xxx_allocated_to) @ by_call_to @ is_not_rxxx_after
+  ; tags= !tags }
 
 
 (** kind of precondition not met *)
@@ -664,8 +649,7 @@ let desc_retain_cycle cycle_str loc cycle_dotty =
   Logging.d_strln "Proposition with retain cycle:" ;
   let tags = Tags.create () in
   let desc =
-    Format.sprintf "Retain cycle %s involving the following objects:%s" (at_line tags loc)
-      cycle_str
+    Format.sprintf "Retain cycle %s involving the following objects:%s" (at_line tags loc) cycle_str
   in
   {descriptions= [desc]; tags= !tags; dotty= cycle_dotty}
 

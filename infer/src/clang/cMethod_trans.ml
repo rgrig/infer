@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -29,7 +29,7 @@ let method_signature_of_pointer tenv pointer =
         Some ms
     | None ->
         None
-  with CFrontend_config.Invalid_declaration -> None
+  with CFrontend_errors.Invalid_declaration -> None
 
 
 let get_method_name_from_clang tenv ms_opt =
@@ -122,26 +122,6 @@ let get_objc_method_data obj_c_message_expr_info =
       (selector, pointer, MCStatic)
 
 
-let sil_func_attributes_of_attributes attrs =
-  let rec do_translation acc al =
-    match al with
-    | [] ->
-        List.rev acc
-    | Clang_ast_t.SentinelAttr attribute_info :: tl ->
-        let sentinel, null_pos =
-          match attribute_info.Clang_ast_t.ai_parameters with
-          | [a; b] ->
-              (int_of_string a, int_of_string b)
-          | _ ->
-              assert false
-        in
-        do_translation (PredSymb.FA_sentinel (sentinel, null_pos) :: acc) tl
-    | _ :: tl ->
-        do_translation acc tl
-  in
-  do_translation [] attrs
-
-
 let should_create_procdesc cfg procname defined set_objc_accessor_attr =
   match Typ.Procname.Hash.find cfg procname with
   | previous_procdesc ->
@@ -201,13 +181,19 @@ let get_objc_property_accessor tenv ms =
       None
 
 
+let find_sentinel_attribute attrs =
+  List.find_map attrs ~f:(function
+    | `SentinelAttr (_attr_info, {Clang_ast_t.sai_sentinel= sentinel; sai_null_pos= null_pos}) ->
+        Some (sentinel, null_pos)
+    | _ ->
+        None )
+
+
 (** Creates a procedure description. *)
 let create_local_procdesc ?(set_objc_accessor_attr = false) trans_unit_ctx cfg tenv ms fbody
     captured =
   let defined = not (List.is_empty fbody) in
   let proc_name = ms.CMethodSignature.name in
-  let pname = Typ.Procname.to_string proc_name in
-  let attributes = sil_func_attributes_of_attributes ms.CMethodSignature.attributes in
   let clang_method_kind = ms.CMethodSignature.method_kind in
   let is_cpp_nothrow = ms.CMethodSignature.is_cpp_nothrow in
   let access =
@@ -235,11 +221,10 @@ let create_local_procdesc ?(set_objc_accessor_attr = false) trans_unit_ctx cfg t
     let captured_mangled = List.map ~f:(fun (var, t) -> (Pvar.get_name var, t)) captured in
     (* Captured variables for blocks are treated as parameters *)
     let formals = captured_mangled @ formals in
-    let const_formals =
-      get_const_params_indices ~shift:(List.length captured_mangled) all_params
-    in
+    let const_formals = get_const_params_indices ~shift:(List.length captured_mangled) all_params in
     let source_range = ms.CMethodSignature.loc in
-    L.(debug Capture Verbose) "@\nCreating a new procdesc for function: '%s'@\n@." pname ;
+    L.(debug Capture Verbose)
+      "@\nCreating a new procdesc for function: '%a'@\n@." Typ.Procname.pp proc_name ;
     L.(debug Capture Verbose) "@\nms = %a@\n@." CMethodSignature.pp ms ;
     let loc_start =
       CLocation.location_of_source_range trans_unit_ctx.CFrontend_config.source_file source_range
@@ -261,11 +246,12 @@ let create_local_procdesc ?(set_objc_accessor_attr = false) trans_unit_ctx cfg t
         ; const_formals
         ; has_added_return_param
         ; access
-        ; func_attributes= attributes
         ; is_defined= defined
         ; is_cpp_noexcept_method= is_cpp_nothrow
-        ; is_model= Config.models_mode
+        ; is_biabduction_model= Config.biabduction_models_mode
+        ; is_no_return= ms.CMethodSignature.is_no_return
         ; is_variadic= ms.CMethodSignature.is_variadic
+        ; sentinel_attr= find_sentinel_attribute ms.CMethodSignature.attributes
         ; loc= loc_start
         ; clang_method_kind
         ; objc_accessor= objc_property_accessor
@@ -297,7 +283,9 @@ let create_external_procdesc trans_unit_ctx cfg proc_name clang_method_kind type
     in
     let proc_attributes =
       { (ProcAttributes.default trans_unit_ctx.CFrontend_config.source_file proc_name) with
-        ProcAttributes.formals; clang_method_kind; ret_type }
+        ProcAttributes.formals
+      ; clang_method_kind
+      ; ret_type }
     in
     ignore (Cfg.create_proc_desc cfg proc_attributes)
 

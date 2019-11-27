@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -96,9 +96,10 @@ type desc =
   ; short: string
   ; meta: string
   ; doc: string
+  ; default_string: string
   ; spec: spec
-        (** how to go from an option in the json config file to a list of command-line options *)
-  ; decode_json: inferconfig_dir:string -> Yojson.Basic.json -> string list }
+  ; decode_json: inferconfig_dir:string -> Yojson.Basic.t -> string list
+        (** how to go from an option in the json config file to a list of command-line options *) }
 
 let dashdash ?short long =
   match (long, short) with
@@ -161,7 +162,7 @@ module SectionMap = Caml.Map.Make (struct
   type t = String.t
 
   (* this must be the reverse of the order in which we want the sections to appear in the
-       manual *)
+     manual *)
   let compare s1 s2 =
     if String.equal s1 s2 then (* this simplifies the next two cases *)
       0
@@ -188,9 +189,7 @@ let add parse_mode sections desc =
   let desc_list = List.Assoc.find_exn ~equal:equal_parse_mode parse_mode_desc_lists parse_mode in
   desc_list := desc :: !desc_list ;
   let add_to_section (command, section) =
-    let sections =
-      List.Assoc.find_exn ~equal:InferCommand.equal help_sections_desc_lists command
-    in
+    let sections = List.Assoc.find_exn ~equal:InferCommand.equal help_sections_desc_lists command in
     let prev_contents = try SectionMap.find section !sections with Caml.Not_found -> [] in
     sections := SectionMap.add section (desc :: prev_contents) !sections
   in
@@ -272,6 +271,7 @@ let deprecate_desc parse_mode ~long ~short ~deprecated doc desc =
   ; short= deprecated
   ; meta= ""
   ; doc= ""
+  ; default_string= ""
   ; spec= deprecated_spec
   ; decode_json= deprecated_decode_json }
 
@@ -281,19 +281,14 @@ let mk ?(deprecated = []) ?(parse_mode = InferCommand) ?(in_help = []) ~long ?sh
   let variable = ref default in
   let closure = mk_setter variable in
   let setter str =
-    try closure str with exc ->
+    try closure str
+    with exc ->
       raise (Arg.Bad (F.sprintf "bad value %s for flag %s (%s)" str long (Exn.to_string exc)))
   in
   let spec = mk_spec setter in
-  let doc =
-    let default_string = default_to_string default in
-    if default_string = "" then doc
-    else
-      let doc_default_sep = if String.is_suffix ~suffix:"\n" doc then "" else " " in
-      doc ^ doc_default_sep ^ "(default: $(i," ^ Cmdliner.Manpage.escape default_string ^ "))"
-  in
+  let default_string = default_to_string default in
   let short = match short0 with Some c -> String.of_char c | None -> "" in
-  let desc = {long; short; meta; doc; spec; decode_json} in
+  let desc = {long; short; meta; doc; default_string; spec; decode_json} in
   (* add desc for long option, with documentation (which includes any short option) for exes *)
   if long <> "" then add parse_mode in_help desc ;
   (* add desc for short option only for parsing, without documentation *)
@@ -522,6 +517,41 @@ let mk_string_list ?(default = []) ?(default_to_string = String.concat ~sep:",")
   mk_with_reset [] ~reset_doc ~long ?parse_mode mk
 
 
+let map_to_str map =
+  let pair_to_str (a, b) = a ^ "=" ^ b in
+  let list = Map.to_alist map |> List.map ~f:pair_to_str in
+  String.concat list ~sep:","
+
+
+let mk_string_map ?(default = String.Map.empty) ?(default_to_string = map_to_str) ?(deprecated = [])
+    ~long ?short ?parse_mode ?in_help ?(meta = "key=value") doc =
+  let flag = mk_flag ~deprecated ?short ~long in
+  let split_str str =
+    match String.lsplit2 str ~on:'=' with
+    | Some a ->
+        a
+    | None ->
+        raise (Arg.Bad "Expected format is <key>=<value>")
+  in
+  let add_to_map map ~key ~data =
+    match Map.add map ~key ~data with
+    | `Ok a ->
+        a
+    | `Duplicate ->
+        raise (Arg.Bad "Duplicate keys are not allowed")
+  in
+  mk ~deprecated ~long ?short ~default ?parse_mode ?in_help ~meta:("+" ^ meta) doc
+    ~default_to_string
+    ~mk_setter:(fun var str ->
+      let key, data = split_str str in
+      var := add_to_map !var ~key ~data )
+    ~mk_spec:(fun set -> String set )
+      (* In spirit of JSON we could have presented json as list of key-value pairs
+         with e.g. "key" and "value" fields, but for simplicity let's present each key-value pair
+         as it is passed to command line, which is a <key>=<value> *)
+    ~decode_json:(list_json_decoder (string_json_decoder ~flag))
+
+
 let normalize_path_in_args_being_parsed ?(f = Fn.id) ~is_anon_arg str =
   if Filename.is_relative str then (
     (* Replace relative paths with absolute ones on the fly in the args being parsed. This assumes
@@ -535,8 +565,8 @@ let normalize_path_in_args_being_parsed ?(f = Fn.id) ~is_anon_arg str =
   else str
 
 
-let mk_path_helper ~setter ~default_to_string ~default ~deprecated ~long ~short ~parse_mode
-    ~in_help ~meta ~decode_json doc =
+let mk_path_helper ~setter ~default_to_string ~default ~deprecated ~long ~short ~parse_mode ~in_help
+    ~meta ~decode_json doc =
   mk ~deprecated ~long ?short ~default ?parse_mode ?in_help ~meta doc ~decode_json
     ~default_to_string
     ~mk_setter:(fun var str ->
@@ -674,8 +704,8 @@ let normalize_desc_list speclist =
   sort speclist
 
 
-let mk_command_doc ~title ~section ~version ~date ~short_description ~synopsis ~description
-    ?options ?exit_status ?environment ?files ?notes ?bugs ?examples ~see_also command_str =
+let mk_command_doc ~title ~section ~version ~date ~short_description ~synopsis ~description ?options
+    ?exit_status ?environment ?files ?notes ?bugs ?examples ~see_also command_str =
   let add_if section blocks =
     match blocks with None -> `Blocks [] | Some bs -> `Blocks (`S section :: bs)
   in
@@ -754,7 +784,13 @@ let mk_rest_actions ?(parse_mode = InferCommand) ?(in_help = []) doc ~usage deco
         select_parse_mode ~usage (decode_action arg) |> ignore )
   in
   add parse_mode in_help
-    {long= "--"; short= ""; meta= ""; doc; spec; decode_json= (fun ~inferconfig_dir:_ _ -> [])} ;
+    { long= "--"
+    ; short= ""
+    ; meta= ""
+    ; doc
+    ; default_string= ""
+    ; spec
+    ; decode_json= (fun ~inferconfig_dir:_ _ -> []) } ;
   rest
 
 
@@ -801,8 +837,7 @@ let anon_fun arg =
     (* stop parsing the current args and go look in that argfile *)
     raise (SubArguments (args_from_argfile arg))
   else if
-    !anon_arg_action.parse_subcommands
-    && List.Assoc.mem !subcommand_actions ~equal:String.equal arg
+    !anon_arg_action.parse_subcommands && List.Assoc.mem !subcommand_actions ~equal:String.equal arg
   then
     let command_switch = List.Assoc.find_exn !subcommand_actions ~equal:String.equal arg in
     match (!curr_command, is_originator) with
@@ -867,8 +902,8 @@ let encode_argv_to_env argv =
        ~f:(fun arg ->
          (not (String.contains arg env_var_sep))
          ||
-         ( warnf "WARNING: Ignoring unsupported option containing '%c' character: %s@\n"
-             env_var_sep arg ;
+         ( warnf "WARNING: Ignoring unsupported option containing '%c' character: %s@\n" env_var_sep
+             arg ;
            false ) )
        argv)
 
@@ -1000,8 +1035,8 @@ let wrap_line indent_string wrap_length line0 =
     let word_length =
       let len = String.length word in
       if String.is_prefix ~prefix:"$(b," word || String.is_prefix ~prefix:"$(i," word then
-        len - 4 (* length of formatting tag prefix *)
-        - 1 (* APPROXIMATION: closing parenthesis that will come after the word, or maybe later *)
+        len - 4 (* length of formatting tag prefix *) - 1
+        (* APPROXIMATION: closing parenthesis that will come after the word, or maybe later *)
       else len
     in
     let new_length = line_length + String.length word_sep_str + word_length in
@@ -1019,7 +1054,7 @@ let wrap_line indent_string wrap_length line0 =
   List.rev (line :: rev_lines)
 
 
-let show_manual ?internal_section format default_doc command_opt =
+let show_manual ?(scrub_defaults = false) ?internal_section format default_doc command_opt =
   let command_doc =
     match command_opt with
     | None ->
@@ -1035,9 +1070,16 @@ let show_manual ?internal_section format default_doc command_opt =
     match meta with "" -> () | meta -> F.fprintf f " $(i,%s)" (Cmdliner.Manpage.escape meta)
   in
   let pp_short f = function "" -> () | s -> Format.fprintf f ",$(b,-%s)" s in
-  let block_of_desc {long; meta; short; doc} =
+  let block_of_desc {long; meta; short; doc; default_string} =
     if String.equal doc "" then []
     else
+      let doc =
+        if scrub_defaults || default_string = "" then doc
+        else
+          let doc_default_sep = if String.is_suffix ~suffix:"\n" doc then "" else " " in
+          Printf.sprintf "%s%s(default: %s)" doc doc_default_sep
+            (Cmdliner.Manpage.escape default_string)
+      in
       let doc_first_line, doc_other_lines =
         match String.split ~on:'\n' doc with first :: other -> (first, other) | [] -> ("", [])
       in
@@ -1045,8 +1087,7 @@ let show_manual ?internal_section format default_doc command_opt =
          blocks, so we do a bit of formatting by hand *)
       let indent_string = "    " in
       let width =
-        77 (* Cmdliner.Manpage width limit it seems *)
-        - 7
+        77 (* Cmdliner.Manpage width limit it seems *) - 7
         (* base indentation of documentation strings *)
       in
       `I (Format.asprintf "$(b,%s)%a%a" (dashdash long) pp_short short pp_meta meta, doc_first_line)

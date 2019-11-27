@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,11 +7,11 @@
 
 open! IStd
 
+exception Error of string
 (** The functions in this module tend to raise more often than their counterparts in [Sqlite3]. In
     particular, they may raise if the [Sqlite3.Rc.t] result of certain operations is unexpected. *)
-exception Error of string
 
-val check_result_code : ?fatal:bool -> Sqlite3.db -> log:string -> Sqlite3.Rc.t -> unit
+val check_result_code : Sqlite3.db -> log:string -> Sqlite3.Rc.t -> unit
 (** Assert that the result is either [Sqlite3.Rc.OK] or [Sqlite3.Rc.ROW]. If the result is not
     valid, then if [fatal] is set raise {!Error}, otherwise log the error and proceed. *)
 
@@ -72,12 +72,17 @@ module type Data = sig
   val deserialize : Sqlite3.Data.t -> t
 end
 
+(** A default implementation of the Data API that encodes every objects as marshalled blobs with no sharing *)
+module MarshalledDataForComparison (D : sig
+  type t
+end) : Data with type t = D.t
+
 (** A default implementation of the Data API that encodes every objects as marshalled blobs *)
-module MarshalledData (D : sig
+module MarshalledDataNOTForComparison (D : sig
   type t
 end) : Data with type t = D.t
 
 (** A default implementation of the Data API that encodes None as a NULL SQLite value *)
-module MarshalledNullableData (D : sig
+module MarshalledNullableDataNOTForComparison (D : sig
   type t
 end) : Data with type t = D.t option

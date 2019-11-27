@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,117 +9,131 @@
 
 [@@@warning "+9"]
 
-type seg = {loc: Exp.t; bas: Exp.t; len: Exp.t; siz: Exp.t; arr: Exp.t}
-[@@deriving compare, sexp]
+type seg = {loc: Term.t; bas: Term.t; len: Term.t; siz: Term.t; arr: Term.t}
+[@@deriving compare, equal, sexp]
 
 type starjunction =
   { us: Var.Set.t
   ; xs: Var.Set.t
-  ; cong: Congruence.t
-  ; pure: Exp.t list
+  ; cong: Equality.t
+  ; pure: Term.t list
   ; heap: seg list
   ; djns: disjunction list }
-[@@deriving compare, sexp]
+[@@deriving compare, equal, sexp]
 
 and disjunction = starjunction list
 
-type t = starjunction [@@deriving compare, sexp]
+type t = starjunction [@@deriving compare, equal, sexp]
 
 let map_seg {loc; bas; len; siz; arr} ~f =
   {loc= f loc; bas= f bas; len= f len; siz= f siz; arr= f arr}
 
-let pp_seg fs {loc; bas; len; siz; arr} =
-  Format.fprintf fs "@[<2>%a@ @[@[-[%a)->@]@ %a@]@]" Exp.pp loc
+let pp_seg ?is_x fs {loc; bas; len; siz; arr} =
+  let term_pp = Term.pp_full ?is_x in
+  Format.fprintf fs "@[<2>%a@ @[@[-[%a)->@]@ %a@]@]" term_pp loc
     (fun fs (bas, len) ->
-      if (not (Exp.equal loc bas)) || not (Exp.equal len siz) then
-        Format.fprintf fs " %a, %a " Exp.pp bas Exp.pp len )
-    (bas, len) Exp.pp (Exp.memory ~siz ~arr)
+      if (not (Term.equal loc bas)) || not (Term.equal len siz) then
+        Format.fprintf fs " %a, %a " term_pp bas term_pp len )
+    (bas, len) term_pp (Term.memory ~siz ~arr)
+
+let pp_seg_norm cong fs seg =
+  pp_seg fs (map_seg seg ~f:(Equality.normalize cong))
 
 let pp_us ?(pre = ("" : _ fmt)) fs us =
   if not (Set.is_empty us) then
     [%Trace.fprintf fs "%( %)@[%a@] .@ " pre Var.Set.pp us]
 
-let rec pp_ vs fs {us; xs; cong; pure; heap; djns} =
+let rec pp vs all_xs fs {us; xs; cong; pure; heap; djns} =
   Format.pp_open_hvbox fs 0 ;
+  let all_xs = Set.union all_xs xs in
+  let is_x var = Set.mem all_xs (Option.value_exn (Var.of_term var)) in
   pp_us fs us ;
-  if not (Set.is_empty xs) then
-    Format.fprintf fs "@<2>∃ @[%a@] .@ ∃ @[%a@] .@ " Var.Set.pp
-      (Set.inter xs vs) Var.Set.pp (Set.diff xs vs) ;
-  let first = Map.is_empty (Congruence.classes cong) in
+  let xs_i_vs, xs_d_vs = Set.inter_diff vs xs in
+  if not (Set.is_empty xs_i_vs) then (
+    Format.fprintf fs "@<2>∃ @[%a@] ." (Var.Set.pp_full ~is_x) xs_i_vs ;
+    if not (Set.is_empty xs_d_vs) then Format.fprintf fs "@ " ) ;
+  if not (Set.is_empty xs_d_vs) then
+    Format.fprintf fs "@<2>∃ @[%a@] .@ " (Var.Set.pp_full ~is_x) xs_d_vs ;
+  let first = Equality.is_true cong in
   if not first then Format.fprintf fs "  " ;
-  Congruence.pp_classes fs cong ;
-  let pure_exps =
+  Equality.pp_classes ~is_x fs cong ;
+  let pure_terms =
     List.filter_map pure ~f:(fun e ->
-        let e' = Congruence.normalize cong e in
-        if Exp.is_true e' then None else Some e' )
+        let e' = Equality.normalize cong e in
+        if Term.is_true e' then None else Some e' )
   in
   List.pp
     ~pre:(if first then "  " else "@ @<2>∧ ")
-    "@ @<2>∧ " Exp.pp fs pure_exps ;
-  let first = first && List.is_empty pure_exps in
+    "@ @<2>∧ " (Term.pp_full ~is_x) fs pure_terms ;
+  let first = first && List.is_empty pure_terms in
   if List.is_empty heap then
-    Format.fprintf fs (if first then "emp" else "@ @<5>∧ emp")
+    Format.fprintf fs
+      ( if first then if List.is_empty djns then "  emp" else ""
+      else "@ @<5>∧ emp" )
   else
     List.pp
       ~pre:(if first then "  " else "@ @<2>∧ ")
-      "@ * " pp_seg fs
+      "@ * " (pp_seg ~is_x) fs
       (List.sort
-         (List.map ~f:(map_seg ~f:(Congruence.normalize cong)) heap)
+         (List.map ~f:(map_seg ~f:(Equality.normalize cong)) heap)
          ~compare:(fun s1 s2 ->
            let b_o = function
-             | Exp.App {op= App {op= Add _; arg}; arg= Integer {data; _}} ->
-                 (arg, data)
-             | e -> (e, Z.zero)
+             | Term.Add poly as sum ->
+                 let const = Qset.count poly Term.one in
+                 (Term.sub sum (Term.rational const), const)
+             | e -> (e, Q.zero)
            in
-           [%compare: Exp.t * (Exp.t * Z.t)]
+           [%compare: Term.t * (Term.t * Q.t)]
              (s1.bas, b_o s1.loc)
              (s2.bas, b_o s2.loc) )) ;
-  List.pp ~pre:"@ * " "@ * "
-    (pp_djn (Set.union vs (Set.union us xs)))
+  let first = first && List.is_empty heap in
+  List.pp
+    ~pre:(if first then "  " else "@ * ")
+    "@ * "
+    (pp_djn (Set.union vs (Set.union us xs)) all_xs)
     fs djns ;
   Format.pp_close_box fs ()
 
-and pp_djn vs fs = function
+and pp_djn vs all_xs fs = function
   | [] -> Format.fprintf fs "false"
   | djn ->
       Format.fprintf fs "@[<hv>( %a@ )@]"
         (List.pp "@ @<2>∨ " (fun fs sjn ->
-             Format.fprintf fs "@[<hv 1>(%a)@]" (pp_ vs)
+             Format.fprintf fs "@[<hv 1>(%a)@]" (pp vs all_xs)
                {sjn with us= Set.diff sjn.us vs} ))
         djn
 
-let pp = pp_ Var.Set.empty
+let pp = pp Var.Set.empty Var.Set.empty
+let pp_djn = pp_djn Var.Set.empty Var.Set.empty
 
-let fold_exps_seg {loc; bas; len; siz; arr} ~init ~f =
-  let f b z = Exp.fold_exps b ~init:z ~f in
+let fold_terms_seg {loc; bas; len; siz; arr} ~init ~f =
+  let f b z = Term.fold_terms b ~init:z ~f in
   f loc (f bas (f len (f siz (f arr init))))
 
 let fold_vars_seg seg ~init ~f =
-  fold_exps_seg seg ~init ~f:(fun init -> Exp.fold_vars ~f ~init)
+  fold_terms_seg seg ~init ~f:(fun init -> Term.fold_vars ~f ~init)
 
 let fv_seg seg = fold_vars_seg seg ~f:Set.add ~init:Var.Set.empty
 
-let fold_exps fold_exps {us= _; xs= _; cong; pure; heap; djns} ~init ~f =
-  Congruence.fold_exps ~init cong ~f
+let fold_terms fold_terms {us= _; xs= _; cong; pure; heap; djns} ~init ~f =
+  Equality.fold_terms ~init cong ~f
   |> fun init ->
-  List.fold ~init pure ~f:(fun init -> Exp.fold_exps ~f ~init)
+  List.fold ~init pure ~f:(fun init -> Term.fold_terms ~f ~init)
   |> fun init ->
-  List.fold ~init heap ~f:(fun init -> fold_exps_seg ~f ~init)
+  List.fold ~init heap ~f:(fun init -> fold_terms_seg ~f ~init)
   |> fun init ->
-  List.fold ~init djns ~f:(fun init -> List.fold ~init ~f:fold_exps)
+  List.fold ~init djns ~f:(fun init -> List.fold ~init ~f:fold_terms)
 
 let rec fv_union init q =
   Set.diff
-    (fold_exps fv_union q ~init ~f:(fun init ->
-         Exp.fold_vars ~f:Set.add ~init ))
+    (fold_terms fv_union q ~init ~f:(fun init ->
+         Term.fold_vars ~f:Set.add ~init ))
     q.xs
 
 let fv q = fv_union Var.Set.empty q
 
 let invariant_pure = function
-  | Exp.Integer {data; typ} ->
-      assert (Typ.equal Typ.bool typ) ;
-      assert (not (Z.equal Z.zero data))
+  | Term.Integer {data} -> assert (not (Z.is_false data))
   | _ -> assert true
 
 let invariant_seg _ = ()
@@ -131,19 +145,18 @@ let rec invariant q =
   try
     assert (
       Set.disjoint us xs
-      || Trace.report "inter: @[%a@]@\nq: @[%a@]" Var.Set.pp
-           (Set.inter us xs) pp q ) ;
+      || fail "inter: @[%a@]@\nq: @[%a@]" Var.Set.pp (Set.inter us xs) pp q
+           () ) ;
     assert (
       Set.is_subset (fv q) ~of_:us
-      || Trace.report "unbound but free: %a" Var.Set.pp (Set.diff (fv q) us)
-    ) ;
-    Congruence.invariant cong ;
+      || fail "unbound but free: %a" Var.Set.pp (Set.diff (fv q) us) () ) ;
+    Equality.invariant cong ;
     ( match djns with
     | [[]] ->
-        assert (Congruence.is_true cong) ;
+        assert (Equality.is_true cong) ;
         assert (List.is_empty pure) ;
         assert (List.is_empty heap)
-    | _ -> assert (not (Congruence.is_false cong)) ) ;
+    | _ -> assert (not (Equality.is_false cong)) ) ;
     List.iter pure ~f:invariant_pure ;
     List.iter heap ~f:invariant_seg ;
     List.iter djns ~f:(fun djn ->
@@ -152,14 +165,30 @@ let rec invariant q =
             invariant sjn ) )
   with exc -> [%Trace.info "%a" pp q] ; raise exc
 
+let rec simplify {us; xs; cong; pure; heap; djns} =
+  [%Trace.call fun {pf} -> pf "%a" pp {us; xs; cong; pure; heap; djns}]
+  ;
+  let heap = List.map heap ~f:(map_seg ~f:(Equality.normalize cong)) in
+  let pure = List.map pure ~f:(Equality.normalize cong) in
+  let cong = Equality.true_ in
+  let djns = List.map djns ~f:(List.map ~f:simplify) in
+  let all_vars =
+    fv {us= Set.union us xs; xs= Var.Set.empty; cong; pure; heap; djns}
+  in
+  let xs = Set.inter all_vars xs in
+  let us = Set.inter all_vars us in
+  {us; xs; cong; pure; heap; djns} |> check invariant
+  |>
+  [%Trace.retn fun {pf} s -> pf "%a" pp s]
+
 (** Quantification and Vocabulary *)
 
 let rename_seg sub ({loc; bas; len; siz; arr} as h) =
-  let loc = Exp.rename loc sub in
-  let bas = Exp.rename bas sub in
-  let len = Exp.rename len sub in
-  let siz = Exp.rename siz sub in
-  let arr = Exp.rename arr sub in
+  let loc = Term.rename sub loc in
+  let bas = Term.rename sub bas in
+  let len = Term.rename sub len in
+  let siz = Term.rename sub siz in
+  let arr = Term.rename sub arr in
   ( if
     loc == h.loc && bas == h.bas && len == h.len && siz == h.siz
     && arr == h.arr
@@ -171,10 +200,8 @@ let rename_seg sub ({loc; bas; len; siz; arr} as h) =
 (** primitive application of a substitution, ignores us and xs, may violate
     invariant *)
 let rec apply_subst sub ({us= _; xs= _; cong; pure; heap; djns} as q) =
-  let cong = Congruence.rename cong sub in
-  let pure =
-    List.map_preserving_phys_equal pure ~f:(fun b -> Exp.rename b sub)
-  in
+  let cong = Equality.rename cong sub in
+  let pure = List.map_preserving_phys_equal pure ~f:(Term.rename sub) in
   let heap = List.map_preserving_phys_equal heap ~f:(rename_seg sub) in
   let djns =
     List.map_preserving_phys_equal djns ~f:(fun d ->
@@ -188,10 +215,13 @@ let rec apply_subst sub ({us= _; xs= _; cong; pure; heap; djns} as q) =
 and rename sub q =
   [%Trace.call fun {pf} -> pf "@[%a@]@ %a" Var.Subst.pp sub pp q]
   ;
-  let sub = Var.Subst.exclude sub q.xs in
-  let us = Var.Subst.apply_set sub q.us in
-  let q' = apply_subst sub (freshen_xs q ~wrt:(Var.Subst.range sub)) in
-  (if us == q.us && q' == q then q else {q' with us})
+  let sub = Var.Subst.restrict sub q.us in
+  ( if Var.Subst.is_empty sub then q
+  else
+    let us = Var.Subst.apply_set sub q.us in
+    assert (not (Set.equal us q.us)) ;
+    let q' = apply_subst sub (freshen_xs q ~wrt:(Set.union q.us us)) in
+    {q' with us} )
   |>
   [%Trace.retn fun {pf} q' ->
     pf "%a" pp q' ;
@@ -200,19 +230,23 @@ and rename sub q =
 
 (** freshen existentials, preserving vocabulary *)
 and freshen_xs q ~wrt =
-  [%Trace.call fun {pf} -> pf "{@[%a@]}@ %a" Var.Set.pp wrt pp q]
+  [%Trace.call fun {pf} ->
+    pf "{@[%a@]}@ %a" Var.Set.pp wrt pp q ;
+    assert (Set.is_subset q.us ~of_:wrt)]
   ;
   let sub = Var.Subst.freshen q.xs ~wrt in
-  let xs = Var.Subst.apply_set sub q.xs in
-  let q' = apply_subst sub q in
-  (if xs == q.xs && q' == q then q else {q' with xs})
+  ( if Var.Subst.is_empty sub then q
+  else
+    let xs = Var.Subst.apply_set sub q.xs in
+    let q' = apply_subst sub q in
+    if xs == q.xs && q' == q then q else {q' with xs} )
   |>
   [%Trace.retn fun {pf} q' ->
-    pf "%a" pp q' ;
-    invariant q' ;
+    pf "%a@ %a" Var.Subst.pp sub pp q' ;
     assert (Set.equal q'.us q.us) ;
     assert (Set.disjoint q'.xs (Var.Subst.domain sub)) ;
-    assert (Set.disjoint q'.xs (Set.inter q.xs wrt))]
+    assert (Set.disjoint q'.xs (Set.inter q.xs wrt)) ;
+    invariant q']
 
 let extend_us us q =
   let us = Set.union us q.us in
@@ -241,8 +275,11 @@ let exists xs q =
   ;
   assert (
     Set.is_subset xs ~of_:q.us
-    || Trace.report "%a" Var.Set.pp (Set.diff xs q.us) ) ;
-  {q with us= Set.diff q.us xs; xs= Set.union q.xs xs} |> check invariant
+    || fail "Sh.exists xs - q.us: %a" Var.Set.pp (Set.diff xs q.us) () ) ;
+  ( if Set.is_empty xs then q
+  else
+    {q with us= Set.diff q.us xs; xs= Set.union q.xs xs} |> check invariant
+  )
   |>
   [%Trace.retn fun {pf} -> pf "%a" pp]
 
@@ -251,7 +288,7 @@ let exists xs q =
 let emp =
   { us= Var.Set.empty
   ; xs= Var.Set.empty
-  ; cong= Congruence.true_
+  ; cong= Equality.true_
   ; pure= []
   ; heap= []
   ; djns= [] }
@@ -260,26 +297,26 @@ let emp =
 let false_ us = {emp with us; djns= [[]]} |> check invariant
 
 let and_cong cong q =
-  [%Trace.call fun {pf} -> pf "%a@ %a" Congruence.pp cong pp q]
+  [%Trace.call fun {pf} -> pf "%a@ %a" Equality.pp cong pp q]
   ;
-  let q = extend_us (Congruence.fv cong) q in
-  let cong = Congruence.and_ q.cong cong in
-  (if Congruence.is_false cong then false_ q.us else {q with cong})
+  let q = extend_us (Equality.fv cong) q in
+  let cong = Equality.and_ q.cong cong in
+  (if Equality.is_false cong then false_ q.us else {q with cong})
   |>
   [%Trace.retn fun {pf} q -> pf "%a" pp q ; invariant q]
 
 let star q1 q2 =
-  [%Trace.call fun {pf} -> pf "%a@ %a" pp q1 pp q2]
+  [%Trace.call fun {pf} -> pf "(%a)@ (%a)" pp q1 pp q2]
   ;
   ( match (q1, q2) with
   | {djns= [[]]; _}, _ | _, {djns= [[]]; _} ->
       false_ (Set.union q1.us q2.us)
   | {us= _; xs= _; cong; pure= []; heap= []; djns= []}, _
-    when Congruence.is_true cong ->
+    when Equality.is_true cong ->
       let us = Set.union q1.us q2.us in
       if us == q2.us then q2 else {q2 with us}
   | _, {us= _; xs= _; cong; pure= []; heap= []; djns= []}
-    when Congruence.is_true cong ->
+    when Equality.is_true cong ->
       let us = Set.union q1.us q2.us in
       if us == q1.us then q1 else {q1 with us}
   | _ ->
@@ -289,8 +326,8 @@ let star q1 q2 =
       let {us= us1; xs= xs1; cong= c1; pure= p1; heap= h1; djns= d1} = q1 in
       let {us= us2; xs= xs2; cong= c2; pure= p2; heap= h2; djns= d2} = q2 in
       assert (Set.equal us (Set.union us1 us2)) ;
-      let cong = Congruence.and_ c1 c2 in
-      if Congruence.is_false cong then false_ us
+      let cong = Equality.and_ c1 c2 in
+      if Equality.is_false cong then false_ us
       else
         { us
         ; xs= Set.union xs1 xs2
@@ -304,8 +341,13 @@ let star q1 q2 =
     invariant q ;
     assert (Set.equal q.us (Set.union q1.us q2.us))]
 
+let stars = function
+  | [] -> emp
+  | [q] -> q
+  | q :: qs -> List.fold ~f:star ~init:q qs
+
 let or_ q1 q2 =
-  [%Trace.call fun {pf} -> pf "%a@ %a" pp q1 pp q2]
+  [%Trace.call fun {pf} -> pf "(%a)@ (%a)" pp q1 pp q2]
   ;
   ( match (q1, q2) with
   | {djns= [[]]; _}, _ ->
@@ -314,13 +356,18 @@ let or_ q1 q2 =
   | _, {djns= [[]]; _} ->
       let us = Set.union q1.us q2.us in
       if us == q1.us then q1 else {q1 with us}
-  | ({djns= []; _} as q), ({pure= []; heap= []; djns= [djn]; _} as d)
-   |({pure= []; heap= []; djns= [djn]; _} as d), ({djns= []; _} as q) ->
+  | ( ({djns= []; _} as q)
+    , ({us= _; xs; cong= _; pure= []; heap= []; djns= [djn]} as d) )
+    when Set.is_empty xs ->
+      {d with us= Set.union q.us d.us; djns= [q :: djn]}
+  | ( ({us= _; xs; cong= _; pure= []; heap= []; djns= [djn]} as d)
+    , ({djns= []; _} as q) )
+    when Set.is_empty xs ->
       {d with us= Set.union q.us d.us; djns= [q :: djn]}
   | _ ->
       { us= Set.union q1.us q2.us
       ; xs= Var.Set.empty
-      ; cong= Congruence.true_
+      ; cong= Equality.true_
       ; pure= []
       ; heap= []
       ; djns= [[q1; q2]] } )
@@ -330,30 +377,55 @@ let or_ q1 q2 =
     invariant q ;
     assert (Set.equal q.us (Set.union q1.us q2.us))]
 
-let rec pure (e : Exp.t) =
-  [%Trace.call fun {pf} -> pf "%a" Exp.pp e]
+let rec pure (e : Term.t) =
+  [%Trace.call fun {pf} -> pf "%a" Term.pp e]
   ;
-  let us = Exp.fv e in
+  let us = Term.fv e in
+  let eq_false b =
+    let cong = Equality.and_eq b Term.false_ Equality.true_ in
+    {emp with us; cong; pure= [e]}
+  in
   ( match e with
-  | Integer {data; typ= Integer {bits= 1}} ->
-      if Z.equal Z.zero data then false_ us else emp
-  | App {op= App {op= And; arg= e1}; arg= e2} -> star (pure e1) (pure e2)
-  | App {op= App {op= Or; arg= e1}; arg= e2} -> or_ (pure e1) (pure e2)
-  | App {op= App {op= App {op= Conditional; arg= cnd}; arg= thn}; arg= els}
-    ->
+  | Integer {data} -> if Z.is_false data then false_ us else emp
+  (* ¬b ==> false = b *)
+  | Ap2 (Xor, Integer {data}, arg) when Z.is_true data -> eq_false arg
+  | Ap2 (Xor, arg, Integer {data}) when Z.is_true data -> eq_false arg
+  | Ap2 (And, e1, e2) -> star (pure e1) (pure e2)
+  | Ap2 (Or, e1, e2) -> or_ (pure e1) (pure e2)
+  | Ap3 (Conditional, cnd, thn, els) ->
       or_
         (star (pure cnd) (pure thn))
-        (star (pure (Exp.not_ Typ.bool cnd)) (pure els))
-  | App {op= App {op= Eq; arg= e1}; arg= e2} ->
-      let cong = Congruence.(and_eq true_ e1 e2) in
-      if Congruence.is_false cong then false_ us
+        (star (pure (Term.not_ cnd)) (pure els))
+  | Ap2 (Eq, e1, e2) ->
+      let cong = Equality.(and_eq e1 e2 true_) in
+      if Equality.is_false cong then false_ us
       else {emp with us; cong; pure= [e]}
   | _ -> {emp with us; pure= [e]} )
   |>
   [%Trace.retn fun {pf} q -> pf "%a" pp q ; invariant q]
 
 let and_ e q = star (pure e) q
-let seg pt = {emp with us= fv_seg pt; heap= [pt]} |> check invariant
+
+let subst sub q =
+  [%Trace.call fun {pf} -> pf "@[%a@]@ %a" Var.Subst.pp sub pp q]
+  ;
+  let dom, eqs =
+    Var.Subst.fold sub ~init:(Var.Set.empty, Term.true_)
+      ~f:(fun var trm (dom, eqs) ->
+        ( Set.add dom var
+        , Term.and_ (Term.eq (Term.var var) (Term.var trm)) eqs ) )
+  in
+  exists dom (and_ eqs q)
+  |>
+  [%Trace.retn fun {pf} q' ->
+    pf "%a" pp q' ;
+    invariant q' ;
+    assert (Set.disjoint q'.us (Var.Subst.domain sub))]
+
+let seg pt =
+  let us = fv_seg pt in
+  if Term.equal Term.null pt.loc then false_ us
+  else {emp with us; heap= [pt]} |> check invariant
 
 (** Update *)
 
@@ -361,6 +433,9 @@ let with_pure pure q = {q with pure} |> check invariant
 
 let rem_seg seg q =
   {q with heap= List.remove_exn q.heap seg} |> check invariant
+
+let filter_heap ~f q =
+  {q with heap= List.filter q.heap ~f} |> check invariant
 
 (** Query *)
 
@@ -370,9 +445,11 @@ let is_emp = function
 
 let is_false = function
   | {djns= [[]]; _} -> true
-  | {cong; pure; _} ->
+  | {cong; pure; heap; _} ->
       List.exists pure ~f:(fun b ->
-          Exp.is_false (Congruence.normalize cong b) )
+          Term.is_false (Equality.normalize cong b) )
+      || List.exists heap ~f:(fun seg ->
+             Equality.entails_eq cong seg.loc Term.null )
 
 let rec pure_approx ({us; xs; cong; pure; heap= _; djns} as q) =
   let heap = emp.heap in
@@ -383,32 +460,39 @@ let rec pure_approx ({us; xs; cong; pure; heap= _; djns} as q) =
   if heap == q.heap && djns == q.djns then q
   else {us; xs; cong; pure; heap; djns} |> check invariant
 
-let fold_disjunctions sjn ~init ~f = List.fold sjn.djns ~init ~f
-let fold_disjuncts djn ~init ~f = List.fold djn ~init ~f
+let pure_approx q =
+  [%Trace.call fun {pf} -> pf "%a" pp q]
+  ;
+  pure_approx q
+  |>
+  [%Trace.retn fun {pf} -> pf "%a" pp]
 
-let fold_dnf ~conj ~disj sjn conjuncts disjuncts =
-  let rec add_disjunct pending_splits sjn (conjuncts, disjuncts) =
+let fold_dnf ~conj ~disj sjn (xs, conjuncts) disjuncts =
+  let rec add_disjunct pending_splits sjn (xs, conjuncts) disjuncts =
+    let ys, sjn = bind_exists sjn ~wrt:xs in
+    let xs = Set.union ys xs in
+    let djns = sjn.djns in
+    let sjn = {sjn with djns= []} in
     split_case
-      (fold_disjunctions sjn ~init:pending_splits
-         ~f:(fun pending_splits split -> split :: pending_splits ))
-      (conj {sjn with djns= []} conjuncts, disjuncts)
-  and split_case pending_splits (conjuncts, disjuncts) =
+      (List.rev_append djns pending_splits)
+      (xs, conj sjn conjuncts)
+      disjuncts
+  and split_case pending_splits (xs, conjuncts) disjuncts =
     match pending_splits with
     | split :: pending_splits ->
-        fold_disjuncts split ~init:disjuncts ~f:(fun disjuncts sjn ->
-            add_disjunct pending_splits sjn (conjuncts, disjuncts) )
-    | [] -> disj conjuncts disjuncts
+        List.fold split ~init:disjuncts ~f:(fun disjuncts sjn ->
+            add_disjunct pending_splits sjn (xs, conjuncts) disjuncts )
+    | [] -> disj (xs, conjuncts) disjuncts
   in
-  add_disjunct [] sjn (conjuncts, disjuncts)
+  add_disjunct [] sjn (xs, conjuncts) disjuncts
 
 let dnf q =
-  let conj sjn conjuncts =
-    assert (List.is_empty sjn.djns) ;
-    assert (List.is_empty conjuncts.djns) ;
-    star conjuncts sjn
+  [%Trace.call fun {pf} -> pf "%a" pp q]
+  ;
+  let conj sjn conjuncts = sjn :: conjuncts in
+  let disj (xs, conjuncts) disjuncts =
+    exists xs (stars conjuncts) :: disjuncts
   in
-  let disj conjuncts disjuncts =
-    assert (match conjuncts.djns with [] | [[]] -> true | _ -> false) ;
-    conjuncts :: disjuncts
-  in
-  fold_dnf ~conj ~disj q emp []
+  fold_dnf ~conj ~disj q (Var.Set.empty, []) []
+  |>
+  [%Trace.retn fun {pf} -> pf "%a" pp_djn]

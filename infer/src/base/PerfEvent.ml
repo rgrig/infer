@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -86,7 +86,7 @@ module JsonFragment = struct
     | _ ->
         L.die InternalError "Unexpected json fragment \"%s\" in state [%a]"
           (to_string json_fragment)
-          (Pp.seq (Pp.to_string ~f:string_of_state))
+          (Pp.seq (Pp.of_string ~f:string_of_state))
           !pp_state
 
 
@@ -102,7 +102,7 @@ module JsonFragment = struct
     | _ ->
         L.die InternalError "Unexpected assoc field \"%t\" in state [%a]"
           (fun f -> Json.pp_field pp_value f key value)
-          (Pp.seq (Pp.to_string ~f:string_of_state))
+          (Pp.seq (Pp.of_string ~f:string_of_state))
           !pp_state
 end
 
@@ -224,13 +224,8 @@ let register_gc_stats logger =
 let logger =
   lazy
     (let log_file =
-       let results_dir =
-         (* if invoked in a sub-dir (e.g., in Buck integrations), log inside the original log
-              file *)
-         Sys.getenv Config.infer_top_results_dir_env_var
-         |> Option.value ~default:Config.results_dir
-       in
-       results_dir ^/ Config.trace_events_file
+       (* if invoked in a sub-dir (e.g., in Buck integrations), log inside the original log file *)
+       Config.toplevel_results_dir ^/ Config.trace_events_file
      in
      let is_toplevel_process = CommandLineOption.is_originator && not !ProcessPoolState.in_child in
      ( if is_toplevel_process then
@@ -250,7 +245,7 @@ let logger =
      else
        (* assume the trace file is here and is ready to accept list elements *)
        JsonFragment.(pp_state := InList :: !pp_state) ) ;
-     logger)
+     logger )
 
 
 (* export logging functions that output a list element at a time and flushes so that multiple

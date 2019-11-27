@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -46,6 +46,10 @@ val opt_cons : 'a option -> 'a list -> 'a list
 
 val remove_first : 'a list -> f:('a -> bool) -> 'a list option
 
+val force_until_first_some : 'a option lazy_t list -> 'a option
+(** [force_until_first_some xs] forces the computation of each element of [xs] and returns the first
+that matches (Some _); or, if no such element exists, it returns None. *)
+
 val pp_print_list :
      max:int
   -> ?pp_sep:(Format.formatter -> unit -> unit)
@@ -53,3 +57,10 @@ val pp_print_list :
   -> Format.formatter
   -> 'a list
   -> unit
+
+val fold2_result :
+     init:'acc
+  -> f:('acc -> 'a -> 'b -> ('acc, 'err) result)
+  -> 'a list
+  -> 'b list
+  -> ('acc, 'err) result Base.List.Or_unequal_lengths.t

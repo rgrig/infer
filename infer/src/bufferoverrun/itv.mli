@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -57,11 +57,13 @@ module ItvPure : sig
 
   val is_le_mone : t -> bool
 
-  val ( <= ) : lhs:t -> rhs:t -> bool
+  val leq : lhs:t -> rhs:t -> bool
 
   val have_similar_bounds : t -> t -> bool
 
   val has_infty : t -> bool
+
+  val has_void_ptr_symb : t -> bool
 
   val make_positive : t -> t
 
@@ -118,9 +120,6 @@ val m1_255 : t
 val nat : t
 (** [0, +oo] *)
 
-val one : t
-(** 1 *)
-
 val pos : t
 (** [1, +oo] *)
 
@@ -129,6 +128,9 @@ val top : t
 
 val zero : t
 (** 0 *)
+
+val zero_one : t
+(** [0, 1] *)
 
 val unknown_bool : t
 (** [0, 1] *)
@@ -143,7 +145,9 @@ val of_big_int : Z.t -> t
 
 val of_int_lit : IntLit.t -> t
 
-val is_const : t -> Z.t option
+val get_const : t -> Z.t option
+
+val is_zero : t -> bool
 
 val is_one : t -> bool
 
@@ -156,6 +160,8 @@ val is_false : t -> bool
 val decr : t -> t
 
 val incr : t -> t
+
+val set_lb : Bound.t -> t -> t
 
 val set_lb_zero : t -> t
 
@@ -173,7 +179,7 @@ val le : lhs:t -> rhs:t -> bool
 
 val lnot : t -> Boolean.t
 
-val range : t -> ItvRange.t
+val range : Location.t -> t -> ItvRange.t
 
 val div : t -> t -> t
 
@@ -207,7 +213,9 @@ val lor_sem : t -> t -> Boolean.t
 
 val lt_sem : t -> t -> Boolean.t
 
-val min_sem : t -> t -> t
+val min_sem : ?use_minmax_bound:bool -> t -> t -> t
+
+val max_sem : ?use_minmax_bound:bool -> t -> t -> t
 
 val mod_sem : t -> t -> t
 
@@ -225,12 +233,24 @@ val prune_eq : t -> t -> t
 
 val prune_ne : t -> t -> t
 
+val prune_lt : t -> t -> t
+
+val prune_le : t -> t -> t
+
 val subst : t -> Bound.eval_sym -> t
 
 val max_of_ikind : Typ.IntegerWidths.t -> Typ.ikind -> t
 
-val of_normal_path : unsigned:bool -> Symb.SymbolPath.partial -> t
+val of_normal_path : unsigned:bool -> ?non_int:bool -> Symb.SymbolPath.partial -> t
 
-val of_offset_path : Symb.SymbolPath.partial -> t
+val of_offset_path : is_void:bool -> Symb.SymbolPath.partial -> t
 
-val of_length_path : Symb.SymbolPath.partial -> t
+val of_length_path : is_void:bool -> Symb.SymbolPath.partial -> t
+
+val of_modeled_path : Symb.SymbolPath.partial -> t
+
+val is_offset_path_of : Symb.SymbolPath.partial -> t -> bool
+
+val is_length_path_of : Symb.SymbolPath.partial -> t -> bool
+
+val has_only_non_int_symbols : t -> bool

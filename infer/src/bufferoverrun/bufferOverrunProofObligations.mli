@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -50,6 +50,7 @@ module ConditionSet : sig
 
   val add_alloc_size :
        Location.t
+    -> can_be_zero:bool
     -> length:ItvPure.t
     -> BufferOverrunTrace.Set.t
     -> BufferOverrunDomain.LatestPrune.t
@@ -72,7 +73,7 @@ module ConditionSet : sig
 
   val subst :
        summary_t
-    -> (strict:bool -> BufferOverrunDomain.eval_sym_trace)
+    -> (mode:BufferOverrunSemantics.eval_mode -> BufferOverrunDomain.eval_sym_trace)
     -> Relation.SubstMap.t
     -> Relation.t
     -> Typ.Procname.t
@@ -83,7 +84,7 @@ module ConditionSet : sig
   val report_errors :
     report:(Condition.t -> ConditionTrace.t -> IssueType.t -> unit) -> checked_t -> unit
 
-  val for_summary : forget_locs:AbsLoc.PowLoc.t -> checked_t -> summary_t
+  val for_summary : relation_forget_locs:AbsLoc.PowLoc.t -> checked_t -> summary_t
 end
 
 val description : markup:bool -> Condition.t -> ConditionTrace.t -> string

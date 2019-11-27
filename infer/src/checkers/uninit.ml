@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,8 +9,8 @@ open! IStd
 module F = Format
 module L = Logging
 
-(** Forward analysis to compute uninitialized variables at each program point *)
 module D = UninitDomain.Domain
+(** Forward analysis to compute uninitialized variables at each program point *)
 
 module MaybeUninitVars = UninitDomain.MaybeUninitVars
 module AliasedVars = AbstractDomain.FiniteSet (UninitDomain.VarPair)
@@ -19,9 +19,7 @@ module RecordDomain = UninitDomain.Record (MaybeUninitVars) (AliasedVars) (D)
 module Payload = SummaryPayload.Make (struct
   type t = UninitDomain.Summary.t
 
-  let update_payloads sum (payloads : Payloads.t) = {payloads with uninit= Some sum}
-
-  let of_payloads (payloads : Payloads.t) = payloads.uninit
+  let field = Payloads.Fields.uninit
 end)
 
 module Models = struct
@@ -101,14 +99,13 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     || is_array_element_passed_by_ref callee_formals t access_expr idx
 
 
-  let report_on_function_params pdesc tenv maybe_uninit_vars actuals loc summary callee_formals_opt
-      =
+  let report_on_function_params tenv maybe_uninit_vars actuals loc summary callee_formals_opt =
     List.iteri actuals ~f:(fun idx e ->
         match HilExp.ignore_cast e with
         | HilExp.AccessExpression access_expr ->
             let _, t = HilExp.AccessExpression.get_base access_expr in
             if
-              should_report_var pdesc tenv maybe_uninit_vars access_expr
+              should_report_var (Summary.get_proc_desc summary) tenv maybe_uninit_vars access_expr
               && (not (Typ.is_pointer t))
               && not
                    (Option.exists callee_formals_opt ~f:(fun callee_formals ->
@@ -138,7 +135,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
 
   (* checks that the set of initialized formal parameters defined in the precondition of
-   the function (init_formal_params) contains the (base of) nth formal parameter of the function  *)
+     the function (init_formal_params) contains the (base of) nth formal parameter of the function *)
   let init_nth_actual_param callee_pname idx init_formal_params =
     match nth_formal_param callee_pname idx with
     | None ->
@@ -155,8 +152,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         else None
 
 
-  let remove_initialized_params pdesc call maybe_uninit_vars idx access_expr remove_fields =
-    match Payload.read pdesc call with
+  let remove_initialized_params summary call maybe_uninit_vars idx access_expr remove_fields =
+    match Payload.read ~caller_summary:summary ~callee_pname:call with
     | Some {pre= init_formals; post= _} -> (
       match init_nth_actual_param call idx init_formals with
       | Some var_formal ->
@@ -173,16 +170,17 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
 
   (* true if a function initializes at least a param or a field of a struct param *)
-  let function_initializes_some_formal_params pdesc call =
-    match Payload.read pdesc call with
+  let function_initializes_some_formal_params summary call =
+    match Payload.read ~caller_summary:summary ~callee_pname:call with
     | Some {pre= initialized_formal_params; post= _} ->
         not (D.is_empty initialized_formal_params)
     | _ ->
         false
 
 
-  let exec_instr (astate : Domain.t) {ProcData.pdesc; extras= {formals; summary}; tenv} _
+  let exec_instr (astate : Domain.t) {ProcData.summary; extras= {formals}; tenv} _
       (instr : HilInstr.t) =
+    let pdesc = Summary.get_proc_desc summary in
     let check_access_expr ~loc rhs_access_expr =
       if should_report_var pdesc tenv astate.maybe_uninit_vars rhs_access_expr then
         report_intra rhs_access_expr loc summary
@@ -192,8 +190,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           check_hil_expr ~loc e
       | HilExp.AccessExpression access_expr ->
           check_access_expr ~loc access_expr
-      | _ ->
-          ()
+      | hil_expr ->
+          HilExp.get_access_exprs hil_expr
+          |> List.iter ~f:(fun access_expr -> check_access_expr ~loc access_expr)
     in
     let update_prepost access_expr rhs =
       let lhs_base = HilExp.AccessExpression.get_base access_expr in
@@ -232,9 +231,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     | Call (_, HilInstr.Direct call, [HilExp.AccessExpression (AddressOf (Base base))], _, _)
       when is_dummy_constructor_of_a_struct call ->
         (* if it's a default constructor, we use the following heuristic: we assume that it initializes
-    correctly all fields when there is an implementation of the constructor that initilizes at least one
-    field. If there is no explicit implementation we cannot assume fields are initialized *)
-        if function_initializes_some_formal_params pdesc call then
+           correctly all fields when there is an implementation of the constructor that initilizes at least one
+           field. If there is no explicit implementation we cannot assume fields are initialized *)
+        if function_initializes_some_formal_params summary call then
           let maybe_uninit_vars =
             (* in HIL/SIL the default constructor has only one param: the struct *)
             MaybeUninitVars.remove_all_fields tenv base astate.maybe_uninit_vars
@@ -269,7 +268,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
                            ~f:(is_fld_or_array_elem_passed_by_ref t access_expr idx) -> (
                     match pname_opt with
                     | Some pname when Config.uninit_interproc ->
-                        remove_initialized_params pdesc pname acc idx access_expr_to_remove false
+                        remove_initialized_params summary pname acc idx access_expr_to_remove false
                     | _ ->
                         MaybeUninitVars.remove access_expr_to_remove acc )
                   | base when Option.exists pname_opt ~f:Typ.Procname.is_constructor ->
@@ -278,7 +277,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
                   | _, {Typ.desc= Tptr _} -> (
                     match pname_opt with
                     | Some pname when Config.uninit_interproc ->
-                        remove_initialized_params pdesc pname acc idx access_expr_to_remove true
+                        remove_initialized_params summary pname acc idx access_expr_to_remove true
                     | _ ->
                         MaybeUninitVars.remove_everything_under tenv access_expr_to_remove acc )
                   | _ ->
@@ -292,14 +291,13 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         in
         ( match call with
         | Direct _ ->
-            report_on_function_params pdesc tenv maybe_uninit_vars actuals loc summary
-              callee_formals_opt
+            report_on_function_params tenv maybe_uninit_vars actuals loc summary callee_formals_opt
         | Indirect _ ->
             () ) ;
         {astate with maybe_uninit_vars}
     | Assume (expr, _, _, loc) ->
         check_hil_expr expr ~loc ; astate
-    | ExitScope _ ->
+    | Metadata _ ->
         astate
 
 
@@ -329,7 +327,7 @@ module Initial = struct
               in
               base_access_expr :: flist
               (* for struct we take the struct address, and the access_path
-                                    to the fields one level down *)
+                 to the fields one level down *)
           | _ ->
               acc )
         | Typ.Tarray {elt} ->
@@ -340,7 +338,10 @@ module Initial = struct
             base_access_expr :: acc )
 end
 
-let checker {Callbacks.tenv; summary; proc_desc} : Summary.t =
+let checker {Callbacks.exe_env; summary} : Summary.t =
+  let proc_desc = Summary.get_proc_desc summary in
+  let proc_name = Summary.get_proc_name summary in
+  let tenv = Exe_env.get_tenv exe_env proc_name in
   (* start with empty set of uninit local vars and empty set of init formal params *)
   let maybe_uninit_vars = Initial.get_locals tenv proc_desc in
   let initial =
@@ -350,14 +351,13 @@ let checker {Callbacks.tenv; summary; proc_desc} : Summary.t =
   in
   let proc_data =
     let formals = FormalMap.make proc_desc in
-    ProcData.make proc_desc tenv {formals; summary}
+    ProcData.make summary tenv {formals; summary}
   in
   match Analyzer.compute_post proc_data ~initial with
   | Some {RecordDomain.prepost} ->
       Payload.update_summary prepost summary
   | None ->
       if Procdesc.Node.get_succs (Procdesc.get_start_node proc_desc) <> [] then (
-        L.internal_error "Uninit analyzer failed to compute post for %a" Typ.Procname.pp
-          (Procdesc.get_proc_name proc_desc) ;
+        L.internal_error "Uninit analyzer failed to compute post for %a" Typ.Procname.pp proc_name ;
         summary )
       else summary

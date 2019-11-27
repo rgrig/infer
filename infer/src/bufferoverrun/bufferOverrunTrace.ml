@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -16,7 +16,9 @@ module BoTrace = struct
 
   type elem =
     | ArrayDeclaration
+    | JavaIntDecleration
     | Assign of PowLoc.t
+    | Global of Loc.t
     | Parameter of Loc.t
     | Through of {risky_fun: lib_fun option}
   [@@deriving compare]
@@ -76,8 +78,12 @@ module BoTrace = struct
   let pp_elem f = function
     | ArrayDeclaration ->
         F.pp_print_string f "ArrayDeclaration"
+    | JavaIntDecleration ->
+        F.pp_print_string f "JavaIntDeclaration"
     | Assign locs ->
         F.fprintf f "Assign `%a`" PowLoc.pp locs
+    | Global loc ->
+        F.fprintf f "Global `%a`" Loc.pp loc
     | Parameter loc ->
         F.fprintf f "Parameter `%a`" Loc.pp loc
     | Through {risky_fun} ->
@@ -112,7 +118,7 @@ module BoTrace = struct
   let has_unknown = final_exists ~f:(function UnknownFrom _ -> true)
 
   let elem_has_risky = function
-    | ArrayDeclaration | Assign _ | Parameter _ ->
+    | JavaIntDecleration | ArrayDeclaration | Assign _ | Global _ | Parameter _ ->
         false
     | Through {risky_fun} ->
         Option.is_some risky_fun
@@ -152,10 +158,14 @@ module BoTrace = struct
 
 
   let elem_err_desc = function
+    | JavaIntDecleration ->
+        "int declaration (java)"
     | ArrayDeclaration ->
         "Array declaration"
     | Assign _ ->
         "Assignment"
+    | Global loc ->
+        if Loc.is_pretty loc then F.asprintf "Global `%a`" Loc.pp loc else ""
     | Parameter loc ->
         if Loc.is_pretty loc then F.asprintf "Parameter `%a`" Loc.pp loc else ""
     | Through {risky_fun} -> (
@@ -183,14 +193,14 @@ module BoTrace = struct
     | Call {location; caller; callee} ->
         let desc = "Call" in
         let tail =
-          Errlog.make_trace_element depth location desc []
-          :: make_err_trace (depth + 1) callee tail
+          Errlog.make_trace_element depth location desc [] :: make_err_trace (depth + 1) callee tail
         in
         make_err_trace depth caller tail
 end
 
 module Set = struct
-  include AbstractDomain.FiniteSet (BoTrace)
+  (* currently, we keep only one trace for efficiency *)
+  include AbstractDomain.MinReprSet (BoTrace)
 
   let set_singleton = singleton
 
@@ -198,22 +208,11 @@ module Set = struct
 
   let singleton_final location kind = set_singleton (BoTrace.final location kind)
 
-  (* currently, we keep only one trace for efficiency *)
-  let join x y =
-    if is_empty x then y
-    else if is_empty y then x
-    else
-      let tx, ty = (min_elt x, min_elt y) in
-      if Int.( <= ) (BoTrace.length tx) (BoTrace.length ty) then x else y
-
-
-  let choose_shortest set = min_elt set
-
   let add_elem location elem t =
-    if is_empty t then singleton location elem else map (BoTrace.add_elem location elem) t
+    if is_bottom t then singleton location elem else map (BoTrace.add_elem location elem) t
 
 
-  let non_empty t = if is_empty t then set_singleton BoTrace.Empty else t
+  let non_empty t = if is_bottom t then set_singleton BoTrace.Empty else t
 
   let call location ~traces_caller ~traces_callee =
     let traces_caller = non_empty traces_caller in
@@ -223,7 +222,7 @@ module Set = struct
         fold
           (fun callee traces -> add (BoTrace.call location ~caller ~callee) traces)
           traces_callee traces )
-      traces_caller empty
+      traces_caller bottom
 
 
   let has_unknown t = exists BoTrace.has_unknown t
@@ -233,16 +232,20 @@ module Set = struct
   let exists_str ~f t = exists (BoTrace.exists_str ~f) t
 
   let make_err_trace depth set tail =
-    if is_empty set then tail else BoTrace.make_err_trace depth (choose_shortest set) tail
+    match min_elt set with None -> tail | Some trace -> BoTrace.make_err_trace depth trace tail
 
 
-  let length set = if is_empty set then 0 else BoTrace.length (choose_shortest set)
+  let length set = match min_elt set with None -> 0 | Some trace -> BoTrace.length trace
 end
 
 module Issue = struct
   type elem = Alloc [@@deriving compare]
 
-  type binary = ArrayAccess (* offset, length *) | Binop [@@deriving compare]
+  type binary =
+    | ArrayAccess
+    (* offset, length *)
+    | Binop
+  [@@deriving compare]
 
   type t =
     | Elem of {location: Location.t; length: int; kind: elem; from: Set.t}

@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -14,7 +14,8 @@ module L = Logging
 module F = Format
 
 let decrease_indent_when_exception thunk =
-  try thunk () with exn when SymOp.exn_not_failure exn ->
+  try thunk ()
+  with exn when SymOp.exn_not_failure exn ->
     IExn.reraise_after exn ~f:(fun () -> L.d_decrease_indent ())
 
 
@@ -144,9 +145,7 @@ end = struct
 
   let sort_then_remove_redundancy constraints =
     let constraints_sorted = List.sort ~compare constraints in
-    let have_same_key (e1, e2, _) (f1, f2, _) =
-      [%compare.equal: Exp.t * Exp.t] (e1, e2) (f1, f2)
-    in
+    let have_same_key (e1, e2, _) (f1, f2, _) = [%compare.equal: Exp.t * Exp.t] (e1, e2) (f1, f2) in
     remove_redundancy have_same_key [] constraints_sorted
 
 
@@ -489,7 +488,7 @@ end = struct
         (* [e <= n' <= n |- e <= n] *)
         List.exists
           ~f:(function
-            | e', Exp.Const (Const.Cint n') -> Exp.equal e e' && IntLit.leq n' n | _, _ -> false)
+            | e', Exp.Const (Const.Cint n') -> Exp.equal e e' && IntLit.leq n' n | _, _ -> false )
           leqs
     | Exp.Const (Const.Cint n), e ->
         (* [ n-1 <= n' < e |- n <= e] *)
@@ -498,7 +497,7 @@ end = struct
             | Exp.Const (Const.Cint n'), e' ->
                 Exp.equal e e' && IntLit.leq (n -- IntLit.one) n'
             | _, _ ->
-                false)
+                false )
           lts
     | _ ->
         Exp.equal e1 e2
@@ -514,7 +513,7 @@ end = struct
         (* [n <= n' < e  |- n < e] *)
         List.exists
           ~f:(function
-            | Exp.Const (Const.Cint n'), e' -> Exp.equal e e' && IntLit.leq n n' | _, _ -> false)
+            | Exp.Const (Const.Cint n'), e' -> Exp.equal e e' && IntLit.leq n n' | _, _ -> false )
           lts
     | e, Exp.Const (Const.Cint n) ->
         (* [e <= n' <= n-1 |- e < n] *)
@@ -523,7 +522,7 @@ end = struct
             | e', Exp.Const (Const.Cint n') ->
                 Exp.equal e e' && IntLit.leq n' (n -- IntLit.one)
             | _, _ ->
-                false)
+                false )
           leqs
     | _ ->
         false
@@ -547,9 +546,7 @@ end = struct
             leqs
         in
         let upper_list =
-          List.map
-            ~f:(function _, Exp.Const (Const.Cint n) -> n | _ -> assert false)
-            e_upper_list
+          List.map ~f:(function _, Exp.Const (Const.Cint n) -> n | _ -> assert false) e_upper_list
         in
         if List.is_empty upper_list then None
         else Some (compute_min_from_nonempty_int_list upper_list)
@@ -571,9 +568,7 @@ end = struct
             lts
         in
         let lower_list =
-          List.map
-            ~f:(function Exp.Const (Const.Cint n), _ -> n | _ -> assert false)
-            e_lower_list
+          List.map ~f:(function Exp.Const (Const.Cint n), _ -> n | _ -> assert false) e_lower_list
         in
         if List.is_empty lower_list then None
         else Some (compute_max_from_nonempty_int_list lower_list)
@@ -1018,10 +1013,27 @@ let check_inconsistency_base tenv prop =
     *)
     Inequalities.inconsistent ineq
   in
-  inconsistent_ptsto ()
-  || check_inconsistency_two_hpreds tenv prop
-  || List.exists ~f:inconsistent_atom pi
-  || inconsistent_inequalities () || inconsistent_this_self_var ()
+  let tests =
+    [ lazy (inconsistent_ptsto ())
+    ; lazy (check_inconsistency_two_hpreds tenv prop)
+    ; lazy (List.exists ~f:inconsistent_atom pi)
+    ; lazy (inconsistent_inequalities ())
+    ; lazy (inconsistent_this_self_var ()) ]
+  in
+  let f index = function
+    | None ->
+        fun test -> Option.some_if (Lazy.force test) index
+    | s ->
+        fun _ -> s
+  in
+  List.foldi ~init:None ~f tests
+
+
+(** Shadows the above, adding some debug output. *)
+let check_inconsistency_base tenv prop =
+  let reason = check_inconsistency_base tenv prop in
+  L.d_printfln "Prover.check_inconsistency_base: inconsistency reason %a" (Pp.option Int.pp) reason ;
+  Option.is_some reason
 
 
 (** Inconsistency checking. *)
@@ -1197,8 +1209,8 @@ end = struct
     L.d_decrease_indent () ;
     if !missing_pi <> [] && !missing_sigma <> [] then (
       L.d_ln () ; Prop.d_pi !missing_pi ; L.d_strln "*" ; Prop.d_sigma !missing_sigma )
-    else if !missing_pi <> [] then ( L.d_ln () ; Prop.d_pi !missing_pi )
-    else if !missing_sigma <> [] then ( L.d_ln () ; Prop.d_sigma !missing_sigma ) ;
+    else if !missing_pi <> [] then (L.d_ln () ; Prop.d_pi !missing_pi)
+    else if !missing_sigma <> [] then (L.d_ln () ; Prop.d_sigma !missing_sigma) ;
     if !missing_fld <> [] then (
       L.d_ln () ;
       L.d_strln "MISSING FLD:" ;
@@ -1459,8 +1471,8 @@ let array_len_imply tenv calc_missing subs len1 len2 indices2 =
   | _, Exp.BinOp (Binop.PlusA _, Exp.Var _, _)
   | _, Exp.BinOp (Binop.PlusA _, _, Exp.Var _)
   | Exp.BinOp (Binop.Mult _, _, _), _ -> (
-    try exp_imply tenv calc_missing subs len1 len2 with IMPL_EXC (s, subs', x) ->
-      raise (IMPL_EXC ("array len:" ^ s, subs', x)) )
+    try exp_imply tenv calc_missing subs len1 len2
+    with IMPL_EXC (s, subs', x) -> raise (IMPL_EXC ("array len:" ^ s, subs', x)) )
   | _ ->
       ProverState.add_bounds_check (ProverState.BClen_imply (len1, len2, indices2)) ;
       subs
@@ -1480,9 +1492,7 @@ let rec sexp_imply tenv source calc_index_frame calc_missing subs se1 se2 typ2 :
       let subs', fld_frame, fld_missing =
         struct_imply tenv source calc_missing subs fsel1 fsel2 typ2
       in
-      let fld_frame_opt =
-        if fld_frame <> [] then Some (Sil.Estruct (fld_frame, inst1)) else None
-      in
+      let fld_frame_opt = if fld_frame <> [] then Some (Sil.Estruct (fld_frame, inst1)) else None in
       let fld_missing_opt =
         if fld_missing <> [] then Some (Sil.Estruct (fld_missing, inst1)) else None
       in
@@ -1750,7 +1760,7 @@ let expand_hpred_pointer =
               match cnt_texp with
               | Sizeof ({typ= cnt_typ} as sizeof_data) ->
                   (* type of struct at adr_base is unknown (typically Tvoid), but
-                       type of contents is known, so construct struct type for single fld:cnt_typ *)
+                     type of contents is known, so construct struct type for single fld:cnt_typ *)
                   let name = Typ.Name.C.from_string ("counterfeit" ^ string_of_int !count) in
                   incr count ;
                   let fields = [(fld, cnt_typ, Annot.Item.empty)] in
@@ -1758,12 +1768,10 @@ let expand_hpred_pointer =
                   Exp.Sizeof {sizeof_data with typ= Typ.mk (Tstruct name)}
               | _ ->
                   (* type of struct at adr_base and of contents are both unknown: give up *)
-                  L.(die InternalError)
-                    "expand_hpred_pointer: Unexpected non-sizeof type in Lfield" )
+                  L.(die InternalError) "expand_hpred_pointer: Unexpected non-sizeof type in Lfield"
+              )
           in
-          let hpred' =
-            Sil.Hpointsto (adr_base, Estruct ([(fld, cnt)], Sil.inst_none), cnt_texp')
-          in
+          let hpred' = Sil.Hpointsto (adr_base, Estruct ([(fld, cnt)], Sil.inst_none), cnt_texp') in
           expand true true hpred'
       | Sil.Hpointsto (Exp.Lindex (e, ind), se, t) ->
           let t' =
@@ -2056,9 +2064,7 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
           | Sil.Hpointsto (e1, se1, texp1), _ -> (
             try
               let typ2 = Exp.texp_to_typ (Some (Typ.mk Tvoid)) texp2 in
-              let typing_frame, typing_missing =
-                texp_imply tenv subs texp1 texp2 e1 calc_missing
-              in
+              let typing_frame, typing_missing = texp_imply tenv subs texp1 texp2 e1 calc_missing in
               let se1' = sexp_imply_preprocess se1 texp1 se2 in
               let subs', fld_frame, fld_missing =
                 sexp_imply tenv e1 calc_index_frame calc_missing subs se1' se2 typ2
@@ -2175,10 +2181,11 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
               let subs' = exp_list_imply tenv calc_missing subs (f2 :: elist2) (f2 :: elist2) in
               let prop1' = Prop.prop_iter_remove_curr_then_to_prop tenv iter1' in
               let hpred1 =
-                match Prop.prop_iter_current tenv iter1' with hpred1, b ->
-                  if b then ProverState.add_missing_pi (Sil.Aneq (e2_, f2_)) ;
-                  (* for PE |- NE *)
-                  hpred1
+                match Prop.prop_iter_current tenv iter1' with
+                | hpred1, b ->
+                    if b then ProverState.add_missing_pi (Sil.Aneq (e2_, f2_)) ;
+                    (* for PE |- NE *)
+                    hpred1
               in
               match hpred1 with
               | Sil.Hlseg _ ->
@@ -2265,8 +2272,7 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
     instantiations for the primed variables of [sigma1] and [sigma2]
     and a frame. Raise IMPL_FALSE if the implication cannot be
     proven. *)
-and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : subst2 * Prop.normal Prop.t
-    =
+and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : subst2 * Prop.normal Prop.t =
   let is_constant_string_class subs = function
     (* if the hpred represents a constant string, return the string *)
     | Sil.Hpointsto (e2_, _, _) -> (
@@ -2537,7 +2543,7 @@ let check_implication_base pname tenv check_frame_empty calc_missing prop1 prop2
     Prop.d_pi pi2 ;
     L.d_decrease_indent () ;
     L.d_ln () ;
-    if pi2_bcheck <> [] then ( L.d_str "pi2 bounds checks: " ; Prop.d_pi pi2_bcheck ; L.d_ln () ) ;
+    if pi2_bcheck <> [] then (L.d_str "pi2 bounds checks: " ; Prop.d_pi pi2_bcheck ; L.d_ln ()) ;
     L.d_strln "returns" ;
     L.d_strln "sub1:" ;
     L.d_increase_indent () ;
@@ -2676,8 +2682,7 @@ let find_minimum_pure_cover tenv cases =
     | [] ->
         seen
     | (pi, x) :: todo' ->
-        if is_cover tenv (seen @ todo') then shrink_ seen todo'
-        else shrink_ ((pi, x) :: seen) todo'
+        if is_cover tenv (seen @ todo') then shrink_ seen todo' else shrink_ ((pi, x) :: seen) todo'
   in
   let shrink cases = if List.length cases > 2 then shrink_ [] cases else cases in
   try Some (shrink (grow [] cases)) with NO_COVER -> None

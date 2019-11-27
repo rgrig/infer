@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -31,7 +31,7 @@ module Make (Set : Set) = struct
 
   module Repr : sig
     (* Sort-of abstracting away the fact that a representative is just an element itself.
-      This ensures that the [Sets] hashtable is accessed with representative only. *)
+       This ensures that the [Sets] hashtable is accessed with representative only. *)
 
     type t = private Set.elt
 

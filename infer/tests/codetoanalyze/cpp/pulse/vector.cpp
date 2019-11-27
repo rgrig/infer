@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -67,6 +67,15 @@ void FP_init_fill_then_push_back_loop_ok(std::vector<int>& vec_other) {
   std::cout << *elt << "\n";
 }
 
+void push_back_loop_bad(std::vector<int>& vec_other) {
+  std::vector<int> vec(2);
+  int* elt = &vec[1];
+  for (const auto& i : vec_other) {
+    vec.push_back(i);
+  }
+  std::cout << *elt << "\n";
+}
+
 void reserve_bad(std::vector<int>& vec) {
   int* elt = &vec[1];
   vec.reserve(vec.size() + 1);
@@ -120,7 +129,7 @@ void push_back_value_ok(std::vector<int>& vec) {
 struct VectorA {
   int x;
 
-  void FP_push_back_value_field_ok(std::vector<int>& vec) {
+  void push_back_value_field_ok(std::vector<int>& vec) {
     x = vec[0];
     vec.push_back(7);
     f(x);

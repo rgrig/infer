@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,13 +7,6 @@
 open! IStd
 module F = Format
 module L = Logging
-
-let store_statement =
-  ResultsDatabase.register_statement
-    {|
-  INSERT OR REPLACE INTO source_files
-  VALUES (:source, :tenv, :integer_type_widths, :proc_names, :freshly_captured) |}
-
 
 let select_existing_statement =
   ResultsDatabase.register_statement
@@ -56,35 +49,22 @@ let add source_file cfg tenv integer_type_widths =
               if not (Caml.Hashtbl.mem existing_proc_names proc_name) then proc_name :: proc_names
               else proc_names )
         in
-        (Tenv.merge ~dst:old_tenv ~src:tenv, proc_names)
+        (Tenv.merge_per_file ~dst:old_tenv ~src:tenv, proc_names)
     | None ->
         (tenv, new_proc_names)
   in
   (* NOTE: it's important to write attribute files to disk before writing cfgs to disk.
      OndemandCapture module relies on it - it uses existance of the cfg as a barrier to make
      sure that all attributes were written to disk (but not necessarily flushed) *)
-  SqliteUtils.with_transaction (ResultsDatabase.get_database ()) ~f:(fun () ->
-      Cfg.store source_file cfg ) ;
-  ResultsDatabase.with_registered_statement store_statement ~f:(fun db store_stmt ->
-      SourceFile.SQLite.serialize source_file
-      |> Sqlite3.bind store_stmt 1
-      (* :source *)
-      |> SqliteUtils.check_result_code db ~log:"store bind source file" ;
-      Tenv.SQLite.serialize tenv |> Sqlite3.bind store_stmt 2
-      (* :tenv *)
-      |> SqliteUtils.check_result_code db ~log:"store bind type environment" ;
-      Typ.IntegerWidths.SQLite.serialize integer_type_widths
-      |> Sqlite3.bind store_stmt 3
-      (* :integer_type_widths *)
-      |> SqliteUtils.check_result_code db ~log:"store bind integer type widths" ;
-      Typ.Procname.SQLiteList.serialize proc_names
-      |> Sqlite3.bind store_stmt 4
-      (* :proc_names *)
-      |> SqliteUtils.check_result_code db ~log:"store bind proc names" ;
-      Sqlite3.bind store_stmt 5 (Sqlite3.Data.INT Int64.one)
-      (* :freshly_captured *)
-      |> SqliteUtils.check_result_code db ~log:"store freshness" ;
-      SqliteUtils.result_unit ~finalize:false ~log:"Cfg.store" db store_stmt )
+  if Config.sqlite_write_daemon then Cfg.store source_file cfg
+  else
+    SqliteUtils.with_transaction (ResultsDatabase.get_database ()) ~f:(fun () ->
+        Cfg.store source_file cfg ) ;
+  DBWriter.add_source_file
+    ~source_file:(SourceFile.SQLite.serialize source_file)
+    ~tenv:(Tenv.SQLite.serialize tenv)
+    ~integer_type_widths:(Typ.IntegerWidths.SQLite.serialize integer_type_widths)
+    ~proc_names:(Typ.Procname.SQLiteList.serialize proc_names)
 
 
 let get_all ~filter () =
@@ -129,9 +109,7 @@ let is_captured source =
       |> Option.is_some )
 
 
-let is_non_empty_statement =
-  ResultsDatabase.register_statement "SELECT 1 FROM source_files LIMIT 1"
-
+let is_non_empty_statement = ResultsDatabase.register_statement "SELECT 1 FROM source_files LIMIT 1"
 
 let is_empty () =
   ResultsDatabase.with_registered_statement is_non_empty_statement ~f:(fun db stmt ->
@@ -154,22 +132,21 @@ let is_freshly_captured source =
       SourceFile.SQLite.serialize source
       |> Sqlite3.bind load_stmt 1
       |> SqliteUtils.check_result_code db ~log:"load bind source file" ;
-      SqliteUtils.result_single_column_option ~finalize:false
-        ~log:"SourceFiles.is_freshly_captured" db load_stmt
+      SqliteUtils.result_single_column_option ~finalize:false ~log:"SourceFiles.is_freshly_captured"
+        db load_stmt
       |> Option.value_map ~default:false ~f:deserialize_freshly_captured )
 
 
-let mark_all_stale_statement =
-  ResultsDatabase.register_statement "UPDATE source_files SET freshly_captured = 0"
-
-
-let mark_all_stale () =
-  ResultsDatabase.with_registered_statement mark_all_stale_statement ~f:(fun db stmt ->
-      SqliteUtils.result_unit db ~finalize:false ~log:"mark_all_stale" stmt )
-
+let mark_all_stale () = DBWriter.mark_all_source_files_stale ()
 
 let select_all_source_files_statement =
-  ResultsDatabase.register_statement "SELECT * FROM source_files"
+  ResultsDatabase.register_statement
+    {|
+  SELECT source_file
+  , type_environment
+  , procedure_names
+  , freshly_captured
+  FROM source_files |}
 
 
 let pp_all ~filter ~type_environment ~procedure_names ~freshly_captured fmt () =

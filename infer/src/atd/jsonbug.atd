@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -44,7 +44,7 @@ type jsonbug = {
   bug_type_hum: string;
   ?linters_def_file: string option;
   ?traceview_id: int option;
-  censored_reason : string;
+  ?censored_reason : string option;
   ?access : string option;
   ?extras : extra option;
 }
@@ -61,12 +61,23 @@ type hum_info = {
   big_o : string;
 }
 
+
+type cost_info = {
+  polynomial_version : int;
+  polynomial : string;
+  ?degree : int option;
+  hum : hum_info;
+}
+
+
 type cost_item = {
   hash : string;
   loc : loc;
+  procedure_name : string;
   procedure_id : string;
-  polynomial : string;
-  hum : hum_info;
+  is_on_ui_thread : bool;
+  alloc_cost : cost_info;
+  exec_cost : cost_info;
 }
 
 type costs_report = cost_item list

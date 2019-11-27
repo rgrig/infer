@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -163,7 +163,8 @@ let read_json_file path =
 
 let do_finally_swallow_timeout ~f ~finally =
   let res =
-    try f () with exc ->
+    try f ()
+    with exc ->
       IExn.reraise_after exc ~f:(fun () ->
           try finally () |> ignore with _ -> (* swallow in favor of the original exception *) () )
   in
@@ -190,10 +191,28 @@ let with_file_out file ~f =
   try_finally_swallow_timeout ~f ~finally
 
 
+type file_lock =
+  { file: string
+  ; oc: Pervasives.out_channel
+  ; fd: Core.Unix.File_descr.t
+  ; lock: unit -> unit
+  ; unlock: unit -> unit }
+
+let create_file_lock () =
+  let file, oc = Core.Filename.open_temp_file "infer" "" in
+  let fd = Core.Unix.openfile ~mode:[IStd.Unix.O_WRONLY] file in
+  let lock () = Core.Unix.lockf fd ~mode:IStd.Unix.F_LOCK ~len:IStd.Int64.zero in
+  let unlock () = Core.Unix.lockf fd ~mode:IStd.Unix.F_ULOCK ~len:IStd.Int64.zero in
+  {file; oc; fd; lock; unlock}
+
+
+let with_file_lock ~file_lock:{file; oc; fd} ~f =
+  let finally () = Core.Unix.close fd ; Out_channel.close oc ; Core.Unix.remove file in
+  try_finally_swallow_timeout ~f ~finally
+
+
 let with_intermediate_temp_file_out file ~f =
-  let temp_filename, temp_oc =
-    Filename.open_temp_file ~in_dir:(Filename.dirname file) "infer" ""
-  in
+  let temp_filename, temp_oc = Filename.open_temp_file ~in_dir:(Filename.dirname file) "infer" "" in
   let f () = f temp_oc in
   let finally () =
     Out_channel.close temp_oc ;
@@ -252,11 +271,11 @@ let create_dir dir =
     if (Unix.stat dir).Unix.st_kind <> Unix.S_DIR then
       L.(die ExternalError) "file '%s' already exists and is not a directory" dir
   with Unix.Unix_error _ -> (
-    try Unix.mkdir dir ~perm:0o700 with Unix.Unix_error _ ->
+    try Unix.mkdir dir ~perm:0o700
+    with Unix.Unix_error _ ->
       let created_concurrently =
         (* check if another process created it meanwhile *)
-        try Polymorphic_compare.( = ) (Unix.stat dir).Unix.st_kind Unix.S_DIR
-        with Unix.Unix_error _ -> false
+        try Poly.equal (Unix.stat dir).Unix.st_kind Unix.S_DIR with Unix.Unix_error _ -> false
       in
       if not created_concurrently then L.(die ExternalError) "cannot create directory '%s'" dir )
 
@@ -306,24 +325,6 @@ let compare_versions v1 v2 =
   [%compare: int list] lv1 lv2
 
 
-let write_file_with_locking ?(delete = false) ~f:do_write fname =
-  Unix.with_file
-    ~mode:Unix.[O_WRONLY; O_CREAT]
-    fname
-    ~f:(fun file_descr ->
-      if Unix.flock file_descr Unix.Flock_command.lock_exclusive then (
-        (* make sure we're not writing over some existing, possibly longer content: some other
-           process may have snagged the file from under us between open(2) and flock(2) so passing
-           O_TRUNC to open(2) above would not be a good substitute for calling ftruncate(2)
-           below. *)
-        Unix.ftruncate file_descr ~len:Int64.zero ;
-        let outc = Unix.out_channel_of_descr file_descr in
-        do_write outc ;
-        Out_channel.flush outc ;
-        ignore (Unix.flock file_descr Unix.Flock_command.unlock) ) ) ;
-  if delete then try Unix.unlink fname with Unix.Unix_error _ -> ()
-
-
 let rec rmtree name =
   match Unix.((lstat name).st_kind) with
   | S_DIR ->
@@ -364,3 +365,95 @@ let strip_balanced_once ~drop s =
     let first = String.unsafe_get s 0 in
     if Char.equal first (String.unsafe_get s (n - 1)) && drop first then String.slice s 1 (n - 1)
     else s
+
+
+let die_expected_yojson_type expected yojson_obj ~src ~example =
+  let eg = if String.equal example "" then "" else " (e.g. '" ^ example ^ "')" in
+  Die.die UserError "in %s expected json %s%s not %s" src expected eg
+    (Yojson.Basic.to_string yojson_obj)
+
+
+let assoc_of_yojson yojson_obj ~src =
+  match yojson_obj with
+  | `Assoc assoc ->
+      assoc
+  | `List [] ->
+      (* missing entries in config reported as empty list *)
+      []
+  | _ ->
+      die_expected_yojson_type "object" yojson_obj ~example:"{ \"foo\': \"bar\" }" ~src
+
+
+let string_of_yojson yojson_obj ~src =
+  match yojson_obj with
+  | `String str ->
+      str
+  | _ ->
+      die_expected_yojson_type "string" yojson_obj ~example:"\"foo\"" ~src
+
+
+let list_of_yojson yojson_obj ~src =
+  match yojson_obj with
+  | `List list ->
+      list
+  | _ ->
+      die_expected_yojson_type "list" yojson_obj ~example:"[ \"foo\', \"bar\" ]" ~src
+
+
+let string_list_of_yojson yojson_obj ~src =
+  List.map ~f:(string_of_yojson ~src) (list_of_yojson yojson_obj ~src)
+
+
+let yojson_lookup yojson_assoc elt_name ~src ~f ~default =
+  let src = src ^ " -> " ^ elt_name in
+  Option.value_map ~default
+    ~f:(fun res -> f res ~src)
+    (List.Assoc.find ~equal:String.equal yojson_assoc elt_name)
+
+
+let timeit ~f =
+  let start_time = Mtime_clock.counter () in
+  let ret_val = f () in
+  let duration_ms = Mtime_clock.count start_time |> Mtime.Span.to_ms |> int_of_float in
+  (ret_val, duration_ms)
+
+
+let do_in_dir ~dir ~f =
+  let cwd = Unix.getcwd () in
+  Unix.chdir dir ;
+  try_finally_swallow_timeout ~f ~finally:(fun () -> Unix.chdir cwd)
+
+
+let get_available_memory_MB () =
+  let proc_meminfo = "/proc/meminfo" in
+  let rec scan_for_expected_output in_channel =
+    match In_channel.input_line in_channel with
+    | None ->
+        None
+    | Some line -> (
+      try Scanf.sscanf line "MemAvailable: %u kB" (fun mem_kB -> Some (mem_kB / 1024))
+      with Scanf.Scan_failure _ -> scan_for_expected_output in_channel )
+  in
+  if Sys.file_exists proc_meminfo <> `Yes then None
+  else with_file_in proc_meminfo ~f:scan_for_expected_output
+
+
+let iter_infer_deps ~project_root ~f infer_deps_file =
+  let buck_root = project_root ^/ "buck-out" in
+  let one_line line =
+    match String.split ~on:'\t' line with
+    | [_; _; target_results_dir] ->
+        let infer_out_src =
+          if Filename.is_relative target_results_dir then
+            Filename.dirname (buck_root ^/ target_results_dir)
+          else target_results_dir
+        in
+        f infer_out_src
+    | _ ->
+        Die.die InternalError "Couldn't parse deps file '%s', line: %s" infer_deps_file line
+  in
+  match read_file infer_deps_file with
+  | Ok lines ->
+      List.iter ~f:one_line lines
+  | Error error ->
+      Die.die InternalError "Couldn't read deps file '%s': %s" infer_deps_file error

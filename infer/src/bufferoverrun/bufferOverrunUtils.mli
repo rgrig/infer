@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -24,7 +24,14 @@ module ModelEnv : sig
 end
 
 module Exec : sig
-  val load_locs : Ident.t -> PowLoc.t -> Dom.Mem.t -> Dom.Mem.t
+  val load_locs :
+       represents_multiple_values:bool
+    -> modeled_range:Dom.ModeledRange.t option
+    -> Ident.t
+    -> Typ.t
+    -> PowLoc.t
+    -> Dom.Mem.t
+    -> Dom.Mem.t
 
   val decl_local : ModelEnv.model_env -> Dom.Mem.t * int -> Loc.t * Typ.t -> Dom.Mem.t * int
 

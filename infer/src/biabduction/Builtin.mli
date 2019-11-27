@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -10,7 +10,7 @@ open! IStd
 (** Module for builtin functions with their symbolic execution handler *)
 
 type args =
-  { pdesc: Procdesc.t
+  { summary: Summary.t
   ; instr: Sil.instr
   ; tenv: Tenv.t
   ; prop_: Prop.normal Prop.t

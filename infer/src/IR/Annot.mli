@@ -1,17 +1,19 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 
 (** The Smallfoot Intermediate Language: Annotations *)
-open! IStd
 
+open! IStd
 module F = Format
 
-type parameters = string list
+type parameter = {name: string option; value: string}
+
+type parameters = parameter list
 
 (** Type to represent one @Annotation. *)
 type t =
@@ -37,6 +39,9 @@ module Item : sig
 
   val empty : t
   (** Empty item annotation. *)
+
+  val is_final : t -> bool
+  (** Check if final annotation is included in. *)
 end
 
 module Class : sig

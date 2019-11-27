@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -28,6 +28,15 @@ module Node : sig
 
   val equal_id : id -> id -> bool
 
+  type destruction_kind =
+    | DestrBreakStmt
+    | DestrContinueStmt
+    | DestrFields
+    | DestrReturnStmt
+    | DestrScope
+    | DestrTemporariesCleanup
+    | DestrVirtualBase
+
   (** kind of statement node *)
   type stmt_nodekind =
     | AssertionFailure
@@ -45,9 +54,10 @@ module Node : sig
     | CXXTypeidExpr
     | DeclStmt
     | DefineBody
-    | Destruction
+    | Destruction of destruction_kind
     | ExceptionHandler
     | ExceptionsSink
+    | ExprWithCleanups
     | FallbackNode
     | FinallyBranch
     | GCCAsmStmt
@@ -62,6 +72,7 @@ module Node : sig
     | ObjCCPPThrow
     | OutOfBound
     | ReturnStmt
+    | Scope of string
     | Skip of string
     | SwitchStmt
     | ThisNotNull
@@ -167,17 +178,17 @@ module Node : sig
   val compute_key : t -> NodeKey.t
 end
 
-(** Map with node id keys. *)
 module IdMap : PrettyPrintable.PPMap with type key = Node.id
+(** Map with node id keys. *)
 
-(** Hash table with nodes as keys. *)
 module NodeHash : Caml.Hashtbl.S with type key = Node.t
+(** Hash table with nodes as keys. *)
 
-(** Map over nodes. *)
 module NodeMap : Caml.Map.S with type key = Node.t
+(** Map over nodes. *)
 
-(** Set of nodes. *)
 module NodeSet : Caml.Set.S with type elt = Node.t
+(** Set of nodes. *)
 
 (** procedure descriptions *)
 
@@ -196,9 +207,6 @@ val create_node : t -> Location.t -> Node.nodekind -> Sil.instr list -> Node.t
 
 val create_node_from_not_reversed :
   t -> Location.t -> Node.nodekind -> Instrs.not_reversed_t -> Node.t
-
-val did_preanalysis : t -> bool
-(** true if we ran the preanalysis on the CFG associated with [t] *)
 
 val fold_instrs : t -> init:'accum -> f:('accum -> Node.t -> Sil.instr -> 'accum) -> 'accum
 (** fold over all nodes and their instructions *)
@@ -248,6 +256,9 @@ val get_ret_var : t -> Pvar.t
 
 val get_start_node : t -> Node.t
 
+val get_static_callees : t -> Typ.Procname.t list
+(** get a list of unique static callees excluding self *)
+
 val is_defined : t -> bool
 (** Return [true] iff the procedure is defined, and not just declared *)
 
@@ -261,6 +272,10 @@ val replace_instrs : t -> f:(Node.t -> Sil.instr -> Sil.instr) -> bool
 (** Map and replace the instructions to be executed.
     Returns true if at least one substitution occured. *)
 
+val replace_instrs_by : t -> f:(Node.t -> Sil.instr -> Sil.instr array) -> bool
+(** Like [replace_instrs], but slower, and each instruction may be replaced                                   
+by 0, 1, or more instructions. *)
+
 val iter_nodes : (Node.t -> unit) -> t -> unit
 (** iterate over all the nodes of a procedure *)
 
@@ -270,18 +285,16 @@ val fold_nodes : t -> init:'accum -> f:('accum -> Node.t -> 'accum) -> 'accum
 val fold_slope_range : Node.t -> Node.t -> init:'accum -> f:('accum -> Node.t -> 'accum) -> 'accum
 (** fold between two nodes or until we reach a branching structure *)
 
-val set_succs_exn_only : Node.t -> Node.t list -> unit
+val set_succs : Node.t -> normal:Node.t list option -> exn:Node.t list option -> unit
+(** Set the successor nodes and exception nodes, if given, and update predecessor links *)
 
-val node_set_succs_exn : t -> Node.t -> Node.t list -> Node.t list -> unit
-(** Set the successor nodes and exception nodes, and build predecessor links *)
+val node_set_succs : t -> Node.t -> normal:Node.t list -> exn:Node.t list -> unit
+(** Set the successor nodes and exception nodes, and update predecessor links *)
 
 val set_exit_node : t -> Node.t -> unit
 (** Set the exit node of the procedure *)
 
 val set_start_node : t -> Node.t -> unit
-
-val signal_did_preanalysis : t -> unit
-(** indicate that we have performed preanalysis on the CFG associated with [t] *)
 
 val get_wto : t -> Node.t WeakTopologicalOrder.Partition.t
 
@@ -304,8 +317,8 @@ val has_modify_in_block_attr : t -> Pvar.t -> bool
 val is_connected : t -> (unit, [`Join | `Other]) Result.t
 (** checks whether a cfg for the given procdesc is connected or not *)
 
+module SQLite : SqliteUtils.Data with type t = t option
 (** per-procedure CFGs are stored in the SQLite "procedures" table as NULL if the procedure has no
    CFG *)
-module SQLite : SqliteUtils.Data with type t = t option
 
 val load : Typ.Procname.t -> t option

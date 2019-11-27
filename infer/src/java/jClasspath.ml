@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -40,15 +40,20 @@ let add_models jar_filename =
 
 let is_model procname = String.Set.mem !models_specs_filenames (Typ.Procname.to_filename procname)
 
-let split_classpath cp = Str.split (Str.regexp JFile.sep) cp
+let split_classpath = String.split ~on:JFile.sep
 
-let append_path classpath path =
-  let full_path = Utils.filename_to_absolute ~root:Config.project_root path in
-  if Sys.file_exists full_path = `Yes then
-    if Int.equal (String.length classpath) 0 then full_path else classpath ^ JFile.sep ^ full_path
-  else (
-    L.debug Capture Medium "Path %s not found" full_path ;
-    classpath )
+let classpath_of_paths paths =
+  let of_path path =
+    let full_path = Utils.filename_to_absolute ~root:Config.project_root path in
+    match Sys.file_exists full_path with
+    | `Yes ->
+        Some full_path
+    | _ ->
+        L.debug Capture Medium "Path %s not found" full_path ;
+        None
+  in
+  let string_sep = Char.to_string JFile.sep in
+  List.filter_map paths ~f:of_path |> String.concat ~sep:string_sep
 
 
 type file_entry = Singleton of SourceFile.t | Duplicate of (string * SourceFile.t) list
@@ -101,10 +106,9 @@ let add_source_file path map =
           (* Two or more source file with the same base name have been found *)
           let current_package = read_package_declaration current_source_file in
           Duplicate ((current_package, current_source_file) :: previous_source_files)
-    with
-    | Not_found_s _ | Caml.Not_found ->
-        (* Most common case: there is no conflict with the base name of the source file *)
-        Singleton current_source_file
+    with Not_found_s _ | Caml.Not_found ->
+      (* Most common case: there is no conflict with the base name of the source file *)
+      Singleton current_source_file
   in
   String.Map.set ~key:basename ~data:entry map
 
@@ -119,9 +123,10 @@ let load_from_verbose_output javac_verbose_out =
          (* the unreadable regexp below captures 3 possible forms:
             1. [wrote DirectoryFileObject[/path/to/classes_out:path/to/File.java]], leaves `path/to/File.java` in match group 2
             2. [wrote RegularFileObject[path/to/File.java]], leaves `path/to/File.java` in match group 5
-            3. [wrote SimpleFileObject[path/to/File.java]], also leaves `path/to/File.java` in match group 5 *)
+            3. [wrote SimpleFileObject[path/to/File.java]], also leaves `path/to/File.java` in match group 5
+            4. [wrote path/to/File.java] leaves `path/to/File.java` in match group 6 (from java 11)*)
          "\\[wrote \
-          \\(DirectoryFileObject\\[%s:\\(.*\\)\\|\\(\\(Regular\\|Simple\\)FileObject\\[\\(.*\\)\\)\\)\\]\\]"
+          \\(DirectoryFileObject\\[%s:\\(.*\\)\\|\\(\\(Regular\\|Simple\\)FileObject\\[\\(.*\\)\\)\\]\\|\\(.*\\)\\)\\]"
          Config.javac_classes_out)
   in
   let source_filename_re =
@@ -132,14 +137,17 @@ let load_from_verbose_output javac_verbose_out =
     match In_channel.input_line_exn file_in with
     | exception End_of_file ->
         In_channel.close file_in ;
-        let classpath = List.fold ~f:append_path ~init:"" (String.Set.elements roots @ paths) in
+        let classpath = classpath_of_paths (String.Set.elements roots @ paths) in
         (classpath, sources, classes)
     | line ->
         if Str.string_match class_filename_re line 0 then
           let path =
-            try Str.matched_group 5 line with Caml.Not_found ->
-              (* either matched group 5 is found, or matched group 2 is found, see doc for [class_filename_re] above *)
-              Config.javac_classes_out ^/ Str.matched_group 2 line
+            try Str.matched_group 5 line
+            with Caml.Not_found -> (
+              try Config.javac_classes_out ^/ Str.matched_group 2 line
+              with Caml.Not_found ->
+                (* either matched group 5, 6, or 2 is found, see doc for [class_filename_re] above *)
+                Str.matched_group 6 line )
           in
           match Javalib.extract_class_name_from_file path with
           | exception (JBasics.Class_structure_error _ | Invalid_argument _) ->
@@ -220,13 +228,9 @@ let search_sources () =
 let load_from_arguments classes_out_path =
   let roots, classes = search_classes classes_out_path in
   let split cp_option = Option.value_map ~f:split_classpath ~default:[] cp_option in
-  let combine path_list classpath =
-    List.fold ~f:append_path ~init:classpath (List.rev path_list)
-  in
   let classpath =
-    combine (split Config.classpath) ""
-    |> combine (String.Set.elements roots)
-    |> combine (split Config.bootclasspath)
+    split Config.bootclasspath @ split Config.classpath @ String.Set.elements roots
+    |> classpath_of_paths
   in
   (classpath, search_sources (), classes)
 
@@ -253,9 +257,7 @@ let add_class cn jclass program =
   program.classmap <- JBasics.ClassMap.add cn jclass program.classmap
 
 
-let set_callee_translated program pname =
-  Typ.Procname.Hash.replace program.callees pname Translated
-
+let set_callee_translated program pname = Typ.Procname.Hash.replace program.callees pname Translated
 
 let add_missing_callee program pname cn ms =
   if not (Typ.Procname.Hash.mem program.callees pname) then
@@ -270,7 +272,8 @@ let iter_missing_callees program ~f =
 let cleanup program = Javalib.close_class_path program.classpath.channel
 
 let lookup_node cn program =
-  try Some (JBasics.ClassMap.find cn (get_classmap program)) with Caml.Not_found -> (
+  try Some (JBasics.ClassMap.find cn (get_classmap program))
+  with Caml.Not_found -> (
     try
       let jclass = javalib_get_class (get_classpath_channel program) cn in
       add_class cn jclass program ; Some jclass
@@ -278,7 +281,7 @@ let lookup_node cn program =
     | JBasics.No_class_found _ ->
         (* TODO T28155039 Figure out when and what to log *)
         None
-    | (JBasics.Class_structure_error _ | Invalid_argument _) as exn ->
+    | (JBasics.Class_structure_error _ | Invalid_argument _ | Failure _) as exn ->
         L.internal_error "ERROR: %s@." (Exn.to_string exn) ;
         None )
 

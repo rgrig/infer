@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -15,15 +15,15 @@ let translate a : Annot.t =
   let rec translate_value_pair acc (x, value) =
     match value with
     | JBasics.EVArray (JBasics.EVCstString s :: l) ->
-        translate_value_pair (s :: acc) (x, JBasics.EVArray l)
+        translate_value_pair (Annot.{name= Some x; value= s} :: acc) (x, JBasics.EVArray l)
     | JBasics.EVCstString s ->
-        s :: acc
+        Annot.{name= Some x; value= s} :: acc
     | JBasics.EVCstBoolean 0 ->
         (* just translate bools as strings. means we can't distinguish between a boolean false
            literal parameter and string literal "false" parameter, but that's ok. *)
-        "false" :: acc
+        Annot.{name= Some x; value= "false"} :: acc
     | JBasics.EVCstBoolean 1 ->
-        "true" :: acc
+        Annot.{name= Some x; value= "true"} :: acc
     | _ ->
         acc
   in

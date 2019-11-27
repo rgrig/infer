@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -21,7 +21,7 @@ let init_global_state source_file =
 
 let store_icfg source_file cfg =
   SourceFiles.add source_file cfg Tenv.Global None ;
-  if Config.debug_mode || Config.frontend_tests then Dotty.print_icfg_dotty source_file cfg ;
+  if Config.debug_mode || Config.frontend_tests then DotCfg.emit_frontend_cfg source_file cfg ;
   ()
 
 
@@ -58,7 +58,7 @@ let load_tenv () =
   match Tenv.load_global () with
   | None ->
       Tenv.create ()
-  | Some _ when Config.models_mode ->
+  | Some _ when Config.biabduction_models_mode ->
       L.(die InternalError)
         "Unexpected global tenv file found in '%s' while generating the models" Config.captured_dir
   | Some tenv ->
@@ -121,7 +121,7 @@ let do_all_files classpath sources classes =
 
 (* loads the source files and translates them *)
 let main load_sources_and_classes =
-  ( match (Config.models_mode, Sys.file_exists Config.models_jar = `Yes) with
+  ( match (Config.biabduction_models_mode, Sys.file_exists Config.biabduction_models_jar = `Yes) with
   | true, false ->
       ()
   | false, false ->
@@ -129,7 +129,7 @@ let main load_sources_and_classes =
   | true, true ->
       L.(die UserError) "Not expecting model file when analyzing the models"
   | false, true ->
-      JClasspath.add_models Config.models_jar ) ;
+      JClasspath.add_models Config.biabduction_models_jar ) ;
   JBasics.set_permissive true ;
   let classpath, sources, classes =
     match load_sources_and_classes with

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -24,7 +24,7 @@ include TaintAnalysis.Make (struct
     let handle_generic_unknown ret_typ actuals =
       match ((ret_typ.Typ.desc : Typ.desc), List.rev_map actuals ~f:HilExp.ignore_cast) with
       (* everything but Tvoid*)
-      | (Tint _ | Tfloat _ | Tfun _ | Tptr (_, _) | Tstruct _ | TVar _ | Tarray _), _ ->
+      | (Tint _ | Tfloat _ | Tfun | Tptr _ | Tstruct _ | TVar _ | Tarray _), _ ->
           (* propagate taint from actuals to return value *)
           [TaintSpec.Propagate_to_return]
       | Tvoid, [] ->
@@ -48,7 +48,7 @@ include TaintAnalysis.Make (struct
           [TaintSpec.Propagate_to_receiver]
     in
     (* if we have a specific model for a procedure, use that. otherwise, use the generic
-         heuristics for dealing with unknown code *)
+       heuristics for dealing with unknown code *)
     match Typ.Procname.get_method pname with
     | "operator+="
     | "operator-="
@@ -73,17 +73,17 @@ include TaintAnalysis.Make (struct
 
 
   (* treat folly functions as unknown library code. we often specify folly functions as sinks,
-       and we don't want to double-report if these functions eventually call other sinks (e.g.,
-       when folly::Subprocess calls exec), in addition some folly functions are heavily optimized in
-       a way that obscures what they're actually doing (e.g., they use assembly code). it's better
-       to write models for these functions or treat them as unknown *)
+     and we don't want to double-report if these functions eventually call other sinks (e.g.,
+     when folly::Subprocess calls exec), in addition some folly functions are heavily optimized in
+     a way that obscures what they're actually doing (e.g., they use assembly code). it's better
+     to write models for these functions or treat them as unknown *)
   let models_matcher = QualifiedCppName.Match.of_fuzzy_qual_names ["folly"]
 
   let get_model pname ret_typ actuals tenv summary =
     (* hack for default C++ constructors, which get translated as an empty body (and will thus
-         have an empty summary). We don't want that because we want to be able to propagate taint
-         from comstructor parameters to the constructed object. so we treat the empty constructor
-         as a skip function instead *)
+       have an empty summary). We don't want that because we want to be able to propagate taint
+       from comstructor parameters to the constructed object. so we treat the empty constructor
+       as a skip function instead *)
     let is_default_constructor pname =
       Typ.Procname.is_c_method pname && Typ.Procname.is_constructor pname
       && AccessTree.BaseMap.is_empty summary

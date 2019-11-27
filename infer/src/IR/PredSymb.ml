@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -11,11 +11,6 @@
 open! IStd
 module L = Logging
 module F = Format
-
-type func_attribute = FA_sentinel of int * int  (** __attribute__((sentinel(int, int))) *)
-[@@deriving compare]
-
-let pp_func_attribute fmt = function FA_sentinel (i, j) -> F.fprintf fmt "sentinel(%d,%d)" i j
 
 (** Visibility modifiers. *)
 type access = Default | Public | Private | Protected [@@deriving compare]
@@ -31,15 +26,6 @@ let string_of_access = function
       "Private"
   | Protected ->
       "Protected"
-
-
-(** Return the value of the FA_sentinel attribute in [attr_list] if it is found *)
-let get_sentinel_func_attribute_value attr_list =
-  match attr_list with
-  | FA_sentinel (sentinel, null_pos) :: _ ->
-      Some (sentinel, null_pos)
-  | [] ->
-      None
 
 
 type mem_kind =

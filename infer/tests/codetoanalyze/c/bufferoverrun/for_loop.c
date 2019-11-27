@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2016-present, Programming Research Laboratory (ROPAS)
  *                             Seoul National University, Korea
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -95,4 +95,42 @@ void call_initialize_arr_Good() {
 void call_initialize_arr_Bad() {
   int arr[10];
   initialize_arr(arr, 20);
+}
+
+void threshold_by_comparison_1_Good() {
+  int arr[100];
+  for (int i = 0; i != 100; i++) {
+    arr[i] = 0;
+  }
+}
+
+void threshold_by_comparison_1_Bad() {
+  int arr[50];
+  for (int i = 0; i != 100; i++) {
+    arr[i] = 0;
+  }
+}
+
+void threshold_by_comparison_2_Good() {
+  int arr[100];
+  int j = 0;
+  while (1) { // widening threshold for j should be 99, not 100
+    j++;
+    if (j == 100) {
+      j = 0;
+    }
+    arr[j] = 0;
+  }
+}
+
+void threshold_by_comparison_2_Bad() {
+  int arr[50];
+  int j = 0;
+  while (1) { // widening threshold for j should be 99, not 100
+    j++;
+    if (j == 100) {
+      j = 0;
+    }
+    arr[j] = 0;
+  }
 }

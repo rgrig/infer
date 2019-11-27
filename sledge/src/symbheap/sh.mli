@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -11,23 +11,26 @@
     size [siz], contained in an enclosing allocation-block starting at [bas]
     of length [len]. Byte-array expressions are either [Var]iables or
     [Splat] vectors. *)
-type seg = {loc: Exp.t; bas: Exp.t; len: Exp.t; siz: Exp.t; arr: Exp.t}
+type seg = {loc: Term.t; bas: Term.t; len: Term.t; siz: Term.t; arr: Term.t}
 
 type starjunction = private
   { us: Var.Set.t  (** vocabulary / variable context of formula *)
   ; xs: Var.Set.t  (** existentially-bound variables *)
-  ; cong: Congruence.t  (** congruence induced by rest of formula *)
-  ; pure: Exp.t list  (** conjunction of pure boolean constraints *)
+  ; cong: Equality.t  (** congruence induced by rest of formula *)
+  ; pure: Term.t list  (** conjunction of pure boolean constraints *)
   ; heap: seg list  (** star-conjunction of segment atomic formulas *)
   ; djns: disjunction list  (** star-conjunction of disjunctions *) }
 
 and disjunction = starjunction list
 
-type t = starjunction
+type t = starjunction [@@deriving equal, compare, sexp]
 
-val pp_seg : seg pp
+val pp_seg : ?is_x:(Term.t -> bool) -> seg pp
+val pp_seg_norm : Equality.t -> seg pp
 val pp_us : ?pre:('a, 'a) fmt -> Var.Set.t pp
 val pp : t pp
+val pp_djn : disjunction pp
+val simplify : t -> t
 
 include Invariant.S with type t := t
 
@@ -50,19 +53,19 @@ val or_ : t -> t -> t
 (** Disjoin formulas, extending to a common vocabulary, and avoiding
     capturing existentials. *)
 
-val pure : Exp.t -> t
+val pure : Term.t -> t
 (** Atomic pure boolean constraint formula. *)
 
-val and_ : Exp.t -> t -> t
+val and_ : Term.t -> t -> t
 (** Conjoin a boolean constraint to a formula. *)
 
-val and_cong : Congruence.t -> t -> t
+val and_cong : Equality.t -> t -> t
 (** Conjoin constraints of a congruence to a formula, extending to a common
     vocabulary, and avoiding capturing existentials. *)
 
 (** Update *)
 
-val with_pure : Exp.t list -> t -> t
+val with_pure : Term.t list -> t -> t
 (** [with_pure pure q] is [{q with pure}], which assumes that [q.pure] and
     [pure] are defined in the same vocabulary, induce the same congruence,
     etc. It can essentially only be used when [pure] is logically equivalent
@@ -72,6 +75,9 @@ val rem_seg : seg -> t -> t
 (** [star (seg s) (rem_seg s q)] is equivalent to [q], assuming that [s] is
     (physically equal to) one of the elements of [q.heap]. Raises if [s] is
     not an element of [q.heap]. *)
+
+val filter_heap : f:(seg -> bool) -> t -> t
+(** [filter_heap q f] Remove all segments in [q] for which [f] returns false *)
 
 (** Quantification and Vocabulary *)
 
@@ -83,6 +89,10 @@ val bind_exists : t -> wrt:Var.Set.t -> Var.Set.t * t
 (** Bind existentials, freshened with respect to [wrt], extends vocabulary. *)
 
 val rename : Var.Subst.t -> t -> t
+(** Apply a substitution, remove its domain from vocabulary and add its
+    range. *)
+
+val subst : Var.Subst.t -> t -> t
 (** Apply a substitution, remove its domain from vocabulary and add its
     range. *)
 
@@ -110,9 +120,9 @@ val pure_approx : t -> t
 
 val fold_dnf :
      conj:(starjunction -> 'conjuncts -> 'conjuncts)
-  -> disj:('conjuncts -> 'disjuncts -> 'disjuncts)
+  -> disj:(Var.Set.t * 'conjuncts -> 'disjuncts -> 'disjuncts)
   -> t
-  -> 'conjuncts
+  -> Var.Set.t * 'conjuncts
   -> 'disjuncts
   -> 'disjuncts
 (** Enumerate the cubes and clauses of a disjunctive-normal form expansion. *)

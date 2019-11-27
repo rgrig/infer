@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -61,8 +61,10 @@ let text_break = {text with break_lines= true}
 (** Default html print environment *)
 let html color =
   { text with
-    kind= HTML; cmap_norm= colormap_from_color color; cmap_foot= colormap_from_color color; color
-  }
+    kind= HTML
+  ; cmap_norm= colormap_from_color color
+  ; cmap_foot= colormap_from_color color
+  ; color }
 
 
 (** Extend the normal colormap for the given object with the given color *)
@@ -123,17 +125,16 @@ let current_time f () =
     tm.Unix.tm_hour tm.Unix.tm_min
 
 
-(** Print the time in seconds elapsed since the beginning of the execution of the current command. *)
-let elapsed_time fmt () = Mtime.Span.pp fmt (Mtime_clock.elapsed ())
-
 let option pp fmt = function
   | None ->
-      F.pp_print_string fmt "<None>"
+      F.pp_print_string fmt "[None]"
   | Some x ->
-      F.fprintf fmt "<Some %a>" pp x
+      F.fprintf fmt "[Some %a]" pp x
 
 
-let to_string ~f fmt x = F.pp_print_string fmt (f x)
+let of_string ~f fmt x = F.pp_print_string fmt (f x)
+
+let string_of_pp pp = Format.asprintf "%a" pp
 
 let cli_args fmt args =
   let pp_args fmt args =
@@ -171,3 +172,5 @@ let cli_args fmt args =
 
 
 let pair ~fst ~snd fmt (a, b) = F.fprintf fmt "(%a,@,%a)" fst a snd b
+
+let in_backticks pp fmt x = F.fprintf fmt "`%a`" pp x

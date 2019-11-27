@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -52,11 +52,11 @@ let node_throws pdesc node (proc_throws : Typ.Procname.t -> throws) : throws =
       Pvar.equal pvar ret_pvar
     in
     match instr with
-    | Sil.Store (Exp.Lvar pvar, _, Exp.Exn _, _) when is_return pvar ->
+    | Sil.Store {e1= Exp.Lvar pvar; e2= Exp.Exn _} when is_return pvar ->
         (* assignment to return variable is an artifact of a throw instruction *)
         Throws
-    | Sil.Call (_, Exp.Const (Const.Cfun callee_pn), _, _, _)
-      when BuiltinDecl.is_declared callee_pn ->
+    | Sil.Call (_, Exp.Const (Const.Cfun callee_pn), _, _, _) when BuiltinDecl.is_declared callee_pn
+      ->
         if Typ.Procname.equal callee_pn BuiltinDecl.__cast then DontKnow else DoesNotThrow
     | Sil.Call (_, Exp.Const (Const.Cfun callee_pn), _, _, _) ->
         proc_throws callee_pn
@@ -161,7 +161,9 @@ end
 (* MakeDF *)
 
 (** Example dataflow callback: compute the the distance from a node to the start node. *)
-let _callback_test_dataflow {Callbacks.proc_desc; tenv; summary} =
+let _callback_test_dataflow {Callbacks.exe_env; summary} =
+  let proc_desc = Summary.get_proc_desc summary in
+  let tenv = Exe_env.get_tenv exe_env (Summary.get_proc_name summary) in
   let verbose = false in
   let module DFCount = MakeDF (struct
     type t = int

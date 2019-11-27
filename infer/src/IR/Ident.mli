@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -28,14 +28,14 @@ type kind [@@deriving compare]
 val equal_kind : kind -> kind -> bool
 (** Equality for kind. *)
 
-(** Set for identifiers. *)
 module Set : Caml.Set.S with type elt = t
+(** Set for identifiers. *)
 
-(** Hash table with ident as key. *)
 module Hash : Caml.Hashtbl.S with type key = t
+(** Hash table with ident as key. *)
 
-(** Map with ident as key. *)
 module Map : Caml.Map.S with type key = t
+(** Map with ident as key. *)
 
 module HashQueue : Hash_queue.S with type Key.t = t
 
@@ -66,6 +66,9 @@ val name_spec : name
 
 val name_return : Mangled.t
 (** Name used for the return variable *)
+
+val name_return_param : Mangled.t
+(** Name used for the return param variable *)
 
 val string_to_name : string -> name
 (** Convert a string to a name. *)

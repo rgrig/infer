@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -13,9 +13,9 @@ open Sawja_pack
 (** data structure for representing whether an instruction is a goto, a return or a standard instruction.   *)
 type jump_kind = Next | Jump of int | Exit
 
+module NodeTbl : Caml.Hashtbl.S with type key = Procdesc.Node.t
 (** Hastable for storing nodes that correspond to if-instructions. These are
     used when adding the edges in the contrl flow graph. *)
-module NodeTbl : Caml.Hashtbl.S with type key = Procdesc.Node.t
 
 (** data structure for saving the three structures tht contain the intermediate
     representation of a file: the type environment, the control graph and the control

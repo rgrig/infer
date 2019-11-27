@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -11,7 +11,7 @@ module F = Format
 (** type of a procedure call; either direct or via function pointer *)
 type call = Direct of Typ.Procname.t | Indirect of HilExp.AccessExpression.t [@@deriving compare]
 
-val pp_call : F.formatter -> call -> unit
+val pp_call : F.formatter -> call -> unit [@@warning "-32"]
 
 type t =
   | Assign of HilExp.AccessExpression.t * HilExp.t * Location.t
@@ -20,7 +20,7 @@ type t =
       (** Assumed expression, true_branch boolean, source of the assume (conditional, ternary, etc.) *)
   | Call of AccessPath.base * call * HilExp.t list * CallFlags.t * Location.t
       (** Var to hold the return, call expression, formals *)
-  | ExitScope of Var.t list * Location.t
+  | Metadata of Sil.instr_metadata  (** see {!Sil.instr_metadata} *)
 [@@deriving compare]
 
 val pp : F.formatter -> t -> unit
@@ -29,7 +29,6 @@ val pp : F.formatter -> t -> unit
 type translation =
   | Instr of t  (** HIL instruction to execute *)
   | Bind of Var.t * HilExp.AccessExpression.t  (** add binding to identifier map *)
-  | Ignore  (** no-op *)
 
 val of_sil :
      include_array_indexes:bool

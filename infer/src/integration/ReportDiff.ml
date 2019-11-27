@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -21,6 +21,7 @@ let reportdiff ~current_report:current_report_fname ~previous_report:previous_re
     let unfiltered_diff =
       Differential.of_reports ~current_report ~previous_report ~current_costs ~previous_costs
     in
+    (* FIXME(T54950303) replace use of filtering with deduplicate *)
     if Config.filtering then
       let file_renamings =
         match Config.file_renamings with

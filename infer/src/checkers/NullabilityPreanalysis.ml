@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -40,16 +40,16 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
   let exec_instr astate (proc_data : Exp.t Ident.Hash.t ProcData.t) _ instr =
     match instr with
-    | Sil.Load (id, exp, _, _) ->
+    | Sil.Load {id; e= exp} ->
         Ident.Hash.add proc_data.extras id exp ;
         astate
-    | Sil.Store (Exp.Lfield (Exp.Var lhs_id, name, typ), exp_typ, rhs, _) -> (
+    | Sil.Store {e1= Exp.Lfield (Exp.Var lhs_id, name, typ); typ= exp_typ; e2= rhs} -> (
       match exp_typ.Typ.desc with
       (* block field of a ObjC class *)
-      | Typ.Tptr ({desc= Tfun _}, _)
+      | Typ.Tptr ({desc= Tfun}, _)
         when Typ.is_objc_class typ && is_self proc_data.extras lhs_id
              && (* lhs is self, rhs is not null *)
-                not (exp_is_null proc_data.extras rhs) ->
+             not (exp_is_null proc_data.extras rhs) ->
           FieldsAssignedInConstructors.add (name, typ) astate
       | _ ->
           astate )
@@ -96,9 +96,8 @@ let analysis cfg tenv =
   let f proc_name pdesc domain =
     if Procdesc.is_defined pdesc && Typ.Procname.is_constructor proc_name then
       match
-        FieldsAssignedInConstructorsChecker.compute_post
-          (ProcData.make pdesc tenv (Ident.Hash.create 10))
-          ~initial
+        FieldsAssignedInConstructorsChecker.compute_post ~initial
+          (ProcData.make (Summary.OnDisk.reset pdesc) tenv (Ident.Hash.create 10))
       with
       | Some new_domain ->
           FieldsAssignedInConstructors.union new_domain domain

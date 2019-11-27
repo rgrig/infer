@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -54,7 +54,7 @@ module TypePointerOrd = struct
     | _, Clang_ast_types.TypePtr.Ptr _ ->
         -1
     | Builtin a, Builtin b ->
-        Polymorphic_compare.compare a b
+        Poly.compare a b
     | Builtin _, _ ->
         1
     | _, Builtin _ ->

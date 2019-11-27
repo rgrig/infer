@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -16,63 +16,50 @@ module Hashtbl = Caml.Hashtbl
 (* in strict mode, give an error if a nullable is passed to checkNotNull *)
 let check_not_null_strict = false
 
-(* o is not annotated and n is annotated with @Nullable *)
+(* the type should be treated as Nonnull *)
 let o = false
 
+(* the type should be treated as Nullable *)
 and n = true
 
-(* create unannotated signature with n argument *)
-let unannotated n =
-  let rec loop l = function i when i <= 0 -> (o, l) | i -> loop (o :: l) (i - 1) in
-  loop [] n
+(* create signature where both return type and params are nonnull *)
+let all_nonnull num_params = (o, List.init num_params ~f:(fun _ -> o))
 
+(* o<N> means signature with N nonnull params and nonnull return type *)
 
-(* not annotated with one unannotated argument *)
-let o1 = unannotated 1
+let o1 = all_nonnull 1
 
-(* not annotated with two unannotated arguments *)
-let o2 = unannotated 2
+let o2 = all_nonnull 2
 
-(* not annotated with three unannotated arguments *)
-let o3 = unannotated 3
+let o3 = all_nonnull 3
 
-(* not annotated with four unannotated arguments *)
-let o4 = unannotated 4
+let o4 = all_nonnull 4
 
-(* not annotated with five unannotated arguments *)
-let o5 = unannotated 5
+let o5 = all_nonnull 5
 
-(* not annotated with six unannotated arguments *)
-let o6 = unannotated 6
+let o6 = all_nonnull 6
 
-(* not annotated with seven unannotated arguments *)
-let o7 = unannotated 7
+let o7 = all_nonnull 7
 
-(* not annotated with eight unannotated arguments *)
-let o8 = unannotated 8
+let o8 = all_nonnull 8
 
-(* not annotated with nine unannotated arguments *)
-let o9 = unannotated 9
+let o9 = all_nonnull 9
 
-(* not annotated with ten unannotated arguments *)
-let o10 = unannotated 10
+let o10 = all_nonnull 10
 
-(* not annotated with eleven unannotated arguments *)
-let o11 = unannotated 11
+let o11 = all_nonnull 11
 
-(* not annotated with twelve unannotated arguments *)
-let o12 = unannotated 12
+let o12 = all_nonnull 12
 
-(* one argument nullable *)
+(* n<N> stands for signature with nonnull return type and N nullable params *)
+
 let n1 = (o, [n])
 
-(* two arguments nullable *)
 let n2 = (o, [n; n])
 
-(* three arguments nullable *)
 let n3 = (o, [n; n; n])
 
-(* the second argument is nullable *)
+(* the second argument is nullable, everything else is nonnull *)
 let on = (o, [o; n])
 
 (* container add *)
@@ -116,9 +103,7 @@ let check_not_null_parameter_list, check_not_null_list =
     ; ( 1
       , (o, [x])
       , "com.google.common.base.Preconditions.checkNotNull(java.lang.Object):java.lang.Object" )
-    ; ( 1
-      , (o, [x])
-      , "com.google.common.base.Verify.verifyNotNull(java.lang.Object):java.lang.Object" )
+    ; (1, (o, [x]), "com.google.common.base.Verify.verifyNotNull(java.lang.Object):java.lang.Object")
     ; ( 1
       , (o, [x; n; n])
       , "com.google.common.base.Verify.verifyNotNull(java.lang.Object,java.lang.String,java.lang.Object[]):java.lang.Object"
@@ -163,8 +148,7 @@ let check_state_list =
     , "com.facebook.infer.annotation.Assertions.assertCondition(boolean,java.lang.String):void" )
   ; ((o, [n]), "com.facebook.infer.annotation.Assertions.assumeCondition(boolean):void")
   ; ( (o, [n; o])
-    , "com.facebook.infer.annotation.Assertions.assumeCondition(boolean,java.lang.String):void" )
-  ]
+    , "com.facebook.infer.annotation.Assertions.assumeCondition(boolean,java.lang.String):void" ) ]
 
 
 let check_argument_list =
@@ -180,16 +164,6 @@ let check_argument_list =
   ; ( (o, [n; n; n])
     , "com.google.common.base.Preconditions.checkArgument(boolean,java.lang.String,java.lang.Object[]):void"
     ) ]
-
-
-let optional_get_list : ((_ * bool list) * _) list =
-  [ ((o, []), "Optional.get():java.lang.Object")
-  ; ((o, []), "com.google.common.base.Optional.get():java.lang.Object") ]
-
-
-let optional_isPresent_list : ((_ * bool list) * _) list =
-  [ ((o, []), "Optional.isPresent():boolean")
-  ; ((o, []), "com.google.common.base.Optional.isPresent():boolean") ]
 
 
 (** Models for boolean functions that return true on null. *)
@@ -212,8 +186,8 @@ let mapPut_list =
   ; (cp, "java.util.Map.put(java.lang.Object,java.lang.Object):java.lang.Object") ]
 
 
-(** Models for @Nullable annotations *)
-let annotated_list_nullable =
+(** Models for nullability *)
+let annotated_list_nullability =
   check_not_null_list @ check_state_list @ check_argument_list
   @ [ ( o1
       , "android.text.SpannableString.valueOf(java.lang.CharSequence):android.text.SpannableString"
@@ -362,6 +336,8 @@ let annotated_list_nullable =
     ; ((n, [o]), "java.lang.Class.getResource(java.lang.String):java.net.URL")
     ; (o1, "java.lang.Class.isAssignableFrom(java.lang.Class):boolean")
     ; (n1, "java.lang.Integer.equals(java.lang.Object):boolean")
+    ; (o1, "java.lang.Integer.parseInt(java.lang.String):int")
+    ; (o1, "java.lang.Long.parseLong(java.lang.String):long")
     ; (n2, "java.lang.RuntimeException.<init>(java.lang.String,java.lang.Throwable)")
     ; (n1, "java.lang.String.equals(java.lang.Object):boolean")
     ; (n1, "java.lang.StringBuilder.append(java.lang.String):java.lang.StringBuilder")
@@ -370,6 +346,7 @@ let annotated_list_nullable =
     ; ( on
       , "java.net.URLClassLoader.newInstance(java.net.URL[],java.lang.ClassLoader):java.net.URLClassLoader"
       )
+    ; (ng, "java.nio.file.Path.getParent():java.nio.file.Path")
     ; (n1, "java.util.AbstractList.equals(java.lang.Object):boolean")
     ; (ca, "java.util.ArrayList.add(java.lang.Object):boolean")
     ; (ca, "java.util.List.add(java.lang.Object):boolean")
@@ -399,9 +376,7 @@ let annotated_list_nullable =
     ; ( (n, [o])
       , "javax.lang.model.element.Element.getAnnotation(java.lang.Class):java.lang.annotation.Annotation"
       )
-    ; ( ng
-      , "javax.lang.model.element.Element.getEnclosingElement():javax.lang.model.element.Element"
-      )
+    ; (ng, "javax.lang.model.element.Element.getEnclosingElement():javax.lang.model.element.Element")
     ; ( ng
       , "javax.lang.model.element.ExecutableElement.getDefaultValue():javax.lang.model.element.AnnotationValue"
       )
@@ -578,13 +553,6 @@ let annotated_list_nullable =
     ; (ng, "java.util.concurrent.atomic.AtomicReference.get():java.lang.Object") ]
 
 
-(** Models for @Present annotations *)
-let annotated_list_present =
-  [ ((n, [o]), "Optional.of(java.lang.Object):Optional")
-  ; ( (n, [o])
-    , "com.google.common.base.Optional.of(java.lang.Object):com.google.common.base.Optional" ) ]
-
-
 (** Models for methods that do not return *)
 let noreturn_list = [((o, [o]), "java.lang.System.exit(int):void")]
 
@@ -596,11 +564,7 @@ let mk_table list =
   map
 
 
-let this_file = Filename.basename __FILE__
-
-let annotated_table_nullable = mk_table annotated_list_nullable
-
-let annotated_table_present = mk_table annotated_list_present
+let annotated_table_nullability = mk_table annotated_list_nullability
 
 let check_not_null_table, check_not_null_parameter_table =
   (mk_table check_not_null_list, mk_table check_not_null_parameter_list)
@@ -613,10 +577,6 @@ let check_argument_table = mk_table check_argument_list
 let containsKey_table = mk_table containsKey_list
 
 let mapPut_table = mk_table mapPut_list
-
-let optional_get_table = mk_table optional_get_list
-
-let optional_isPresent_table = mk_table optional_isPresent_list
 
 let noreturn_table = mk_table noreturn_list
 

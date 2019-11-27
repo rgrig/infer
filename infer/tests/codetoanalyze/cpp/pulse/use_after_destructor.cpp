@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -22,6 +22,11 @@ struct S {
   // operator= is called
 
   ~S() { delete f; }
+
+  void reinit(S s) {
+    f = new int;
+    *f = *(s.f);
+  }
 };
 
 // destructor called at end of function, no issues
@@ -34,16 +39,24 @@ void nested_scope_destructor_ok() {
 int reinit_after_explicit_destructor_ok() {
   S s(1);
   s.~S();
-  s = S(2);
+  s.reinit(S(2));
   return *s.f;
 }
 
-int reinit_after_explicit_destructor2_ok() {
+int reinit_after_explicit_destructor_bad() {
+  S s(1);
+  s.~S();
+  s = S(2); // a temporary is created then operator= is called
+  return *s.f;
+}
+
+int reinit_after_explicit_destructor2_bad() {
   S s(1);
   S s2(2);
   s.~S();
-  s = s2;
+  s = s2; // operator=
   return *s.f;
+  // [s2.f] is [s.f] so gets deleted twice
 }
 
 void placement_new_explicit_destructor_ok() {
@@ -74,9 +87,8 @@ int use_after_destructor_bad() {
   return ret;
 }
 
-// can't get this yet because we assume operator= copies resources correctly
-// (but this isn't true for S)
-void FN_use_after_scope1_bad() {
+// S::operator= doesn't copy resources correctly
+void use_after_scope1_bad() {
   S s(1);
   {
     S tmp(2);
@@ -85,11 +97,10 @@ void FN_use_after_scope1_bad() {
   // destructor for s here; second time the value held by s has been destructed
 }
 
-void FN_use_after_scope2_bad() {
+// same as above
+void use_after_scope2_bad() {
   S s(1);
-  {
-    s = S(1);
-  } // destructor runs here, but our frontend currently doesn't insert it
+  { s = S(1); }
 }
 
 struct POD {
@@ -129,41 +140,41 @@ void basic_placement_new_ok() {
   delete[] ptr;
 }
 
-S* destruct_pointer_contents_then_placement_new1_ok(S* s) {
+int* destruct_pointer_contents_then_placement_new1_ok(S* s) {
   s->~S();
   new (s) S(1);
-  return s;
+  return s->f;
 }
 
-S* destruct_pointer_contents_then_placement_new2_ok(S* s) {
+int* destruct_pointer_contents_then_placement_new2_ok(S* s) {
   s->~S();
   new (&(s->f)) S(1);
-  return s;
+  return s->f;
 }
 
-S* placement_new_aliasing1_bad() {
+int* placement_new_aliasing1_bad() {
   S* s = new S(1);
   s->~S();
   auto alias = new (s) S(2);
   delete alias; // this deletes s too
-  return s; // bad, returning freed memory
+  return s->f; // bad, accessing freed memory
 }
 
-S* placement_new_aliasing2_bad() {
+int* placement_new_aliasing2_bad() {
   S* s = new S(1);
   s->~S();
   auto alias = new (s) S(2);
   delete s; // this deletes alias too
-  return alias; // bad, returning freed memory
+  return alias->f; // bad, accessing freed memory
 }
 
-S* placement_new_aliasing3_bad() {
+int* placement_new_aliasing3_bad() {
   S* s = new S(1);
   s->~S();
   S* alias = s;
   auto alias_placement = new (s) S(2);
   delete s; // this deletes alias too
-  return alias; // bad, returning freed memory
+  return alias->f; // bad, accessing freed memory
 }
 
 void placement_new_non_var_ok() {
@@ -249,6 +260,42 @@ std::unique_ptr<A>* allocate_in_branch_ok(bool b) {
 
   // read a3
   const B* read = (*a3)->f;
+}
+
+std::string mk_string();
+
+bool variable_init_ternary_ok(bool b) {
+  // this can cause issues because of the way the frontend treatment of ternary
+  // ?: interacts with the treatment of passing return values by reference as
+  // parameters
+  std::string newPath = b ? "" : mk_string();
+}
+
+void move_data(POD* from, POD* to);
+
+struct Moveable {
+  Moveable() = default;
+  Moveable(const Moveable&) = delete; // not copyable
+
+  // move constructor
+  Moveable(Moveable&& that) noexcept { move_data(&that.data, &data); }
+
+  Moveable& operator=(Moveable&& that) noexcept {
+    this->~Moveable();
+    ::new (this) Moveable(std::move(that));
+    return *this;
+  }
+
+  ~Moveable() {}
+
+  Moveable& operator=(const Moveable&) = delete;
+
+  POD data;
+};
+
+void move_moveable_ok(Moveable& src) {
+  Moveable x;
+  x = std::move(src);
 }
 
 } // namespace use_after_destructor

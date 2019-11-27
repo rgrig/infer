@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -10,12 +10,14 @@
 namespace deref_after_mode_example {
 
 struct Person {
+  // memory leak FP on Person::Person() because unique_ptr constructor is
+  // unknown
   std::unique_ptr<int> age{new int(35)};
   std::unique_ptr<int> move_age() { return std::move(age); }
   int access_age() { return *age; }
 };
 
-int deref_after_move_crash() {
+int FN_deref_after_move_bad() {
   Person p;
   auto x = p.move_age();
   *x;

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,12 +7,11 @@
 
 open! IStd
 
-let create_fake_jsonbug ?(bug_type = "bug_type") ?(qualifier = "qualifier")
-    ?(severity = "severity") ?(line = 1) ?(column = 1) ?(procedure = "procedure")
-    ?(procedure_start_line = 1) ?(file = "file/at/a/certain/path.java") ?(bug_trace = [])
-    ?(key = "File|method|TYPE") ?(node_key = Some "1234") ?(hash = "1") ?(dotty = None)
-    ?(infer_source_loc = None) ?(linters_def_file = Some "file/at/certain/path.al") ?doc_url () :
-    Jsonbug_t.jsonbug =
+let create_fake_jsonbug ?(bug_type = "bug_type") ?(qualifier = "qualifier") ?(severity = "severity")
+    ?(line = 1) ?(column = 1) ?(procedure = "procedure") ?(procedure_start_line = 1)
+    ?(file = "file/at/a/certain/path.java") ?(bug_trace = []) ?(key = "File|method|TYPE")
+    ?(node_key = Some "1234") ?(hash = "1") ?(dotty = None) ?(infer_source_loc = None)
+    ?(linters_def_file = Some "file/at/certain/path.al") ?doc_url () : Jsonbug_t.jsonbug =
   { bug_type
   ; qualifier
   ; severity
@@ -31,7 +30,7 @@ let create_fake_jsonbug ?(bug_type = "bug_type") ?(qualifier = "qualifier")
   ; linters_def_file
   ; doc_url
   ; traceview_id= None
-  ; censored_reason= ""
+  ; censored_reason= None
   ; access= None
   ; extras= None }
 

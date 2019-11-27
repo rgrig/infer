@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -17,6 +17,8 @@ val expensive : string
 
 val inject_prop : string
 
+val lockless : string
+
 val no_allocation : string
 
 val nullable : string
@@ -25,23 +27,23 @@ val nonnull : string
 
 val performance_critical : string
 
-val present : string
-
 val prop : string
 
-val for_non_ui_thread : string
+val for_non_ui_thread : string [@@warning "-32"]
 
-val for_ui_thread : string
+val for_ui_thread : string [@@warning "-32"]
 
 val guarded_by : string
 
 val suppress_lint : string
 
-val thread_confined : string
-
 val thread_safe : string
 
+val mainthread : string
+
 val ui_thread : string
+
+val worker_thread : string
 
 val visibleForTesting : string
 
@@ -60,6 +62,8 @@ val ia_is_false_on_null : Annot.Item.t -> bool
 
 val ia_is_initializer : Annot.Item.t -> bool
 
+val ia_is_cleanup : Annot.Item.t -> bool
+
 val ia_is_field_injector_readonly : Annot.Item.t -> bool
 (** Annotations for readonly injectors.
     The injector framework initializes the field but does not write null into it. *)
@@ -68,17 +72,13 @@ val ia_is_field_injector_readwrite : Annot.Item.t -> bool
 (** Annotations for read-write injectors.
     The injector framework initializes the field and can write null into it. *)
 
-val ia_is_mutable : Annot.Item.t -> bool
-
 val ia_is_nonnull : Annot.Item.t -> bool
 
 val ia_is_nullable : Annot.Item.t -> bool
 
-val ia_is_present : Annot.Item.t -> bool
+val ia_is_nullsafe_strict : Annot.Item.t -> bool
 
 val ia_is_true_on_null : Annot.Item.t -> bool
-
-val ia_is_verify : Annot.Item.t -> bool
 
 val ia_is_expensive : Annot.Item.t -> bool
 
@@ -91,18 +91,6 @@ val ia_is_ignore_allocations : Annot.Item.t -> bool
 val ia_is_inject : Annot.Item.t -> bool
 
 val ia_is_suppress_lint : Annot.Item.t -> bool
-
-val ia_is_on_event : Annot.Item.t -> bool
-
-val ia_is_on_bind : Annot.Item.t -> bool
-
-val ia_is_on_mount : Annot.Item.t -> bool
-
-val ia_is_on_unbind : Annot.Item.t -> bool
-
-val ia_is_on_unmount : Annot.Item.t -> bool
-
-val ia_is_mainthread : Annot.Item.t -> bool
 
 val ia_is_not_thread_safe : Annot.Item.t -> bool
 
@@ -118,11 +106,11 @@ val ia_is_thread_confined : Annot.Item.t -> bool
 
 val ia_is_thrift_service : Annot.Item.t -> bool
 
-val ia_is_ui_thread : Annot.Item.t -> bool
-
 val ia_is_volatile : Annot.Item.t -> bool
 
 val ia_is_worker_thread : Annot.Item.t -> bool
+
+val ia_is_uithread_equivalent : Annot.Item.t -> bool
 
 val pdesc_get_return_annot : Procdesc.t -> Annot.Item.t
 (** get the list of annotations on the return value of [pdesc] *)

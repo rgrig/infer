@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -45,13 +45,14 @@ val log_error_using_state : Summary.t -> exn -> unit
 
 val log_issue_external :
      Typ.Procname.t
+  -> issue_log:IssueLog.t
   -> Exceptions.severity
   -> loc:Location.t
   -> ltr:Errlog.loc_trace
   -> ?access:string
   -> IssueType.t
   -> string
-  -> unit
+  -> IssueLog.t
 (** Log an issue to the error log in [IssueLog] associated with the given procname. *)
 
 val is_suppressed :

@@ -1,4 +1,4 @@
-// Copyright (c) 2018-present, Facebook, Inc.
+// Copyright (c) Facebook, Inc. and its affiliates.
 //
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
@@ -27,6 +27,20 @@ SET message = "Found static local var";
 
 };
 
+DEFINE-CHECKER FIND_STATIC_GLOBAL_VAR = {
+SET report_when =
+  WHEN is_static_var AND is_global_var
+  HOLDS-IN-NODE VarDecl;
+SET message = "Found a static global var";
+};
+
+DEFINE-CHECKER FIND_EXTERN_VAR = {
+SET report_when =
+  WHEN is_extern_var
+  HOLDS-IN-NODE VarDecl;
+SET message = "Found extern var";
+};
+
 DEFINE-CHECKER FIND_CXX_METHOD_OVERRIDES = {
     SET report_when = is_cxx_method_overriding;
     SET message = "%decl_name% overrides";
@@ -52,4 +66,9 @@ DEFINE-CHECKER FIND_CXX_METHODS_FROM_HEADER_FILE = {
 DEFINE-CHECKER FIND_LISTED_SYMBOLS = {
     SET report_when = NOT is_decl() AND has_cxx_fully_qualified_name_in_custom_symbols("test");
     SET message = "found usage of %cxx_fully_qualified_name%";
+};
+
+DEFINE-CHECKER FIND_REF_FROM_SRC_FILE = {
+    SET report_when = is_referencing_decl_from_source_file(REGEXP("/test_included.h$"));
+    SET message = "found ref from %ref_source_file%";
 };

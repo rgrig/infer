@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -17,8 +17,8 @@ type failure_kind =
   | FKrecursion_timeout of int  (** max recursion level exceeded *)
   | FKcrash of string  (** uncaught exception or failed assertion *)
 
-(** failure that prevented analysis from finishing *)
 exception Analysis_failure_exe of failure_kind
+(** failure that prevented analysis from finishing *)
 
 let exn_not_failure = function Analysis_failure_exe _ -> false | _ -> true
 
@@ -36,7 +36,8 @@ let try_finally ~f ~finally =
           | finally_exn
           when (* do not swallow Analysis_failure_exe thrown from finally *)
                match finally_exn with Analysis_failure_exe _ -> false | _ -> true
-          -> () )
+          ->
+            () )
 
 
 let pp_failure_kind fmt = function

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -14,7 +14,7 @@ module Raw = struct
   let compare_typ_ _ _ = 0
 
   (* ignore types while comparing bases. we can't trust the types from all of our frontends to be
-   consistent, and the variable names should already be enough to distinguish the bases. *)
+     consistent, and the variable names should already be enough to distinguish the bases. *)
   type base = Var.t * typ_ [@@deriving compare]
 
   let equal_base = [%compare.equal: base]
@@ -251,7 +251,7 @@ module Abs = struct
 
   let is_exact = function Exact _ -> true | Abstracted _ -> false
 
-  let ( <= ) ~lhs ~rhs =
+  let leq ~lhs ~rhs =
     match (lhs, rhs) with
     | Abstracted _, Exact _ ->
         false

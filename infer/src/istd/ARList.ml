@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -26,9 +26,7 @@ type +'a t = Empty | Cons of 'a * 'a t | Snoc of 'a t * 'a | Concat of 'a t * 'a
 let () =
   (* This is a pretty simple test to check that the runtime representation of OCaml lists is compatible with our lists and hence using [Obj.magic] for [of_list] is legit *)
   let exception RuntimeValue in
-  assert (
-    Polymorphic_compare.(Caml.Obj.repr [RuntimeValue] = Caml.Obj.repr (Cons (RuntimeValue, Empty)))
-  )
+  assert (Poly.(Caml.Obj.repr [RuntimeValue] = Caml.Obj.repr (Cons (RuntimeValue, Empty))))
 
 
 (* Constructors *)

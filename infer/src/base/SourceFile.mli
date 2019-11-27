@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,11 +9,11 @@ open! IStd
 
 type t [@@deriving compare]
 
-(** Maps from source_file *)
 module Map : Caml.Map.S with type key = t
+(** Maps from source_file *)
 
-(** Set of source files *)
 module Set : Caml.Set.S with type elt = t
+(** Set of source files *)
 
 module Hash : Caml.Hashtbl.S with type key = t
 
@@ -41,10 +41,7 @@ val create : ?warn_on_error:bool -> string -> t
    WARNING: If warn_on_error is false, no warning will be shown whenever an error occurs for
    the given path (e.g. if it does not exist). *)
 
-val is_cpp_model : t -> bool
-(** Returns true if the file is a C++ model *)
-
-val is_infer_model : t -> bool
+val is_biabduction_model : t -> bool
 
 val is_under_project_root : t -> bool
 (** Returns true if the file is in project root *)

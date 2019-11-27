@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -27,33 +27,78 @@ let table_has_procedure table proc_name =
   with Caml.Not_found -> false
 
 
-(** Return the annotated signature of the procedure, taking into account models. *)
-let get_modelled_annotated_signature proc_attributes =
+(* This is used outside of nullsafe for biabduction.
+   If biabduction and nullsafe want to depend on common functionality, this functionality
+   should be refactored out in a dedicated library.
+ *)
+let get_modelled_annotated_signature_for_biabduction proc_attributes =
   let proc_name = proc_attributes.ProcAttributes.proc_name in
-  let annotated_signature = AnnotatedSignature.get proc_attributes in
+  let annotated_signature = AnnotatedSignature.get ~is_strict_mode:false proc_attributes in
   let proc_id = Typ.Procname.to_unique_id proc_name in
   let lookup_models_nullable ann_sig =
     try
-      let mark = Hashtbl.find annotated_table_nullable proc_id in
-      AnnotatedSignature.mark proc_name AnnotatedSignature.Nullable ann_sig mark
+      let modelled_nullability = Hashtbl.find annotated_table_nullability proc_id in
+      AnnotatedSignature.set_modelled_nullability proc_name ann_sig InternalModel
+        modelled_nullability
     with Caml.Not_found -> ann_sig
   in
-  let lookup_models_present ann_sig =
-    try
-      let mark = Hashtbl.find annotated_table_present proc_id in
-      AnnotatedSignature.mark proc_name AnnotatedSignature.Present ann_sig mark
-    with Caml.Not_found -> ann_sig
+  annotated_signature |> lookup_models_nullable
+
+
+let get_unique_repr proc_name =
+  let java_proc_name =
+    match proc_name with Typ.Procname.Java java_proc_name -> Some java_proc_name | _ -> None
   in
-  annotated_signature |> lookup_models_nullable |> lookup_models_present
+  Option.map java_proc_name ~f:ThirdPartyMethod.unique_repr_of_java_proc_name
 
 
-(** Return true when the procedure has been modelled for nullable. *)
-let is_modelled_nullable proc_name =
+let to_modelled_nullability ThirdPartyMethod.{ret_nullability; param_nullability} =
+  let is_nullable = function
+    | ThirdPartyMethod.Nullable ->
+        true
+    | ThirdPartyMethod.Nonnull ->
+        false
+  in
+  (is_nullable ret_nullability, List.map param_nullability ~f:is_nullable)
+
+
+(** Return the annotated signature of the procedure, taking into account models.
+    External models take precedence over internal ones.
+ *)
+let get_modelled_annotated_signature tenv proc_attributes =
+  let proc_name = proc_attributes.ProcAttributes.proc_name in
+  let is_strict_mode =
+    PatternMatch.check_current_class_attributes Annotations.ia_is_nullsafe_strict tenv proc_name
+  in
+  let annotated_signature = AnnotatedSignature.get ~is_strict_mode proc_attributes in
   let proc_id = Typ.Procname.to_unique_id proc_name in
-  try
-    ignore (Hashtbl.find annotated_table_nullable proc_id) ;
-    true
-  with Caml.Not_found -> false
+  (* Look in the infer internal models *)
+  let correct_by_internal_models ann_sig =
+    try
+      let modelled_nullability = Hashtbl.find annotated_table_nullability proc_id in
+      AnnotatedSignature.set_modelled_nullability proc_name ann_sig InternalModel
+        modelled_nullability
+    with Caml.Not_found -> ann_sig
+  in
+  (* Look at external models *)
+  let correct_by_external_models ann_sig =
+    get_unique_repr proc_name
+    |> Option.bind
+         ~f:
+           (ThirdPartyAnnotationInfo.find_nullability_info
+              (ThirdPartyAnnotationGlobalRepo.get_repo ()))
+    |> Option.map ~f:(fun ThirdPartyAnnotationInfo.{nullability; filename; line_number} ->
+           (to_modelled_nullability nullability, filename, line_number) )
+    |> Option.value_map
+       (* If we found information in third-party repo, overwrite annotated signature *)
+         ~f:(fun (modelled_nullability, filename, line_number) ->
+           AnnotatedSignature.set_modelled_nullability proc_name ann_sig
+             (ThirdPartyRepo {filename; line_number})
+             modelled_nullability )
+         ~default:ann_sig
+  in
+  (* External models overwrite internal ones *)
+  annotated_signature |> correct_by_internal_models |> correct_by_external_models
 
 
 (** Check if the procedure is one of the known Preconditions.checkNotNull. *)
@@ -79,12 +124,6 @@ let is_check_argument proc_name =
 
 (** Check if the procedure does not return. *)
 let is_noreturn proc_name = table_has_procedure noreturn_table proc_name
-
-(** Check if the procedure is Optional.get(). *)
-let is_optional_get proc_name = table_has_procedure optional_get_table proc_name
-
-(** Check if the procedure is Optional.isPresent(). *)
-let is_optional_isPresent proc_name = table_has_procedure optional_isPresent_table proc_name
 
 (** Check if the procedure returns true on null. *)
 let is_true_on_null proc_name = table_has_procedure true_on_null_table proc_name

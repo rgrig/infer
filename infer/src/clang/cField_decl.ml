@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -40,13 +40,17 @@ let fields_superclass tenv interface_decl_info =
 
 
 let build_sil_field qual_type_to_sil_type tenv class_tname field_name qual_type prop_attributes =
-  let prop_atts = List.map ~f:Clang_ast_j.string_of_property_attribute prop_attributes in
+  let prop_atts =
+    List.map
+      ~f:(fun att -> Annot.{name= None; value= Clang_ast_j.string_of_property_attribute att})
+      prop_attributes
+  in
   let annotation_from_type t =
     match t.Typ.desc with
     | Typ.Tptr (_, Typ.Pk_objc_weak) ->
-        [Config.weak]
+        [Annot.{name= None; value= Config.weak}]
     | Typ.Tptr (_, Typ.Pk_objc_unsafe_unretained) ->
-        [Config.unsafe_unret]
+        [Annot.{name= None; value= Config.unsafe_unret}]
     | _ ->
         []
   in

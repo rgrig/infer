@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -105,7 +105,7 @@ let remove_abduced_retvars tenv p =
           | Sil.Aeq (lhs, rhs) | Sil.Aneq (lhs, rhs) ->
               exp_contains lhs || exp_contains rhs
           | Sil.Apred (_, es) | Sil.Anpred (_, es) ->
-              List.exists ~f:exp_contains es)
+              List.exists ~f:exp_contains es )
         pi
     in
     (Sil.HpredSet.elements reach_hpreds, reach_pi)

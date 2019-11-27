@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -25,7 +25,7 @@ void test_pointer(const std::shared_ptr<lol>& foo) {
   }
 }
 
-void skip_then_split_case_bad() {
+void ERROR_FP_skip_then_split_case_bad() {
   auto foo = std::make_shared<lol>();
   skip_no_const(foo); // Infer havocs foo here since it's not const
   test_pointer(foo); // this call creates a case split, foo can be null in one
@@ -33,7 +33,7 @@ void skip_then_split_case_bad() {
   foo->f = 12; // error
 }
 
-void FP_const_skip_then_split_case_ok() {
+void ERROR_const_skip_then_split_case_ok() {
   auto foo = std::make_shared<lol>();
   skip_const(foo); // Infer shouldn't havoc foo here since it's const...
   test_pointer(foo); /* ...so foo cannot be null here, even if there is an
@@ -42,7 +42,7 @@ void FP_const_skip_then_split_case_ok() {
 }
 
 // same as above but make sure infer pinpoints the correct const argument
-void FP_const_skip2_then_split_case_ok() {
+void ERROR_const_skip2_then_split_case_ok() {
   auto foo = std::make_shared<lol>();
   skip_const2(0, foo, 0, 0);
   test_pointer(foo);
@@ -50,7 +50,7 @@ void FP_const_skip2_then_split_case_ok() {
 }
 
 // same as above but hide the type under a typedef
-void FP_typedef_skip_then_split_case_ok() {
+void ERROR_typedef_skip_then_split_case_ok() {
   auto foo = std::make_shared<lol>();
   skip_typedef(foo);
   test_pointer(foo);

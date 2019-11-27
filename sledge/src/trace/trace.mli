@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -19,13 +19,25 @@ type trace_mods_funs = trace_mod_funs Map.M(String).t
 type config =
   { trace_all: bool  (** Enable all tracing *)
   ; trace_mods_funs: trace_mods_funs
-        (** Specify tracing of individual toplevel modules *) }
+        (** Specify tracing of individual toplevel modules *)
+  ; colors: bool  (** Enable color output *) }
 
-val init : ?margin:int -> config:config -> unit -> unit
+val none : config
+val all : config
+val parse : string -> (config, exn) result
+
+val init : ?colors:bool -> ?margin:int -> config:config -> unit -> unit
 (** Initialize the configuration of debug tracing. *)
 
 type 'a printf = ('a, Formatter.t, unit) format -> 'a
 type pf = {pf: 'a. 'a printf}
+
+val pp_styled :
+     [> `Bold | `Cyan | `Magenta | `None]
+  -> ('a, Format.formatter, unit, unit) format4
+  -> Format.formatter
+  -> 'a
+(** If config.colors is set to true, print in the specificed color *)
 
 val printf : string -> string -> 'a printf
 (** Like [Format.printf], if enabled, otherwise like [Format.iprintf]. *)
@@ -48,5 +60,6 @@ val retn : string -> string -> (pf -> 'b -> unit) -> 'b -> 'b
 val flush : unit -> unit
 (** Flush the internal buffers. *)
 
-val report : ('a, Formatter.t, unit, bool) format4 -> 'a
-(** Emit a message at the current indentation level, and return [false]. *)
+val fail : ('a, unit -> _) fmt -> 'a
+(** Emit a message at the current indentation level, and raise a [Failure]
+    exception indicating a fatal error. *)

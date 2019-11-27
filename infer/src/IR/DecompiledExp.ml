@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -45,7 +45,7 @@ let rec pp fmt = function
   | Darray (de1, de2) ->
       F.fprintf fmt "%a[%a]" pp de1 pp de2
   | Dbinop (op, de1, de2) ->
-      F.fprintf fmt "(%a%a%a)" pp de1 (Pp.to_string ~f:(Binop.str Pp.text)) op pp de2
+      F.fprintf fmt "(%a%a%a)" pp de1 (Pp.of_string ~f:(Binop.str Pp.text)) op pp de2
   | Dconst (Cfun pn) -> (
     match builtin_functions_to_string pn with
     | Some str ->
@@ -68,7 +68,7 @@ let rec pp fmt = function
       F.fprintf fmt "*%a" pp de
   | Dfcall (fun_dexp, args, _, {cf_virtual= isvirtual}) ->
       let pp_args fmt des =
-        if eradicate_java () then ( if des <> [] then F.pp_print_string fmt "..." )
+        if eradicate_java () then (if des <> [] then F.pp_print_string fmt "...")
         else Pp.comma_seq pp fmt des
       in
       let pp_fun fmt = function
@@ -148,8 +148,7 @@ let pp_vpath pe fmt vpath =
 let rec has_tmp_var = function
   | Dpvar pvar | Dpvaraddr pvar ->
       Pvar.is_frontend_tmp pvar || Pvar.is_clang_tmp pvar
-  | Dderef dexp | Ddot (dexp, _) | Darrow (dexp, _) | Dunop (_, dexp) | Dsizeof (_, Some dexp, _)
-    ->
+  | Dderef dexp | Ddot (dexp, _) | Darrow (dexp, _) | Dunop (_, dexp) | Dsizeof (_, Some dexp, _) ->
       has_tmp_var dexp
   | Darray (dexp1, dexp2) | Dbinop (_, dexp1, dexp2) ->
       has_tmp_var dexp1 || has_tmp_var dexp2

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -43,9 +43,9 @@ let get_extended_args_for_method_with_block_analysis act_params =
   List.map ~f:(fun (exp, _, typ) -> (exp, typ)) args_and_captured
 
 
-let resolve_method_with_block_args_and_analyze ~caller_pdesc pname act_params =
+let resolve_method_with_block_args_and_analyze ~caller_summary pname act_params =
   let pdesc_opt =
-    match Ondemand.analyze_proc_name ~caller_pdesc pname with
+    match Ondemand.analyze_proc_name ~caller_summary pname with
     | Some summary ->
         Some (Summary.get_proc_desc summary)
     | None ->
@@ -56,9 +56,9 @@ let resolve_method_with_block_args_and_analyze ~caller_pdesc pname act_params =
     when Procdesc.is_defined pdesc
          && Int.equal (List.length (Procdesc.get_formals pdesc)) (List.length act_params)
          (* only specialize defined methods, and when formals and actuals have the same length  *)
-        -> (
+    -> (
       (* a list with the same length of the actual params of the function,
-        containing either a Closure or None. *)
+         containing either a Closure or None. *)
       let block_args =
         List.map act_params ~f:(function
           | Exp.Closure cl, _ when Typ.Procname.is_objc_block cl.name ->
@@ -78,21 +78,20 @@ let resolve_method_with_block_args_and_analyze ~caller_pdesc pname act_params =
         Typ.Procname.with_block_parameters pname block_name_args
       in
       (* new procdesc cloned from the original one, where the block parameters have been
-       replaced by the block arguments. The formals have also been expanded with the captured variables  *)
+         replaced by the block arguments. The formals have also been expanded with the captured variables *)
       let specialized_pdesc =
         SpecializeProcdesc.with_block_args pdesc pname_with_block_args block_args
       in
       Logging.(debug Analysis Verbose) "Instructions of specialized method:@." ;
       Procdesc.iter_instrs
         (fun _ instr ->
-          Logging.(debug Analysis Verbose) "%a@." (Sil.pp_instr ~print_types:false Pp.text) instr
-          )
+          Logging.(debug Analysis Verbose) "%a@." (Sil.pp_instr ~print_types:false Pp.text) instr )
         specialized_pdesc ;
       Logging.(debug Analysis Verbose) "End of instructions@." ;
-      match Ondemand.analyze_proc_desc ~caller_pdesc specialized_pdesc with
+      match Ondemand.analyze_proc_desc ~caller_summary specialized_pdesc with
       | Some summary ->
           (* Since the closures in the formals were replaced by the captured variables,
-           we do the same with the actual arguments *)
+             we do the same with the actual arguments *)
           let extended_args = get_extended_args_for_method_with_block_analysis act_params in
           Some (summary, extended_args)
       | None ->

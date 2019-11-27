@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -229,9 +229,7 @@ let get_pure_extended p =
 
 
 (** Print existential quantification *)
-let pp_evars f evars =
-  if evars <> [] then F.fprintf f "exists [%a]. " (Pp.comma_seq Ident.pp) evars
-
+let pp_evars f evars = if evars <> [] then F.fprintf f "exists [%a]. " (Pp.comma_seq Ident.pp) evars
 
 (** Print an hpara in simple mode *)
 let pp_hpara_simple pe_ env n f pred =
@@ -351,24 +349,26 @@ let sigma_gen_free_vars sigma = ISequence.gen_sequence_list sigma ~f:Sil.hpred_g
 
 let sigma_free_vars sigma = Sequence.Generator.run (sigma_gen_free_vars sigma)
 
-(** Find free variables in the footprint part of the prop *)
-let footprint_gen_free_vars {sigma_fp; pi_fp} =
-  Sequence.Generator.(sigma_gen_free_vars sigma_fp >>= fun () -> pi_gen_free_vars pi_fp)
-
-
-let footprint_free_vars prop = Sequence.Generator.run (footprint_gen_free_vars prop)
-
 let gen_free_vars {sigma; sigma_fp; sub; pi; pi_fp} =
   let open Sequence.Generator in
   sigma_gen_free_vars sigma
   >>= fun () ->
   sigma_gen_free_vars sigma_fp
   >>= fun () ->
-  Sil.subst_gen_free_vars sub
-  >>= fun () -> pi_gen_free_vars pi >>= fun () -> pi_gen_free_vars pi_fp
+  Sil.subst_gen_free_vars sub >>= fun () -> pi_gen_free_vars pi >>= fun () -> pi_gen_free_vars pi_fp
 
 
 let free_vars prop = Sequence.Generator.run (gen_free_vars prop)
+
+let seq_max_stamp predicate seq =
+  seq |> Sequence.filter ~f:predicate |> Sequence.map ~f:Ident.get_stamp
+  |> Sequence.max_elt ~compare:Int.compare
+  |> Option.value ~default:0
+
+
+let all_true _ = true
+
+let max_stamp ?(f = all_true) prop = seq_max_stamp f (free_vars prop)
 
 let exposed_gen_free_vars prop = gen_free_vars (unsafe_cast_to_normal prop)
 
@@ -437,8 +437,7 @@ let rec create_strexp_of_type ~path tenv struct_init_mode (typ : Typ.t) len inst
   let init_value () =
     let create_fresh_var () =
       let fresh_id =
-        Ident.create_fresh
-          (if !BiabductionConfig.footprint then Ident.kfootprint else Ident.kprimed)
+        Ident.create_fresh (if !BiabductionConfig.footprint then Ident.kfootprint else Ident.kprimed)
       in
       Exp.Var fresh_id
     in
@@ -447,13 +446,13 @@ let rec create_strexp_of_type ~path tenv struct_init_mode (typ : Typ.t) len inst
     else create_fresh_var ()
   in
   match (typ.desc, len) with
-  | (Tint _ | Tfloat _ | Tvoid | Tfun _ | Tptr _ | TVar _), None ->
+  | (Tint _ | Tfloat _ | Tvoid | Tfun | Tptr _ | TVar _), None ->
       Eexp (init_value (), inst)
   | Tstruct name, _ -> (
       if List.exists ~f:(fun (n, _) -> Typ.Name.equal n name) path then
         L.die InternalError
-          "Ill-founded recursion in [create_strexp_of_type]: a sub-element of struct %a is also \
-           of type struct %a: %a:%a"
+          "Ill-founded recursion in [create_strexp_of_type]: a sub-element of struct %a is also of \
+           type struct %a: %a:%a"
           Typ.Name.pp name Typ.Name.pp name pp_path (List.rev path) Typ.Name.pp name ;
       match (struct_init_mode, Tenv.lookup tenv name) with
       | Fld_init, Some {fields} ->
@@ -477,7 +476,7 @@ let rec create_strexp_of_type ~path tenv struct_init_mode (typ : Typ.t) len inst
       Earray (len, [], inst)
   | Tarray _, Some len ->
       Earray (len, [], inst)
-  | (Tint _ | Tfloat _ | Tvoid | Tfun _ | Tptr _ | TVar _), Some _ ->
+  | (Tint _ | Tfloat _ | Tvoid | Tfun | Tptr _ | TVar _), Some _ ->
       assert false
 
 
@@ -533,7 +532,7 @@ let sigma_get_unsigned_exps sigma =
     to ensure the soundness of this collapsing. *)
 let exp_collapse_consecutive_indices_prop (typ : Typ.t) exp =
   let typ_is_base (typ1 : Typ.t) =
-    match typ1.desc with Tint _ | Tfloat _ | Tstruct _ | Tvoid | Tfun _ -> true | _ -> false
+    match typ1.desc with Tint _ | Tfloat _ | Tstruct _ | Tvoid | Tfun -> true | _ -> false
   in
   let typ_is_one_step_from_base =
     match typ.desc with Tptr (t, _) | Tarray {elt= t} -> typ_is_base t | _ -> false
@@ -828,7 +827,7 @@ module Normalize = struct
           in
           match (e1', e2') with
           (* pattern for arrays and extensible structs:
-               sizeof(struct s {... t[l]}) + k * sizeof(t)) = sizeof(struct s {... t[l + k]}) *)
+             sizeof(struct s {... t[l]}) + k * sizeof(t)) = sizeof(struct s {... t[l + k]}) *)
           | ( Sizeof ({typ; dynamic_length= len1_opt} as sizeof_data)
             , BinOp (Mult _, len2, Sizeof {typ= elt; dynamic_length= None}) )
             when isPlusA && extensible_array_element_typ_equal elt typ ->
@@ -968,8 +967,8 @@ module Normalize = struct
           else
             match (e1, e2) with
             | Const (Cint n), Const (Cint m) -> (
-              try Exp.int (IntLit.shift_left n m) with IntLit.OversizedShift ->
-                BinOp (Shiftlt, eval e1, eval e2) )
+              try Exp.int (IntLit.shift_left n m)
+              with IntLit.OversizedShift -> BinOp (Shiftlt, eval e1, eval e2) )
             | _, Const (Cint m) when IntLit.iszero m ->
                 eval e1
             | _, Const (Cint m) when IntLit.isone m ->
@@ -983,8 +982,8 @@ module Normalize = struct
           else
             match (e1, e2) with
             | Const (Cint n), Const (Cint m) -> (
-              try Exp.int (IntLit.shift_right n m) with IntLit.OversizedShift ->
-                BinOp (Shiftrt, eval e1, eval e2) )
+              try Exp.int (IntLit.shift_right n m)
+              with IntLit.OversizedShift -> BinOp (Shiftrt, eval e1, eval e2) )
             | _, Const (Cint m) when IntLit.iszero m ->
                 eval e1
             | Const (Cint m), _ when IntLit.iszero m ->
@@ -1454,7 +1453,7 @@ module Normalize = struct
         match (normalized_cnt, normalized_te) with
         | Earray ((Exp.Sizeof _ as size), [], inst), Sizeof {typ= {desc= Tarray _}} ->
             (* check for an empty array whose size expression is (Sizeof type), and turn the array
-                 into a strexp of the given type *)
+               into a strexp of the given type *)
             let hpred' = mk_ptsto_exp tenv Fld_init (root, size, None) inst in
             replace_hpred hpred'
         | ( Earray
@@ -1478,10 +1477,7 @@ module Normalize = struct
           , Sizeof {typ= {desc= Tarray {elt}} as arr} )
           when Typ.equal typ elt ->
             let sizeof_data =
-              { Exp.typ= arr
-              ; nbytes= None
-              ; dynamic_length= Some (Exp.BinOp (omult, x, len))
-              ; subtype }
+              {Exp.typ= arr; nbytes= None; dynamic_length= Some (Exp.BinOp (omult, x, len)); subtype}
             in
             let hpred' = mk_ptsto_exp tenv Fld_init (root, Sizeof sizeof_data, None) inst in
             replace_hpred (replace_array_contents hpred' esel)
@@ -1492,10 +1488,7 @@ module Normalize = struct
           , Sizeof {typ= {desc= Tarray {elt}} as arr} )
           when Typ.equal typ elt ->
             let sizeof_data =
-              { Exp.typ= arr
-              ; nbytes= None
-              ; dynamic_length= Some (Exp.BinOp (omult, x, len))
-              ; subtype }
+              {Exp.typ= arr; nbytes= None; dynamic_length= Some (Exp.BinOp (omult, x, len)); subtype}
             in
             let hpred' = mk_ptsto_exp tenv Fld_init (root, Sizeof sizeof_data, None) inst in
             replace_hpred (replace_array_contents hpred' esel)
@@ -1550,9 +1543,7 @@ module Normalize = struct
       in
       List.fold ~f:get_disequality_info ~init:[] nonineq_list
     in
-    let is_neq e n =
-      List.exists ~f:(fun (e', n') -> Exp.equal e e' && IntLit.eq n n') diseq_list
-    in
+    let is_neq e n = List.exists ~f:(fun (e', n') -> Exp.equal e e' && IntLit.eq n n') diseq_list in
     let le_list_tightened =
       let get_le_inequality_info acc a =
         match atom_exp_le_const a with Some (e, n) -> (e, n) :: acc | _ -> acc
@@ -1721,16 +1712,25 @@ module Normalize = struct
       in
       if not footprint then p'
       else
-        let p'' =
-          match a' with
-          | Aeq (Exp.Var i, e) when not (Exp.ident_mem e i) ->
-              let mysub = Sil.subst_of_list [(i, e)] in
-              let sigma_fp' = sigma_normalize tenv mysub p'.sigma_fp in
-              let pi_fp' = a' :: pi_normalize tenv mysub sigma_fp' p'.pi_fp in
-              footprint_normalize tenv (set p' ~pi_fp:pi_fp' ~sigma_fp:sigma_fp')
-          | _ ->
-              footprint_normalize tenv (set p' ~pi_fp:(a' :: p'.pi_fp))
+        let predicate_warning =
+          not (Sil.atom_free_vars a' |> Sequence.for_all ~f:Ident.is_footprint)
         in
+        let p'' =
+          if predicate_warning then footprint_normalize tenv p'
+          else
+            match a' with
+            | Aeq (Exp.Var i, e) when not (Exp.ident_mem e i) ->
+                let mysub = Sil.subst_of_list [(i, e)] in
+                let sigma_fp' = sigma_normalize tenv mysub p'.sigma_fp in
+                let pi_fp' = a' :: pi_normalize tenv mysub sigma_fp' p'.pi_fp in
+                footprint_normalize tenv (set p' ~pi_fp:pi_fp' ~sigma_fp:sigma_fp')
+            | _ ->
+                footprint_normalize tenv (set p' ~pi_fp:(a' :: p'.pi_fp))
+        in
+        if predicate_warning then (
+          L.d_warning "dropping non-footprint " ;
+          Sil.d_atom a' ;
+          L.d_ln () ) ;
         unsafe_cast_to_normal p''
 
 
@@ -2399,7 +2399,10 @@ let prop_iter_next iter =
   | hpred' :: new' ->
       Some
         { iter with
-          pit_old= iter.pit_curr :: iter.pit_old; pit_curr= hpred'; pit_state= (); pit_new= new' }
+          pit_old= iter.pit_curr :: iter.pit_old
+        ; pit_curr= hpred'
+        ; pit_state= ()
+        ; pit_new= new' }
 
 
 (** Insert before the current element of the iterator. *)
@@ -2481,10 +2484,6 @@ let prop_iter_footprint_gen_free_vars {pit_sigma_fp; pit_pi_fp} =
   Sequence.Generator.(sigma_gen_free_vars pit_sigma_fp >>= fun () -> pi_gen_free_vars pit_pi_fp)
 
 
-let prop_iter_footprint_free_vars iter =
-  Sequence.Generator.run (prop_iter_footprint_gen_free_vars iter)
-
-
 (** Find fav of the iterator *)
 let prop_iter_gen_free_vars ({pit_sub; pit_pi; pit_newpi; pit_old; pit_new; pit_curr} as iter) =
   let open Sequence.Generator in
@@ -2502,6 +2501,8 @@ let prop_iter_gen_free_vars ({pit_sub; pit_pi; pit_newpi; pit_old; pit_new; pit_
 
 
 let prop_iter_free_vars iter = Sequence.Generator.run (prop_iter_gen_free_vars iter)
+
+let prop_iter_max_stamp ?(f = all_true) iter = seq_max_stamp f (prop_iter_free_vars iter)
 
 (** Extract the sigma part of the footprint *)
 let prop_iter_get_footprint_sigma iter = iter.pit_sigma_fp

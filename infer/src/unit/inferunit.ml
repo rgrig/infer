@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -30,12 +30,14 @@ let () =
         ; AccessPathTests.tests
         ; AccessTreeTests.tests
         ; AddressTakenTests.tests
+        ; CStubsTests.tests
         ; DifferentialFiltersTests.tests
         ; DifferentialTests.tests
         ; FileDiffTests.tests
         ; IListTests.tests
         ; JavaProfilerSamplesTest.tests
         ; LivenessTests.tests
+        ; MaximumSharingTests.tests
         ; PerfProfilerATDParserTest.tests
         ; ProcCfgTests.tests
         ; SchedulerTests.tests
@@ -43,7 +45,7 @@ let () =
         ; TaintTests.tests
         ; TraceTests.tests
         ; WeakTopologicalOrderTests.tests ]
-      @ ClangTests.tests )
+      @ ClangTests.tests @ AllNullsafeTests.tests )
   in
   let test_suite = "all" >::: tests in
   OUnit2.run_test_tt_main test_suite

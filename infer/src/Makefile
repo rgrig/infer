@@ -1,4 +1,4 @@
-# Copyright (c) 2013-present, Facebook, Inc.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -19,7 +19,7 @@ INFER_MAIN = infer
 
 #### Checkers declarations ####
 
-INFER_ATDGEN_STUB_BASES = atd/jsonbug atd/runstate atd/java_method_decl atd/perf_profiler atd/java_profiler_samples
+INFER_ATDGEN_STUB_BASES = atd/jsonbug atd/runstate atd/java_method_decl atd/perf_profiler atd/java_profiler_samples atd/clang_profiler_samples
 INFER_ATDGEN_TYPES = j t
 INFER_ATDGEN_STUB_ATDS = $(INFER_ATDGEN_STUB_BASES:.atd)
 INFER_ATDGEN_SUFFIXES = $(foreach atd_t,$(INFER_ATDGEN_TYPES),_$(atd_t).ml _$(atd_t).mli)
@@ -112,6 +112,8 @@ $(INFER_BUILD_DIR)/$(INFER_MAIN).exe: $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
 
 .PHONY: test
 test: $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
+#	needed for dune to "install" the relevant dynamic libraries for the C stubs
+	$(QUIET)cd c_stubs; dune build InferCStubs.install
 	$(QUIET)dune build \
 	  $(patsubst $(INFER_BUILD_DIR)/%.exe,_build/test/%.bc,$(INFER_CONFIG_TARGETS)) \
 	  _build/test/scripts/checkCopyright.bc _build/test/$(INFERUNIT_MAIN).bc _build/test/infertop.bc
@@ -133,17 +135,17 @@ ifeq ($(WINDOWS_BUILD),yes)
 # http://cygwin.1069669.n5.nabble.com/cp-utility-bug-when-dest-name-exe-file-exist-tp57955p58001.html
 	$(REMOVE) $(INFER_BIN) $(INFER_BIN).exe
 endif
-	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFER_MAIN).exe $(INFER_BIN)
-	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFER_MAIN).exe $(INFER_BIN).exe
-	$(MAKE) $(INFER_BIN_ALIASES)
+	$(INSTALL_PROGRAM) -C $(INFER_BUILD_DIR)/$(INFER_MAIN).exe $(INFER_BIN).exe
 ifeq ($(IS_FACEBOOK_TREE),yes)
-	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFER_CREATE_TRACEVIEW_LINKS_MAIN).exe \
+	$(INSTALL_PROGRAM) -C $(INFER_BUILD_DIR)/$(INFER_CREATE_TRACEVIEW_LINKS_MAIN).exe \
 		$(INFER_CREATE_TRACEVIEW_LINKS_BIN)
 endif
 
 
 .PHONY: infer
 infer: $(INFER_BIN).exe
+	$(INSTALL_PROGRAM) -C $(INFER_BIN).exe $(INFER_BIN)
+	$(MAKE) $(INFER_BIN_ALIASES)
 
 $(INFER_BUILD_DIR)/$(INFER_MAIN).bc: $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
 	dune build $(INFER_CONFIG_TARGETS:.exe=.bc)
@@ -155,16 +157,18 @@ ifeq ($(WINDOWS_BUILD),yes)
 # http://cygwin.1069669.n5.nabble.com/cp-utility-bug-when-dest-name-exe-file-exist-tp57955p58001.html
 	$(REMOVE) $(INFER_BIN) $(INFER_BIN).exe
 endif
-	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFER_MAIN).bc $(INFER_BIN)
-	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFER_MAIN).bc $(INFER_BIN).bc
-	$(MAKE) $(INFER_BIN_ALIASES)
+	$(INSTALL_PROGRAM) -C $(INFER_BUILD_DIR)/$(INFER_MAIN).bc $(INFER_BIN).bc
 ifeq ($(IS_FACEBOOK_TREE),yes)
-	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/$(INFER_CREATE_TRACEVIEW_LINKS_MAIN).bc \
+	$(INSTALL_PROGRAM) -C $(INFER_BUILD_DIR)/$(INFER_CREATE_TRACEVIEW_LINKS_MAIN).bc \
 		$(INFER_CREATE_TRACEVIEW_LINKS_BIN)
 endif
+#	needed for dune to "install" the relevant dynamic libraries for the C stubs
+	cd c_stubs; dune build InferCStubs.install
 
 .PHONY: byte
 byte: $(INFER_BIN).bc
+	$(INSTALL_PROGRAM) -C $(INFER_BIN).byte $(INFER_BIN)
+	$(MAKE) $(INFER_BIN_ALIASES)
 
 roots:=Infer
 ifeq ($(IS_FACEBOOK_TREE),yes)
@@ -193,10 +197,12 @@ dsort:
 
 $(INFER_BUILD_DIR)/infertop.bc: $(SRC_DIR)/infertop.ml $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
 	dune build $@
+#	needed for dune to "install" the relevant dynamic libraries for the C stubs
+	cd c_stubs; dune build InferCStubs.install
 	$(QUIET)touch $@
 
 $(INFERTOP_BIN): $(INFER_BUILD_DIR)/infertop.bc
-	$(QUIET)$(INSTALL_PROGRAM) $< $@
+	$(QUIET)$(INSTALL_PROGRAM) -C $< $@
 	$(QUIET)touch $@
 
 .PHONY: toplevel
@@ -207,7 +213,7 @@ checkCopyright: $(CHECKCOPYRIGHT_BIN)
 
 $(CHECKCOPYRIGHT_BIN): $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
 	dune build $(INFER_BUILD_DIR)/scripts/$(CHECKCOPYRIGHT_MAIN).exe
-	$(INSTALL_PROGRAM) $(INFER_BUILD_DIR)/scripts/$(CHECKCOPYRIGHT_MAIN).exe $(CHECKCOPYRIGHT_BIN)
+	$(INSTALL_PROGRAM) -C $(INFER_BUILD_DIR)/scripts/$(CHECKCOPYRIGHT_MAIN).exe $(CHECKCOPYRIGHT_BIN)
 
 define gen_atdgen_rules
 # generate files using atdgen
@@ -237,7 +243,7 @@ $(foreach atd_type,$(CLANG_ATDGEN_TYPES),\
 
 define mirror_fcp_file
 $(CLANG_PLUGIN_MIRROR)/$(notdir $(1)): $(1)
-	$(INSTALL_DATA) $$< $$@
+	$(INSTALL_DATA) -C $$< $$@
 endef
 
 $(foreach file, $(FCP_FILES_TO_MIRROR), $(eval $(call mirror_fcp_file,$(file))))
@@ -264,8 +270,10 @@ $(GENERATED_FROM_AUTOCONF): $(MAKEFILE_LIST)
 	  -e 's|@IS_RELEASE_TREE[@]|$(IS_RELEASE_TREE)|g' \
 	  -e "s|@INFER_GIT_COMMIT[@]|$$INFER_GIT_COMMIT|g" \
 	  -e "s|@INFER_GIT_BRANCH[@]|$$INFER_GIT_BRANCH|g" \
+	  -e "s|@JAVA_MAJOR_VERSION[@]|$(JAVA_MAJOR_VERSION)|g" \
 	  -e "s|@BUILD_C_ANALYZERS[@]|$(BUILD_C_ANALYZERS)|g" \
 	  -e "s|@BUILD_JAVA_ANALYZERS[@]|$(BUILD_JAVA_ANALYZERS)|g" \
+	  -e "s|@BUILD_PLATFORM[@]|$(BUILD_PLATFORM)|g" \
 	  -e "s|@OPAMSWITCH[@]|$(OPAMSWITCH)|g" \
 	  -e "s|@XCODE_SELECT[@]|$(XCODE_SELECT)|g" \
 	  -e "s|@INFER_MAN_LAST_MODIFIED[@]|$(INFER_MAN_LAST_MODIFIED)|g" \
@@ -303,7 +311,7 @@ clean:
 	  $(INFERUNIT_BIN) $(CHECKCOPYRIGHT_BIN)
 	$(REMOVE) $(BIN_DIR)/llvm_sil
 	$(REMOVE) $(INFER_CREATE_TRACEVIEW_LINKS_BIN)
-	$(REMOVE) atd/*_{j,t,v}.ml{,i} atd/clang_*
+	$(REMOVE) atd/*_{j,t,v}.ml{,i} atd/clang_ast_*
 	$(REMOVE) mod_dep.dot
 	$(REMOVE) mod_dep.pdf
 

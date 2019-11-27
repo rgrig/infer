@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -13,11 +13,7 @@ module L = Logging
 module Payload = SummaryPayload.Make (struct
   type t = ResourceLeakDomain.t
 
-  let update_payloads resources_payload (payloads : Payloads.t) =
-    {payloads with lab_resource_leaks= Some resources_payload}
-
-
-  let of_payloads {Payloads.lab_resource_leaks} = lab_resource_leaks
+  let field = Payloads.Fields.lab_resource_leaks
 end)
 
 module TransferFunctions (CFG : ProcCfg.S) = struct
@@ -57,7 +53,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
 
   (** Take an abstract state and instruction, produce a new abstract state *)
-  let exec_instr (astate : ResourceLeakDomain.t) {ProcData.pdesc= _; tenv= _} _
+  let exec_instr (astate : ResourceLeakDomain.t) {ProcData.summary= _; tenv= _} _
       (instr : HilInstr.t) =
     match instr with
     | Call (_return_opt, Direct _callee_procname, _actuals, _, _loc) ->
@@ -72,16 +68,16 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     | Call (_, Indirect _, _, _, _) ->
         (* This should never happen in Java. Fail if it does. *)
         L.(die InternalError) "Unexpected indirect call %a" HilInstr.pp instr
-    | ExitScope _ ->
+    | Metadata _ ->
         astate
 
 
   let pp_session_name _node fmt = F.pp_print_string fmt "resource leaks"
 end
 
+module CFG = ProcCfg.Normal
 (** 5(a) Type of CFG to analyze--Exceptional to follow exceptional control-flow edges, Normal to
    ignore them *)
-module CFG = ProcCfg.Normal
 
 (* Create an intraprocedural abstract interpreter from the transfer functions we defined *)
 module Analyzer = LowerHil.MakeAbstractInterpreter (TransferFunctions (CFG))
@@ -90,13 +86,13 @@ module Analyzer = LowerHil.MakeAbstractInterpreter (TransferFunctions (CFG))
 let report_if_leak _post _summary (_proc_data : unit ProcData.t) = ()
 
 (* Callback for invoking the checker from the outside--registered in RegisterCheckers *)
-let checker {Callbacks.summary; proc_desc; tenv} : Summary.t =
-  let proc_data = ProcData.make proc_desc tenv () in
+let checker {Callbacks.summary; exe_env} : Summary.t =
+  let proc_name = Summary.get_proc_name summary in
+  let tenv = Exe_env.get_tenv exe_env proc_name in
+  let proc_data = ProcData.make summary tenv () in
   match Analyzer.compute_post proc_data ~initial:ResourceLeakDomain.initial with
   | Some post ->
       report_if_leak post summary proc_data ;
       Payload.update_summary post summary
   | None ->
-      L.(die InternalError)
-        "Analyzer failed to compute post for %a" Typ.Procname.pp
-        (Procdesc.get_proc_name proc_data.pdesc)
+      L.(die InternalError) "Analyzer failed to compute post for %a" Typ.Procname.pp proc_name

@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2014-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,8 +9,7 @@ open! IStd
 
 (** Module type for the type checking functions. *)
 
-type check_return_type =
-  Typ.Procname.t -> Procdesc.t -> Typ.t -> Typ.t option -> Location.t -> unit
+type check_return_type = Typ.Procname.t -> Procdesc.t -> Typ.t -> Typ.t option -> Location.t -> unit
 
 type find_canonical_duplicate = Procdesc.Node.t -> Procdesc.Node.t
 

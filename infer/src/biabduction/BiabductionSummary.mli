@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -41,8 +41,8 @@ module Jprop : sig
   (** Extract the toplevel jprop of a prop *)
 end
 
-(** set of visited nodes: node id and list of lines of all the instructions *)
 module Visitedset : Caml.Set.S with type elt = Procdesc.Node.id * int list
+(** set of visited nodes: node id and list of lines of all the instructions *)
 
 (** A spec consists of:
     pre: a joined prop

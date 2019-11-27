@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -68,9 +68,13 @@ module StructuredSil = struct
 
   let unknown_exp = var_of_str "__unknown__"
 
-  let make_load ~rhs_typ lhs_id rhs_exp = Cmd (Sil.Load (lhs_id, rhs_exp, rhs_typ, dummy_loc))
+  let make_load ~rhs_typ lhs_id rhs_exp =
+    Cmd (Sil.Load {id= lhs_id; e= rhs_exp; root_typ= rhs_typ; typ= rhs_typ; loc= dummy_loc})
 
-  let make_set ~rhs_typ ~lhs_exp ~rhs_exp = Cmd (Sil.Store (lhs_exp, rhs_typ, rhs_exp, dummy_loc))
+
+  let make_set ~rhs_typ ~lhs_exp ~rhs_exp =
+    Cmd (Sil.Store {e1= lhs_exp; root_typ= rhs_typ; typ= rhs_typ; e2= rhs_exp; loc= dummy_loc})
+
 
   let make_call ?(procname = dummy_procname) ?return:return_opt args =
     let ret_id_typ =
@@ -162,7 +166,7 @@ struct
     in
     let create_node kind cmds = Procdesc.create_node pdesc dummy_loc kind cmds in
     let set_succs cur_node succs ~exn_handlers =
-      Procdesc.node_set_succs_exn pdesc cur_node succs exn_handlers
+      Procdesc.node_set_succs pdesc cur_node ~normal:succs ~exn:exn_handlers
     in
     let mk_prune_nodes_for_cond cond_exp if_kind =
       let mk_prune_node cond_exp if_kind true_branch =
@@ -243,13 +247,13 @@ struct
     let exit_node = create_node Procdesc.Node.Exit_node [] in
     set_succs last_node [exit_node] ~exn_handlers:no_exn_handlers ;
     Procdesc.set_exit_node pdesc exit_node ;
-    (pdesc, assert_map)
+    (Summary.OnDisk.reset pdesc, assert_map)
 
 
   let create_test test_program extras ~initial pp_opt test_pname _ =
     let pp_state = Option.value ~default:I.TransferFunctions.Domain.pp pp_opt in
-    let pdesc, assert_map = structured_program_to_cfg test_program test_pname in
-    let inv_map = I.exec_pdesc (ProcData.make pdesc (Tenv.create ()) extras) ~initial in
+    let summary, assert_map = structured_program_to_cfg test_program test_pname in
+    let inv_map = I.exec_pdesc (ProcData.make summary (Tenv.create ()) extras) ~initial in
     let collect_invariant_mismatches node_id (inv_str, inv_label) error_msgs_acc =
       let post_str =
         try
@@ -293,7 +297,6 @@ module Make (T : TransferFunctions.SIL with type CFG.Node.t = Procdesc.Node.t) =
     List.concat_map
       ~f:(fun (name, test_program) ->
         List.map ai_list ~f:(fun (ai_name, create_test) ->
-            name ^ "_" ^ ai_name >:: create_test test_program extras ~initial pp_opt test_pname )
-        )
+            name ^ "_" ^ ai_name >:: create_test test_program extras ~initial pp_opt test_pname ) )
       tests
 end

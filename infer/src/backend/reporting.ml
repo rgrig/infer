@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -36,12 +36,20 @@ let log_issue_from_summary severity summary ~node ~session ~loc ~ltr ?extras exn
     | _ ->
         false
   in
+  let is_java_external_package =
+    match procname with
+    | Typ.Procname.Java java_pname ->
+        Typ.Procname.Java.is_external java_pname
+    | _ ->
+        false
+  in
   let should_suppress_lint =
     Language.curr_language_is Java
     && Annotations.ia_is_suppress_lint
          (Summary.get_attributes summary).ProcAttributes.method_annotation.return
   in
-  if should_suppress_lint || is_java_generated_method then () (* Skip the reporting *)
+  if should_suppress_lint || is_java_generated_method || is_java_external_package then ()
+    (* Skip the reporting *)
   else
     let err_log = Summary.get_err_log summary in
     let clang_method_kind = Some attrs.clang_method_kind in
@@ -51,7 +59,7 @@ let log_issue_from_summary severity summary ~node ~session ~loc ~ltr ?extras exn
 
 let log_issue_deprecated_using_state severity proc_name ?node ?loc ?ltr exn =
   if !BiabductionConfig.footprint then
-    match Summary.get proc_name with
+    match Summary.OnDisk.get proc_name with
     | Some summary ->
         let node =
           let node = match node with None -> State.get_node_exn () | Some node -> node in
@@ -82,12 +90,13 @@ let log_error = log_issue_from_summary_simplified Exceptions.Error
 
 let log_warning = log_issue_from_summary_simplified Exceptions.Warning
 
-let log_issue_external procname severity ~loc ~ltr ?access issue_type error_message =
+let log_issue_external procname ~issue_log severity ~loc ~ltr ?access issue_type error_message =
   let exn = checker_exception issue_type error_message in
-  let errlog = IssueLog.get_errlog procname in
+  let issue_log, errlog = IssueLog.get_or_add issue_log ~proc:procname in
   let node = Errlog.UnknownNode in
   log_issue_from_errlog procname ~clang_method_kind:None severity errlog ~loc ~node ~session:0 ~ltr
-    ~access ~extras:None exn
+    ~access ~extras:None exn ;
+  issue_log
 
 
 let log_error_using_state summary exn =
@@ -110,17 +119,17 @@ let is_suppressed ?(field_name = None) tenv proc_desc kind =
   let lookup = Tenv.lookup tenv in
   let proc_attributes = Procdesc.get_attributes proc_desc in
   (* Errors can be suppressed with annotations. An error of kind CHECKER_ERROR_NAME can be
-         suppressed with the following annotations:
-         - @android.annotation.SuppressLint("checker-error-name")
-         - @some.PrefixErrorName
-         where the kind matching is case - insensitive and ignores '-' and '_' characters. *)
+     suppressed with the following annotations:
+     - @android.annotation.SuppressLint("checker-error-name")
+     - @some.PrefixErrorName
+     where the kind matching is case - insensitive and ignores '-' and '_' characters. *)
   let annotation_matches (a : Annot.t) =
     let normalize str = Str.global_replace (Str.regexp "[_-]") "" (String.lowercase str) in
     let drop_prefix str = Str.replace_first (Str.regexp "^[A-Za-z]+_") "" str in
-    let normalized_equal s1 s2 = String.equal (normalize s1) (normalize s2) in
+    let normalized_equal s1 a2 = String.equal (normalize s1) (normalize a2.Annot.value) in
     let is_parameter_suppressed () =
       String.is_suffix a.class_name ~suffix:Annotations.suppress_lint
-      && List.mem ~equal:normalized_equal a.parameters kind.IssueType.unique_id
+      && List.exists ~f:(normalized_equal kind.IssueType.unique_id) a.parameters
     in
     let is_annotation_suppressed () =
       String.is_suffix
@@ -134,7 +143,7 @@ let is_suppressed ?(field_name = None) tenv proc_desc kind =
       annotation_matches
   in
   let is_field_suppressed () =
-    match (field_name, PatternMatch.get_this_type proc_attributes) with
+    match (field_name, PatternMatch.get_this_type_nonstatic_methods_only proc_attributes) with
     | Some field_name, Some t -> (
       match Typ.Struct.get_field_type_and_annotation ~lookup field_name t with
       | Some (_, ia) ->
@@ -145,7 +154,7 @@ let is_suppressed ?(field_name = None) tenv proc_desc kind =
         false
   in
   let is_class_suppressed () =
-    match PatternMatch.get_this_type proc_attributes with
+    match PatternMatch.get_this_type_nonstatic_methods_only proc_attributes with
     | Some t -> (
       match PatternMatch.type_get_annotation tenv t with
       | Some ia ->

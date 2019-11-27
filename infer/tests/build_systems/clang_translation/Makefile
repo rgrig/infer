@@ -1,4 +1,4 @@
-# Copyright (c) 2016-present, Facebook, Inc.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -22,7 +22,7 @@ CLEAN_EXTRA = $(DOT_FILES) $(foreach source,$(SOURCES),infer-out-$(basename $(no
 
 include $(TESTS_DIR)/clang-frontend.make
 
-INFER_OPTIONS = capture --frontend-tests --skip-translation-headers exclude_dir --cxx-infer-headers
+INFER_OPTIONS = capture --frontend-tests --skip-translation-headers exclude_dir
 
 capture: $(DOT_FILES)
 

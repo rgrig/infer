@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -29,6 +29,8 @@ val get_init_list_instrs :
 val get_pointer_to_property : Clang_ast_t.decl -> Clang_ast_t.pointer option
 
 val is_objc_method : Clang_ast_t.decl -> bool
+
+val is_no_return : Clang_ast_t.decl -> bool
 
 val is_variadic : Clang_ast_t.decl -> bool
 

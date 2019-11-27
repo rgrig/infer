@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -80,7 +80,7 @@ let get tenv prop exp category =
       | Sil.Apred (att, _) | Anpred (att, _) ->
           PredSymb.equal_category (PredSymb.to_category att) category
       | _ ->
-          false)
+          false )
     atts
 
 
@@ -300,7 +300,7 @@ let deallocate_stack_vars tenv (p : 'a Prop.t) pvars =
             fresh_address_vars := (v, freshv) :: !fresh_address_vars ;
             (Exp.Lvar v, Exp.Var freshv)
         | _ ->
-            assert false)
+            assert false )
       sigma_stack
   in
   let pi1 = List.map ~f:(fun (id, e) -> Sil.Aeq (Exp.Var id, e)) (Sil.sub_to_list p.sub) in

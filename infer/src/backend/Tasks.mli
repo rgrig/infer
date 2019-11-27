@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -17,11 +17,16 @@ val fork_protect : f:('a -> 'b) -> 'a -> 'b
 
 (** A runner accepts new tasks repeatedly for parallel execution *)
 module Runner : sig
-  type 'a t
+  type ('work, 'final) t
 
-  val create : jobs:int -> f:'a doer -> 'a t
+  val create :
+       jobs:int
+    -> f:'work doer
+    -> child_epilogue:(unit -> 'final)
+    -> tasks:'work ProcessPool.TaskGenerator.t
+    -> ('work, 'final) t
   (** Create a runner running [jobs] jobs in parallel *)
 
-  val run : 'a t -> tasks:'a list -> unit
+  val run : (_, 'final) t -> 'final option Array.t
   (** Start the given tasks with the runner and wait until completion *)
 end

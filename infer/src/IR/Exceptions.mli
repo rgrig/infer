@@ -1,6 +1,6 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -42,6 +42,8 @@ exception Array_out_of_bounds_l2 of Localise.error_desc * Logging.ocaml_pos
 exception Array_out_of_bounds_l3 of Localise.error_desc * Logging.ocaml_pos
 
 exception Bad_footprint of Logging.ocaml_pos
+
+exception Biabd_use_after_free of Localise.error_desc * Logging.ocaml_pos
 
 exception Cannot_star of Logging.ocaml_pos
 
@@ -135,8 +137,6 @@ exception Unary_minus_applied_to_unsigned_expression of Localise.error_desc * Lo
 exception Unknown_proc
 
 exception Unsafe_guarded_by_access of Localise.error_desc * Logging.ocaml_pos
-
-exception Use_after_free of Localise.error_desc * Logging.ocaml_pos
 
 exception Wrong_argument_number of Logging.ocaml_pos
 

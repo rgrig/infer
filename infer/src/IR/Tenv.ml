@@ -1,23 +1,18 @@
 (*
- * Copyright (c) 2016-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 open! IStd
-module Hashtbl = Caml.Hashtbl
 module L = Logging
 
 (** Module for Type Environments. *)
 
-(** Hash tables on strings. *)
-module TypenameHash = Hashtbl.Make (struct
-  type t = Typ.Name.t
+module TypenameHash = Caml.Hashtbl.Make (Typ.Name)
+(** Hash tables on type names. *)
 
-  let equal tn1 tn2 = Typ.Name.equal tn1 tn2
-
-  let hash = Hashtbl.hash
-end)
+module TypenameHashNormalizer = MaximumSharing.ForHashtbl (TypenameHash)
 
 (** Type for type environment. *)
 type t = Typ.Struct.t TypenameHash.t
@@ -34,10 +29,11 @@ let pp fmt (tenv : t) =
 let create () = TypenameHash.create 1000
 
 (** Construct a struct type in a type environment *)
-let mk_struct tenv ?default ?fields ?statics ?methods ?exported_objc_methods ?supers ?annots name =
+let mk_struct tenv ?default ?fields ?statics ?methods ?exported_objc_methods ?supers ?annots ?dummy
+    name =
   let struct_typ =
     Typ.Struct.internal_mk_struct ?default ?fields ?statics ?methods ?exported_objc_methods ?supers
-      ?annots ()
+      ?annots ?dummy ()
   in
   TypenameHash.replace tenv name struct_typ ;
   struct_typ
@@ -45,7 +41,8 @@ let mk_struct tenv ?default ?fields ?statics ?methods ?exported_objc_methods ?su
 
 (** Look up a name in the global type environment. *)
 let lookup tenv name : Typ.Struct.t option =
-  try Some (TypenameHash.find tenv name) with Caml.Not_found -> (
+  try Some (TypenameHash.find tenv name)
+  with Caml.Not_found -> (
     (* ToDo: remove the following additional lookups once C/C++ interop is resolved *)
     match (name : Typ.Name.t) with
     | CStruct m -> (
@@ -81,6 +78,10 @@ let pp_per_file fmt = function
 
 
 module SQLite : SqliteUtils.Data with type t = per_file = struct
+  module Serializer = SqliteUtils.MarshalledDataNOTForComparison (struct
+    type nonrec t = t
+  end)
+
   type t = per_file
 
   let global_string = "global"
@@ -89,23 +90,30 @@ module SQLite : SqliteUtils.Data with type t = per_file = struct
     | Global ->
         Sqlite3.Data.TEXT global_string
     | FileLocal tenv ->
-        Sqlite3.Data.BLOB (Marshal.to_string tenv [])
+        Serializer.serialize tenv
 
 
-  let deserialize = function[@warning "-8"]
+  let deserialize = function
     | Sqlite3.Data.TEXT g when String.equal g global_string ->
         Global
-    | Sqlite3.Data.BLOB b ->
-        FileLocal (Marshal.from_string b 0)
+    | blob ->
+        FileLocal (Serializer.deserialize blob)
 end
 
 let merge ~src ~dst =
+  TypenameHash.iter
+    (fun pname cfg ->
+      if (not (Typ.Struct.is_dummy cfg)) || not (TypenameHash.mem dst pname) then
+        TypenameHash.replace dst pname cfg )
+    src
+
+
+let merge_per_file ~src ~dst =
   match (src, dst) with
   | Global, Global ->
       Global
   | FileLocal src_tenv, FileLocal dst_tenv ->
-      TypenameHash.iter (fun pname cfg -> TypenameHash.replace dst_tenv pname cfg) src_tenv ;
-      FileLocal dst_tenv
+      merge ~src:src_tenv ~dst:dst_tenv ; FileLocal dst_tenv
   | Global, FileLocal _ | FileLocal _, Global ->
       L.die InternalError "Cannot merge Global tenv with FileLocal tenv"
 
@@ -124,9 +132,10 @@ let global_tenv : t option ref = ref None
 
 let global_tenv_path = Config.(results_dir ^/ global_tenv_filename) |> DB.filename_from_string
 
+let read path = Serialization.read_from_file tenv_serializer path
+
 let load_global () : t option =
-  if is_none !global_tenv then
-    global_tenv := Serialization.read_from_file tenv_serializer global_tenv_path ;
+  if is_none !global_tenv then global_tenv := read global_tenv_path ;
   !global_tenv
 
 
@@ -163,5 +172,10 @@ let store_to_filename tenv tenv_filename =
 let store_global tenv =
   (* update in-memory global tenv for later uses by this process, e.g. in single-core mode the
      frontend and backend run in the same process *)
+  L.debug Capture Quiet "Tenv.store: global tenv has size %d bytes.@."
+    (Obj.(reachable_words (repr tenv)) * (Sys.word_size / 8)) ;
+  let tenv = TypenameHashNormalizer.normalize tenv in
+  L.debug Capture Quiet "Tenv.store: canonicalized tenv has size %d bytes.@."
+    (Obj.(reachable_words (repr tenv)) * (Sys.word_size / 8)) ;
   global_tenv := Some tenv ;
   store_to_filename tenv global_tenv_path

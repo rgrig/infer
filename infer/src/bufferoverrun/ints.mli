@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2017-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -63,7 +63,7 @@ module NonNegativeInt : sig
 
   val is_one : t -> bool
 
-  val ( <= ) : lhs:t -> rhs:t -> bool
+  val leq : lhs:t -> rhs:t -> bool
 
   val succ : t -> t
 
@@ -72,8 +72,6 @@ module NonNegativeInt : sig
   val ( + ) : t -> t -> t
 
   val ( * ) : t -> t -> t
-
-  val max : t -> t -> t
 
   val pp : F.formatter -> t -> unit
 end

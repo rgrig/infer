@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,46 +7,41 @@
 
 open! IStd
 
-type linter =
-  { condition: CTL.t
-  ; issue_desc: CIssue.issue_desc
-  ; whitelist_paths: ALVar.t list
-  ; blacklist_paths: ALVar.t list }
+type exception_details =
+  { msg: string
+  ; position: Logging.ocaml_pos
+  ; source_range: Clang_ast_t.source_range
+  ; ast_node: string option }
 
-val filter_parsed_linters : linter list -> SourceFile.t -> linter list
+exception Unimplemented of exception_details
 
-val pp_linters : Format.formatter -> linter list -> unit
+exception IncorrectAssumption of exception_details
 
-(* map used to expand macro. It maps a formula id to a triple
-   (visited, parameters, definition).
-   Visited is used during the expansion phase to understand if the
-   formula was already expanded and, if yes we have a cyclic definifion *)
+exception Invalid_declaration
 
-type macros_map = (bool * ALVar.t list * CTL.t) ALVar.FormulaIdMap.t
+val unimplemented :
+     Logging.ocaml_pos
+  -> Clang_ast_t.source_range
+  -> ?ast_node:string
+  -> ('a, Format.formatter, unit, _) format4
+  -> 'a
+(** Raise Unimplemented. This is caught at the level of translating a method and makes the frontend
+    give up on that method. *)
 
-(** Map a path name to a list of paths.  *)
-type paths_map = ALVar.t list ALVar.VarMap.t
+val incorrect_assumption :
+     Logging.ocaml_pos
+  -> Clang_ast_t.source_range
+  -> ?ast_node:string
+  -> ('a, Format.formatter, unit, _) format4
+  -> 'a
+(** Used to mark places in the frontend that incorrectly assume something to be
+    impossible. TODO(t21762295) get rid of all instances of this. *)
 
-(* Module for warnings detected at translation time by the frontend *)
-
-val invoke_set_of_checkers_on_node :
-  linter list -> CLintersContext.context -> Ctl_parser_types.ast_node -> unit
-(** Run frontend checkers on an AST node *)
-
-val build_macros_map : CTL.clause list -> macros_map
-
-val build_paths_map : (string * ALVar.alexp list) list -> paths_map
-
-val expand_checkers : macros_map -> paths_map -> CTL.ctl_checker list -> CTL.ctl_checker list
-
-val create_parsed_linters : string -> CTL.ctl_checker list -> linter list
-
-val remove_new_lines_and_whitespace : string -> string
-
-val fill_issue_desc_info_and_log :
-     CLintersContext.context
-  -> witness:Ctl_parser_types.ast_node
-  -> current_node:Ctl_parser_types.ast_node
-  -> CIssue.issue_desc
-  -> Location.t
+val protect :
+     f:(unit -> unit)
+  -> recover:(unit -> unit)
+  -> pp_context:(Format.formatter -> unit -> unit)
+  -> CFrontend_config.translation_unit_context
   -> unit
+(** Catch frontend errors in [f] to avoid crashing due to bugs in the frontend. Upon error [recover]
+    is run and [pp_context] is used to provide more info to the user. *)

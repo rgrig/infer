@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -12,27 +12,29 @@ include (
     sig
       include
         (module type of Base
-        (* extended below, remove *)
-        with module Invariant := Base.Invariant
-         and module List := Base.List
-         and module Map := Base.Map
-         and module Option := Base.Option
-         and module Result := Base.Result
-         and module Set := Base.Set
-        (* prematurely deprecated, remove and use Stdlib instead *)
-         and module Filename := Base.Filename
-         and module Format := Base.Format
-         and module Marshal := Base.Marshal
-         and module Scanf := Base.Scanf
-         and type ('ok, 'err) result := ('ok, 'err) Base.result)
-      [@warning "-3"]
+          (* extended below, remove *)
+          with module Array := Base.Array
+           and module Invariant := Base.Invariant
+           and module List := Base.List
+           and module Map := Base.Map
+           and module Option := Base.Option
+           and module Result := Base.Result
+           and module Set := Base.Set
+          (* prematurely deprecated, remove and use Stdlib instead *)
+           and module Filename := Base.Filename
+           and module Format := Base.Format
+           and module Marshal := Base.Marshal
+           and module Scanf := Base.Scanf
+           and type ('ok, 'err) result := ('ok, 'err) Base.result
+         [@warning "-3"])
     end )
 
 (* undeprecate *)
 external ( == ) : 'a -> 'a -> bool = "%eq"
+external ( != ) : 'a -> 'a -> bool = "%noteq"
 
 include Stdio
-module Fheap = Core_kernel.Fheap
+module Command = Core.Command
 module Hash_queue = Core_kernel.Hash_queue
 
 (** Tuple operations *)
@@ -60,14 +62,19 @@ let warn fmt =
   Format.pp_open_box fs 2 ;
   Format.pp_print_string fs "Warning: " ;
   Format.kfprintf
-    (fun fs ->
+    (fun fs () ->
       Format.pp_close_box fs () ;
       Format.pp_force_newline fs () )
     fs fmt
 
-let raisef exn fmt =
+let raisef ?margin exn fmt =
   let bt = Caml.Printexc.get_raw_backtrace () in
   let fs = Format.str_formatter in
+  ( match margin with
+  | Some m ->
+      Format.pp_set_margin fs m ;
+      Format.pp_set_max_indent fs (m - 1)
+  | None -> () ) ;
   Format.pp_open_box fs 2 ;
   Format.kfprintf
     (fun fs () ->
@@ -109,17 +116,20 @@ module Invariant = struct
   include Base.Invariant
 
   let invariant here t sexp_of_t f =
-    try f () with exn ->
-      let bt = Caml.Printexc.get_raw_backtrace () in
-      let exn =
-        Error.to_exn
-          (Error.create_s
-             (Base.Sexp.message "invariant failed"
-                [ ("", Source_code_position.sexp_of_t here)
-                ; ("exn", sexp_of_exn exn)
-                ; ("", sexp_of_t t) ]))
-      in
-      Caml.Printexc.raise_with_backtrace exn bt
+    assert (
+      ( try f ()
+        with exn ->
+          let bt = Caml.Printexc.get_raw_backtrace () in
+          let exn =
+            Error.to_exn
+              (Error.create_s
+                 (Base.Sexp.message "invariant failed"
+                    [ ("", sexp_of_exn exn)
+                    ; ("", Source_code_position.sexp_of_t here)
+                    ; ("", sexp_of_t t) ]))
+          in
+          Caml.Printexc.raise_with_backtrace exn bt ) ;
+      true )
 end
 
 let map_preserving_phys_equal map t ~f =
@@ -157,6 +167,8 @@ module List = struct
         | xs -> Format.fprintf fs "%( %)%a" sep (pp sep pp_elt) xs ) ;
         Option.iter suf ~f:(Format.fprintf fs)
 
+  let pop_exn = function x :: xs -> (x, xs) | [] -> raise Caml.Not_found
+
   let find_map_remove xs ~f =
     let rec find_map_remove_ ys = function
       | [] -> None
@@ -192,10 +204,25 @@ module List = struct
       let n = n - 1 in
       let xs = rev_init n ~f in
       f n :: xs
+
+  let symmetric_diff ~compare xs ys =
+    let rec symmetric_diff_ xxs yys =
+      match (xxs, yys) with
+      | x :: xs, y :: ys ->
+          let ord = compare x y in
+          if ord = 0 then symmetric_diff_ xs ys
+          else if ord < 0 then Either.First x :: symmetric_diff_ xs yys
+          else Either.Second y :: symmetric_diff_ xxs ys
+      | xs, [] -> map ~f:Either.first xs
+      | [], ys -> map ~f:Either.second ys
+    in
+    symmetric_diff_ (sort ~compare xs) (sort ~compare ys)
 end
 
 module Map = struct
   include Base.Map
+
+  let equal_m__t (module Elt : Compare_m) equal_v = equal equal_v
 
   let find_and_remove_exn m k =
     let found = ref None in
@@ -244,21 +271,67 @@ module Set = struct
 
   type ('elt, 'cmp) tree = ('elt, 'cmp) Using_comparator.Tree.t
 
+  let equal_m__t (module Elt : Compare_m) = equal
   let pp pp_elt fs x = List.pp ",@ " pp_elt fs (to_list x)
   let disjoint x y = is_empty (inter x y)
+  let add_option yo x = Option.fold ~f:add ~init:x yo
+  let add_list ys x = List.fold ~f:add ~init:x ys
   let diff_inter_diff x y = (diff x y, inter x y, diff y x)
   let inter_diff x y = (inter x y, diff y x)
   let of_vector cmp x = of_array cmp (Vector.to_array x)
   let to_tree = Using_comparator.to_tree
+
+  let union x y =
+    let xy = union x y in
+    let xy_tree = to_tree xy in
+    if xy_tree == to_tree x then x
+    else if xy_tree == to_tree y then y
+    else xy
+end
+
+module Qset = struct
+  include Qset
+
+  let pp sep pp_elt fs s = List.pp sep pp_elt fs (to_list s)
+end
+
+module Array = struct
+  include Base.Array
+
+  let pp sep pp_elt fs a = List.pp sep pp_elt fs (to_list a)
+end
+
+module Q = struct
+  let pp = Q.pp_print
+  let hash = Hashtbl.hash
+  let hash_fold_t s q = Int.hash_fold_t s (hash q)
+  let sexp_of_t q = Sexp.Atom (Q.to_string q)
+
+  let t_of_sexp = function
+    | Sexp.Atom s -> Q.of_string s
+    | _ -> assert false
+
+  let of_z = Q.of_bigint
+
+  include Q
 end
 
 module Z = struct
-  include Z
-
-  let hash_fold_t s z = Int.hash_fold_t s (Z.hash z)
+  let pp = Z.pp_print
+  let hash = [%hash: Z.t]
+  let hash_fold_t s z = Int.hash_fold_t s (hash z)
   let sexp_of_t z = Sexp.Atom (Z.to_string z)
 
   let t_of_sexp = function
     | Sexp.Atom s -> Z.of_string s
     | _ -> assert false
+
+  (* the signed 1-bit integers are -1 and 0 *)
+  let true_ = Z.minus_one
+  let false_ = Z.zero
+  let of_bool = function true -> true_ | false -> false_
+  let is_true = Z.equal true_
+  let is_false = Z.equal false_
+
+  include Z
 end

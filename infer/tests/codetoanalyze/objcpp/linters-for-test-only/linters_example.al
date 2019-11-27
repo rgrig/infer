@@ -1,4 +1,4 @@
-// Copyright (c) 2018-present, Facebook, Inc.
+// Copyright (c) Facebook, Inc. and its affiliates.
 //
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
@@ -231,5 +231,20 @@ DEFINE-CHECKER ONLY_ONE_CLASS_METHOD = {
 
   SET message = "Found class with only one class method";
   SET mode = "ON";
+
+};
+
+DEFINE-CHECKER TEST_PROPERTY_ON_NTH_PARAMETER = {
+
+  LET check_prop =
+  WHEN
+     HOLDS-NEXT WITH-TRANSITION ParameterPos "2"
+      (has_value("Sample") HOLDS-EVENTUALLY)
+  HOLDS-IN-NODE CXXMemberCallExpr;
+
+  SET report_when =
+     call_cxx_method("test") AND check_prop;
+
+  SET message = "The second parameter is the string Sample";
 
 };

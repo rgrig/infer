@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2018-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -126,7 +126,7 @@ module NoRelation = struct
 
     let f3_false _ _ _ = false
 
-    let ( <= ) ~lhs:() ~rhs:() = true
+    let leq ~lhs:() ~rhs:() = true
 
     let join = f2
 
@@ -489,9 +489,7 @@ module Make (Manager : Manager_S) = struct
       a
 
 
-    let of_powloc var_of_loc locs =
-      PowLoc.fold (fun loc acc -> add (var_of_loc loc) acc) locs empty
-
+    let of_powloc var_of_loc locs = PowLoc.fold (fun loc acc -> add (var_of_loc loc) acc) locs empty
 
     let int_of_powloc locs = of_powloc Var.of_loc locs
 
@@ -798,7 +796,7 @@ module Make (Manager : Manager_S) = struct
               Texpr1.Unop (uop, re', typ, round) )
       | Texpr1.Binop (bop, re1, re2, typ, round) ->
           Option.map2 (symexp_raw_subst subst_map re1) (symexp_raw_subst subst_map re2)
-            ~f:(fun re1' re2' -> Texpr1.Binop (bop, re1', re2', typ, round) )
+            ~f:(fun re1' re2' -> Texpr1.Binop (bop, re1', re2', typ, round))
 
 
     let symexp_subst subst_map x =
@@ -860,12 +858,12 @@ module Make (Manager : Manager_S) = struct
           let lb, ub = (Itv.ItvPure.lb itv_pure, Itv.ItvPure.ub itv_pure) in
           Option.value_map (SymExp.of_sym sym) ~default:empty ~f:(fun sym_exp ->
               let tcons_lb =
-                Option.map (Itv.Bound.is_const lb) ~f:(fun lb ->
+                Option.map (Itv.Bound.get_const lb) ~f:(fun lb ->
                     let sym_minus_lb = SymExp.minus sym_exp (SymExp.of_big_int lb) in
                     Tcons1.make sym_minus_lb Tcons1.SUPEQ )
               in
               let tcons_ub =
-                Option.map (Itv.Bound.is_const ub) ~f:(fun ub ->
+                Option.map (Itv.Bound.get_const ub) ~f:(fun ub ->
                     let ub_minus_sym = SymExp.minus (SymExp.of_big_int ub) sym_exp in
                     Tcons1.make ub_minus_sym Tcons1.SUPEQ )
               in
@@ -980,7 +978,7 @@ module Make (Manager : Manager_S) = struct
 
     let pp fmt x = Abstract1.print fmt x
 
-    let ( <= ) ~lhs ~rhs = sync_env_lift (Abstract1.is_leq man) lhs rhs
+    let leq ~lhs ~rhs = sync_env_lift (Abstract1.is_leq man) lhs rhs
 
     let sat_tcons tcons x =
       let tcons = Constraints.remove_strict_ineq_tcons1 tcons in
@@ -1213,7 +1211,7 @@ module Make (Manager : Manager_S) = struct
       let ge_than_lhs pack_id rhs =
         match PackMap.find pack_id lhs with
         | lhs ->
-            Val.( <= ) ~lhs ~rhs
+            Val.leq ~lhs ~rhs
         | exception Caml.Not_found ->
             Val.is_top rhs
       in
@@ -1247,7 +1245,7 @@ module Make (Manager : Manager_S) = struct
       PackMap.merge widen_opt prev next
 
 
-    let ( <= ) ~lhs ~rhs =
+    let leq ~lhs ~rhs =
       let _, packs_lhs, packs_rhs = sync_pack lhs rhs in
       le_synced_packs ~lhs:packs_lhs ~rhs:packs_rhs
 
@@ -1565,12 +1563,8 @@ module Make (Manager : Manager_S) = struct
 
 
   let init_array :
-         Allocsite.t
-      -> offset_opt:Itv.t option
-      -> size:Itv.t
-      -> size_exp_opt:SymExp.t option
-      -> t
-      -> t =
+      Allocsite.t -> offset_opt:Itv.t option -> size:Itv.t -> size_exp_opt:SymExp.t option -> t -> t
+      =
    fun allocsite ~offset_opt ~size ~size_exp_opt ->
     lift_default ~default:Bottom (PackedVal.init_array allocsite ~offset_opt ~size ~size_exp_opt)
 

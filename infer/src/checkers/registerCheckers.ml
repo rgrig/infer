@@ -1,5 +1,5 @@
 (*
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -32,7 +32,9 @@ let all_checkers =
      Currently, the checkers are run in the reverse order *)
   [ { name= "annotation reachability"
     ; active= Config.annotation_reachability
-    ; callbacks= [(Procedure AnnotationReachability.checker, Language.Java)] }
+    ; callbacks=
+        [ (Procedure AnnotationReachability.checker, Language.Java)
+        ; (Procedure AnnotationReachability.checker, Language.Clang) ] }
   ; { name= "nullable checks"
     ; active= Config.nullsafe
     ; callbacks=
@@ -65,6 +67,9 @@ let all_checkers =
   ; { name= "immutable cast"
     ; active= Config.immutable_cast
     ; callbacks= [(Procedure ImmutableChecker.callback_check_immutable_cast, Language.Java)] }
+  ; { name= "inefficient keyset iterator"
+    ; active= Config.inefficient_keyset_iterator
+    ; callbacks= [(Procedure InefficientKeysetIterator.checker, Language.Java)] }
   ; { name= "liveness"
     ; active= Config.liveness
     ; callbacks= [(Procedure Liveness.checker, Language.Clang)] }
@@ -76,10 +81,11 @@ let all_checkers =
     ; callbacks=
         [ (Procedure NullabilitySuggest.checker, Language.Java)
         ; (Procedure NullabilitySuggest.checker, Language.Clang) ] }
-  ; { name= "ownership"
-    ; active= Config.ownership
-    ; callbacks= [(Procedure Ownership.checker, Language.Clang)] }
-  ; {name= "pulse"; active= Config.pulse; callbacks= [(Procedure Pulse.checker, Language.Clang)]}
+  ; { name= "pulse"
+    ; active= Config.pulse || Config.impurity
+    ; callbacks=
+        (Procedure Pulse.checker, Language.Clang)
+        :: (if Config.impurity then [(Procedure Pulse.checker, Language.Java)] else []) }
   ; { name= "quandary"
     ; active= Config.quandary || Config.quandaryBO
     ; callbacks=
@@ -100,25 +106,25 @@ let all_checkers =
                interprocedural later on *)
             Procedure ResourceLeaks.checker
           , Language.Java ) ] }
-  ; {name= "litho"; active= Config.litho; callbacks= [(Procedure Litho.checker, Language.Java)]}
+  ; { name= "litho-required-props"
+    ; active= Config.litho_required_props
+    ; callbacks= [(Procedure RequiredProps.checker, Language.Java)] }
+  ; { name= "litho-graphql-field-access"
+    ; active= Config.litho_graphql_field_access
+    ; callbacks= [(Procedure GraphQLFieldAccess.checker, Language.Java)] }
   ; {name= "SIOF"; active= Config.siof; callbacks= [(Procedure Siof.checker, Language.Clang)]}
   ; { name= "uninitialized variables"
     ; active= Config.uninit
     ; callbacks= [(Procedure Uninit.checker, Language.Clang)] }
   ; { name= "cost analysis"
-    ; active= Config.cost
+    ; active= Config.cost || (Config.loop_hoisting && Config.hoisting_report_only_expensive)
     ; callbacks= [(Procedure Cost.checker, Language.Clang); (Procedure Cost.checker, Language.Java)]
     }
   ; { name= "loop hoisting"
     ; active= Config.loop_hoisting
     ; callbacks=
-        ( (Procedure Hoisting.checker, Language.Clang)
-          :: (Procedure Hoisting.checker, Language.Java)
-          ::
-          ( if Config.hoisting_report_only_expensive then
-            [(Procedure Cost.checker, Language.Clang); (Procedure Cost.checker, Language.Java)]
-          else [] )
-        @ if Config.purity then [(Procedure Purity.checker, Language.Java)] else [] ) }
+        [(Procedure Hoisting.checker, Language.Clang); (Procedure Hoisting.checker, Language.Java)]
+    }
   ; { name= "Starvation analysis"
     ; active= Config.starvation
     ; callbacks=
@@ -126,10 +132,21 @@ let all_checkers =
         ; (Cluster Starvation.reporting, Language.Java)
         ; (Procedure Starvation.analyze_procedure, Language.Clang)
         ; (Cluster Starvation.reporting, Language.Clang) ] }
-  ; {name= "purity"; active= Config.purity; callbacks= [(Procedure Purity.checker, Language.Java)]}
+  ; { name= "impurity"
+    ; active= Config.impurity
+    ; callbacks=
+        [(Procedure Impurity.checker, Language.Java); (Procedure Impurity.checker, Language.Clang)]
+    }
+  ; { name= "purity"
+    ; active= Config.purity || Config.loop_hoisting
+    ; callbacks=
+        [(Procedure Purity.checker, Language.Java); (Procedure Purity.checker, Language.Clang)] }
   ; { name= "Class loading analysis"
     ; active= Config.class_loads
-    ; callbacks= [(Procedure ClassLoads.analyze_procedure, Language.Java)] } ]
+    ; callbacks= [(Procedure ClassLoads.analyze_procedure, Language.Java)] }
+  ; { name= "Self captured in block checker"
+    ; active= Config.self_in_block
+    ; callbacks= [(Procedure SelfInBlock.checker, Language.Clang)] } ]
 
 
 let get_active_checkers () =
@@ -162,5 +179,5 @@ let pp_checker fmt {name; callbacks} =
     |> LanguageSet.elements
   in
   F.fprintf fmt "%s (%a)" name
-    (Pp.seq ~sep:", " (Pp.to_string ~f:Language.to_string))
+    (Pp.seq ~sep:", " (Pp.of_string ~f:Language.to_string))
     langs_of_callbacks

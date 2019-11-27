@@ -1,12 +1,13 @@
 (*
  * Copyright (c) 2009-2013, Monoidics ltd.
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
 
 open! IStd
+module F = Format
 
 (** Execution environments: basically a cache of where procedures are and what is their CFG and type
    environment *)
@@ -41,11 +42,12 @@ type t =
   ; file_map: file_data SourceFile.Hash.t  (** map from source files to file data *) }
 
 let get_file_data exe_env pname =
-  try Some (Typ.Procname.Hash.find exe_env.proc_map pname) with Caml.Not_found ->
+  try Some (Typ.Procname.Hash.find exe_env.proc_map pname)
+  with Caml.Not_found ->
     let source_file_opt =
       match Attributes.load pname with
       | None ->
-          L.(debug Analysis Medium) "can't find tenv_cfg_object for %a@." Typ.Procname.pp pname ;
+          L.debug Analysis Medium "can't find attributes for %a@." Typ.Procname.pp pname ;
           None
       | Some proc_attributes when Config.reactive_capture ->
           let get_captured_file {ProcAttributes.translation_unit} = translation_unit in
@@ -68,8 +70,8 @@ let file_data_to_tenv file_data =
 
 let file_data_to_integer_type_widths file_data =
   if is_none file_data.integer_type_widths then
-    file_data.integer_type_widths
-    <- Option.first_some (Typ.IntegerWidths.load file_data.source) (Some Typ.IntegerWidths.java) ;
+    file_data.integer_type_widths <-
+      Option.first_some (Typ.IntegerWidths.load file_data.source) (Some Typ.IntegerWidths.java) ;
   file_data.integer_type_widths
 
 
@@ -83,6 +85,12 @@ let java_global_tenv =
 
 
 let get_column_value ~value_on_java ~file_data_to_value ~column_name exe_env proc_name =
+  let pp_loc_opt f = function
+    | Some loc ->
+        F.fprintf f " in file '%a' at %a" SourceFile.pp loc.Location.file Location.pp loc
+    | None ->
+        ()
+  in
   match proc_name with
   | Typ.Procname.Java _ ->
       Lazy.force value_on_java
@@ -93,15 +101,13 @@ let get_column_value ~value_on_java ~file_data_to_value ~column_name exe_env pro
       | Some v ->
           v
       | None ->
-          let loc = State.get_loc_exn () in
-          L.(die InternalError)
-            "get_column_value: %s not found for %a in file '%a' at %a" column_name Typ.Procname.pp
-            proc_name SourceFile.pp loc.Location.file Location.pp loc )
+          let loc_opt = State.get_loc () in
+          L.die InternalError "get_column_value: %s not found for %a%a" column_name Typ.Procname.pp
+            proc_name pp_loc_opt loc_opt )
     | None ->
-        let loc = State.get_loc_exn () in
-        L.(die InternalError)
-          "get_column_value: file_data not found for %a in file '%a' at %a" Typ.Procname.pp
-          proc_name SourceFile.pp loc.Location.file Location.pp loc )
+        let loc_opt = State.get_loc () in
+        L.die InternalError "get_column_value: file_data not found for %a%a" Typ.Procname.pp
+          proc_name pp_loc_opt loc_opt )
 
 
 (** return the type environment associated to the procedure *)
