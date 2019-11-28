@@ -30,6 +30,7 @@ module Attribute = struct
     | AddressOfCppTemporary of Var.t * ValueHistory.t
     | AddressOfStackVariable of Var.t * Location.t * ValueHistory.t
     | Arithmetic of Arithmetic.t * Trace.t
+    | BoItv of Itv.t
     | Closure of Typ.Procname.t
     | Invalid of Invalidation.t * Trace.t
     | MustBeValid of Trace.t
@@ -64,6 +65,8 @@ module Attribute = struct
 
   let const_rank = Variants.to_rank (Arithmetic (Arithmetic.equal_to IntLit.zero, dummy_trace))
 
+  let bo_itv_rank = Variants.to_rank (BoItv Itv.zero)
+
   let pp f attribute =
     let pp_string_if_debug string fmt =
       if Config.debug_level_analysis >= 3 then F.pp_print_string fmt string
@@ -73,6 +76,8 @@ module Attribute = struct
         F.fprintf f "t&%a (%a)" Var.pp var ValueHistory.pp history
     | AddressOfStackVariable (var, location, history) ->
         F.fprintf f "s&%a (%a) at %a" Var.pp var ValueHistory.pp history Location.pp location
+    | BoItv bo_itv ->
+        F.fprintf f "BoItv (%a)" Itv.pp bo_itv
     | Closure pname ->
         Typ.Procname.pp f pname
     | Arithmetic (phi, trace) ->
@@ -141,6 +146,13 @@ module Attributes = struct
     |> Option.map ~f:(fun attr ->
            let[@warning "-8"] (Attribute.Arithmetic (a, trace)) = attr in
            (a, trace) )
+
+
+  let get_bo_itv attrs =
+    Set.find_rank attrs Attribute.bo_itv_rank
+    |> Option.map ~f:(fun attr ->
+           let[@warning "-8"] (Attribute.BoItv itv) = attr in
+           itv )
 
 
   include Set

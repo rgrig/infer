@@ -145,6 +145,8 @@ val of_big_int : Z.t -> t
 
 val of_int_lit : IntLit.t -> t
 
+val of_pulse_value : PulseAbstractValue.t -> t
+
 val get_const : t -> Z.t option
 
 val is_zero : t -> bool
@@ -220,6 +222,8 @@ val max_sem : ?use_minmax_bound:bool -> t -> t -> t
 val mod_sem : t -> t -> t
 
 val ne_sem : t -> t -> Boolean.t
+
+val arith_binop : Binop.t -> t -> t -> t option
 
 val prune_eq_zero : t -> t
 

@@ -119,6 +119,8 @@ module ItvPure = struct
 
   let of_big_int n = of_bound (Bound.of_big_int n)
 
+  let of_pulse_value v = of_bound (Bound.of_pulse_value v)
+
   let mone = of_bound Bound.mone
 
   let zero_255 = (Bound.zero, Bound.z255)
@@ -392,6 +394,16 @@ module ItvPure = struct
         Bottom
 
 
+  let arith_binop bop x y =
+    match bop with
+    | Binop.PlusA _ ->
+        Some (plus x y)
+    | Binop.MinusA _ ->
+        Some (minus x y)
+    | _ ->
+        None
+
+
   let prune_le : t -> t -> t = fun (l1, u1) (_, u2) -> (l1, Bound.overapprox_min u1 u2)
 
   let prune_ge : t -> t -> t = fun (l1, u1) (l2, _) -> (Bound.underapprox_max l1 l2, u1)
@@ -574,6 +586,8 @@ let of_big_int : Z.t -> t = fun n -> NonBottom (ItvPure.of_big_int n)
 
 let of_int_lit : IntLit.t -> t = fun n -> of_big_int (IntLit.to_big_int n)
 
+let of_pulse_value : PulseAbstractValue.t -> t = fun v -> NonBottom (ItvPure.of_pulse_value v)
+
 let is_false : t -> bool = function NonBottom x -> ItvPure.is_false x | Bottom -> false
 
 let le : lhs:t -> rhs:t -> bool = leq
@@ -610,6 +624,15 @@ let lift2 : (ItvPure.t -> ItvPure.t -> ItvPure.t) -> t -> t -> t =
       Bottom
   | NonBottom x, NonBottom y ->
       NonBottom (f x y)
+
+
+let lift2opt : (ItvPure.t -> ItvPure.t -> ItvPure.t option) -> t -> t -> t option =
+ fun f x y ->
+  match (x, y) with
+  | Bottom, _ | _, Bottom ->
+      Some Bottom
+  | NonBottom x, NonBottom y ->
+      f x y |> Option.map ~f:(fun v -> NonBottom v)
 
 
 let bind2_gen : bot:'a -> (ItvPure.t -> ItvPure.t -> 'a) -> t -> t -> 'a =
@@ -688,6 +711,8 @@ let min_sem : ?use_minmax_bound:bool -> t -> t -> t =
 let max_sem : ?use_minmax_bound:bool -> t -> t -> t =
  fun ?use_minmax_bound -> lift2 (ItvPure.max_sem ?use_minmax_bound)
 
+
+let arith_binop : Binop.t -> t -> t -> t option = fun bop -> lift2opt (ItvPure.arith_binop bop)
 
 let prune_eq_zero : t -> t = bind1 ItvPure.prune_eq_zero
 
