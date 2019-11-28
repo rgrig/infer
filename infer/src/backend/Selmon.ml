@@ -174,7 +174,7 @@ let minimize_product (markov_chain : mc) dfa_final pair =
   else if List.mem ~equal:Int.equal old_decide_no 0 then dummy_no
   else begin
     let check_keys h =
-      assert (List.equal ~equal:Int.equal old_vertices (keys_of h)) in
+      assert (List.equal Int.equal old_vertices (keys_of h)) in
     let initial_classes = (* classes are MCx{maybe,n,y} *)
       let classes = Int.Table.create () in
       let offset = Int.Table.create () in

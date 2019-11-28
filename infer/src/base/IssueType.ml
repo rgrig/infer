@@ -451,8 +451,6 @@ let complexity_increase ~kind ~is_on_cold_start ~is_on_ui_thread =
 
 let topl_error = register_from_string "TOPL_ERROR"
 
-let topl_error = from_string "TOPL_ERROR"
-
 let unary_minus_applied_to_unsigned_expression =
   register_from_string ~enabled:false "UNARY_MINUS_APPLIED_TO_UNSIGNED_EXPRESSION"
 

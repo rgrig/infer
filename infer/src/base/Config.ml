@@ -2142,12 +2142,30 @@ and select =
     "Select bug number $(i,N). If omitted, prompt for input."
 
 
+and sfg_coalesce =
+  CLOpt.mk_bool ~long:"sfg-coalesce" ~default:true
+    ~in_help:[Report, manual_generic]
+    "In symbolic flowgraphs, coalesce vertices known to correspond to the same program location."
+
+and sfg_keep_epsilon =
+  CLOpt.mk_bool ~long:"sfg-keep-epsilon"
+    ~in_help:[Report, manual_generic]
+    "In symbolic flowgraphs, do not remove epsilon transitions."
 and scuba_logging = CLOpt.mk_bool ~long:"scuba-logging" "(direct) logging to scuba "
 
 and scuba_normals =
   CLOpt.mk_string_map ~long:"scuba-normal"
     "add an extra string (normal) field to be set for each sample of scuba, format <name>=<value>"
 
+and sfg_output =
+  CLOpt.mk_bool ~long:"sfg-output"
+    ~in_help:[Report, manual_generic]
+    "Output symbolic flowgraphs, in .sfg.dot files."
+
+and sfg_selmon =
+  CLOpt.mk_string_opt ~long:"sfg-selmon"
+    ~in_help:[Report, manual_generic]
+    "Specialize the named monitor for each of the named symbolic flowgraphs."
 
 and siof_safe_methods =
   CLOpt.mk_string_list ~long:"siof-safe-methods"
@@ -3180,6 +3198,14 @@ and results_dir = !results_dir
 and seconds_per_iteration = !seconds_per_iteration
 
 and select = !select
+
+and sfg_coalesce = !sfg_coalesce
+
+and sfg_keep_epsilon = !sfg_keep_epsilon
+
+and sfg_output = !sfg_output
+
+and sfg_selmon = !sfg_selmon
 
 and scuba_logging = !scuba_logging
 
