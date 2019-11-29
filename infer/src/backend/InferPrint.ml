@@ -1148,10 +1148,96 @@ let finalize_and_close_files format_list_by_kind (stats : Stats.t) =
   List.iter ~f:close_files_of_report_kind format_list_by_kind
 
 
+let sfg_id = ref 0
+let sfg_output summary =
+  let proc_name = Summary.get_proc_name summary in
+  let fname = Typ.Procname.to_filename proc_name in
+  F.printf "Dumping paths for %s@\n%!" fname;
+  Unix.close DB.Results_dir.(create_file Abs_root ["paths"; fname]);
+  let fname = DB.Results_dir.(path_to_filename Abs_root ["paths"; fname]) in
+  let fname = DB.filename_to_string fname in
+  let o_sfgfile = Utils.create_outfile (Printf.sprintf "%s.sfg.dot" fname) in
+  let o_mon = match Config.sfg_selmon with
+    | None -> None
+    | Some mname ->
+        let o_monfile = Utils.create_outfile (Printf.sprintf "%s.mon.dot" fname) in
+        let o_mondfa = Selmon.load_dfa mname in
+        Option.both o_monfile o_mondfa in
+  let dump_monitor graph (monfile, dfa) =
+    let mc = Selmon.mc_of_calls graph in
+    let mon = Selmon.product dfa mc in
+    let () =
+      let cost_filename t = Printf.sprintf "%s-%d.%s.lp" fname !sfg_id t in
+      Selmon.cost_optim (cost_filename "optim") fname mon;
+      Selmon.cost_seeall (cost_filename "seeall") fname mon in
+    let fmt = monfile.Utils.fmt in
+    let pp_arc
+      src
+      Selmon.
+        { arc_label = { nh_probability; nh_letter; nh_target }
+        ; arc_target = tgt }
+    =
+      F.fprintf fmt "%d -> %d [label=\"%.2f:%s:%d\"];@\n"
+        src tgt nh_probability nh_letter nh_target in
+    let pp_vertex ~key:src ~data:arcs =
+      List.iter ~f:(pp_arc src) arcs in
+    let color c m x =
+      F.fprintf fmt "%d [style=\"filled\" fillcolor=\"%s\"] // %s@\n" x c m in
+    F.fprintf fmt "@[<2>digraph mon {@\n";
+    F.fprintf fmt "// MON_SIZE %d ID %d@\n" Selmon.(size mon.mon_mc) !sfg_id;
+    color "yellow" "INITIAL" Selmon.initial_vertex;
+    Int.Table.iteri mon.Selmon.mon_mc ~f:pp_vertex;
+    List.iter ~f:(color "green" "YES") mon.Selmon.mon_decide_yes;
+    List.iter ~f:(color "red" "NO") mon.Selmon.mon_decide_no;
+    F.fprintf fmt "@]@\n}@\n%!" in
+  let dump_specs sfgfile specs =
+    let debug = false in
+    let specs = BiabductionSummary.normalized_specs_to_specs specs in
+    let fmt = sfgfile.Utils.fmt in
+    let dump_path (_post, path) =
+      incr sfg_id;
+      if debug then begin
+        F.fprintf fmt "@[<2>(PATH:@\n";
+        F.fprintf fmt "%a" Paths.Path.pp path;
+        F.fprintf fmt "@]@\n)@\n"
+      end;
+      let graph = Paths.Path.get_calls
+        ~coalesce:Config.sfg_coalesce
+        ~with_epsilon:Config.sfg_keep_epsilon
+        proc_name path
+      in
+      F.fprintf fmt "@[<2>digraph sfg {@\n";
+      F.fprintf fmt "// SFG_SIZE %d ID %d@\n" (List.length graph.Paths.edges) !sfg_id;
+      F.fprintf fmt "// START %d STOP %d@\n" graph.Paths.start_node graph.Paths.stop_node;
+      let pp_k fmt label = F.fprintf fmt "%s" (Selmon.string_of_label label) in
+      let pp_edge (src, tgt, kind) =
+        F.fprintf fmt "  %d -> %d [label=\"%a\"];@\n" src tgt pp_k kind in
+      List.iter ~f:pp_edge graph.Paths.edges;
+      F.fprintf fmt "@]@\n}@\n%!";
+      Option.iter ~f:(dump_monitor graph) o_mon
+    in
+    let dump_one_spec spec =
+      List.iter ~f:dump_path spec.BiabductionSummary.posts in
+    List.iter ~f:dump_one_spec specs
+  in
+  let maybe_dump a b = match a, b with
+    | Some a, Some b ->
+        F.printf "Generating symbolic flowgraphs into %s@\n%!" fname;
+        dump_specs a b
+    | _ ->
+        F.printf "SKIP generating flowgraphs into %s@\n%!" fname in
+  let o_preposts = match summary.Summary.payloads.Payloads.biabduction with
+    | None -> None
+    | Some biabduction -> Some biabduction.BiabductionSummary.preposts in
+  maybe_dump o_sfgfile o_preposts;
+  Option.iter ~f:Utils.close_outf o_sfgfile;
+  Option.iter ~f:(function (file, _) -> Utils.close_outf file) o_mon
+
 let pp_summary_and_issues formats_by_report_kind issue_formats =
   let stats = Stats.create () in
   let linereader = Printer.LineReader.create () in
   let filters = Inferconfig.create_filters () in
+  if Config.sfg_output then SpecsFiles.iter_from_config ~f:sfg_output;
   let all_issues = ref [] in
   SpecsFiles.iter_from_config ~f:(fun summary ->
       all_issues :=

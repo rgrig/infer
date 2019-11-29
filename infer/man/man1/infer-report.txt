@@ -326,6 +326,23 @@ OPTIONS
        --results-dir,-o dir
            Write results and internal files in the specified directory
 
+       --no-sfg-coalesce
+           Deactivates: In symbolic flowgraphs, coalesce vertices known to
+           correspond to the same program location. (Conversely:
+           --sfg-coalesce)
+
+       --sfg-keep-epsilon
+           Activates: In symbolic flowgraphs, do not remove epsilon
+           transitions. (Conversely: --no-sfg-keep-epsilon)
+
+       --sfg-output
+           Activates: Output symbolic flowgraphs, in .sfg.dot files.
+           (Conversely: --no-sfg-output)
+
+       --sfg-selmon string
+           Specialize the named monitor for each of the named symbolic
+           flowgraphs.
+
        --skip-analysis-in-path-skips-compilation
            Activates: Whether paths in --skip-analysis-in-path should be
            compiled or not (Conversely:

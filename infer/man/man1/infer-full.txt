@@ -1009,6 +1009,23 @@ OPTIONS
            Activates: Enable --self_in_block and disable all other checkers
            (Conversely: --no-self_in_block-only)           See also infer-analyze(1).
 
+       --no-sfg-coalesce
+           Deactivates: In symbolic flowgraphs, coalesce vertices known to
+           correspond to the same program location. (Conversely:
+           --sfg-coalesce)           See also infer-report(1).
+
+       --sfg-keep-epsilon
+           Activates: In symbolic flowgraphs, do not remove epsilon
+           transitions. (Conversely: --no-sfg-keep-epsilon)           See also infer-report(1).
+
+       --sfg-output
+           Activates: Output symbolic flowgraphs, in .sfg.dot files.
+           (Conversely: --no-sfg-output)           See also infer-report(1).
+
+       --sfg-selmon string
+           Specialize the named monitor for each of the named symbolic
+           flowgraphs.           See also infer-report(1).
+
        --no-siof
            Deactivates: the Static Initialization Order Fiasco analysis (C++
            only) (Conversely: --siof)           See also infer-analyze(1).
@@ -1707,6 +1724,9 @@ INTERNAL OPTIONS
 
        --select-reset
            Cancel the effect of --select.
+
+       --sfg-selmon-reset
+           Cancel the effect of --sfg-selmon.
 
        --siof-safe-methods-reset
            Set --siof-safe-methods to the empty list.

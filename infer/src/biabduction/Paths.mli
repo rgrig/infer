@@ -67,6 +67,9 @@ module Path : sig
   (** keep only information about calls, perhaps coalescing vertices that
   correspond to the same place in the program *)
 
+  val pp : Format.formatter -> t -> unit
+  (** pretty print a path *)
+
   val start : Procdesc.Node.t -> t
   (** create a new path with given start node *)
 end
