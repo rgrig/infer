@@ -623,7 +623,7 @@ end = struct
       | Pcall (p, pname_q, ExecCompleted q, _) ->
           if Int.equal (s pname_r p) (s pname_q q) then
             L.(die InternalError) "Same start??";
-          (i pname_r p, s pname_q q, Call pname) :: (i pname_q q, ir, Return pname) :: edges
+          (i pname_r p, s pname_q q, Call pname_q) :: (i pname_q q, ir, Return pname_q) :: edges
       | Pjoin (p, q, _) ->
           (i pname_r p, ir, Epsilon) :: (i pname_r q, ir, Epsilon) :: edges
     in
