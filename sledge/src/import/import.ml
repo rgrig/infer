@@ -12,16 +12,8 @@ include (
     sig
       include
         (module type of Base
-          (* extended below, remove *)
-          with module Array := Base.Array
-           and module Invariant := Base.Invariant
-           and module List := Base.List
-           and module Map := Base.Map
-           and module Option := Base.Option
-           and module Result := Base.Result
-           and module Set := Base.Set
           (* prematurely deprecated, remove and use Stdlib instead *)
-           and module Filename := Base.Filename
+          with module Filename := Base.Filename
            and module Format := Base.Format
            and module Marshal := Base.Marshal
            and module Scanf := Base.Scanf
@@ -32,6 +24,8 @@ include (
 (* undeprecate *)
 external ( == ) : 'a -> 'a -> bool = "%eq"
 external ( != ) : 'a -> 'a -> bool = "%noteq"
+
+exception Not_found = Caml.Not_found
 
 include Stdio
 module Command = Core.Command
@@ -46,6 +40,7 @@ let trd3 (_, _, z) = z
 (** Function combinators *)
 
 let ( >> ) f g x = g (f x)
+let ( << ) f g x = f (g x)
 let ( $ ) f g x = f x ; g x
 let ( $> ) x f = f x ; x
 let ( <$ ) f x = f x ; x
@@ -142,6 +137,20 @@ let map_preserving_phys_equal map t ~f =
   in
   if !change then t' else t
 
+module type Applicative_syntax = sig
+  type 'a t
+
+  val ( let+ ) : 'a t -> ('a -> 'b) -> 'b t
+  val ( and+ ) : 'a t -> 'b t -> ('a * 'b) t
+end
+
+module type Monad_syntax = sig
+  include Applicative_syntax
+
+  val ( let* ) : 'a t -> ('a -> 'b t) -> 'b t
+  val ( and* ) : 'a t -> 'b t -> ('a * 'b) t
+end
+
 module Option = struct
   include Base.Option
 
@@ -150,9 +159,19 @@ module Option = struct
     | None -> ()
 
   let cons xo xs = match xo with Some x -> x :: xs | None -> xs
+
+  module Monad_syntax = struct
+    type nonrec 'a t = 'a t
+
+    let ( let+ ) x f = map ~f x
+    let ( and+ ) x y = both x y
+    let ( let* ) x f = bind ~f x
+    let ( and* ) x y = both x y
+  end
 end
 
 include Option.Monad_infix
+include Option.Monad_syntax
 
 module List = struct
   include Base.List
@@ -167,7 +186,7 @@ module List = struct
         | xs -> Format.fprintf fs "%( %)%a" sep (pp sep pp_elt) xs ) ;
         Option.iter suf ~f:(Format.fprintf fs)
 
-  let pop_exn = function x :: xs -> (x, xs) | [] -> raise Caml.Not_found
+  let pop_exn = function x :: xs -> (x, xs) | [] -> raise Not_found
 
   let find_map_remove xs ~f =
     let rec find_map_remove_ ys = function
@@ -190,13 +209,11 @@ module List = struct
 
   let remove_exn ?(equal = phys_equal) xs x =
     let rec remove_ ys = function
-      | [] -> raise Caml.Not_found
+      | [] -> raise Not_found
       | z :: xs ->
           if equal x z then rev_append ys xs else remove_ (z :: ys) xs
     in
     remove_ [] xs
-
-  let remove xs x = try Some (remove_exn xs x) with Caml.Not_found -> None
 
   let rec rev_init n ~f =
     if n = 0 then []
@@ -224,17 +241,15 @@ module Map = struct
 
   let equal_m__t (module Elt : Compare_m) equal_v = equal equal_v
 
-  let find_and_remove_exn m k =
+  let find_and_remove m k =
     let found = ref None in
     let m =
       change m k ~f:(fun v ->
           found := v ;
           None )
     in
-    match !found with None -> raise Caml.Not_found | Some v -> (v, m)
-
-  let find_and_remove m k =
-    try Some (find_and_remove_exn m k) with Caml.Not_found -> None
+    let+ v = !found in
+    (v, m)
 
   let find_or_add (type data) map key ~(default : data) ~if_found ~if_added
       =

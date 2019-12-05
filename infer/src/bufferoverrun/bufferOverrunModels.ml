@@ -100,7 +100,7 @@ let fgets str_exp num_exp =
     let traces = Trace.Set.join (Dom.Val.get_traces str_v) (Dom.Val.get_traces num_v) in
     let update_strlen1 allocsite arrinfo acc =
       let strlen =
-        let offset = ArrayBlk.ArrInfo.offsetof arrinfo in
+        let offset = ArrayBlk.ArrInfo.get_offset arrinfo in
         let num = Dom.Val.get_itv num_v in
         Itv.plus offset (Itv.set_lb_zero (Itv.decr num))
       in
@@ -449,8 +449,7 @@ let create_copy_array src_exp =
 
 
 module CFArray = struct
-  (** Creates a new array from the given array by copying the first X
-     elements. *)
+  (** Creates a new array from the given array by copying the first X elements. *)
   let create_array src_exp size_exp =
     let {exec= malloc_exec; check= _} = malloc ~can_be_zero:true size_exp in
     let exec model_env ~ret:((id, _) as ret) mem =
@@ -471,7 +470,7 @@ module CFArray = struct
   let length e =
     let exec {integer_type_widths} ~ret:(ret_id, _) mem =
       let v = Sem.eval_arr integer_type_widths e mem in
-      let length = Dom.Val.of_itv (ArrayBlk.sizeof (Dom.Val.get_array_blk v)) in
+      let length = Dom.Val.of_itv (ArrayBlk.get_size (Dom.Val.get_array_blk v)) in
       Dom.Mem.add_stack (Loc.of_id ret_id) length mem
     in
     {exec; check= no_check}
@@ -673,7 +672,7 @@ module StdVector = struct
       let deref_of_vec = deref_of model_env elt_typ vec_arg mem in
       let array_v = Dom.Mem.find_set deref_of_vec mem in
       let traces = Dom.Val.get_traces array_v in
-      let size = ArrayBlk.sizeof (Dom.Val.get_array_blk array_v) in
+      let size = ArrayBlk.get_size (Dom.Val.get_array_blk array_v) in
       let empty = Dom.Val.of_itv ~traces (Itv.of_bool (Itv.le_sem size Itv.zero)) in
       let mem = model_by_value empty id mem in
       match PowLoc.is_singleton_or_more deref_of_vec with
@@ -766,8 +765,8 @@ module StdBasicString = struct
   let length = StdVector.size
 end
 
-(** Java's integers are modeled with an indirection to a memory
-   location that holds the actual integer value *)
+(** Java's integers are modeled with an indirection to a memory location that holds the actual
+    integer value *)
 module JavaInteger = struct
   let intValue exp =
     let exec _ ~ret:(id, _) mem =
@@ -884,8 +883,8 @@ module Collection = struct
     {exec; check= no_check}
 
 
-  (** increase the size by [0, 1] because put replaces the value
-     rather than add a new one when the key is found in the map *)
+  (** increase the size by [0, 1] because put replaces the value rather than add a new one when the
+      key is found in the map *)
   let put coll_id = {exec= change_size_by_incr_or_not coll_id; check= no_check}
 
   (* The return value is set by [set_itv_updated_by_addition] in order to be sure that it can be
@@ -954,9 +953,8 @@ module Collection = struct
     {exec; check= no_check}
 
 
-  (** Returns a view of the portion of this list between the specified
-     fromIndex, inclusive, and toIndex, exclusive. Simply model it as
-     creating a new list with length toIndex - fromIndex.  *)
+  (** Returns a view of the portion of this list between the specified fromIndex, inclusive, and
+      toIndex, exclusive. Simply model it as creating a new list with length toIndex - fromIndex. *)
   let subList from_exp to_exp =
     let exec ({integer_type_widths} as model) ~ret mem =
       let from_idx = Sem.eval integer_type_widths from_exp mem in
@@ -967,8 +965,8 @@ module Collection = struct
     {exec; check= no_check}
 
 
-  (** increase the size by [0, |collection_to_add|] because put replaces the value
-     rather than add a new one when the key is found in the map *)
+  (** increase the size by [0, |collection_to_add|] because put replaces the value rather than add a
+      new one when the key is found in the map *)
   let putAll coll_id coll_to_add =
     let exec model_env ~ret mem =
       let to_add_length =

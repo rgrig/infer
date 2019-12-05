@@ -890,8 +890,8 @@ DEFINE-CHECKER IVAR_CAPTURED_IN_OBJC_BLOCK = {
 	};
 
 DEFINE-CHECKER CALLS_TO_FUNCTIONS_WITH_CREATE_FUNCTION_PARAMETERS = {
-LET is_create_method_parameter = HOLDS-NEXT WITH-TRANSITION Parameters 
-    (call_function(REGEXP(".*Create.*")) AND has_type("REGEXP('C.*Ref')"));
+LET is_create_method_parameter = HOLDS-NEXT WITH-TRANSITION Parameters
+    (call_function(REGEXP(".*Create.*")) AND has_type("REGEXP('__C.+')*"));
 SET report_when =
     WHEN
       is_create_method_parameter
@@ -907,8 +907,51 @@ DEFINE-CHECKER CLASS_AND_VAR = {
         (global_var_exists()));
 
    SET report_when =
-   WHEN var_decl() AND declaration_has_name("SiblingExample")
+   WHEN (var_decl() AND declaration_has_name("SiblingExample"))
    HOLDS-IN-NODE  ObjCInterfaceDecl;
 
 	 SET message = "Found a global var next to a class";
+};
+
+DEFINE-CHECKER CAT_DECL_MACRO = {
+
+  LET is_linkable_var =
+      is_extern_var() AND
+      declaration_has_name(REGEXP("Linkable_.*")) AND
+      has_type("char");
+
+	 LET var_decls =
+	  		HOLDS-NEXT WITH-TRANSITION Sibling
+        (is_node("VarDecl") AND is_linkable_var());
+
+   SET report_when =
+       WHEN
+       NOT (
+          is_node("ObjCCategoryDecl")
+           AND-WITH-WITNESSES var_decls() : decl_name_is_contained_in_name_of_decl()
+      )
+      HOLDS-IN-NODE ObjCCategoryDecl;
+
+	 SET message = "A category is defined without the corresponding macro";
+};
+
+DEFINE-CHECKER CAT_IMPL_MACRO = {
+
+  LET is_linkable_var =
+      has_visibility_attribute("Default") AND
+      declaration_has_name(REGEXP("Linkable_.*")) AND
+      has_type("char");
+
+	 LET var_decls =
+	  		HOLDS-NEXT WITH-TRANSITION Sibling
+        (is_node("VarDecl") AND is_linkable_var());
+
+   SET report_when =
+       WHEN
+      NOT (
+          is_node("ObjCCategoryImplDecl")
+           AND-WITH-WITNESSES var_decls() : decl_name_is_contained_in_name_of_decl()
+      ) HOLDS-IN-NODE ObjCCategoryImplDecl;
+
+	 SET message = "A category is implemented without the corresponding macro";
 };

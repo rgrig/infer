@@ -24,14 +24,12 @@ module SymbolPath : sig
     | Field of {fn: Typ.Fieldname.t; prefix: partial; typ: Typ.t option}
     | Callsite of {ret_typ: Typ.t; cs: CallSite.t}
     | StarField of {last_field: Typ.Fieldname.t; prefix: partial}
-        (**
-          Represents a path starting with [prefix] and ending with the field [last_field],
-          the middle can be anything.
-          Invariants:
-          - There is at most one StarField
-          - StarField excluded, there are no duplicate fieldnames
-          - StarField can only be followed by Deref elements
-        *)
+        (** Represents a path starting with [prefix] and ending with the field [last_field], the
+            middle can be anything. Invariants:
+
+            - There is at most one StarField
+            - StarField excluded, there are no duplicate fieldnames
+            - StarField can only be followed by Deref elements *)
   [@@deriving compare]
 
   type t = private
@@ -121,6 +119,10 @@ module Symbol : sig
   val of_pulse_value : PulseAbstractValue.t -> t
 
   val exists_str : f:(string -> bool) -> t -> bool
+
+  val is_pulse_value : t -> bool
+
+  val get_pulse_value_exn : t -> PulseAbstractValue.t
 end
 
 module SymbolSet : sig

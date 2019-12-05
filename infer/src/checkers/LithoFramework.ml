@@ -41,6 +41,14 @@ let is_component procname tenv =
       false
 
 
+let is_call_build_inside procname tenv =
+  match Typ.Procname.get_method procname with
+  | "child" ->
+      is_component_builder procname tenv
+  | _ ->
+      false
+
+
 let is_component_build_method procname tenv =
   match Typ.Procname.get_method procname with
   | "build" ->
@@ -58,6 +66,14 @@ let is_on_create_layout = function
     match Typ.Procname.Java.get_method java_pname with "onCreateLayout" -> true | _ -> false )
   | _ ->
       false
+
+
+let get_component_create_typ_opt procname tenv =
+  match procname with
+  | Typ.Procname.Java java_pname when is_component_create_method procname tenv ->
+      Some (Typ.Procname.Java.get_class_type_name java_pname)
+  | _ ->
+      None
 
 
 module type LithoContext = sig
@@ -121,9 +137,7 @@ struct
         , location ) ->
         let callee_summary_opt = Payload.read ~caller_summary:summary ~callee_pname in
         let receiver =
-          Domain.LocalAccessPath.make
-            (HilExp.AccessExpression.to_access_path receiver_ae)
-            caller_pname
+          Domain.LocalAccessPath.make_from_access_expression receiver_ae caller_pname
         in
         if
           ( LithoContext.check_callee ~callee_pname ~tenv callee_summary_opt
@@ -133,11 +147,30 @@ struct
           && LithoContext.satisfies_heuristic ~callee_pname ~callee_summary_opt tenv
         then
           let return_access_path = Domain.LocalAccessPath.make (return_base, []) caller_pname in
+          let callee = Domain.MethodCall.make receiver callee_pname location in
           let return_calls =
             (try Domain.find return_access_path astate with Caml.Not_found -> Domain.CallSet.empty)
-            |> Domain.CallSet.add (Domain.MethodCall.make receiver callee_pname location)
+            |> Domain.CallSet.add callee
           in
-          Domain.add return_access_path return_calls astate
+          let astate = Domain.add return_access_path return_calls astate in
+          match get_component_create_typ_opt callee_pname tenv with
+          | Some create_typ ->
+              Domain.call_create return_access_path create_typ location astate
+          | None ->
+              if is_component_build_method callee_pname tenv then
+                Domain.call_build_method ~ret:return_access_path ~receiver astate
+              else if is_call_build_inside callee_pname tenv then
+                match actuals with
+                | _ :: HilExp.AccessExpression ae :: _ ->
+                    let receiver =
+                      Domain.LocalAccessPath.make_from_access_expression ae caller_pname
+                    in
+                    Domain.call_build_method ~ret:return_access_path ~receiver astate
+                | _ ->
+                    astate
+              else if is_component_builder callee_pname tenv then
+                Domain.call_builder ~ret:return_access_path ~receiver callee astate
+              else astate
         else
           (* treat it like a normal call *)
           apply_callee_summary callee_summary_opt caller_pname return_base actuals astate
@@ -146,7 +179,7 @@ struct
           Payload.read ~caller_summary:summary ~callee_pname:callee_procname
         in
         apply_callee_summary callee_summary_opt caller_pname ret_id_typ actuals astate
-    | Assign (lhs_ae, HilExp.AccessExpression rhs_ae, _) -> (
+    | Assign (lhs_ae, HilExp.AccessExpression rhs_ae, _) ->
         (* creating an alias for the rhs binding; assume all reads will now occur through the
            alias. this helps us keep track of chains in cases like tmp = getFoo(); x = tmp;
            tmp.getBar() *)
@@ -156,10 +189,13 @@ struct
         let rhs_access_path =
           Domain.LocalAccessPath.make (HilExp.AccessExpression.to_access_path rhs_ae) caller_pname
         in
-        try
-          let call_set = Domain.find rhs_access_path astate in
-          Domain.remove rhs_access_path astate |> Domain.add lhs_access_path call_set
-        with Caml.Not_found -> astate )
+        let astate =
+          try
+            let call_set = Domain.find rhs_access_path astate in
+            Domain.remove rhs_access_path astate |> Domain.add lhs_access_path call_set
+          with Caml.Not_found -> astate
+        in
+        Domain.assign ~lhs:lhs_access_path ~rhs:rhs_access_path astate
     | _ ->
         astate
 
@@ -168,7 +204,7 @@ struct
 end
 
 module MakeAnalyzer (LithoContext : LithoContext with type t = Domain.t) = struct
-  module TF = TransferFunctions (ProcCfg.Exceptional) (LithoContext)
+  module TF = TransferFunctions (ProcCfg.Normal) (LithoContext)
   module A = LowerHil.MakeAbstractInterpreter (TF)
 
   let checker {Callbacks.summary; exe_env} =

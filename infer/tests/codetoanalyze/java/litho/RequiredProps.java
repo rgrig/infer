@@ -80,7 +80,7 @@ public class RequiredProps {
     return builder.prop2(new Object()).prop3(new Object()).build();
   }
 
-  public Component setRequiredOnBothBranchesOk_FP(boolean b) {
+  public Component setRequiredOnBothBranchesOk(boolean b) {
     MyComponent.Builder builder = mMyComponent.create();
     if (b) {
       builder = builder.prop1(new Object());
@@ -102,12 +102,35 @@ public class RequiredProps {
   }
 
   // gets confused at cyclic dependency to builder when setting prop1
-  public Component setRequiredOk_FP(boolean b) {
+  public Component setRequiredOk(boolean b) {
     MyComponent.Builder builder = mMyComponent.create();
     builder = builder.prop1(new Object());
     return builder.prop2(new Object()).prop3(new Object()).build();
   }
 
+  // gets confused at side-effectfull prop setting
+  public Component setRequiredEffectful_FP(boolean b) {
+    MyComponent.Builder builder = mMyComponent.create();
+    builder.prop1(new Object());
+    return builder.prop2(new Object()).prop3(new Object()).build();
+  }
+
+  public Component setRequiredOnOneBranchEffectfulBad(boolean b) {
+    MyComponent.Builder builder = mMyComponent.create();
+    if (b) {
+      builder.prop1(new Object());
+    }
+    return builder.prop2(new Object()).prop3(new Object()).build();
+  }
+
+  public void buildPropLithoMissingOneInLoopBad(int x) {
+
+    for (int i = 0; i < x; i++) {
+      Column.create()
+          .child(mMyLithoComponent.create().prop1(new Object()).commonProp(new Object()))
+          .build();
+    }
+  }
   // due to mutual recursion check, we break cycle at seen props
   public Component doubleSetMissingBad_FN() {
     Component.Builder builder =
@@ -205,6 +228,26 @@ public class RequiredProps {
 
   public void buildPropResMissingBad() {
     mResPropComponent.create().build();
+  }
+
+  public void buildPropResInCondOk_FP(boolean b) {
+    ResPropComponent.Builder builder = mResPropComponent.create();
+    if (b) {
+      builder.propAttr(new Object());
+    } else {
+      builder.propDip(new Object());
+    }
+    builder.build();
+  }
+
+  public void buildPropResInCondOneNormalOk_FP(boolean b) {
+    ResPropComponent.Builder builder = mResPropComponent.create();
+    if (b) {
+      builder.propAttr(new Object());
+    } else {
+      builder.prop(new Object());
+    }
+    builder.build();
   }
 
   public void buildPropVarArgNormalOk() {

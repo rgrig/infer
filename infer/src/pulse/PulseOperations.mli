@@ -45,6 +45,17 @@ val eval_access :
 (** Like [eval] but starts from an address instead of an expression, checks that it is valid, and if
     so dereferences it according to the access. *)
 
+type operand = LiteralOperand of IntLit.t | AbstractValueOperand of AbstractValue.t
+
+val eval_binop :
+     Location.t
+  -> Binop.t
+  -> operand
+  -> operand
+  -> ValueHistory.t
+  -> t
+  -> t * (AbstractValue.t * ValueHistory.t)
+
 val havoc_id : Ident.t -> ValueHistory.t -> t -> t
 
 val havoc_deref :
@@ -104,3 +115,13 @@ val call :
   -> t list access_result
 (** perform an interprocedural call: apply the summary for the call proc name passed as argument if
     it exists *)
+
+val unknown_call :
+     Location.t
+  -> CallEvent.t
+  -> ret:Ident.t * 'a
+  -> actuals:((AbstractValue.t * ValueHistory.t) * Typ.t) list
+  -> t
+  -> t
+(** performs a call to a function with no summary by optimistically havoc'ing the by-ref actuals and
+    the return value as appropriate *)

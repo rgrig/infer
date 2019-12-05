@@ -269,10 +269,8 @@ and eval_binop : Typ.IntegerWidths.t -> Binop.t -> Exp.t -> Exp.t -> Mem.t -> Va
       Val.lor_sem v1 v2
 
 
-(**
-  [eval_locs exp mem] is like [eval exp mem |> Val.get_all_locs]
-  but takes some shortcuts to avoid computing useless and/or problematic intermediate values
-*)
+(** [eval_locs exp mem] is like [eval exp mem |> Val.get_all_locs] but takes some shortcuts to avoid
+    computing useless and/or problematic intermediate values *)
 let rec eval_locs : Exp.t -> Mem.t -> PowLoc.t =
  fun exp mem ->
   match exp with
@@ -441,10 +439,10 @@ let eval_sympath ~mode params sympath mem =
       (Val.get_itv v, Val.get_traces v)
   | Symb.SymbolPath.Offset {p} ->
       let v = eval_sympath_partial ~mode params p mem in
-      (ArrayBlk.offsetof ~cost_mode:(is_cost_mode mode) (Val.get_array_blk v), Val.get_traces v)
+      (ArrayBlk.get_offset ~cost_mode:(is_cost_mode mode) (Val.get_array_blk v), Val.get_traces v)
   | Symb.SymbolPath.Length {p} ->
       let v = eval_sympath_partial ~mode params p mem in
-      (ArrayBlk.sizeof ~cost_mode:(is_cost_mode mode) (Val.get_array_blk v), Val.get_traces v)
+      (ArrayBlk.get_size ~cost_mode:(is_cost_mode mode) (Val.get_array_blk v), Val.get_traces v)
 
 
 let mk_eval_sym_trace integer_type_widths (callee_formals : (Pvar.t * Typ.t) list)
@@ -498,7 +496,7 @@ let eval_array_locs_length arr_locs mem =
   else
     let arr = Mem.find_set arr_locs mem in
     let traces = Val.get_traces arr in
-    let length = Val.get_array_blk arr |> ArrayBlk.sizeof in
+    let length = Val.get_array_blk arr |> ArrayBlk.get_size in
     match Itv.get_bound length Symb.BoundEnd.UpperBound with
     | NonBottom b when not (Bounds.Bound.is_pinf b) ->
         Val.of_itv ~traces length
@@ -645,7 +643,7 @@ module Prune = struct
         ~f:(fun astate (alias_typ, lv, i, java_tmp) ->
           let array_v = Mem.find lv mem in
           let lhs =
-            Val.get_array_blk array_v |> ArrayBlk.sizeof
+            Val.get_array_blk array_v |> ArrayBlk.get_size
             |> Itv.plus (Itv.of_int_lit i)
             |> Val.of_itv |> Val.set_itv_updated_by_addition
           in

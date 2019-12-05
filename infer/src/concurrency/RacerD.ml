@@ -183,8 +183,17 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   let call_without_summary callee_pname ret_base call_flags actuals astate =
     let open RacerDModels in
     let open RacerDDomain in
-    let should_assume_returns_ownership (call_flags : CallFlags.t) actuals =
-      (not call_flags.cf_interface) && List.is_empty actuals
+    let should_assume_returns_ownership callee_pname (call_flags : CallFlags.t) actuals =
+      (* non-interface methods with no summary and no parameters *)
+      ((not call_flags.cf_interface) && List.is_empty actuals)
+      || (* static [$Builder] creation methods *)
+      creates_builder callee_pname
+    in
+    let should_assume_returns_conditional_ownership callee_pname =
+      (* non-interface methods with  no parameters  *)
+      is_abstract_getthis_like callee_pname
+      || (* non-static [$Builder] methods with same return type as receiver type *)
+      is_builder_passthrough callee_pname
     in
     if is_box callee_pname then
       match actuals with
@@ -200,14 +209,13 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           else astate
       | _ ->
           astate
-    else if should_assume_returns_ownership call_flags actuals then
-      (* assume non-interface methods with no summary and no parameters return ownership *)
+    else if should_assume_returns_ownership callee_pname call_flags actuals then
       let ownership =
         OwnershipDomain.add (AccessExpression.base ret_base) OwnershipAbstractValue.owned
           astate.ownership
       in
       {astate with ownership}
-    else if is_abstract_getthis_like callee_pname then
+    else if should_assume_returns_conditional_ownership callee_pname then
       (* assume abstract, single-parameter methods whose return type is equal to that of the first
          formal return conditional ownership -- an example is getThis in Litho *)
       let ownership =
@@ -788,13 +796,11 @@ let should_filter_access exp_opt =
       AccessExpression.to_accesses exp |> snd |> List.exists ~f:check_access )
 
 
-(**
-  Map containing reported accesses, which groups them in lists, by abstract location.
-  The equivalence relation used for grouping them is equality of access paths.
-  This is slightly complicated because local variables contain the pname of the function declaring
-  them.  Here we want a purely name-based comparison, and in particular that [this == this]
-  regardless the method declaring it.  Hence the redefined comparison functions.
-*)
+(** Map containing reported accesses, which groups them in lists, by abstract location. The
+    equivalence relation used for grouping them is equality of access paths. This is slightly
+    complicated because local variables contain the pname of the function declaring them. Here we
+    want a purely name-based comparison, and in particular that [this == this] regardless the method
+    declaring it. Hence the redefined comparison functions. *)
 module ReportMap : sig
   type t
 
@@ -927,23 +933,22 @@ let should_report_guardedby_violation classname_str ({snapshot; tenv; procname} 
     To cut down on duplication noise we don't always report at both sites (line numbers) involved in
     a race.
 
-    -- If a protected access races with an unprotected one, we don't report the protected but we do
-       report the unprotected one (and we point to the protected from the unprotected one).  This
-       way the report is at the line number in a race-pair where the programmer should take action.
+    \-- If a protected access races with an unprotected one, we don't report the protected but we do
+    report the unprotected one (and we point to the protected from the unprotected one). This way
+    the report is at the line number in a race-pair where the programmer should take action.
 
-    -- Similarly, if a threaded and unthreaded (not known to be threaded) access race, we report at
-       the unthreaded site.
+    \-- Similarly, if a threaded and unthreaded (not known to be threaded) access race, we report at
+    the unthreaded site.
 
     Also, we avoid reporting multiple races at the same line (which can happen a lot in an
     interprocedural scenario) or multiple accesses to the same field in a single method, expecting
     that the programmer already gets signal from one report. To report all the races with separate
-    warnings leads to a lot of noise.  But note, we never suppress all the potential issues in a
+    warnings leads to a lot of noise. But note, we never suppress all the potential issues in a
     class: if we don't report any races, it means we didn't find any.
 
     The above is tempered at the moment by abstractions of "same lock" and "same thread": we are
     currently not distinguishing different locks, and are treating "known to be confined to a
-    thread" as if "known to be confined to UI thread".
-*)
+    thread" as if "known to be confined to UI thread". *)
 let report_unsafe_accesses ~issue_log classname (aggregated_access_map : ReportMap.t) =
   let open RacerDDomain in
   let open RacerDModels in

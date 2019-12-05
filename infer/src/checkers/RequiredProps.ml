@@ -92,8 +92,6 @@ let find_client_component_type call_chain =
     call_chain
 
 
-let suffixes = String.Set.of_list ["Attr"; "Dip"; "Px"; "Res"; "Sp"]
-
 let has_prop prop_set prop =
   let check prop =
     String.Set.mem prop_set prop
@@ -102,7 +100,7 @@ let has_prop prop_set prop =
           that all @Prop's can be set any of these 6 ways. *)
     String.Set.exists prop_set ~f:(fun el ->
         String.chop_prefix el ~prefix:prop
-        |> Option.exists ~f:(fun suffix -> String.Set.mem suffixes suffix) )
+        |> Option.exists ~f:(fun suffix -> String.Set.mem LithoDomain.suffixes suffix) )
   in
   match prop with
   | Prop prop ->
@@ -125,7 +123,8 @@ module LithoContext = struct
     (* If the method is build() or create() itself or doesn't contain a build() in
        its summary, we want to track it in the domain. *)
     ( LithoFramework.is_component_build_method callee_pname tenv
-    || LithoFramework.is_component_create_method callee_pname tenv )
+    || LithoFramework.is_component_create_method callee_pname tenv
+    || (Config.new_litho_domain && LithoFramework.is_call_build_inside callee_pname tenv) )
     ||
     (* check if build()/create() exists in callees *)
     let build_exists_in_callees =
@@ -154,6 +153,15 @@ module LithoContext = struct
 
 
   let report astate tenv summary =
+    let check_on_string_set parent_typename call_chain prop_set =
+      let required_props = get_required_props parent_typename tenv in
+      List.iter
+        ~f:(fun required_prop ->
+          if not (has_prop prop_set required_prop) then
+            report_missing_required_prop summary required_prop parent_typename
+              (Summary.get_loc summary) call_chain )
+        required_props
+    in
     let check_required_prop_chain _ call_chain =
       let call_chain =
         List.drop_while call_chain ~f:(fun Domain.MethodCall.{procname} ->
@@ -168,25 +176,17 @@ module LithoContext = struct
            ones are annotated with @Prop *)
         match find_client_component_type call_chain with
         | Some parent_typename ->
-            let required_props = get_required_props parent_typename tenv in
             let prop_set =
-              List.map
-                ~f:(fun Domain.MethodCall.{procname} -> Typ.Procname.get_method procname)
-                call_chain
-              |> String.Set.of_list
+              List.map ~f:Domain.MethodCall.procname_to_string call_chain |> String.Set.of_list
             in
-            List.iter
-              ~f:(fun required_prop ->
-                if not (has_prop prop_set required_prop) then
-                  report_missing_required_prop summary required_prop parent_typename
-                    (Summary.get_loc summary) call_chain )
-              required_props
+            check_on_string_set parent_typename call_chain prop_set
         | _ ->
             () )
       | _ ->
           ()
     in
-    Domain.iter_call_chains ~f:check_required_prop_chain astate
+    if Config.new_litho_domain then Domain.check_required_props ~check_on_string_set astate
+    else Domain.iter_call_chains ~f:check_required_prop_chain astate
 
 
   let session_name = "litho required props"

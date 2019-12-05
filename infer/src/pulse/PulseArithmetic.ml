@@ -5,6 +5,8 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
+[@@@ocamlformat "parse-docstrings = false"]
+
 open! IStd
 module F = Format
 module L = Logging
@@ -159,6 +161,13 @@ let pp fmt = function
       F.fprintf fmt "≠%a" IntLit.pp l
   | Outside (l, u) ->
       F.fprintf fmt "∉[%a,%a]" IntLit.pp l IntLit.pp u
+
+
+let is_equal_to_zero = function
+  | Between (Int l, Int u) when IntLit.iszero l && IntLit.iszero u ->
+      true
+  | _ ->
+      false
 
 
 let has_empty_intersection a1 a2 =

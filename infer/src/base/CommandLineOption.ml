@@ -742,7 +742,7 @@ let set_curr_speclist_for_parse_mode ~usage parse_mode =
   let curr_usage status =
     prerr_endline (String.concat_array ~sep:" " !args_to_parse) ;
     prerr_endline usage ;
-    Pervasives.exit status
+    Stdlib.exit status
   in
   (* "-help" and "--help" are automatically recognized by Arg.parse, so we have to give them special
      treatment *)
@@ -912,7 +912,7 @@ let decode_env_to_argv env =
   String.split ~on:env_var_sep env |> List.filter ~f:(Fn.non String.is_empty)
 
 
-(** [prefix_before_rest (prefix @ ["--" :: rest])] is [prefix] where "--" is not in [prefix]. *)
+(** [prefix_before_rest (prefix @ \["--" :: rest\])] is [prefix] where "--" is not in [prefix]. *)
 let rev_prefix_before_rest args =
   let rec rev_prefix_before_rest_ rev_keep = function
     | [] | "--" :: _ ->
@@ -963,7 +963,7 @@ let parse_args ~usage initial_action ?initial_command args =
           parse_loop () )
         else (
           ANSITerminal.prerr_string L.(term_styles_of_style Fatal) usage_msg ;
-          Pervasives.exit 1 )
+          Stdlib.exit 1 )
     | Arg.Help _ ->
         (* we handle --help by ourselves and error on -help, so Arg has no way to raise Help
            anymore *)

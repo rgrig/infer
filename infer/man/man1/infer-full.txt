@@ -449,6 +449,7 @@ OPTIONS
              MEMORY_LEAK (enabled by default),
              MISSING_REQUIRED_PROP (enabled by default),
              MIXED_SELF_WEAKSELF (enabled by default),
+             MULTIPLE_WEAKSELF (enabled by default),
              MUTABLE_LOCAL_VARIABLE_IN_COMPONENT_FILE (enabled by default),
              Missing_fld (enabled by default),
              NULLPTR_DEREFERENCE (disabled by default),
@@ -1554,6 +1555,10 @@ INTERNAL OPTIONS
 
        --never-returning-null json
            Matcher or list of matchers for functions that never return null.
+
+       --new-litho-domain
+           Activates: [EXPERIMENTAL] Use new litho domain (Conversely:
+           --no-new-litho-domain)
 
        --nullable-annotation-name string
            Specify custom nullable annotation name

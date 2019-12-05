@@ -15,6 +15,10 @@ module LocalAccessPath = struct
 
   let make access_path parent = {access_path; parent}
 
+  let make_from_access_expression ae parent =
+    make (HilExp.AccessExpression.to_access_path ae) parent
+
+
   let to_formal_option {access_path= ((_, base_typ) as base), accesses; parent} formal_map =
     match FormalMap.get_formal_index base formal_map with
     | Some formal_index ->
@@ -26,6 +30,8 @@ module LocalAccessPath = struct
   let pp fmt t = AccessPath.pp fmt t.access_path
 end
 
+let suffixes = String.Set.of_list ["Attr"; "Dip"; "Px"; "Res"; "Sp"]
+
 module MethodCall = struct
   type t = {receiver: LocalAccessPath.t; procname: Typ.Procname.t; location: Location.t}
   [@@deriving compare]
@@ -34,32 +40,278 @@ module MethodCall = struct
 
   let pp fmt {receiver; procname} =
     F.fprintf fmt "%a.%a" LocalAccessPath.pp receiver Typ.Procname.pp procname
+
+
+  let procname_to_string {procname} = Typ.Procname.get_method procname
 end
 
 module CallSet = AbstractDomain.FiniteSet (MethodCall)
-include AbstractDomain.Map (LocalAccessPath) (CallSet)
+module OldDomain = AbstractDomain.Map (LocalAccessPath) (CallSet)
 
-let substitute ~(f_sub : LocalAccessPath.t -> LocalAccessPath.t option) astate =
-  fold
-    (fun original_access_path call_set acc ->
-      let access_path' =
-        match f_sub original_access_path with
-        | Some access_path ->
-            access_path
+module NewDomain = struct
+  module CreatedLocation = struct
+    type t = {location: Location.t; typ_name: Typ.name} [@@deriving compare]
+
+    let pp fmt {location; typ_name} =
+      F.fprintf fmt "Created at %a with type %a" Location.pp location Typ.Name.pp typ_name
+  end
+
+  module CreatedLocations = AbstractDomain.InvertedSet (CreatedLocation)
+
+  module Created = struct
+    include AbstractDomain.InvertedMap (LocalAccessPath) (CreatedLocations)
+
+    let lookup k x = Option.value (find_opt k x) ~default:CreatedLocations.empty
+  end
+
+  module MethodCalls = struct
+    module IsBuildMethodCalled = AbstractDomain.BooleanAnd
+
+    module S = AbstractDomain.InvertedSet (struct
+      include MethodCall
+
+      let compare_procname p1 p2 =
+        let chopped_opt pname =
+          let method_name = Typ.Procname.get_method pname in
+          String.Set.find_map suffixes ~f:(fun suffix -> String.chop_suffix method_name ~suffix)
+        in
+        let replace_both s p =
+          match p with
+          | Typ.Procname.Java java_pname ->
+              (* This is a bit of a hack to quickly compare based on only
+                 method names *)
+              Typ.Procname.Java
+                ( Typ.Procname.Java.replace_method_name s java_pname
+                |> Typ.Procname.Java.replace_parameters [] )
+          | _ ->
+              p
+        in
+        let p1, p2 =
+          match (chopped_opt p1, chopped_opt p2) with
+          | Some chopped1, Some chopped2 ->
+              (replace_both chopped1 p1, replace_both chopped2 p2)
+          | Some chopped1, None ->
+              (replace_both chopped1 p1, Typ.Procname.replace_parameters [] p2)
+          | None, Some chopped2 ->
+              (Typ.Procname.replace_parameters [] p1, replace_both chopped2 p2)
+          | _ ->
+              (p1, p2)
+        in
+        Typ.Procname.compare p1 p2
+
+
+      let compare x y =
+        let r = LocalAccessPath.compare x.receiver y.receiver in
+        if r <> 0 then r else compare_procname x.procname y.procname
+    end)
+
+    (* TODO: add return type && and do not add return method to the set *)
+    type t = {is_build_method_called: IsBuildMethodCalled.t; method_calls: S.t}
+
+    let pp fmt {is_build_method_called; method_calls} =
+      F.fprintf fmt "%a%s" S.pp method_calls
+        (if is_build_method_called then " then build() called" else "")
+
+
+    let leq ~lhs ~rhs =
+      IsBuildMethodCalled.leq ~lhs:lhs.is_build_method_called ~rhs:rhs.is_build_method_called
+      && S.leq ~lhs:lhs.method_calls ~rhs:rhs.method_calls
+
+
+    let join x y =
+      { is_build_method_called=
+          IsBuildMethodCalled.join x.is_build_method_called y.is_build_method_called
+      ; method_calls= S.join x.method_calls y.method_calls }
+
+
+    let widen ~prev ~next ~num_iters =
+      { is_build_method_called=
+          IsBuildMethodCalled.widen ~prev:prev.is_build_method_called
+            ~next:next.is_build_method_called ~num_iters
+      ; method_calls= S.widen ~prev:prev.method_calls ~next:next.method_calls ~num_iters }
+
+
+    let empty = {is_build_method_called= false; method_calls= S.empty}
+
+    let singleton e = {is_build_method_called= false; method_calls= S.singleton e}
+
+    let add e ({is_build_method_called; method_calls} as x) =
+      if is_build_method_called then x else {x with method_calls= S.add e method_calls}
+
+
+    let set_build_method_called x = {x with is_build_method_called= true}
+
+    let to_string_set method_calls =
+      let accum_as_string method_call acc =
+        String.Set.add acc (MethodCall.procname_to_string method_call)
+      in
+      S.fold accum_as_string method_calls String.Set.empty
+
+
+    let get_call_chain method_calls =
+      (* TODO: sort chain by inserted order *)
+      S.elements method_calls
+
+
+    let check_required_props ~check_on_string_set parent_typename
+        {is_build_method_called; method_calls} =
+      if is_build_method_called then
+        let prop_set = to_string_set method_calls in
+        let call_chain = get_call_chain method_calls in
+        check_on_string_set parent_typename call_chain prop_set
+  end
+
+  module MethodCalled = struct
+    include AbstractDomain.InvertedMap (CreatedLocation) (MethodCalls)
+
+    let add_one k v x =
+      let f = function
         | None ->
-            original_access_path
+            Some (MethodCalls.singleton v)
+        | Some method_calls ->
+            Some (MethodCalls.add v method_calls)
       in
-      let call_set' =
-        CallSet.fold
-          (fun ({procname; location} as call) call_set_acc ->
-            let receiver =
-              match f_sub call.receiver with Some receiver' -> receiver' | None -> call.receiver
-            in
-            CallSet.add {receiver; procname; location} call_set_acc )
-          call_set CallSet.empty
+      update k f x
+
+
+    let add_all created_locations callee x =
+      CreatedLocations.fold
+        (fun created_location acc -> add_one created_location callee acc)
+        created_locations x
+
+
+    let build_method_called_one created_location x =
+      let f v =
+        let method_calls = Option.value v ~default:MethodCalls.empty in
+        Some (MethodCalls.set_build_method_called method_calls)
       in
-      add access_path' call_set' acc )
-    astate empty
+      update created_location f x
+
+
+    let build_method_called created_locations x =
+      CreatedLocations.fold build_method_called_one created_locations x
+
+
+    let check_required_props ~check_on_string_set x =
+      let f CreatedLocation.{typ_name} method_calls =
+        MethodCalls.check_required_props ~check_on_string_set typ_name method_calls
+      in
+      iter f x
+  end
+
+  type t = {created: Created.t; method_called: MethodCalled.t}
+
+  let pp fmt {created; method_called} =
+    F.fprintf fmt "@[<v 0>@[Created:@;%a@]@,@[MethodCalled:@;%a@]@]" Created.pp created
+      MethodCalled.pp method_called
+
+
+  let leq ~lhs ~rhs =
+    Created.leq ~lhs:lhs.created ~rhs:rhs.created
+    && MethodCalled.leq ~lhs:lhs.method_called ~rhs:rhs.method_called
+
+
+  let join x y =
+    { created= Created.join x.created y.created
+    ; method_called= MethodCalled.join x.method_called y.method_called }
+
+
+  let widen ~prev ~next ~num_iters =
+    { created= Created.widen ~prev:prev.created ~next:next.created ~num_iters
+    ; method_called= MethodCalled.widen ~prev:prev.method_called ~next:next.method_called ~num_iters
+    }
+
+
+  let empty = {created= Created.empty; method_called= MethodCalled.empty}
+
+  let assign ~lhs ~rhs ({created} as x) =
+    {x with created= Created.add lhs (Created.lookup rhs created) created}
+
+
+  let call_create lhs typ_name location ({created} as x) =
+    {x with created= Created.add lhs (CreatedLocations.singleton {location; typ_name}) created}
+
+
+  let call_builder ~ret ~receiver callee {created; method_called} =
+    let created_locations = Created.lookup receiver created in
+    { created= Created.add ret created_locations created
+    ; method_called= MethodCalled.add_all created_locations callee method_called }
+
+
+  let call_build_method ~ret ~receiver {created; method_called} =
+    let created_locations = Created.lookup receiver created in
+    { created= Created.add ret created_locations created
+    ; method_called= MethodCalled.build_method_called created_locations method_called }
+
+
+  let check_required_props ~check_on_string_set {method_called} =
+    MethodCalled.check_required_props ~check_on_string_set method_called
+end
+
+include struct
+  include AbstractDomain.Pair (OldDomain) (NewDomain)
+
+  let lift_old f (o, _) = f o
+
+  let lift_new f (_, n) = f n
+
+  let map_old f (o, n) = (f o, n)
+
+  let map_new f (o, n) = (o, f n)
+
+  let empty = (OldDomain.empty, NewDomain.empty)
+
+  let add k v = map_old (OldDomain.add k v)
+
+  let remove k = map_old (OldDomain.remove k)
+
+  let bindings = lift_old OldDomain.bindings
+
+  let find k = lift_old (OldDomain.find k)
+
+  let mem k = lift_old (OldDomain.mem k)
+
+  let iter f = lift_old (OldDomain.iter f)
+
+  let fold f (o, _) init = OldDomain.fold f o init
+
+  let assign ~lhs ~rhs = map_new (NewDomain.assign ~lhs ~rhs)
+
+  let call_create ret typ_name location = map_new (NewDomain.call_create ret typ_name location)
+
+  let call_builder ~ret ~receiver callee = map_new (NewDomain.call_builder ~ret ~receiver callee)
+
+  let call_build_method ~ret ~receiver = map_new (NewDomain.call_build_method ~ret ~receiver)
+
+  let check_required_props ~check_on_string_set =
+    lift_new (NewDomain.check_required_props ~check_on_string_set)
+end
+
+let substitute ~(f_sub : LocalAccessPath.t -> LocalAccessPath.t option) ((_, new_astate) as astate)
+    =
+  let old_astate, _ =
+    fold
+      (fun original_access_path call_set acc ->
+        let access_path' =
+          match f_sub original_access_path with
+          | Some access_path ->
+              access_path
+          | None ->
+              original_access_path
+        in
+        let call_set' =
+          CallSet.fold
+            (fun ({procname; location} as call) call_set_acc ->
+              let receiver =
+                match f_sub call.receiver with Some receiver' -> receiver' | None -> call.receiver
+              in
+              CallSet.add {receiver; procname; location} call_set_acc )
+            call_set CallSet.empty
+        in
+        add access_path' call_set' acc )
+      astate empty
+  in
+  (old_astate, new_astate)
 
 
 (** Unroll the domain to enumerate all the call chains ending in [call] and apply [f] to each

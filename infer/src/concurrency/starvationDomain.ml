@@ -46,9 +46,9 @@ module ThreadDomain = struct
     |> F.pp_print_string fmt
 
 
-  (** Can two thread statuses occur in parallel? Only [UIThread, UIThread] is forbidden. 
-      In addition, this is monotonic wrt the lattice (increasing either argument cannot 
-      transition from true to false). *)
+  (** Can two thread statuses occur in parallel? Only [UIThread, UIThread] is forbidden. In
+      addition, this is monotonic wrt the lattice (increasing either argument cannot transition from
+      true to false). *)
   let can_run_in_parallel st1 st2 =
     match (st1, st2) with UIThread, UIThread -> false | _, _ -> true
 
@@ -59,9 +59,9 @@ module ThreadDomain = struct
      Otherwise, we have no info on caller, so use callee's info. *)
   let integrate_summary ~caller ~callee = if is_bottom caller then callee else caller
 
-  (** given the current thread state [caller_thread] and the thread state under which a critical pair
-      occurred, [pair_thread], decide whether to throw away the pair (returning [None]) because it 
-      cannot occur within a call from the current state, or adapt its thread state appropriately. *)
+  (** given the current thread state [caller_thread] and the thread state under which a critical
+      pair occurred, [pair_thread], decide whether to throw away the pair (returning [None]) because
+      it cannot occur within a call from the current state, or adapt its thread state appropriately. *)
   let apply_to_pair caller_thread pair_thread =
     match (caller_thread, pair_thread) with
     | UnknownThread, _ ->
@@ -119,6 +119,7 @@ module Event = struct
     | LockAcquire of Lock.t
     | MayBlock of (string * StarvationModels.severity)
     | StrictModeCall of string
+    | MonitorWait of Lock.t
   [@@deriving compare]
 
   let pp fmt = function
@@ -128,6 +129,8 @@ module Event = struct
         F.fprintf fmt "MayBlock(%s, %a)" msg StarvationModels.pp_severity sev
     | StrictModeCall msg ->
         F.fprintf fmt "StrictModeCall(%s)" msg
+    | MonitorWait lock ->
+        F.fprintf fmt "MonitorWait(%a)" Lock.pp lock
 
 
   let describe fmt elem =
@@ -138,6 +141,8 @@ module Event = struct
         F.pp_print_string fmt msg
     | StrictModeCall msg ->
         F.pp_print_string fmt msg
+    | MonitorWait lock ->
+        F.fprintf fmt "calls `wait` on %a" Lock.describe lock
 
 
   let make_acquire lock = LockAcquire lock
@@ -152,10 +157,13 @@ module Event = struct
   let make_strict_mode_call callee =
     let descr = make_call_descr callee in
     StrictModeCall descr
+
+
+  let make_object_wait lock = MonitorWait lock
 end
 
-(** A lock acquisition with source location and procname in which it occurs.
-    The location & procname are *ignored* for comparisons, and are only for reporting. *)
+(** A lock acquisition with source location and procname in which it occurs. The location & procname
+    are *ignored* for comparisons, and are only for reporting. *)
 module Acquisition = struct
   type t =
     {lock: Lock.t; loc: Location.t [@compare.ignore]; procname: Typ.Procname.t [@compare.ignore]}
@@ -409,11 +417,12 @@ let is_recursive_lock event tenv =
       false
 
 
-(** skip adding an order pair [(_, event)] if  
-  - we have no tenv, or,
-  - [event] is not a lock event, or,
-  - we do not hold the lock, or,
-  - the lock is not recursive. *)
+(** skip adding an order pair [(_, event)] if
+
+    - we have no tenv, or,
+    - [event] is not a lock event, or,
+    - we do not hold the lock, or,
+    - the lock is not recursive. *)
 let should_skip ?tenv event lock_state =
   Option.exists tenv ~f:(fun tenv ->
       LockState.is_lock_taken event lock_state && is_recursive_lock event tenv )
@@ -447,8 +456,9 @@ module Attribute = struct
   type t =
     | Nothing
     | ThreadGuard
-    | Executor of StarvationModels.executor_thread_constraint
     | Runnable of Typ.Procname.t
+    | WorkScheduler of StarvationModels.scheduler_thread_constraint
+    | Looper of StarvationModels.scheduler_thread_constraint
   [@@deriving equal]
 
   let top = Nothing
@@ -466,10 +476,12 @@ module Attribute = struct
         F.pp_print_string fmt "Nothing"
     | ThreadGuard ->
         F.pp_print_string fmt "ThreadGuard"
-    | Executor c ->
-        F.fprintf fmt "Executor(%a)" pp_constr c
     | Runnable runproc ->
         F.fprintf fmt "Runnable(%a)" Typ.Procname.pp runproc
+    | WorkScheduler c ->
+        F.fprintf fmt "WorkScheduler(%a)" pp_constr c
+    | Looper c ->
+        F.fprintf fmt "Looper(%a)" pp_constr c
 
 
   let join lhs rhs = if equal lhs rhs then lhs else Nothing
@@ -486,15 +498,15 @@ module AttributeDomain = struct
     find_opt acc_exp t |> Option.exists ~f:(function Attribute.ThreadGuard -> true | _ -> false)
 
 
-  let get_executor_constraint acc_exp t =
-    find_opt acc_exp t |> Option.bind ~f:(function Attribute.Executor c -> Some c | _ -> None)
+  let get_scheduler_constraint acc_exp t =
+    find_opt acc_exp t |> Option.bind ~f:(function Attribute.WorkScheduler c -> Some c | _ -> None)
 
 
   let exit_scope vars t =
     let pred key _value =
       HilExp.AccessExpression.get_base key
       |> fst
-      |> fun v -> not (List.exists vars ~f:(Var.equal v))
+      |> fun v -> Var.is_this v || not (List.exists vars ~f:(Var.equal v))
     in
     filter pred t
 end
@@ -594,6 +606,16 @@ let blocking_call ~callee sev ~loc astate =
   make_call_with_event new_event ~loc astate
 
 
+let wait_on_monitor ~loc actuals astate =
+  match actuals with
+  | HilExp.AccessExpression exp :: _ ->
+      let lock = HilExp.AccessExpression.to_access_path exp in
+      let new_event = Event.make_object_wait lock in
+      make_call_with_event new_event ~loc astate
+  | _ ->
+      astate
+
+
 let strict_mode_call ~callee ~loc astate =
   let new_event = Event.make_strict_mode_call callee in
   make_call_with_event new_event ~loc astate
@@ -635,7 +657,7 @@ let filter_blocking_calls ({critical_pairs} as astate) =
 
 let schedule_work loc thread_constraint astate procname =
   let thread : ThreadDomain.t =
-    match (thread_constraint : StarvationModels.executor_thread_constraint) with
+    match (thread_constraint : StarvationModels.scheduler_thread_constraint) with
     | ForUIThread ->
         UIThread
     | ForNonUIThread ->
@@ -651,19 +673,23 @@ type summary =
   { critical_pairs: CriticalPairs.t
   ; thread: ThreadDomain.t
   ; scheduled_work: ScheduledWorkDomain.t
+  ; attributes: AttributeDomain.t
   ; return_attribute: Attribute.t }
 
 let empty_summary : summary =
   { critical_pairs= CriticalPairs.bottom
   ; thread= ThreadDomain.bottom
   ; scheduled_work= ScheduledWorkDomain.bottom
+  ; attributes= AttributeDomain.top
   ; return_attribute= Attribute.top }
 
 
 let pp_summary fmt (summary : summary) =
-  F.fprintf fmt "{thread= %a; critical_pairs= %a; scheduled_work= %a; return_attributes= %a}"
+  F.fprintf fmt
+    "{thread= %a; critical_pairs= %a; scheduled_work= %a; attributes= %a; return_attributes= %a}"
     ThreadDomain.pp summary.thread CriticalPairs.pp summary.critical_pairs ScheduledWorkDomain.pp
-    summary.scheduled_work Attribute.pp summary.return_attribute
+    summary.scheduled_work AttributeDomain.pp summary.attributes Attribute.pp
+    summary.return_attribute
 
 
 let integrate_summary ?tenv ?lhs callsite (astate : t) (summary : summary) =
@@ -681,14 +707,34 @@ let integrate_summary ?tenv ?lhs callsite (astate : t) (summary : summary) =
 
 let summary_of_astate : Procdesc.t -> t -> summary =
  fun proc_desc astate ->
+  let proc_name = Procdesc.get_proc_name proc_desc in
+  let attributes =
+    let var_predicate =
+      match proc_name with
+      | Typ.Procname.Java jname when Typ.Procname.Java.is_class_initializer jname ->
+          (* only keep static attributes for the class initializer *)
+          fun v -> Var.is_global v
+      | Typ.Procname.Java jname when Typ.Procname.Java.is_constructor jname ->
+          (* only keep static attributes or ones that have [this] as their root *)
+          fun v -> Var.is_this v || Var.is_global v
+      | _ ->
+          (* non-constructor/class initializer or non-java, don't keep any attributes *)
+          Fn.const false
+    in
+    AttributeDomain.filter
+      (fun exp _ -> HilExp.AccessExpression.get_base exp |> fst |> var_predicate)
+      astate.attributes
+  in
+  let return_attribute =
+    let return_var_exp =
+      HilExp.AccessExpression.base
+        (Var.of_pvar (Pvar.get_ret_pvar proc_name), Procdesc.get_ret_type proc_desc)
+    in
+    AttributeDomain.find_opt return_var_exp astate.attributes
+    |> Option.value ~default:Attribute.Nothing
+  in
   { critical_pairs= astate.critical_pairs
   ; thread= astate.thread
   ; scheduled_work= astate.scheduled_work
-  ; return_attribute=
-      (let return_var_exp =
-         HilExp.AccessExpression.base
-           ( Var.of_pvar (Pvar.get_ret_pvar (Procdesc.get_proc_name proc_desc))
-           , Procdesc.get_ret_type proc_desc )
-       in
-       AttributeDomain.find_opt return_var_exp astate.attributes
-       |> Option.value ~default:Attribute.Nothing ) }
+  ; attributes
+  ; return_attribute }

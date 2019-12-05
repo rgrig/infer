@@ -96,16 +96,16 @@ val pp : t pp
 
 include Invariant.S with type t := t
 
-type exp = t
-
 (** Exp.Reg is re-exported as Reg *)
 module Reg : sig
+  type exp := t
   type t = private exp [@@deriving compare, equal, hash, sexp]
-  type reg = t
 
   include Comparator.S with type t := t
 
   module Set : sig
+    type reg := t
+
     type t = (reg, comparator_witness) Set.t
     [@@deriving compare, equal, sexp]
 
@@ -117,6 +117,8 @@ module Reg : sig
   end
 
   module Map : sig
+    type reg := t
+
     type 'a t = (reg, 'a, comparator_witness) Map.t
     [@@deriving compare, equal, sexp]
 
@@ -200,7 +202,7 @@ val select : Typ.t -> t -> int -> t
 val update : Typ.t -> rcd:t -> int -> elt:t -> t
 
 val struct_rec :
-     (module Hashtbl.Key with type t = 'id)
+     (module Hashtbl.Key.S with type t = 'id)
   -> (id:'id -> Typ.t -> t lazy_t vector -> t) Staged.t
 (** [struct_rec Id id element_thunks] constructs a possibly-cyclic [Struct]
     value. Cycles are detected using [Id]. The caller of [struct_rec Id]

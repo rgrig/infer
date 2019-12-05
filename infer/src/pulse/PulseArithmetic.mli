@@ -7,14 +7,11 @@
 open! IStd
 module F = Format
 
-module Bound : sig
-  type t = Int of IntLit.t | MinusInfinity | PlusInfinity
-end
-
-type t = private Between of Bound.t * Bound.t | Outside of IntLit.t * IntLit.t
-[@@deriving compare]
+type t [@@deriving compare]
 
 val equal_to : IntLit.t -> t
+
+val is_equal_to_zero : t -> bool
 
 val pp : F.formatter -> t -> unit
 
@@ -27,14 +24,13 @@ type abduction_result =
 val abduce_binop_is_true : negated:bool -> Binop.t -> t option -> t option -> abduction_result
 (** given [arith_lhs_opt bop arith_rhs_opt] and if not [negated], return either
 
-   - [Unsatisfiable] iff lhs bop rhs = ∅
+    - [Unsatisfiable] iff lhs bop rhs = ∅
 
-   - [Satisfiable (abduced_lhs_opt,abduced_rhs_opt)] iff lhs bop rhs ≠ ∅, such that (taking lhs=true
-    if lhs_opt is [None], same for rhs) [abduced_lhs_opt=Some alhs] if (lhs bop rhs ≠ ∅ => alhs⇔lhs)
-    (and similarly for rhs)
+    - [Satisfiable (abduced_lhs_opt,abduced_rhs_opt)] iff lhs bop rhs ≠ ∅, such that (taking
+      lhs=true if lhs_opt is [None], same for rhs) [abduced_lhs_opt=Some alhs] if (lhs bop rhs ≠
+      ∅ => alhs⇔lhs) (and similarly for rhs)
 
-    If [negated] then imagine a similar explanation replacing "= ∅" with "≠ ∅" and vice-versa.
-*)
+    If [negated] then imagine a similar explanation replacing "= ∅" with "≠ ∅" and vice-versa. *)
 
 val binop : Binop.t -> t -> t -> t option
 

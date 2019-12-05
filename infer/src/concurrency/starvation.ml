@@ -79,7 +79,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     AttributeDomain.find_opt exp astate.attributes
     |> IOption.if_none_evalopt ~f:(fun () ->
            StarvationModels.get_executor_thread_annotation_constraint tenv exp
-           |> Option.map ~f:(fun constr -> Attribute.Executor constr) )
+           |> Option.map ~f:(fun constr -> Attribute.WorkScheduler constr) )
     |> IOption.if_none_evalopt ~f:(fun () ->
            StarvationModels.get_run_method_from_runnable tenv exp
            |> Option.map ~f:(fun procname -> Attribute.Runnable procname) )
@@ -87,32 +87,31 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
   let do_work_scheduling tenv callee actuals loc (astate : Domain.t) =
     let open Domain in
-    let schedule_work runnable thread =
-      match get_exp_attributes tenv runnable astate with
-      | Some (Attribute.Runnable procname) ->
-          Domain.schedule_work loc thread astate procname
-      | _ ->
-          astate
+    let schedule_work (runnable, thread) =
+      get_exp_attributes tenv runnable astate
+      |> Option.bind ~f:(function Attribute.Runnable procname -> Some procname | _ -> None)
+      |> Option.fold ~init:astate ~f:(Domain.schedule_work loc thread)
     in
-    match actuals with
-    | HilExp.AccessExpression executor :: HilExp.AccessExpression runnable :: _
-      when StarvationModels.schedules_work tenv callee ->
-        let thread =
-          match get_exp_attributes tenv executor astate with
-          | Some (Attribute.Executor constr) ->
-              constr
-          | _ ->
-              StarvationModels.ForUnknownThread
-        in
-        schedule_work runnable thread
-    | HilExp.AccessExpression runnable :: _
-      when StarvationModels.schedules_work_on_ui_thread tenv callee ->
-        schedule_work runnable StarvationModels.ForUIThread
-    | HilExp.AccessExpression runnable :: _
-      when StarvationModels.schedules_work_on_bg_thread tenv callee ->
-        schedule_work runnable StarvationModels.ForNonUIThread
-    | _ ->
-        astate
+    let work_opt =
+      match actuals with
+      | HilExp.AccessExpression executor :: HilExp.AccessExpression runnable :: _
+        when StarvationModels.schedules_work tenv callee ->
+          let thread =
+            get_exp_attributes tenv executor astate
+            |> Option.bind ~f:(function Attribute.WorkScheduler c -> Some c | _ -> None)
+            |> Option.value ~default:StarvationModels.ForUnknownThread
+          in
+          Some (runnable, thread)
+      | HilExp.AccessExpression runnable :: _
+        when StarvationModels.schedules_work_on_ui_thread tenv callee ->
+          Some (runnable, StarvationModels.ForUIThread)
+      | HilExp.AccessExpression runnable :: _
+        when StarvationModels.schedules_work_on_bg_thread tenv callee ->
+          Some (runnable, StarvationModels.ForNonUIThread)
+      | _ ->
+          None
+    in
+    Option.value_map work_opt ~default:astate ~f:schedule_work
 
 
   let do_assignment tenv lhs_access_exp rhs_exp (astate : Domain.t) =
@@ -124,30 +123,86 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
            {astate with attributes} )
 
 
-  let do_call ProcData.{tenv; summary} lhs callee actuals loc astate =
+  let do_call ProcData.{tenv; summary} lhs callee actuals loc (astate : Domain.t) =
     let open Domain in
+    let make_ret_attr return_attribute = {empty_summary with return_attribute} in
+    let make_thread thread = {empty_summary with thread} in
     let get_returned_executor_summary () =
       StarvationModels.get_returned_executor ~attrs_of_pname tenv callee actuals
-      |> Option.map ~f:(fun thread_constraint ->
-             {empty_summary with return_attribute= Attribute.Executor thread_constraint} )
+      |> Option.map ~f:(fun thread_constraint -> make_ret_attr (WorkScheduler thread_constraint))
     in
     let get_thread_assert_summary () =
       match ConcurrencyModels.get_thread_assert_effect callee with
       | BackgroundThread ->
-          Some {empty_summary with thread= ThreadDomain.BGThread}
+          Some (make_thread BGThread)
       | MainThread ->
-          Some {empty_summary with thread= ThreadDomain.UIThread}
+          Some (make_thread UIThread)
       | MainThreadIfTrue ->
-          Some {empty_summary with return_attribute= Attribute.ThreadGuard}
+          Some (make_ret_attr ThreadGuard)
       | UnknownThread ->
           None
     in
+    let get_mainLooper_summary () =
+      if StarvationModels.is_getMainLooper tenv callee actuals then
+        Some (make_ret_attr (Looper ForUIThread))
+      else None
+    in
     let get_callee_summary () = Payload.read ~caller_summary:summary ~callee_pname:callee in
-    let callsite = CallSite.make callee loc in
-    get_returned_executor_summary ()
-    |> IOption.if_none_evalopt ~f:get_thread_assert_summary
-    |> IOption.if_none_evalopt ~f:get_callee_summary
-    |> Option.fold ~init:astate ~f:(Domain.integrate_summary ~tenv ~lhs callsite)
+    let treat_handler_constructor () =
+      if StarvationModels.is_handler_constructor tenv callee actuals then
+        match actuals with
+        | HilExp.AccessExpression receiver :: HilExp.AccessExpression exp :: _ ->
+            let constr =
+              AttributeDomain.find_opt exp astate.attributes
+              |> Option.bind ~f:(function Attribute.Looper c -> Some c | _ -> None)
+              |> Option.value ~default:StarvationModels.ForUnknownThread
+            in
+            let attributes =
+              AttributeDomain.add receiver (WorkScheduler constr) astate.attributes
+            in
+            Some {astate with attributes}
+        | _ ->
+            None
+      else None
+    in
+    let treat_thread_constructor () =
+      if StarvationModels.is_thread_constructor tenv callee actuals then
+        match actuals with
+        | HilExp.AccessExpression receiver :: rest ->
+            ( match rest with
+            | HilExp.AccessExpression exp1 :: HilExp.AccessExpression exp2 :: _ ->
+                (* two additional arguments, either could be a runnable, see docs *)
+                [exp1; exp2]
+            | HilExp.AccessExpression runnable :: _ ->
+                (* either just one argument, or more but 2nd is not an access expression *)
+                [runnable]
+            | _ ->
+                [] )
+            |> List.map ~f:(fun r () -> StarvationModels.get_run_method_from_runnable tenv r)
+            |> IList.eval_until_first_some
+            |> Option.map ~f:(fun procname ->
+                   let attributes =
+                     AttributeDomain.add receiver (Runnable procname) astate.attributes
+                   in
+                   {astate with attributes} )
+        | _ ->
+            None
+      else None
+    in
+    (* constructor calls are special-cased because they side-effect the receiver and do not
+       return anything *)
+    let treat_modeled_summaries () =
+      let callsite = CallSite.make callee loc in
+      IList.eval_until_first_some
+        [ get_returned_executor_summary
+        ; get_thread_assert_summary
+        ; get_mainLooper_summary
+        ; get_callee_summary ]
+      |> Option.map ~f:(Domain.integrate_summary ~tenv ~lhs callsite astate)
+    in
+    IList.eval_until_first_some
+      [treat_handler_constructor; treat_thread_constructor; treat_modeled_summaries]
+    |> Option.value ~default:astate
 
 
   let exec_instr (astate : Domain.t) ({ProcData.summary; tenv; extras} as procdata) _
@@ -201,6 +256,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           do_lock locks loc astate |> do_unlock locks
       | NoEffect when is_java && is_strict_mode_violation tenv callee actuals ->
           Domain.strict_mode_call ~callee ~loc astate
+      | NoEffect when is_java && is_monitor_wait tenv callee actuals ->
+          Domain.wait_on_monitor ~loc actuals astate
       | NoEffect when is_java -> (
           let ret_exp = HilExp.AccessExpression.base ret_base in
           let astate = do_work_scheduling tenv callee actuals loc astate in
@@ -219,6 +276,73 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 end
 
 module Analyzer = LowerHil.MakeAbstractInterpreter (TransferFunctions (ProcCfg.Normal))
+
+(** Compute the attributes (of static variables) set up by the class initializer. *)
+let set_class_init_attributes procname (astate : Domain.t) =
+  let open Domain in
+  let attributes =
+    Typ.Procname.get_class_type_name procname
+    |> Option.map ~f:(fun tname -> Typ.Procname.(Java (Java.get_class_initializer tname)))
+    |> Option.bind ~f:Payload.read_toplevel_procedure
+    |> Option.value_map ~default:AttributeDomain.top ~f:(fun summary -> summary.attributes)
+  in
+  ({astate with attributes} : t)
+
+
+(** Compute the attributes of instance variables that all constructors agree on. *)
+let set_constructor_attributes tenv procname (astate : Domain.t) =
+  let open Domain in
+  (* make a local [this] variable, for replacing all constructor attribute map keys' roots *)
+  let local_this = Pvar.mk Mangled.this procname |> Var.of_pvar in
+  let make_local exp =
+    (* contract here matches that of [StarvationDomain.summary_of_astate] *)
+    let var, typ = HilExp.AccessExpression.get_base exp in
+    if Var.is_global var then
+      (* let expressions rooted at globals unchanged, these are probably from class initialiser *)
+      exp
+    else (
+      assert (Var.is_this var) ;
+      HilExp.AccessExpression.replace_base ~remove_deref_after_base:false (local_this, typ) exp )
+  in
+  let localize_attrs attributes =
+    AttributeDomain.(fold (fun exp attr acc -> add (make_local exp) attr acc) attributes empty)
+  in
+  let attributes =
+    Typ.Procname.get_class_type_name procname
+    (* retrieve its definition *)
+    |> Option.bind ~f:(Tenv.lookup tenv)
+    (* get the list of methods in the class *)
+    |> Option.value_map ~default:[] ~f:(fun (tstruct : Typ.Struct.t) -> tstruct.methods)
+    (* keep only the constructors *)
+    |> List.filter ~f:Typ.Procname.(function Java jname -> Java.is_constructor jname | _ -> false)
+    (* get the summaries of the constructors *)
+    |> List.filter_map ~f:Payload.read_toplevel_procedure
+    (* make instances of [this] local to the current procedure and select only the attributes *)
+    |> List.map ~f:(fun (summary : Domain.summary) -> localize_attrs summary.attributes)
+    (* join all the attribute maps together *)
+    |> List.reduce ~f:AttributeDomain.join
+    |> Option.value ~default:AttributeDomain.top
+  in
+  {astate with attributes}
+
+
+let set_initial_attributes tenv procname astate =
+  match procname with
+  | Typ.Procname.Java java_pname when Typ.Procname.Java.is_class_initializer java_pname ->
+      (* we are analyzing the class initializer, don't go through on-demand again *)
+      astate
+  | Typ.Procname.Java java_pname
+    when Typ.Procname.Java.(is_constructor java_pname || is_static java_pname) ->
+      (* analyzing a constructor or static method, so we need the attributes established by the
+         class initializer *)
+      set_class_init_attributes procname astate
+  | Typ.Procname.Java _ ->
+      (* we are analyzing an instance method, so we need constructor-established attributes
+         which will include those by the class initializer *)
+      set_constructor_attributes tenv procname astate
+  | _ ->
+      astate
+
 
 let analyze_procedure {Callbacks.exe_env; summary} =
   let proc_desc = Summary.get_proc_desc summary in
@@ -259,7 +383,10 @@ let analyze_procedure {Callbacks.exe_env; summary} =
       else Fn.id
     in
     let initial =
-      Domain.bottom |> set_lock_state_for_synchronized_proc |> set_thread_status_by_annotation
+      Domain.bottom
+      (* set the attributes of instance variables set up by all constructors or the class initializer *)
+      |> set_initial_attributes tenv procname
+      |> set_lock_state_for_synchronized_proc |> set_thread_status_by_annotation
     in
     Analyzer.compute_post proc_data ~initial
     |> Option.map ~f:filter_blocks
@@ -415,17 +542,18 @@ end = struct
 end
 
 let should_report_deadlock_on_current_proc current_elem endpoint_elem =
+  let open Domain in
   (not Config.deduplicate)
   ||
-  let open Domain in
   match (endpoint_elem.CriticalPair.elem.event, current_elem.CriticalPair.elem.event) with
-  | _, (MayBlock _ | StrictModeCall _) | (MayBlock _ | StrictModeCall _), _ ->
+  | _, (MayBlock _ | StrictModeCall _ | MonitorWait _)
+  | (MayBlock _ | StrictModeCall _ | MonitorWait _), _ ->
       (* should never happen *)
       L.die InternalError "Deadlock cannot occur without two lock events: %a" CriticalPair.pp
         current_elem
   | LockAcquire ((Var.LogicalVar _, _), []), _ ->
       (* first elem is a class object (see [lock_of_class]), so always report because the
-         reverse ordering on the events will not occur -- FIXME WHY? *)
+         reverse ordering on the events will not occur since we don't search the class for static locks *)
       true
   | LockAcquire ((Var.LogicalVar _, _), _ :: _), _ | _, LockAcquire ((Var.LogicalVar _, _), _) ->
       (* first elem has an ident root, but has a non-empty access path, which means we are
@@ -480,12 +608,19 @@ let fold_reportable_summaries (tenv, current_summary) clazz ~init ~f =
     The net effect of the above issues is that we will only see these locks in conflicting pairs
     once, as opposed to twice with all other deadlock pairs. *)
 
-(** report warnings possible on the parallel composition of two threads/critical pairs 
+(** report warnings possible on the parallel composition of two threads/critical pairs
     [should_report_starvation] means [pair] is on the UI thread and not on a constructor *)
 let report_on_parallel_composition ~should_report_starvation tenv pdesc pair lock other_pname
     other_pair report_map =
   let open Domain in
   let pname = Procdesc.get_proc_name pdesc in
+  let make_trace_and_loc () =
+    let first_trace = CriticalPair.make_trace ~header:"[Trace 1] " pname pair in
+    let second_trace = CriticalPair.make_trace ~header:"[Trace 2] " other_pname other_pair in
+    let ltr = first_trace @ second_trace in
+    let loc = CriticalPair.get_earliest_lock_or_call_loc ~procname:pname pair in
+    (ltr, loc)
+  in
   if CriticalPair.can_run_in_parallel pair other_pair then
     let acquisitions = other_pair.CriticalPair.elem.acquisitions in
     match other_pair.CriticalPair.elem.event with
@@ -496,25 +631,29 @@ let report_on_parallel_composition ~should_report_starvation tenv pdesc pair loc
             "Method %a runs on UI thread and%a, which may be held by another thread which %s."
             pname_pp pname Lock.pp_locks lock block_descr
         in
-        let first_trace = CriticalPair.make_trace ~header:"[Trace 1] " pname pair in
-        let second_trace = CriticalPair.make_trace ~header:"[Trace 2] " other_pname other_pair in
-        let ltr = first_trace @ second_trace in
-        let loc = CriticalPair.get_earliest_lock_or_call_loc ~procname:pname pair in
+        let ltr, loc = make_trace_and_loc () in
         ReportMap.add_starvation sev tenv pdesc loc ltr error_message report_map
+    | MonitorWait monitor_lock
+      when should_report_starvation
+           && Acquisitions.lock_is_held lock acquisitions
+           && not (Lock.equal lock monitor_lock) ->
+        let error_message =
+          Format.asprintf
+            "Method %a runs on UI thread and%a, which may be held by another thread which %a."
+            pname_pp pname Lock.pp_locks lock Event.describe other_pair.CriticalPair.elem.event
+        in
+        let ltr, loc = make_trace_and_loc () in
+        ReportMap.add_starvation High tenv pdesc loc ltr error_message report_map
     | LockAcquire other_lock
       when CriticalPair.may_deadlock pair other_pair
            && should_report_deadlock_on_current_proc pair other_pair ->
-        let open Domain in
         let error_message =
           Format.asprintf
             "Potential deadlock. %a (Trace 1) and %a (Trace 2) acquire locks %a and %a in reverse \
              orders."
             pname_pp pname pname_pp other_pname Lock.describe lock Lock.describe other_lock
         in
-        let first_trace = CriticalPair.make_trace ~header:"[Trace 1] " pname pair in
-        let second_trace = CriticalPair.make_trace ~header:"[Trace 2] " other_pname other_pair in
-        let ltr = first_trace @ second_trace in
-        let loc = CriticalPair.get_earliest_lock_or_call_loc ~procname:pname pair in
+        let ltr, loc = make_trace_and_loc () in
         ReportMap.add_deadlock tenv pdesc loc ltr error_message report_map
     | _ ->
         report_map
@@ -529,22 +668,32 @@ let report_on_pair ((tenv, summary) as env) (pair : Domain.CriticalPair.t) repor
   let should_report_starvation =
     CriticalPair.is_uithread pair && not (Typ.Procname.is_constructor pname)
   in
+  let make_trace_and_loc () =
+    let loc = CriticalPair.get_loc pair in
+    let ltr = CriticalPair.make_trace ~include_acquisitions:false pname pair in
+    (ltr, loc)
+  in
   match event with
   | MayBlock (_, sev) when should_report_starvation ->
       let error_message =
         Format.asprintf "Method %a runs on UI thread and may block; %a." pname_pp pname
           Event.describe event
       in
-      let loc = CriticalPair.get_loc pair in
-      let ltr = CriticalPair.make_trace ~include_acquisitions:false pname pair in
+      let ltr, loc = make_trace_and_loc () in
       ReportMap.add_starvation sev tenv pdesc loc ltr error_message report_map
+  | MonitorWait _ when should_report_starvation ->
+      let error_message =
+        Format.asprintf "Method %a runs on UI thread and may block; %a." pname_pp pname
+          Event.describe event
+      in
+      let ltr, loc = make_trace_and_loc () in
+      ReportMap.add_starvation High tenv pdesc loc ltr error_message report_map
   | StrictModeCall _ when should_report_starvation ->
       let error_message =
         Format.asprintf "Method %a runs on UI thread and may violate Strict Mode; %a." pname_pp
           pname Event.describe event
       in
-      let loc = CriticalPair.get_loc pair in
-      let ltr = CriticalPair.make_trace ~include_acquisitions:false pname pair in
+      let ltr, loc = make_trace_and_loc () in
       ReportMap.add_strict_mode_violation tenv pdesc loc ltr error_message report_map
   | LockAcquire _ when StarvationModels.is_annotated_lockless ~attrs_of_pname tenv pname ->
       let error_message =

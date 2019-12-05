@@ -40,6 +40,10 @@ module ItvPure = struct
 
   let ub : t -> Bound.t = snd
 
+  let get_bound (lb, ub) bound_end =
+    match bound_end with Symb.BoundEnd.LowerBound -> lb | Symb.BoundEnd.UpperBound -> ub
+
+
   let is_lb_infty : t -> bool = fun (l, _) -> Bound.is_minf l
 
   let is_finite : t -> bool =
@@ -182,6 +186,8 @@ module ItvPure = struct
 
   let is_le_mone : t -> bool = fun (_, ub) -> Bound.le ub Bound.mone
 
+  let is_same_one_symbol (l, u) = Bound.is_same_one_symbol l u
+
   let range : Location.t -> t -> ItvRange.t =
    fun loop_head_loc (lb, ub) -> ItvRange.of_bounds ~loop_head_loc ~lb ~ub
 
@@ -265,7 +271,9 @@ module ItvPure = struct
     | Some n, _ ->
         mult_const n y
     | None, None ->
-        top
+        if is_same_one_symbol x && is_same_one_symbol y then
+          (Bound.mk_MultB (Z.zero, lb x, lb y), Bound.mk_MultB (Z.zero, ub x, ub y))
+        else top
 
 
   let div : t -> t -> t = fun x y -> match get_const y with None -> top | Some n -> div_const x n
@@ -539,14 +547,8 @@ let bot : t = Bottom
 
 let top : t = NonBottom ItvPure.top
 
-let get_bound itv (be : Symb.BoundEnd.t) =
-  match (itv, be) with
-  | Bottom, _ ->
-      Bottom
-  | NonBottom x, LowerBound ->
-      NonBottom (ItvPure.lb x)
-  | NonBottom x, UpperBound ->
-      NonBottom (ItvPure.ub x)
+let get_bound itv bound_end =
+  match itv with Bottom -> Bottom | NonBottom x -> NonBottom (ItvPure.get_bound x bound_end)
 
 
 let false_sem = NonBottom ItvPure.false_sem

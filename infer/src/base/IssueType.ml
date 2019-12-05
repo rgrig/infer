@@ -61,15 +61,16 @@ end = struct
   let set_enabled issue b = issue.enabled <- b
 
   (** Avoid creating new issue types. The idea is that there are three types of issue types:
-        1. Statically pre-defined issue types, namely the ones in this module
 
-        2. Dynamically created ones, eg from custom errors defined in the models, or defined by the
+      + Statically pre-defined issue types, namely the ones in this module
+
+      + Dynamically created ones, eg from custom errors defined in the models, or defined by the
         user in AL linters
 
-        3. Issue types created at command-line-parsing time. These can mention issues of type 1. or
-        2., but issues of type 2. have not yet been defined. Thus, we record only there [enabled]
-        status definitely. The [hum]an-readable description can be updated when we encounter the
-        definition of the issue type, eg in AL. *)
+      + Issue types created at command-line-parsing time. These can mention issues of type 1. or 2.,
+        but issues of type 2. have not yet been defined. Thus, we record only there [enabled] status
+        definitely. The [hum]an-readable description can be updated when we encounter the definition
+        of the issue type, eg in AL. *)
   let register_from_string ?(enabled = true) ?hum:hum0 ?doc_url ?linters_def_file unique_id =
     let hum = match hum0 with Some str -> str | _ -> prettify unique_id in
     let issue = {unique_id; enabled; hum; doc_url; linters_def_file} in
@@ -360,6 +361,8 @@ let missing_fld = register_from_string "Missing_fld" ~hum:"Missing Field"
 let missing_required_prop = register_from_string "MISSING_REQUIRED_PROP"
 
 let mixed_self_weakself = register_from_string "MIXED_SELF_WEAKSELF" ~hum:"Mixed Self WeakSelf"
+
+let multiple_weakself = register_from_string "MULTIPLE_WEAKSELF" ~hum:"Multiple WeakSelf Use"
 
 let mutable_local_variable_in_component_file =
   register_from_string "MUTABLE_LOCAL_VARIABLE_IN_COMPONENT_FILE"

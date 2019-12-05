@@ -263,11 +263,8 @@ let get_direct_successor_nodes an =
 
 let infer_prefix = "__infer_ctl_"
 
-(** Data structures for type parser.
-    Correspondence with clang types inferred from
-    StringRef BuiltinType::getName in
-    https://clang.llvm.org/doxygen/Type_8cpp_source.html
-*)
+(** Data structures for type parser. Correspondence with clang types inferred from StringRef
+    BuiltinType::getName in https://clang.llvm.org/doxygen/Type_8cpp_source.html *)
 type builtin_kind =
   | Void  (** void *)
   | Bool  (** bool *)
@@ -561,7 +558,8 @@ and c_type_equal c_type abs_ctype =
   | ElaboratedType ti, TypeName _
   | AutoType ti, TypeName _
   | TypedefType (ti, _), ObjCGenProt _
-  | AttributedType (ti, _), Pointer _ -> (
+  | AttributedType (ti, _), Pointer _
+  | TypedefType (ti, _), Pointer _ -> (
     match ti.ti_desugared_type with Some dt -> check_type_ptr dt abs_ctype | None -> false )
   | AttributedType (ti, _), TypeName _ -> (
     match ti.ti_desugared_type with Some dt -> check_type_ptr dt abs_ctype | None -> false )

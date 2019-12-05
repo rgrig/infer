@@ -18,9 +18,9 @@ type op1 =
           signed integer. That is, it two's-complement--decodes the low [n]
           bits of the infinite two's-complement encoding of [arg]. *)
   | Unsigned of {bits: int}
-      (** [Ap1 (Unsigned {bits= n}, arg)] is [arg] interpreted as an [n]-bit
-          unsigned integer. That is, it unsigned-binary--decodes the low [n]
-          bits of the infinite two's-complement encoding of [arg]. *)
+      (** [Ap1 (Unsigned {bits= n}, arg)] is [arg] interpreted as an
+          [n]-bit unsigned integer. That is, it unsigned-binary--decodes the
+          low [n] bits of the infinite two's-complement encoding of [arg]. *)
   | Convert of {src: Typ.t; dst: Typ.t}
       (** [Ap1 (Convert {src; dst}, arg)] is [arg] converted from type [src]
           to type [dst], possibly with loss of information. The [src] and
@@ -87,16 +87,16 @@ val pp_full : ?is_x:(t -> bool) -> t pp
 val pp : t pp
 val invariant : t -> unit
 
-type term = t
-
 (** Term.Var is re-exported as Var *)
 module Var : sig
+  type term := t
   type t = private term [@@deriving compare, equal, hash, sexp]
-  type var = t
 
   include Comparator.S with type t := t
 
   module Set : sig
+    type var := t
+
     type t = (var, comparator_witness) Set.t
     [@@deriving compare, equal, sexp]
 
@@ -120,6 +120,7 @@ module Var : sig
   val global : t -> bool
 
   module Subst : sig
+    type var := t
     type t [@@deriving compare, equal, sexp]
 
     val pp : t pp
@@ -201,7 +202,7 @@ val update : rcd:t -> idx:int -> elt:t -> t
 
 (* recursive n-ary application *)
 val rec_app :
-     (module Hashtbl.Key with type t = 'id)
+     (module Hashtbl.Key.S with type t = 'id)
   -> (id:'id -> recN -> t lazy_t vector -> t) Staged.t
 
 val size_of : Typ.t -> t

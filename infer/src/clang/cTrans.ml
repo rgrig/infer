@@ -5,6 +5,8 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
+[@@@ocamlformat "parse-docstrings = false"]
+
 open! IStd
 open PolyVariantEqual
 
@@ -3431,6 +3433,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
         unaryExprOrTypeTraitExpr_trans trans_state unary_expr_or_type_trait_expr_info
     | ObjCBridgedCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _)
     | ImplicitCastExpr (stmt_info, stmt_list, expr_info, cast_kind)
+    | BuiltinBitCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _)
     | CStyleCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _)
     | CXXReinterpretCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _, _)
     | CXXConstCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _, _)
@@ -3480,12 +3483,14 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
         floatingLiteral_trans trans_state expr_info float_string
     | CXXScalarValueInitExpr (_, _, expr_info) ->
         cxxScalarValueInitExpr_trans trans_state expr_info
-    | ObjCBoxedExpr (stmt_info, stmts, info, boxed_expr_info) -> (
-      match boxed_expr_info.Clang_ast_t.obei_boxing_method with
-      | Some sel ->
-          objCBoxedExpr_trans trans_state info sel stmt_info stmts
-      | None ->
-          assert false )
+    | ObjCBoxedExpr (stmt_info, stmts, info, boxed_expr_info) ->
+        (* Sometimes clang does not return a boxing method (a name of function to apply), e.g.,
+           [@("str")].  In that case, it uses "unknownSelector:" instead of giving up the
+           translation. *)
+        let sel =
+          Option.value boxed_expr_info.Clang_ast_t.obei_boxing_method ~default:"unknownSelector:"
+        in
+        objCBoxedExpr_trans trans_state info sel stmt_info stmts
     | ObjCArrayLiteral (stmt_info, stmts, expr_info, array_literal_info) ->
         objCArrayLiteral_trans trans_state expr_info stmt_info stmts array_literal_info
     | ObjCDictionaryLiteral (stmt_info, stmts, expr_info, dict_literal_info) ->
@@ -3681,6 +3686,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     | OMPTaskwaitDirective _
     | OMPTaskyieldDirective _
     | OMPTeamsDirective _
+    | SourceLocExpr _
     | SEHExceptStmt _
     | SEHFinallyStmt _
     | SEHLeaveStmt _

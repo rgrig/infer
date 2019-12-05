@@ -8,25 +8,27 @@
 open! IStd
 module F = Format
 
-(** Domain for thread-type.  The main goals are 
-    - Track code paths that are explicitly on UI/BG thread (via annotations, or assertions). 
-    - Maintain UI/BG-thread-ness through the call stack (if a caller is of unknown status and 
-      callee is on UI/BG thread then caller must be on the UI/BG thread too). 
-    - Traces with "UI-thread" status cannot interleave but all other combinations can.  
-    - Top is AnyThread, which means that there are executions on both UI and BG threads on 
-      this method.
-    - Bottom is UnknownThread, and used as initial state.
-*)
+(** Domain for thread-type. The main goals are
+
+    - Track code paths that are explicitly on UI/BG thread (via annotations, or assertions).
+    - Maintain UI/BG-thread-ness through the call stack (if a caller is of unknown status and callee
+      is on UI/BG thread then caller must be on the UI/BG thread too).
+    - Traces with "UI-thread" status cannot interleave but all other combinations can.
+    - Top is AnyThread, which means that there are executions on both UI and BG threads on this
+      method.
+    - Bottom is UnknownThread, and used as initial state. *)
 module ThreadDomain : sig
   type t = UnknownThread | UIThread | BGThread | AnyThread
 
   include AbstractDomain.WithBottom with type t := t
 end
 
-(** Abstraction of a path that represents a lock, special-casing comparison
-    to work over type, base variable modulo this and access list *)
+(** Abstraction of a path that represents a lock, special-casing comparison to work over type, base
+    variable modulo this and access list *)
 module Lock : sig
   include PrettyPrintable.PrintableOrderedType with type t = AccessPath.t
+
+  val equal : t -> t -> bool
 
   val owner_class : t -> Typ.name option
   (** Class of the root variable of the path representing the lock *)
@@ -41,6 +43,7 @@ module Event : sig
     | LockAcquire of Lock.t
     | MayBlock of (string * StarvationModels.severity)
     | StrictModeCall of string
+    | MonitorWait of Lock.t
   [@@deriving compare]
 
   val describe : F.formatter -> t -> unit
@@ -68,12 +71,11 @@ module CriticalPairElement : sig
   type t = private {acquisitions: Acquisitions.t; event: Event.t; thread: ThreadDomain.t}
 end
 
-(** A [CriticalPairElement] equipped with a call stack. 
-    The intuition is that if we have a critical pair `(locks, event)` in the summary 
-    of a method then there is a trace of that method where `event` occurs, and right 
-    before it occurs the locks held are exactly `locks` (no over/under approximation).
-    We call it "critical" because the information here alone determines deadlock conditions. 
-*)
+(** A [CriticalPairElement] equipped with a call stack. The intuition is that if we have a critical
+    pair `(locks, event)` in the summary of a method then there is a trace of that method where
+    `event` occurs, and right before it occurs the locks held are exactly `locks` (no over/under
+    approximation). We call it "critical" because the information here alone determines deadlock
+    conditions. *)
 module CriticalPair : sig
   type t = private {elem: CriticalPairElement.t; loc: Location.t; trace: CallSite.t list}
 
@@ -102,19 +104,20 @@ module CriticalPairs : AbstractDomain.FiniteSetS with type elt = CriticalPair.t
 
 module GuardToLockMap : AbstractDomain.WithTop
 
-(** Tracks whether a variable has been tested for whether we execute on UI thread, or 
-    has been assigned an executor object. *)
+(** Tracks expression attributes *)
 module Attribute : sig
   type t =
     | Nothing
-    | ThreadGuard
-    | Executor of StarvationModels.executor_thread_constraint
-    | Runnable of Typ.Procname.t
+    | ThreadGuard  (** is boolean equivalent to whether on UI thread *)
+    | Runnable of Typ.Procname.t  (** is a Runnable/Callable with given "run" procname *)
+    | WorkScheduler of StarvationModels.scheduler_thread_constraint
+        (** exp is something that schedules work on the given thread *)
+    | Looper of StarvationModels.scheduler_thread_constraint  (** Android looper on given thread *)
 
   include AbstractDomain.WithTop with type t := t
 end
 
-(** Tracks all variables assigned values of [Attribute] *)
+(** Tracks all expressions assigned values of [Attribute] *)
 module AttributeDomain : sig
   include
     AbstractDomain.InvertedMapS
@@ -123,8 +126,8 @@ module AttributeDomain : sig
 
   val is_thread_guard : HilExp.AccessExpression.t -> t -> bool
 
-  val get_executor_constraint :
-    HilExp.AccessExpression.t -> t -> StarvationModels.executor_thread_constraint option
+  val get_scheduler_constraint :
+    HilExp.AccessExpression.t -> t -> StarvationModels.scheduler_thread_constraint option
 
   val exit_scope : Var.t list -> t -> t
 end
@@ -156,6 +159,8 @@ val release : t -> Lock.t list -> t
 
 val blocking_call : callee:Typ.Procname.t -> StarvationModels.severity -> loc:Location.t -> t -> t
 
+val wait_on_monitor : loc:Location.t -> HilExp.t list -> t -> t
+
 val strict_mode_call : callee:Typ.Procname.t -> loc:Location.t -> t -> t
 
 val add_guard :
@@ -179,13 +184,14 @@ val unlock_guard : t -> HilExp.t -> t
 (** Release the lock the guard was constructed with. *)
 
 val schedule_work :
-  Location.t -> StarvationModels.executor_thread_constraint -> t -> Typ.Procname.t -> t
+  Location.t -> StarvationModels.scheduler_thread_constraint -> t -> Typ.Procname.t -> t
 (** record the fact that a method is scheduled to run on a certain thread/executor *)
 
 type summary =
   { critical_pairs: CriticalPairs.t
   ; thread: ThreadDomain.t
   ; scheduled_work: ScheduledWorkDomain.t
+  ; attributes: AttributeDomain.t  (** final-state attributes that affect instance variables only *)
   ; return_attribute: Attribute.t }
 
 val empty_summary : summary
@@ -194,8 +200,8 @@ val pp_summary : F.formatter -> summary -> unit
 
 val integrate_summary :
   ?tenv:Tenv.t -> ?lhs:HilExp.AccessExpression.t -> CallSite.t -> t -> summary -> t
-(** apply a callee summary to the current abstract state; 
-    [lhs] is the expression assigned the returned value, if any *)
+(** apply a callee summary to the current abstract state; [lhs] is the expression assigned the
+    returned value, if any *)
 
 val summary_of_astate : Procdesc.t -> t -> summary
 

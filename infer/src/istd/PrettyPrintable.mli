@@ -172,6 +172,8 @@ module type PPUniqRankSet = sig
 
   val fold : t -> init:'accum -> f:('accum -> elt -> 'accum) -> 'accum
 
+  val fold_map : t -> init:'accum -> f:('accum -> elt -> 'accum * elt) -> 'accum * t
+
   val is_empty : t -> bool
 
   val is_singleton : t -> bool
@@ -184,7 +186,7 @@ module type PPUniqRankSet = sig
 
   val union_prefer_left : t -> t -> t
   (** in case an element with the same rank is present both in [lhs] and [rhs], keep the one from
-     [lhs] in [union_prefer_left lhs rhs] *)
+      [lhs] in [union_prefer_left lhs rhs] *)
 
   val pp : ?print_rank:bool -> F.formatter -> t -> unit
 end

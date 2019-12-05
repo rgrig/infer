@@ -12,16 +12,8 @@ include module type of (
     sig
       include
         (module type of Base
-          (* extended below, remove *)
-          with module Array := Base.Array
-           and module Invariant := Base.Invariant
-           and module List := Base.List
-           and module Map := Base.Map
-           and module Option := Base.Option
-           and module Result := Base.Result
-           and module Set := Base.Set
           (* prematurely deprecated, remove and use Stdlib instead *)
-           and module Filename := Base.Filename
+          with module Filename := Base.Filename
            and module Format := Base.Format
            and module Marshal := Base.Marshal
            and module Scanf := Base.Scanf
@@ -52,20 +44,24 @@ val trd3 : _ * _ * 'a -> 'a
 (** Function combinators *)
 
 val ( >> ) : ('a -> 'b) -> ('b -> 'c) -> 'a -> 'c
-(** Composition of functions: [(f >> g) x] is exactly equivalent to [g (f
-    (x))]. Left associative. *)
+(** Composition of functions: [(f >> g) x] is exactly equivalent to
+    [g (f (x))]. Left associative. *)
+
+val ( << ) : ('b -> 'c) -> ('a -> 'b) -> 'a -> 'c
+(** Reverse composition of functions: [(g << f) x] is exactly equivalent to
+    [g (f (x))]. Left associative. *)
 
 val ( $ ) : ('a -> unit) -> ('a -> 'b) -> 'a -> 'b
 (** Sequential composition of functions: [(f $ g) x] is exactly equivalent
     to [(f x) ; (g x)]. Left associative. *)
 
 val ( $> ) : 'a -> ('a -> unit) -> 'a
-(** Apply and ignore function: [x $> f] is exactly equivalent to [f x ; x].
-    Left associative. *)
+(** Reverse apply and ignore function: [x $> f] is exactly equivalent to
+    [f x ; x]. Left associative. *)
 
 val ( <$ ) : ('a -> unit) -> 'a -> 'a
-(** Reverse apply and ignore function: [f <$ x] is exactly equivalent to [f
-    x ; x]. Left associative. *)
+(** Apply and ignore function: [f <$ x] is exactly equivalent to [f x ; x].
+    Left associative. *)
 
 (** Pretty-printing *)
 
@@ -113,6 +109,20 @@ val or_error : ('a -> 'b) -> 'a -> unit -> 'b or_error
 
 module Invariant : module type of Base.Invariant
 
+module type Applicative_syntax = sig
+  type 'a t
+
+  val ( let+ ) : 'a t -> ('a -> 'b) -> 'b t
+  val ( and+ ) : 'a t -> 'b t -> ('a * 'b) t
+end
+
+module type Monad_syntax = sig
+  include Applicative_syntax
+
+  val ( let* ) : 'a t -> ('a -> 'b t) -> 'b t
+  val ( and* ) : 'a t -> 'b t -> ('a * 'b) t
+end
+
 module Option : sig
   include module type of Base.Option
 
@@ -120,9 +130,12 @@ module Option : sig
   (** Pretty-print an option. *)
 
   val cons : 'a t -> 'a list -> 'a list
+
+  module Monad_syntax : Monad_syntax
 end
 
 include module type of Option.Monad_infix
+include module type of Option.Monad_syntax with type 'a t = 'a option
 
 module List : sig
   include module type of Base.List
@@ -158,7 +171,6 @@ module List : sig
       argument, or raise [Not_found] if no such element exists. [equal]
       defaults to physical equality. *)
 
-  val remove : 'a list -> 'a -> 'a list option
   val rev_init : int -> f:(int -> 'a) -> 'a list
 
   val symmetric_diff :
@@ -175,7 +187,6 @@ module Map : sig
     -> ('k, 'v, 'c) t
     -> bool
 
-  val find_and_remove_exn : ('k, 'v, 'c) t -> 'k -> 'v * ('k, 'v, 'c) t
   val find_and_remove : ('k, 'v, 'c) t -> 'k -> ('v * ('k, 'v, 'c) t) option
 
   val find_or_add :
