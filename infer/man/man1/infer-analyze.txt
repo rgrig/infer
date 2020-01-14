@@ -176,14 +176,6 @@ OPTIONS
            Activates: Enable --linters and disable all other checkers
            (Conversely: --no-linters-only)
 
-       --litho-graphql-field-access
-           Activates: [EXPERIMENTAL] GraphQL field access check for Litho
-           (Conversely: --no-litho-graphql-field-access)
-
-       --litho-graphql-field-access-only
-           Activates: Enable --litho-graphql-field-access and disable all
-           other checkers (Conversely: --no-litho-graphql-field-access-only)
-
        --litho-required-props
            Activates: [EXPERIMENTAL] Required Prop check for Litho
            (Conversely: --no-litho-required-props)
@@ -357,17 +349,13 @@ BIABDUCTION CHECKER OPTIONS
        --biabduction-fallback-model-free-pattern string
            Regex of methods that should be modelled as free if definition is
            missing
-BUCK FLAVORS OPTIONS
+BUCK OPTIONS
        --merge
            Activates: Merge the captured results directories specified in the
-           dependency file (Conversely: --no-merge)
+           dependency file. (Conversely: --no-merge)
 BUFFER OVERRUN OPTIONS
        --bo-debug int
            Debug level for buffer-overrun checker (0-4)
-
-       --bo-relational-domain { oct | poly }
-           Select a relational domain being used in the bufferoverrun checker
-           (experimental)
 CLANG OPTIONS
        --annotation-reachability-cxx json
            Specify annotation reachability analyses to be performed on
@@ -450,6 +438,11 @@ RACERD CHECKER OPTIONS
        --racerd-guardedby
            Activates: Check @GuardedBy annotations with RacerD (Conversely:
            --no-racerd-guardedby)
+
+       --racerd-unknown-returns-owned
+           Activates: Assume that all methods without a CFG (including
+           abstract methods) return owned objects (Conversely:
+           --no-racerd-unknown-returns-owned)
 
        --threadsafe-aliases json
            Specify custom annotations that should be considered aliases of

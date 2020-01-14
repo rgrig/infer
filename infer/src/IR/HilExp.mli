@@ -10,7 +10,7 @@ module F = Format
 
 module Access : sig
   type 'array_index t =
-    | FieldAccess of Typ.Fieldname.t
+    | FieldAccess of Fieldname.t
     | ArrayAccess of Typ.t * 'array_index
     | TakeAddress
     | Dereference
@@ -27,7 +27,7 @@ type t =
       (** Unary operator with type of the result if known *)
   | BinaryOperator of Binop.t * t * t  (** Binary operator *)
   | Exception of t  (** Exception *)
-  | Closure of Typ.Procname.t * (AccessPath.base * t) list  (** Name of function + environment *)
+  | Closure of Procname.t * (AccessPath.base * t) list  (** Name of function + environment *)
   | Constant of Const.t  (** Constants *)
   | Cast of Typ.t * t  (** Type cast *)
   | Sizeof of Typ.t * t option
@@ -36,7 +36,7 @@ type t =
 
 and access_expression = private
   | Base of AccessPath.base
-  | FieldOffset of access_expression * Typ.Fieldname.t  (** field access *)
+  | FieldOffset of access_expression * Fieldname.t  (** field access *)
   | ArrayOffset of access_expression * Typ.t * t option  (** array access *)
   | AddressOf of access_expression  (** "address of" operator [&] *)
   | Dereference of access_expression  (** "dereference" operator [*] *)
@@ -47,7 +47,7 @@ module AccessExpression : sig
 
   val base : AccessPath.base -> access_expression
 
-  val field_offset : access_expression -> Typ.Fieldname.t -> access_expression
+  val field_offset : access_expression -> Fieldname.t -> access_expression
 
   val array_offset : access_expression -> Typ.t -> t option -> access_expression
 
@@ -68,6 +68,8 @@ module AccessExpression : sig
     remove_deref_after_base:bool -> AccessPath.base -> access_expression -> access_expression
 
   val is_base : access_expression -> bool
+
+  val is_return_var : access_expression -> bool
 
   val get_typ : access_expression -> Tenv.t -> Typ.t option
 
@@ -90,7 +92,7 @@ module AccessExpression : sig
 
   type nonrec t = access_expression = private
     | Base of AccessPath.base
-    | FieldOffset of access_expression * Typ.Fieldname.t
+    | FieldOffset of access_expression * Fieldname.t
     | ArrayOffset of access_expression * Typ.t * t option
     | AddressOf of access_expression
     | Dereference of access_expression

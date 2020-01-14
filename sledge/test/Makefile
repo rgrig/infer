@@ -23,6 +23,9 @@ DIFF?=diff
 # configure the non-host llvm and clang
 export PATH := $(CURDIR)/../.llvm_install/sledge/bin:$(PATH)
 
+# configure sort
+export LANG := C
+
 default: test
 
 # all analyze tests
@@ -81,6 +84,12 @@ report-summary:
 # compile c++ to llvm bitcode
 %.bc : %.cpp
 	@(cd $(dir $*) && clang++ -g -c -emit-llvm $(CLANG_ARGS) $(notdir $*).cpp -o $(notdir $*).bc)
+
+%.llair : %.bc
+	$(SLEDGE_EXE) llvm translate $< -llair-output $@
+
+%.llair.txt : %.llair
+	$(SLEDGE_EXE) disassemble $< -llair-txt-output $@
 
 # code to test analyze
 AnalyzeCs:=$(shell find * -not -path 'llvm/*' -name '*.c')

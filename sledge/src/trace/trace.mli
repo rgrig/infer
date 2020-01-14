@@ -33,7 +33,7 @@ type 'a printf = ('a, Formatter.t, unit) format -> 'a
 type pf = {pf: 'a. 'a printf}
 
 val pp_styled :
-     [> `Bold | `Cyan | `Magenta | `None]
+     [`Bold | `Cyan | `Magenta]
   -> ('a, Format.formatter, unit, unit) format4
   -> Format.formatter
   -> 'a
@@ -51,10 +51,13 @@ val kprintf : string -> string -> (Formatter.t -> unit) -> 'a printf
 val info : string -> string -> 'a printf
 (** Emit a message at the current indentation level, if enabled. *)
 
-val call : string -> string -> (pf -> 'b) -> 'b
+val infok : string -> string -> (pf -> 'a) -> 'a
+(** Emit a message at the current indentation level, if enabled. *)
+
+val call : string -> string -> (pf -> 'a) -> 'a
 (** Increase indentation level and emit a message, if enabled. *)
 
-val retn : string -> string -> (pf -> 'b -> unit) -> 'b -> 'b
+val retn : string -> string -> (pf -> 'a -> unit) -> 'a -> 'a
 (** Decrease indentation level and emit a message, if enabled. *)
 
 val flush : unit -> unit

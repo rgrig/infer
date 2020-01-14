@@ -29,16 +29,14 @@ let append_no_duplicates_annotations =
   Staged.unstage (IList.append_no_duplicates ~cmp)
 
 
-let append_no_duplicates_methods =
-  Staged.unstage (IList.append_no_duplicates ~cmp:Typ.Procname.compare)
-
+let append_no_duplicates_methods = Staged.unstage (IList.append_no_duplicates ~cmp:Procname.compare)
 
 let add_no_duplicates_fields field_tuple l =
   let rec replace_field field_tuple l found =
     match (field_tuple, l) with
     | (field, typ, annot), ((old_field, old_typ, old_annot) as old_field_tuple) :: rest ->
         let ret_list, ret_found = replace_field field_tuple rest found in
-        if Typ.Fieldname.equal field old_field && Typ.equal typ old_typ then
+        if Fieldname.equal field old_field && Typ.equal typ old_typ then
           let annotations = append_no_duplicates_annotations annot old_annot in
           ((field, typ, annotations) :: ret_list, true)
         else (old_field_tuple :: ret_list, ret_found)
@@ -63,9 +61,7 @@ let list_range i j =
   aux j []
 
 
-let mk_class_field_name class_tname field_name =
-  Typ.Fieldname.Clang.from_class_name class_tname field_name
-
+let mk_class_field_name class_tname field_name = Fieldname.make class_tname field_name
 
 let is_cpp_translation translation_unit_context =
   let lang = translation_unit_context.CFrontend_config.lang in
@@ -157,8 +153,7 @@ let mk_sil_var trans_unit_ctx named_decl_info decl_info_qual_type_opt procname o
           if var_decl_info.Clang_ast_t.vdi_is_static_local then
             Some
               (fun name_string _ ->
-                Mangled.from_string (F.asprintf "%a.%s" Typ.Procname.pp outer_procname name_string)
-                )
+                Mangled.from_string (F.asprintf "%a.%s" Procname.pp outer_procname name_string) )
           else None
         in
         mk_sil_global_var trans_unit_ctx ?mk_name decl_info named_decl_info var_decl_info qt

@@ -93,7 +93,7 @@ let get_arithmetic = get_attribute Attributes.get_arithmetic
 let get_bo_itv v memory =
   match get_attribute Attributes.get_bo_itv v memory with
   | None ->
-      Itv.of_pulse_value v
+      Itv.ItvPure.of_pulse_value v
   | Some itv ->
       itv
 
@@ -127,8 +127,6 @@ let find_opt addr memory =
 
 
 let fold_attrs f memory init = Graph.fold f (snd memory) init
-
-let set_attrs addr attrs memory = (fst memory, Graph.add addr attrs (snd memory))
 
 let set_edges addr edges memory = (Graph.add addr edges (fst memory), snd memory)
 

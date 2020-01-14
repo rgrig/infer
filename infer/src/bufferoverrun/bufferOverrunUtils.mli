@@ -8,19 +8,18 @@
 open! IStd
 open AbsLoc
 module Dom = BufferOverrunDomain
-module Relation = BufferOverrunDomainRelation
 module PO = BufferOverrunProofObligations
 
 module ModelEnv : sig
   type model_env =
-    { pname: Typ.Procname.t
+    { pname: Procname.t
     ; node_hash: int
     ; location: Location.t
     ; tenv: Tenv.t
     ; integer_type_widths: Typ.IntegerWidths.t }
 
   val mk_model_env :
-    Typ.Procname.t -> node_hash:int -> Location.t -> Tenv.t -> Typ.IntegerWidths.t -> model_env
+    Procname.t -> node_hash:int -> Location.t -> Tenv.t -> Typ.IntegerWidths.t -> model_env
 end
 
 module Exec : sig
@@ -56,8 +55,6 @@ module Check : sig
   val array_access :
        arr:Dom.Val.t
     -> idx:Dom.Val.t
-    -> idx_sym_exp:Relation.SymExp.t option
-    -> relation:Relation.t
     -> is_plus:bool
     -> last_included:bool
     -> latest_prune:Dom.LatestPrune.t

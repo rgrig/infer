@@ -27,7 +27,7 @@ MODULE_DESCRIPTION = '''Run analysis of code built with a command like:
 buck [options] [target]
 
 Analysis examples:
-infer -- buck build HelloWorld'''
+infer --buck-clang -- buck build HelloWorld'''
 LANG = ['clang', 'java']
 
 KEEP_GOING_OPTION = "--keep-going"
@@ -154,7 +154,8 @@ class BuckAnalyzer:
         if proc.returncode != 0:
             return None
         # remove target name prefixes from each line and split them into a list
-        out = [x.split(None, 1)[1] for x in buck_output.strip().split('\n')]
+        out = [os.path.join(self.args.project_root, x.split(None, 1)[1])
+               for x in buck_output.strip().split('\n')]
         return [os.path.dirname(x)
                 if os.path.isfile(x) else x
                 for x in out if os.path.exists(x)]

@@ -29,6 +29,8 @@ module ItvPure : sig
 
   val zero : t
 
+  val nat : t
+
   val of_int : int -> t
 
   val lb : t -> Bound.t
@@ -100,6 +102,20 @@ module ItvPure : sig
   val mult : t -> t -> t
 
   val exists_str : f:(string -> bool) -> t -> bool
+
+  val of_int_lit : IntLit.t -> t
+
+  val of_pulse_value : PulseAbstractValue.t -> t
+
+  val get_bound : t -> Symb.BoundEnd.t -> Bound.t
+
+  val arith_binop : Binop.t -> t -> t -> t
+
+  val arith_unop : Unop.t -> t -> t option
+
+  val to_boolean : t -> Boolean.t
+
+  val prune_binop : Binop.t -> t -> t -> t bottom_lifted
 end
 
 include module type of AbstractDomain.BottomLifted (ItvPure)
@@ -135,7 +151,7 @@ val zero_one : t
 val unknown_bool : t
 (** [0, 1] *)
 
-val get_iterator_itv : t -> t
+val get_range_of_iterator : t -> t
 
 val of_bool : Boolean.t -> t
 
@@ -144,8 +160,6 @@ val of_int : int -> t
 val of_big_int : Z.t -> t
 
 val of_int_lit : IntLit.t -> t
-
-val of_pulse_value : PulseAbstractValue.t -> t
 
 val get_const : t -> Z.t option
 
@@ -223,15 +237,13 @@ val mod_sem : t -> t -> t
 
 val ne_sem : t -> t -> Boolean.t
 
-val arith_binop : Binop.t -> t -> t -> t option
-
 val prune_eq_zero : t -> t
 
 val prune_ne_zero : t -> t
 
 val prune_ge_one : t -> t
 
-val prune_comp : Binop.t -> t -> t -> t
+val prune_binop : Binop.t -> t -> t -> t
 
 val prune_eq : t -> t -> t
 
@@ -258,3 +270,6 @@ val is_offset_path_of : Symb.SymbolPath.partial -> t -> bool
 val is_length_path_of : Symb.SymbolPath.partial -> t -> bool
 
 val has_only_non_int_symbols : t -> bool
+
+val is_incr_of : Symb.SymbolPath.partial -> t -> bool
+(** Check if [itv] is [path+1] when called [is_incr_of path itv] *)

@@ -14,8 +14,8 @@ type violation [@@deriving compare]
 val check : is_strict_mode:bool -> Nullability.t -> (unit, violation) result
 
 type dereference_type =
-  | MethodCall of Typ.Procname.t
-  | AccessToField of Typ.Fieldname.t
+  | MethodCall of Procname.t
+  | AccessToField of Fieldname.t
   | AccessByIndex of {index_desc: string}
   | ArrayLengthAccess
 [@@deriving compare]

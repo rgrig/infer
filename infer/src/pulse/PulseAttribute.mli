@@ -15,8 +15,8 @@ type t =
   | AddressOfCppTemporary of Var.t * ValueHistory.t
   | AddressOfStackVariable of Var.t * Location.t * ValueHistory.t
   | Arithmetic of Arithmetic.t * Trace.t
-  | BoItv of Itv.t
-  | Closure of Typ.Procname.t
+  | BoItv of Itv.ItvPure.t
+  | Closure of Procname.t
   | Invalid of Invalidation.t * Trace.t
   | MustBeValid of Trace.t
   | StdVectorReserve
@@ -25,16 +25,18 @@ type t =
 
 val pp : F.formatter -> t -> unit
 
+val is_suitable_for_pre : t -> bool
+
 module Attributes : sig
   include PrettyPrintable.PPUniqRankSet with type elt = t
 
   val get_address_of_stack_variable : t -> (Var.t * Location.t * ValueHistory.t) option
 
-  val get_closure_proc_name : t -> Typ.Procname.t option
+  val get_closure_proc_name : t -> Procname.t option
 
   val get_arithmetic : t -> (Arithmetic.t * Trace.t) option
 
-  val get_bo_itv : t -> Itv.t option
+  val get_bo_itv : t -> Itv.ItvPure.t option
 
   val get_invalid : t -> (Invalidation.t * Trace.t) option
 

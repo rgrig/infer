@@ -19,8 +19,8 @@ type t =
   | Dsizeof of Typ.t * t option * Subtype.t
   | Dderef of t
   | Dfcall of t * t list * Location.t * CallFlags.t
-  | Darrow of t * Typ.Fieldname.t
-  | Ddot of t * Typ.Fieldname.t
+  | Darrow of t * Fieldname.t
+  | Ddot of t * Fieldname.t
   | Dpvar of Pvar.t
   | Dpvaraddr of Pvar.t
   | Dunop of Unop.t * t
@@ -38,7 +38,7 @@ let split_var_clang var_name =
 
 
 let builtin_functions_to_string pn =
-  if Typ.Procname.equal pn BuiltinDecl.__objc_alloc_no_fail then Some "alloc" else None
+  if Procname.equal pn BuiltinDecl.__objc_alloc_no_fail then Some "alloc" else None
 
 
 let rec pp fmt = function
@@ -51,10 +51,10 @@ let rec pp fmt = function
     | Some str ->
         F.pp_print_string fmt str
     | None -> (
-        let procname_str = Typ.Procname.to_simplified_string pn in
+        let procname_str = Procname.to_simplified_string pn in
         match pn with
-        | Typ.Procname.ObjC_Cpp {kind= ObjCInstanceMethod}
-        | Typ.Procname.ObjC_Cpp {kind= ObjCClassMethod} -> (
+        | Procname.ObjC_Cpp {kind= ObjCInstanceMethod} | Procname.ObjC_Cpp {kind= ObjCClassMethod}
+          -> (
           match String.lsplit2 ~on:':' procname_str with
           | Some (base_name, _) ->
               F.pp_print_string fmt base_name
@@ -75,10 +75,10 @@ let rec pp fmt = function
         | Dconst (Cfun pname) ->
             let s =
               match pname with
-              | Typ.Procname.Java pname_java ->
-                  Typ.Procname.Java.get_method pname_java
+              | Procname.Java pname_java ->
+                  Procname.Java.get_method pname_java
               | _ ->
-                  Typ.Procname.to_string pname
+                  Procname.to_string pname
             in
             F.pp_print_string fmt s
         | de ->
@@ -97,18 +97,17 @@ let rec pp fmt = function
       F.fprintf fmt "%a%a(%a)" pp_receiver receiver pp_fun fun_dexp pp_args args'
   | Darrow (Dpvar pv, f) when Pvar.is_this pv ->
       (* this->fieldname *)
-      F.pp_print_string fmt (Typ.Fieldname.to_simplified_string f)
+      F.pp_print_string fmt (Fieldname.to_simplified_string f)
   | Darrow (de, f) ->
       if Language.curr_language_is Java then
-        F.fprintf fmt "%a.%s" pp de (Typ.Fieldname.to_flat_string f)
-      else F.fprintf fmt "%a->%s" pp de (Typ.Fieldname.to_string f)
+        F.fprintf fmt "%a.%s" pp de (Fieldname.get_field_name f)
+      else F.fprintf fmt "%a->%s" pp de (Fieldname.to_string f)
   | Ddot (Dpvar _, fe) when eradicate_java () ->
       (* static field access *)
-      F.pp_print_string fmt (Typ.Fieldname.to_simplified_string fe)
+      F.pp_print_string fmt (Fieldname.to_simplified_string fe)
   | Ddot (de, f) ->
       let field_text =
-        if Language.curr_language_is Java then Typ.Fieldname.to_flat_string f
-        else Typ.Fieldname.to_string f
+        if Language.curr_language_is Java then Fieldname.get_field_name f else Fieldname.to_string f
       in
       F.fprintf fmt "%a.%s" pp de field_text
   | Dpvar pv ->
@@ -141,7 +140,7 @@ let pp_vpath pe fmt vpath =
   let pp fmt = function Some de -> pp fmt de | None -> () in
   if Pp.equal_print_kind pe.Pp.kind Pp.HTML then
     let pp f vpath = F.fprintf f "{vpath: %a}" pp vpath in
-    Io_infer.Html.with_color Orange pp fmt vpath
+    Pp.html_with_color Orange pp fmt vpath
   else pp fmt vpath
 
 

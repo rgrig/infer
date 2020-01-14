@@ -73,7 +73,7 @@ let check_condition tenv case_zero find_canonical_duplicate curr_pdesc node e ty
     in
     let do_instr = function
       | Sil.Call (_, Exp.Const (Const.Cfun pn), [_; (Exp.Sizeof {typ}, _)], _, _)
-        when Typ.Procname.equal pn BuiltinDecl.__instanceof && typ_is_throwable typ ->
+        when Procname.equal pn BuiltinDecl.__instanceof && typ_is_throwable typ ->
           throwable_found := true
       | _ ->
           ()
@@ -158,7 +158,7 @@ let check_field_assignment ~is_strict_mode tenv find_canonical_duplicate curr_pd
       let should_report =
         (not (AndroidFramework.is_destroy_method curr_pname))
         && PatternMatch.type_is_class t_lhs
-        && (not (Typ.Fieldname.Java.is_outer_instance fname))
+        && (not (Fieldname.is_java_outer_instance fname))
         && (not (field_is_injector_readwrite ()))
         && not (field_is_in_cleanup_context ())
       in
@@ -192,7 +192,7 @@ let is_field_declared_as_nonnull annotated_field_opt =
 
 
 let lookup_field_in_typestate pname field_name typestate =
-  let pvar = Pvar.mk (Mangled.from_string (Typ.Fieldname.to_string field_name)) pname in
+  let pvar = Pvar.mk (Mangled.from_string (Fieldname.to_string field_name)) pname in
   TypeState.lookup_pvar pvar typestate
 
 
@@ -238,7 +238,7 @@ let check_constructor_initialization tenv find_canonical_duplicate curr_construc
     curr_constructor_pdesc start_node ~typestates_for_curr_constructor_and_all_initializer_methods
     ~typestates_for_all_constructors_incl_current loc : unit =
   State.set_node start_node ;
-  if Typ.Procname.is_constructor curr_constructor_pname then
+  if Procname.is_constructor curr_constructor_pname then
     match
       PatternMatch.get_this_type_nonstatic_methods_only
         (Procdesc.get_attributes curr_constructor_pdesc)
@@ -281,14 +281,14 @@ let check_constructor_initialization tenv find_canonical_duplicate curr_construc
             in
             let should_check_field_initialization =
               let in_current_class =
-                let fld_cname = Typ.Fieldname.Java.get_class field_name in
-                String.equal (Typ.Name.name name) fld_cname
+                let fld_cname = Fieldname.get_class_name field_name in
+                Typ.Name.equal name fld_cname
               in
               (not is_injector_readonly_annotated)
               (* primitive types can not be null so initialization check is not needed *)
               && PatternMatch.type_is_class field_type
               && in_current_class
-              && not (Typ.Fieldname.Java.is_outer_instance field_name)
+              && not (Fieldname.is_java_outer_instance field_name)
             in
             if should_check_field_initialization then (
               (* Check if non-null field is not initialized. *)
@@ -366,8 +366,8 @@ let check_return_annotation tenv find_canonical_duplicate curr_pdesc ret_range
   (* Disables the warnings since it is not clear how to annotate the return value of lambdas *)
   | Some _
     when match curr_pname with
-         | Typ.Procname.Java java_pname ->
-             Typ.Procname.Java.is_lambda java_pname
+         | Procname.Java java_pname ->
+             Procname.Java.is_lambda java_pname
          | _ ->
              false ->
       ()
@@ -417,11 +417,11 @@ let is_third_party_via_sig_files proc_name =
 
 let is_marked_third_party_in_config proc_name =
   match proc_name with
-  | Typ.Procname.Java java_pname ->
+  | Procname.Java java_pname ->
       (* TODO: migrate to the new way of checking for third party: use
          signatures repository instead of looking it up in config params.
       *)
-      Typ.Procname.Java.is_external java_pname
+      Procname.Java.is_external java_pname
   | _ ->
       false
 
@@ -549,7 +549,7 @@ let check_inheritance_rule_for_signature find_canonical_duplicate tenv loc ~base
   (* Check return value *)
   match base_proc_name with
   (* TODO model this as unknown nullability and get rid of that check *)
-  | Typ.Procname.Java java_pname when not (Typ.Procname.Java.is_external java_pname) ->
+  | Procname.Java java_pname when not (Procname.Java.is_external java_pname) ->
       (* Check if return value is consistent with the base *)
       let base_nullability =
         AnnotatedNullability.get_nullability

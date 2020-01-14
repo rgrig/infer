@@ -11,6 +11,8 @@ open! IStd
 open AbsLoc
 open! AbstractDomain.Types
 open BufferOverrunDomain
+module L = Logging
+module TraceSet = BufferOverrunTrace.Set
 
 let eval_const : Typ.IntegerWidths.t -> Const.t -> Val.t =
  fun integer_type_widths -> function
@@ -45,7 +47,7 @@ let rec must_alias : Exp.t -> Exp.t -> Mem.t -> bool =
   | Exp.Lvar x1, Exp.Lvar x2 ->
       Pvar.equal x1 x2
   | Exp.Lfield (e1, fld1, _), Exp.Lfield (e2, fld2, _) ->
-      must_alias e1 e2 m && Typ.Fieldname.equal fld1 fld2
+      must_alias e1 e2 m && Fieldname.equal fld1 fld2
   | Exp.Lindex (e11, e12), Exp.Lindex (e21, e22) ->
       must_alias e11 e21 m && must_alias e12 e22 m
   | Exp.Sizeof {nbytes= Some nbytes1}, Exp.Sizeof {nbytes= Some nbytes2} ->
@@ -303,7 +305,7 @@ let rec eval_arr : Typ.IntegerWidths.t -> Exp.t -> Mem.t -> Val.t =
  fun integer_type_widths exp mem ->
   match exp with
   | Exp.Var id ->
-      let alias_loc = AliasTargets.find_first_simple_zero_alias (Mem.find_alias_id id mem) in
+      let alias_loc = AliasTargets.find_simple_alias (Mem.find_alias_id id mem) in
       Option.value_map alias_loc ~default:Val.bot ~f:(fun loc -> Mem.find loc mem)
   | Exp.Lvar pvar ->
       Mem.find (Loc.of_pvar pvar) mem
@@ -390,11 +392,17 @@ let rec eval_sympath_partial ~mode params p mem =
     with Caml.Not_found ->
       L.d_printfln_escaped "Symbol %a is not found in parameters." (Pvar.pp Pp.text) x ;
       Val.Itv.top )
-  | Symb.SymbolPath.Callsite {cs} -> (
+  | Symb.SymbolPath.Callsite {ret_typ; cs; obj_path} -> (
     match mode with
     | EvalNormal | EvalCost ->
-        L.d_printfln_escaped "Symbol for %a is not expected to be in parameters." Typ.Procname.pp
+        L.d_printfln_escaped "Symbol for %a is not expected to be in parameters." Procname.pp
           (CallSite.pname cs) ;
+        let obj_path =
+          Option.bind obj_path ~f:(fun obj_path ->
+              eval_sympath_partial ~mode params obj_path mem
+              |> Val.get_pow_loc |> PowLoc.min_elt_opt |> Option.bind ~f:Loc.get_path )
+        in
+        let p = Symb.SymbolPath.of_callsite ?obj_path ~ret_typ cs in
         Mem.find (Loc.of_allocsite (Allocsite.make_symbol p)) mem
     | EvalPOCond | EvalPOReachability ->
         Val.Itv.top )
@@ -475,12 +483,6 @@ let mk_eval_sym_mode ~mode integer_type_widths callee_formals actual_exps caller
 
 let mk_eval_sym_cost = mk_eval_sym_mode ~mode:EvalCost
 
-let get_sym_f integer_type_widths mem e = Val.get_sym (eval integer_type_widths e mem)
-
-let get_offset_sym_f integer_type_widths mem e = Val.get_offset_sym (eval integer_type_widths e mem)
-
-let get_size_sym_f integer_type_widths mem e = Val.get_size_sym (eval integer_type_widths e mem)
-
 (* This function evaluates the array length conservatively, which is useful when there are multiple
    array locations and their lengths are joined to top.  For example, if the [arr_locs] points to
    two arrays [a] and [b] and if their lengths are [a.length] and [b.length], this function
@@ -488,7 +490,7 @@ let get_size_sym_f integer_type_widths mem e = Val.get_size_sym (eval integer_ty
 let conservative_array_length ?traces arr_locs mem =
   let accum_add arr_loc acc = Mem.find arr_loc mem |> Val.array_sizeof |> Itv.plus acc in
   PowLoc.fold accum_add arr_locs Itv.zero
-  |> Val.of_itv ?traces |> Val.get_iterator_itv |> Val.set_itv_updated_by_addition
+  |> Val.of_itv ?traces |> Val.get_range_of_iterator |> Val.set_itv_updated_by_addition
 
 
 let eval_array_locs_length arr_locs mem =
@@ -522,19 +524,25 @@ module Prune = struct
 
 
   let prune_has_next ~true_branch iterator ({mem} as astate) =
-    let accum_pruned arr_loc tgt acc =
+    let accum_prune_common ~prune_f loc acc =
+      let length = collection_length_of_iterator iterator mem in
+      let v = prune_f (Mem.find loc mem) length in
+      update_mem_in_prune loc v acc
+    in
+    let accum_pruned loc tgt acc =
       match tgt with
+      | AliasTarget.IteratorSimple {i} when IntLit.(eq i zero) ->
+          let prune_f = if true_branch then Val.prune_lt else Val.prune_eq in
+          accum_prune_common ~prune_f loc acc
       | AliasTarget.IteratorOffset {alias_typ; i} when IntLit.(eq i zero) ->
-          let length = collection_length_of_iterator iterator mem |> Val.get_itv in
-          let v = Mem.find arr_loc mem in
-          let v =
-            let prune_f =
+          let prune_f v length =
+            let f =
               if true_branch then Val.prune_length_lt
               else match alias_typ with Eq -> Val.prune_length_eq | Le -> Val.prune_length_le
             in
-            prune_f v length
+            f v (Val.get_itv length)
           in
-          update_mem_in_prune arr_loc v acc
+          accum_prune_common ~prune_f loc acc
       | _ ->
           acc
     in
@@ -589,27 +597,27 @@ module Prune = struct
   let gen_prune_alias_functions ~prune_alias_core integer_type_widths comp x e astate =
     (* [val_prune_eq] is applied when the alias type is [AliasTarget.Eq]. *)
     let val_prune_eq =
-      match comp with
-      | Binop.Lt | Binop.Gt | Binop.Le | Binop.Ge ->
-          Val.prune_comp comp
-      | Binop.Eq ->
+      match (comp : Binop.t) with
+      | Lt | Gt | Le | Ge ->
+          Val.prune_binop comp
+      | Eq ->
           Val.prune_eq
-      | Binop.Ne ->
+      | Ne ->
           Val.prune_ne
       | _ ->
           assert false
     in
     (* [val_prune_le] is applied when the alias type is [AliasTarget.Le]. *)
     let val_prune_le =
-      match comp with
-      | Binop.Lt ->
+      match (comp : Binop.t) with
+      | Lt ->
           (* when [alias_target <= alias_key < e], prune [alias_target] with [alias_target < e] *)
-          Some (Val.prune_comp comp)
-      | Binop.Le | Binop.Eq ->
+          Some (Val.prune_binop comp)
+      | Le | Eq ->
           (* when [alias_target <= alias_key = e] or [alias_target <= alias_key <= e], prune
              [alias_target] with [alias_target <= e] *)
-          Some (Val.prune_comp Binop.Le)
-      | Binop.Ne | Binop.Gt | Binop.Ge ->
+          Some (Val.prune_binop Le)
+      | Ne | Gt | Ge ->
           (* when [alias_target <= alias_key != e], [alias_target <= alias_key > e] or [alias_target
              <= alias_key >= e], no prune *)
           None
@@ -732,9 +740,7 @@ module Prune = struct
 
   let prune_unreachable : Typ.IntegerWidths.t -> Exp.t -> t -> t =
    fun integer_type_widths e ({mem} as astate) ->
-    if is_unreachable_constant integer_type_widths e mem || Mem.is_relation_unsat mem then
-      {astate with mem= Mem.bot}
-    else astate
+    if is_unreachable_constant integer_type_widths e mem then {astate with mem= Mem.bot} else astate
 
 
   let rec prune_helper integer_type_widths e astate =
@@ -779,129 +785,6 @@ module Prune = struct
   let prune : Typ.IntegerWidths.t -> Exp.t -> Mem.t -> Mem.t =
    fun integer_type_widths e mem ->
     let mem, prune_pairs = Mem.apply_latest_prune e mem in
-    let mem =
-      let constrs = Relation.Constraints.of_exp e ~get_sym_f:(get_sym_f integer_type_widths mem) in
-      Mem.meet_constraints constrs mem
-    in
     let {mem; prune_pairs} = prune_helper integer_type_widths e {mem; prune_pairs} in
     if PrunePairs.is_reachable prune_pairs then Mem.set_prune_pairs prune_pairs mem else Mem.bot
 end
-
-let get_matching_pairs :
-       Tenv.t
-    -> Typ.IntegerWidths.t
-    -> Val.t
-    -> Val.t
-    -> Exp.t option
-    -> Typ.t
-    -> Mem.t
-    -> _ Mem.t0
-    -> (Relation.Var.t * Relation.SymExp.t option) list =
- fun tenv integer_type_widths callee_v actual actual_exp_opt typ caller_mem callee_exit_mem ->
-  let get_offset_sym v = Val.get_offset_sym v in
-  let get_size_sym v = Val.get_size_sym v in
-  let get_field_name (fn, _, _) = fn in
-  let append_field v fn = PowLoc.append_field (Val.get_all_locs v) ~fn in
-  let deref_field v fn mem = Mem.find_set (append_field v fn) mem in
-  let deref_ptr v mem =
-    let array_locs = Val.get_array_locs v in
-    let locs = if PowLoc.is_empty array_locs then Val.get_pow_loc v else array_locs in
-    Mem.find_set locs mem
-  in
-  let add_pair_sym_main_value v1 v2 ~e2_opt l =
-    Option.value_map (Val.get_sym_var v1) ~default:l ~f:(fun var ->
-        let sym_exp_opt =
-          Option.first_some
-            (Relation.SymExp.of_exp_opt
-               ~get_sym_f:(get_sym_f integer_type_widths caller_mem)
-               e2_opt)
-            (Relation.SymExp.of_sym (Val.get_sym v2))
-        in
-        (var, sym_exp_opt) :: l )
-  in
-  let add_pair_sym s1 s2 l =
-    Option.value_map (Relation.Sym.get_var s1) ~default:l ~f:(fun var ->
-        (var, Relation.SymExp.of_sym s2) :: l )
-  in
-  let add_pair_val v1 v2 ~e2_opt rel_pairs =
-    rel_pairs
-    |> add_pair_sym_main_value v1 v2 ~e2_opt
-    |> add_pair_sym (get_offset_sym v1) (get_offset_sym v2)
-    |> add_pair_sym (get_size_sym v1) (get_size_sym v2)
-  in
-  let add_pair_field v1 v2 pairs fn =
-    let v1' = deref_field v1 fn callee_exit_mem in
-    let v2' = deref_field v2 fn caller_mem in
-    add_pair_val v1' v2' ~e2_opt:None pairs
-  in
-  let add_pair_ptr typ v1 v2 pairs =
-    match typ.Typ.desc with
-    | Typ.Tptr ({desc= Tstruct typename}, _) -> (
-      match Tenv.lookup tenv typename with
-      | Some str ->
-          let fns = List.map ~f:get_field_name str.Typ.Struct.fields in
-          List.fold ~f:(add_pair_field v1 v2) ~init:pairs fns
-      | _ ->
-          pairs )
-    | Typ.Tptr (_, _) ->
-        let v1' = deref_ptr v1 callee_exit_mem in
-        let v2' = deref_ptr v2 caller_mem in
-        add_pair_val v1' v2' ~e2_opt:None pairs
-    | _ ->
-        pairs
-  in
-  [] |> add_pair_val callee_v actual ~e2_opt:actual_exp_opt |> add_pair_ptr typ callee_v actual
-
-
-let subst_map_of_rel_pairs : (Relation.Var.t * Relation.SymExp.t option) list -> Relation.SubstMap.t
-    =
- fun pairs ->
-  let add_pair rel_map (x, e) = Relation.SubstMap.add x e rel_map in
-  List.fold pairs ~init:Relation.SubstMap.empty ~f:add_pair
-
-
-let rec list_fold2_def :
-       default:Val.t * Exp.t option
-    -> f:('a -> Val.t * Exp.t option -> 'b -> 'b)
-    -> 'a list
-    -> (Val.t * Exp.t option) list
-    -> init:'b
-    -> 'b =
- fun ~default ~f xs ys ~init:acc ->
-  match (xs, ys) with
-  | [], _ ->
-      acc
-  | x :: xs', [] ->
-      list_fold2_def ~default ~f xs' ys ~init:(f x default acc)
-  | [x], _ :: _ ->
-      let v = List.fold ys ~init:Val.bot ~f:(fun acc (y, _) -> Val.join y acc) in
-      let exp_opt = match ys with [(_, exp_opt)] -> exp_opt | _ -> None in
-      f x (v, exp_opt) acc
-  | x :: xs', y :: ys' ->
-      list_fold2_def ~default ~f xs' ys' ~init:(f x y acc)
-
-
-let get_subst_map :
-       Tenv.t
-    -> Typ.IntegerWidths.t
-    -> (Pvar.t * Typ.t) list
-    -> (Exp.t * 'a) list
-    -> Mem.t
-    -> _ Mem.t0
-    -> Relation.SubstMap.t =
- fun tenv integer_type_widths callee_formals params caller_mem callee_exit_mem ->
-  let add_pair (formal, typ) (actual, actual_exp) rel_l =
-    let callee_v = Mem.find (Loc.of_pvar formal) callee_exit_mem in
-    let new_rel_matching =
-      get_matching_pairs tenv integer_type_widths callee_v actual actual_exp typ caller_mem
-        callee_exit_mem
-    in
-    List.rev_append new_rel_matching rel_l
-  in
-  let actuals =
-    List.map ~f:(fun (a, _) -> (eval integer_type_widths a caller_mem, Some a)) params
-  in
-  let rel_pairs =
-    list_fold2_def ~default:(Val.Itv.top, None) ~f:add_pair callee_formals actuals ~init:[]
-  in
-  subst_map_of_rel_pairs rel_pairs

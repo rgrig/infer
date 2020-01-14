@@ -11,11 +11,10 @@
 open! IStd
 module F = Format
 module L = Logging
+module CLOpt = CommandLineOption
 
 let clear_caches () =
-  Ondemand.LocalCache.clear () ;
-  Summary.OnDisk.clear_cache () ;
-  Typ.Procname.SQLite.clear_cache ()
+  Ondemand.LocalCache.clear () ; Summary.OnDisk.clear_cache () ; Procname.SQLite.clear_cache ()
 
 
 let analyze_target : SchedulerTypes.target Tasks.doer =
@@ -37,7 +36,7 @@ let analyze_target : SchedulerTypes.target Tasks.doer =
     decr procs_left ;
     if Int.( <= ) !procs_left 0 then (
       L.log_task "Analysing block of %d procs, starting with %a@." per_procedure_logging_granularity
-        Typ.Procname.pp proc_name ;
+        Procname.pp proc_name ;
       procs_left := per_procedure_logging_granularity ) ;
     Ondemand.analyze_proc_name_toplevel exe_env proc_name
   in
@@ -114,6 +113,20 @@ let get_source_files_to_analyze ~changed_files =
   source_files_to_analyze
 
 
+let schedule sources =
+  if Config.call_graph_schedule then (
+    CLOpt.warnf "WARNING: '--call-graph-schedule' is deprecated. Use '--scheduler' instead.@." ;
+    SyntacticCallGraph.make sources )
+  else
+    match Config.scheduler with
+    | File ->
+        FileScheduler.make sources
+    | Restart ->
+        RestartScheduler.make sources
+    | SyntacticCallGraph ->
+        SyntacticCallGraph.make sources
+
+
 let analyze source_files_to_analyze =
   if Int.equal Config.jobs 1 then (
     let target_files = List.rev_map source_files_to_analyze ~f:(fun sf -> SchedulerTypes.File sf) in
@@ -121,7 +134,7 @@ let analyze source_files_to_analyze =
     BackendStats.get () )
   else (
     L.environment_info "Parallel jobs: %d@." Config.jobs ;
-    let tasks = TaskScheduler.schedule source_files_to_analyze in
+    let tasks = schedule source_files_to_analyze in
     (* Prepare tasks one cluster at a time while executing in parallel *)
     let runner =
       Tasks.Runner.create ~jobs:Config.jobs ~f:analyze_target ~child_epilogue:BackendStats.get

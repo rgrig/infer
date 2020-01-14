@@ -60,7 +60,7 @@ exception Custom_error of string * Localise.error_desc
 exception Dummy_exception of Localise.error_desc
 
 exception
-  Dangling_pointer_dereference of PredSymb.dangling_kind option * Localise.error_desc * L.ocaml_pos
+  Dangling_pointer_dereference of bool (* is it user visible? *) * Localise.error_desc * L.ocaml_pos
 
 exception Deallocate_stack_variable of Localise.error_desc
 
@@ -86,11 +86,9 @@ exception Internal_error of Localise.error_desc
 
 exception Java_runtime_exception of Typ.Name.t * string * Localise.error_desc
 
-exception
-  Leak of
-    bool * Sil.hpred * (visibility * Localise.error_desc) * bool * PredSymb.resource * L.ocaml_pos
+exception Leak of bool * (visibility * Localise.error_desc) * bool * PredSymb.resource * L.ocaml_pos
 
-exception Missing_fld of Typ.Fieldname.t * L.ocaml_pos
+exception Missing_fld of Fieldname.t * L.ocaml_pos
 
 exception Premature_nil_termination of Localise.error_desc * L.ocaml_pos
 
@@ -260,14 +258,8 @@ let recognize_exception exn =
       ; visibility= Exn_developer
       ; severity= Some Info
       ; category= Checker }
-  | Dangling_pointer_dereference (dko, desc, ocaml_pos) ->
-      let visibility =
-        match dko with
-        | Some _ ->
-            Exn_user (* only show to the user if the category was identified *)
-        | None ->
-            Exn_developer
-      in
+  | Dangling_pointer_dereference (user_visible, desc, ocaml_pos) ->
+      let visibility = if user_visible then Exn_user else Exn_developer in
       { name= IssueType.dangling_pointer_dereference
       ; description= desc
       ; ocaml_pos= Some ocaml_pos
@@ -380,7 +372,7 @@ let recognize_exception exn =
       ; visibility= Exn_user
       ; severity= None
       ; category= Prover }
-  | Leak (fp_part, _, (exn_vis, error_desc), done_array_abstraction, resource, ocaml_pos) ->
+  | Leak (fp_part, (exn_vis, error_desc), done_array_abstraction, resource, ocaml_pos) ->
       if done_array_abstraction then
         { name= IssueType.leak_after_array_abstraction
         ; description= error_desc
@@ -414,7 +406,7 @@ let recognize_exception exn =
         ; severity= None
         ; category= Prover }
   | Missing_fld (fld, ocaml_pos) ->
-      let desc = Localise.verbatim_desc (Typ.Fieldname.to_full_string fld) in
+      let desc = Localise.verbatim_desc (Fieldname.to_full_string fld) in
       { name= IssueType.missing_fld
       ; description= desc
       ; ocaml_pos= Some ocaml_pos

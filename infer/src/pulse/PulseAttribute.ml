@@ -29,8 +29,8 @@ module Attribute = struct
     | AddressOfCppTemporary of Var.t * ValueHistory.t
     | AddressOfStackVariable of Var.t * Location.t * ValueHistory.t
     | Arithmetic of Arithmetic.t * Trace.t
-    | BoItv of Itv.t
-    | Closure of Typ.Procname.t
+    | BoItv of Itv.ItvPure.t
+    | Closure of Procname.t
     | Invalid of Invalidation.t * Trace.t
     | MustBeValid of Trace.t
     | StdVectorReserve
@@ -43,12 +43,12 @@ module Attribute = struct
 
   let dummy_trace = Trace.Immediate {location= Location.dummy; history= []}
 
-  let closure_rank = Variants.to_rank (Closure (Typ.Procname.from_string_c_fun ""))
+  let closure_rank = Variants.to_rank (Closure (Procname.from_string_c_fun ""))
 
   let written_to_rank = Variants.to_rank (WrittenTo dummy_trace)
 
   let address_of_stack_variable_rank =
-    let pname = Typ.Procname.from_string_c_fun "" in
+    let pname = Procname.from_string_c_fun "" in
     let var = Var.of_pvar (Pvar.mk (Mangled.from_string "") pname) in
     let location = Location.dummy in
     Variants.to_rank (AddressOfStackVariable (var, location, []))
@@ -64,7 +64,7 @@ module Attribute = struct
 
   let const_rank = Variants.to_rank (Arithmetic (Arithmetic.equal_to IntLit.zero, dummy_trace))
 
-  let bo_itv_rank = Variants.to_rank (BoItv Itv.zero)
+  let bo_itv_rank = Variants.to_rank (BoItv Itv.ItvPure.zero)
 
   let pp f attribute =
     let pp_string_if_debug string fmt =
@@ -76,9 +76,9 @@ module Attribute = struct
     | AddressOfStackVariable (var, location, history) ->
         F.fprintf f "s&%a (%a) at %a" Var.pp var ValueHistory.pp history Location.pp location
     | BoItv bo_itv ->
-        F.fprintf f "BoItv (%a)" Itv.pp bo_itv
+        F.fprintf f "BoItv (%a)" Itv.ItvPure.pp bo_itv
     | Closure pname ->
-        Typ.Procname.pp f pname
+        Procname.pp f pname
     | Arithmetic (phi, trace) ->
         F.fprintf f "Arith %a" (Trace.pp ~pp_immediate:(fun fmt -> Arithmetic.pp fmt phi)) trace
     | Invalid (invalidation, trace) ->
@@ -158,3 +158,14 @@ module Attributes = struct
 end
 
 include Attribute
+
+let is_suitable_for_pre = function
+  | Arithmetic _ | BoItv _ | MustBeValid _ ->
+      true
+  | AddressOfCppTemporary _
+  | AddressOfStackVariable _
+  | Closure _
+  | Invalid _
+  | StdVectorReserve
+  | WrittenTo _ ->
+      false

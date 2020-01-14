@@ -28,107 +28,180 @@ type t = starjunction [@@deriving compare, equal, sexp]
 let map_seg {loc; bas; len; siz; arr} ~f =
   {loc= f loc; bas= f bas; len= f len; siz= f siz; arr= f arr}
 
-let pp_seg ?is_x fs {loc; bas; len; siz; arr} =
-  let term_pp = Term.pp_full ?is_x in
-  Format.fprintf fs "@[<2>%a@ @[@[-[%a)->@]@ %a@]@]" term_pp loc
-    (fun fs (bas, len) ->
-      if (not (Term.equal loc bas)) || not (Term.equal len siz) then
-        Format.fprintf fs " %a, %a " term_pp bas term_pp len )
-    (bas, len) term_pp (Term.memory ~siz ~arr)
-
-let pp_seg_norm cong fs seg =
-  pp_seg fs (map_seg seg ~f:(Equality.normalize cong))
-
-let pp_us ?(pre = ("" : _ fmt)) fs us =
-  if not (Set.is_empty us) then
-    [%Trace.fprintf fs "%( %)@[%a@] .@ " pre Var.Set.pp us]
-
-let rec pp vs all_xs fs {us; xs; cong; pure; heap; djns} =
-  Format.pp_open_hvbox fs 0 ;
-  let all_xs = Set.union all_xs xs in
-  let is_x var = Set.mem all_xs (Option.value_exn (Var.of_term var)) in
-  pp_us fs us ;
-  let xs_i_vs, xs_d_vs = Set.inter_diff vs xs in
-  if not (Set.is_empty xs_i_vs) then (
-    Format.fprintf fs "@<2>∃ @[%a@] ." (Var.Set.pp_full ~is_x) xs_i_vs ;
-    if not (Set.is_empty xs_d_vs) then Format.fprintf fs "@ " ) ;
-  if not (Set.is_empty xs_d_vs) then
-    Format.fprintf fs "@<2>∃ @[%a@] .@ " (Var.Set.pp_full ~is_x) xs_d_vs ;
-  let first = Equality.is_true cong in
-  if not first then Format.fprintf fs "  " ;
-  Equality.pp_classes ~is_x fs cong ;
-  let pure_terms =
-    List.filter_map pure ~f:(fun e ->
-        let e' = Equality.normalize cong e in
-        if Term.is_true e' then None else Some e' )
-  in
-  List.pp
-    ~pre:(if first then "  " else "@ @<2>∧ ")
-    "@ @<2>∧ " (Term.pp_full ~is_x) fs pure_terms ;
-  let first = first && List.is_empty pure_terms in
-  if List.is_empty heap then
-    Format.fprintf fs
-      ( if first then if List.is_empty djns then "  emp" else ""
-      else "@ @<5>∧ emp" )
-  else
-    List.pp
-      ~pre:(if first then "  " else "@ @<2>∧ ")
-      "@ * " (pp_seg ~is_x) fs
-      (List.sort
-         (List.map ~f:(map_seg ~f:(Equality.normalize cong)) heap)
-         ~compare:(fun s1 s2 ->
-           let b_o = function
-             | Term.Add poly as sum ->
-                 let const = Qset.count poly Term.one in
-                 (Term.sub sum (Term.rational const), const)
-             | e -> (e, Q.zero)
-           in
-           [%compare: Term.t * (Term.t * Q.t)]
-             (s1.bas, b_o s1.loc)
-             (s2.bas, b_o s2.loc) )) ;
-  let first = first && List.is_empty heap in
-  List.pp
-    ~pre:(if first then "  " else "@ * ")
-    "@ * "
-    (pp_djn (Set.union vs (Set.union us xs)) all_xs)
-    fs djns ;
-  Format.pp_close_box fs ()
-
-and pp_djn vs all_xs fs = function
-  | [] -> Format.fprintf fs "false"
-  | djn ->
-      Format.fprintf fs "@[<hv>( %a@ )@]"
-        (List.pp "@ @<2>∨ " (fun fs sjn ->
-             Format.fprintf fs "@[<hv 1>(%a)@]" (pp vs all_xs)
-               {sjn with us= Set.diff sjn.us vs} ))
-        djn
-
-let pp = pp Var.Set.empty Var.Set.empty
-let pp_djn = pp_djn Var.Set.empty Var.Set.empty
-
 let fold_terms_seg {loc; bas; len; siz; arr} ~init ~f =
-  let f b z = Term.fold_terms b ~init:z ~f in
+  let f b s = f s b in
   f loc (f bas (f len (f siz (f arr init))))
 
 let fold_vars_seg seg ~init ~f =
   fold_terms_seg seg ~init ~f:(fun init -> Term.fold_vars ~f ~init)
 
+let fold_vars fold_vars {us= _; xs= _; cong; pure; heap; djns} ~init ~f =
+  Equality.fold_terms ~init cong ~f:(fun init -> Term.fold_vars ~f ~init)
+  |> fun init ->
+  List.fold ~init pure ~f:(fun init -> Term.fold_vars ~f ~init)
+  |> fun init ->
+  List.fold ~init heap ~f:(fun init -> fold_vars_seg ~f ~init)
+  |> fun init ->
+  List.fold ~init djns ~f:(fun init -> List.fold ~init ~f:fold_vars)
+
+let var_strength q =
+  let rec var_strength_ xs m q =
+    let xs = Set.union xs q.xs in
+    fold_vars (var_strength_ xs) {q with cong= Equality.true_} ~init:m
+      ~f:(fun m var ->
+        if not (Set.mem xs var) then Map.set m ~key:var ~data:`Universal
+        else
+          match Map.find m var with
+          | None -> Map.set m ~key:var ~data:`Anonymous
+          | Some `Anonymous -> Map.set m ~key:var ~data:`Existential
+          | Some _ -> m )
+  in
+  var_strength_ Var.Set.empty Var.Map.empty q
+
+let pp_memory x fs (siz, arr) =
+  let term_pp = Term.ppx x in
+  Format.fprintf fs "@<1>⟨%a,%a@<1>⟩" term_pp siz term_pp arr
+
+let pp_seg x fs {loc; bas; len; siz; arr} =
+  let term_pp = Term.ppx x in
+  Format.fprintf fs "@[<2>%a@ @[@[-[%a)->@]@ %a@]@]" term_pp loc
+    (fun fs (bas, len) ->
+      if (not (Term.equal loc bas)) || not (Term.equal len siz) then
+        Format.fprintf fs " %a, %a " term_pp bas term_pp len )
+    (bas, len) (pp_memory x) (siz, arr)
+
+let pp_seg_norm cong fs seg =
+  let x _ = None in
+  pp_seg x fs (map_seg seg ~f:(Equality.normalize cong))
+
+let pp_block x fs segs =
+  let is_full_alloc segs =
+    match segs with
+    | {loc; bas; len; _} :: _ -> (
+        Term.equal loc bas
+        &&
+        match len with
+        | Integer {data} -> (
+          match
+            List.fold segs ~init:(Some Z.zero) ~f:(fun len seg ->
+                match (len, seg.siz) with
+                | Some len, Integer {data} -> Some (Z.add len data)
+                | _ -> None )
+          with
+          | Some blk_len -> Z.equal data blk_len
+          | _ -> false )
+        | _ -> false )
+    | [] -> false
+  in
+  let term_pp = Term.ppx x in
+  let pp_mems =
+    List.pp "@,^" (fun fs seg -> pp_memory x fs (seg.siz, seg.arr))
+  in
+  match segs with
+  | {loc; bas; len; _} :: _ ->
+      Format.fprintf fs "@[<2>%a@ @[@[-[%t)->@]@ @[%a@]@]@]" term_pp loc
+        (fun fs ->
+          if not (is_full_alloc segs) then
+            Format.fprintf fs " %a, %a " term_pp bas term_pp len )
+        pp_mems segs
+  | [] -> ()
+
+let pp_heap x ?pre cong fs heap =
+  let bas_off = function
+    | Term.Add poly as sum ->
+        let const = Qset.count poly Term.one in
+        (Term.sub sum (Term.rational const), const)
+    | e -> (e, Q.zero)
+  in
+  let compare s1 s2 =
+    [%compare: Term.t * (Term.t * Q.t)]
+      ( Equality.normalize cong s1.bas
+      , bas_off (Equality.normalize cong s1.loc) )
+      ( Equality.normalize cong s2.bas
+      , bas_off (Equality.normalize cong s2.loc) )
+  in
+  let break s1 s2 =
+    (not (Term.equal s1.bas s2.bas))
+    || (not (Term.equal s1.len s2.len))
+    || not (Equality.entails_eq cong (Term.add s1.loc s1.siz) s2.loc)
+  in
+  let heap = List.map heap ~f:(map_seg ~f:(Equality.normalize cong)) in
+  let blocks = List.group ~break (List.sort ~compare heap) in
+  List.pp ?pre "@ * " (pp_block x) fs blocks
+
+let pp_us ?(pre = ("" : _ fmt)) fs us =
+  if not (Set.is_empty us) then
+    [%Trace.fprintf fs "%( %)@[%a@] .@ " pre Var.Set.pp us]
+
+let rec pp_ ?var_strength vs parent_cong fs {us; xs; cong; pure; heap; djns}
+    =
+  Format.pp_open_hvbox fs 0 ;
+  let x v = Option.bind ~f:(fun m -> Map.find m v) var_strength in
+  pp_us fs us ;
+  let xs_d_vs, xs_i_vs =
+    Set.diff_inter
+      (Set.filter xs ~f:(fun v -> Poly.(x v <> Some `Anonymous)))
+      vs
+  in
+  if not (Set.is_empty xs_i_vs) then (
+    Format.fprintf fs "@<2>∃ @[%a@] ." (Var.Set.ppx x) xs_i_vs ;
+    if not (Set.is_empty xs_d_vs) then Format.fprintf fs "@ " ) ;
+  if not (Set.is_empty xs_d_vs) then
+    Format.fprintf fs "@<2>∃ @[%a@] .@ " (Var.Set.ppx x) xs_d_vs ;
+  let first = Equality.entails parent_cong cong in
+  if not first then Format.fprintf fs "  " ;
+  Equality.pp_classes_diff x fs (parent_cong, cong) ;
+  let pure =
+    List.filter_map pure ~f:(fun e ->
+        let e' = Equality.normalize cong e in
+        if Term.is_true e' then None else Some e' )
+  in
+  List.pp
+    ~pre:(if first then "@[  " else "@ @[@<2>∧ ")
+    "@ @<2>∧ " (Term.ppx x) fs
+    (List.dedup_and_sort ~compare:Term.compare pure)
+    ~suf:"@]" ;
+  let first = first && List.is_empty pure in
+  if List.is_empty heap then
+    Format.fprintf fs
+      ( if first then if List.is_empty djns then "  emp" else ""
+      else "@ @<5>∧ emp" )
+  else pp_heap x ~pre:(if first then "  " else "@ @<2>∧ ") cong fs heap ;
+  let first = first && List.is_empty heap in
+  List.pp
+    ~pre:(if first then "  " else "@ * ")
+    "@ * "
+    (pp_djn ?var_strength (Set.union vs (Set.union us xs)) cong)
+    fs djns ;
+  Format.pp_close_box fs ()
+
+and pp_djn ?var_strength:parent_var_strength vs cong fs = function
+  | [] -> Format.fprintf fs "false"
+  | djn ->
+      Format.fprintf fs "@[<hv>( %a@ )@]"
+        (List.pp "@ @<2>∨ " (fun fs sjn ->
+             let var_strength =
+               let combine ~key sjn_v m_v =
+                 if Set.mem sjn.xs key then sjn_v else m_v
+               in
+               Option.map
+                 ~f:(Map.merge_skewed ~combine (var_strength sjn))
+                 parent_var_strength
+             in
+             Format.fprintf fs "@[<hv 1>(%a)@]"
+               (pp_ ?var_strength vs cong)
+               {sjn with us= Set.diff sjn.us vs} ))
+        djn
+
+let pp_diff_eq cong fs q =
+  pp_ ~var_strength:(var_strength q) Var.Set.empty cong fs q
+
+let pp fs q = pp_diff_eq Equality.true_ fs q
+let pp_djn fs d = pp_djn Var.Set.empty Equality.true_ fs d
 let fv_seg seg = fold_vars_seg seg ~f:Set.add ~init:Var.Set.empty
 
-let fold_terms fold_terms {us= _; xs= _; cong; pure; heap; djns} ~init ~f =
-  Equality.fold_terms ~init cong ~f
-  |> fun init ->
-  List.fold ~init pure ~f:(fun init -> Term.fold_terms ~f ~init)
-  |> fun init ->
-  List.fold ~init heap ~f:(fun init -> fold_terms_seg ~f ~init)
-  |> fun init ->
-  List.fold ~init djns ~f:(fun init -> List.fold ~init ~f:fold_terms)
-
 let rec fv_union init q =
-  Set.diff
-    (fold_terms fv_union q ~init ~f:(fun init ->
-         Term.fold_vars ~f:Set.add ~init ))
-    q.xs
+  Set.diff (fold_vars fv_union q ~init ~f:Set.add) q.xs
 
 let fv q = fv_union Var.Set.empty q
 

@@ -58,13 +58,10 @@ val eval_binop :
 
 val havoc_id : Ident.t -> ValueHistory.t -> t -> t
 
-val havoc_deref :
-  Location.t -> AbstractValue.t * ValueHistory.t -> ValueHistory.t -> t -> t access_result
-
 val havoc_field :
      Location.t
   -> AbstractValue.t * ValueHistory.t
-  -> Typ.Fieldname.t
+  -> Fieldname.t
   -> ValueHistory.t
   -> t
   -> t access_result
@@ -108,9 +105,10 @@ val check_address_escape :
 val call :
      caller_summary:Summary.t
   -> Location.t
-  -> Typ.Procname.t
+  -> Procname.t
   -> ret:Ident.t * Typ.t
   -> actuals:((AbstractValue.t * ValueHistory.t) * Typ.t) list
+  -> formals_opt:(Pvar.t * Typ.t) list option
   -> t
   -> t list access_result
 (** perform an interprocedural call: apply the summary for the call proc name passed as argument if
@@ -121,6 +119,7 @@ val unknown_call :
   -> CallEvent.t
   -> ret:Ident.t * 'a
   -> actuals:((AbstractValue.t * ValueHistory.t) * Typ.t) list
+  -> formals_opt:(Pvar.t * Typ.t) list option
   -> t
   -> t
 (** performs a call to a function with no summary by optimistically havoc'ing the by-ref actuals and

@@ -13,6 +13,7 @@ type op1 =
   | Signed of {bits: int}
   | Unsigned of {bits: int}
   | Convert of {src: Typ.t; dst: Typ.t}
+  | Splat
   | Select of int
 [@@deriving compare, equal, hash, sexp]
 
@@ -31,7 +32,6 @@ type op2 =
   | Shl
   | Lshr
   | Ashr
-  | Splat
   | Memory
   | Update of int
 [@@deriving compare, equal, hash, sexp]
@@ -111,7 +111,17 @@ type _t = T0.t
 
 include T
 
-let empty_map = Map.empty (module T)
+module Map = struct
+  include (
+    Map :
+      module type of Map
+        with type ('key, 'value, 'cmp) t := ('key, 'value, 'cmp) Map.t )
+
+  type 'v t = 'v Map.M(T).t [@@deriving compare, equal, sexp]
+
+  let empty = empty (module T)
+end
+
 let empty_qset = Qset.empty (module T)
 
 let fix (f : (t -> 'a as 'f) -> 'f) (bot : 'f) (e : t) : 'a =
@@ -130,24 +140,21 @@ let fix (f : (t -> 'a as 'f) -> 'f) (bot : 'f) (e : t) : 'a =
 let fix_flip (f : ('z -> t -> 'a as 'f) -> 'f) (bot : 'f) (z : 'z) (e : t) =
   fix (fun f' e z -> f (fun z e -> f' e z) z e) (fun e z -> bot z e) e z
 
-let rec pp ?is_x fs term =
-  let get_var_style var =
-    match is_x with
-    | None -> `None
-    | Some is_x -> if not (is_x var) then `Bold else `Cyan
-  in
+let rec ppx strength fs term =
   let pp_ pp fs term =
     let pf fmt =
       Format.pp_open_box fs 2 ;
       Format.kfprintf (fun fs -> Format.pp_close_box fs ()) fs fmt
     in
     match term with
-    | Var {name; id= -1} as var ->
-        Trace.pp_styled (get_var_style var) "%@%s" fs name
-    | Var {name; id= 0} as var ->
-        Trace.pp_styled (get_var_style var) "%%%s" fs name
-    | Var {name; id} as var ->
-        Trace.pp_styled (get_var_style var) "%%%s_%d" fs name id
+    | Var {name; id= -1} -> Trace.pp_styled `Bold "%@%s" fs name
+    | Var {name; id= 0} -> Trace.pp_styled `Bold "%%%s" fs name
+    | Var {name; id} -> (
+      match strength term with
+      | None -> pf "%%%s_%d" name id
+      | Some `Universal -> Trace.pp_styled `Bold "%%%s_%d" fs name id
+      | Some `Existential -> Trace.pp_styled `Cyan "%%%s_%d" fs name id
+      | Some `Anonymous -> Trace.pp_styled `Cyan "_" fs )
     | Integer {data} -> Trace.pp_styled `Magenta "%a" fs Z.pp data
     | Float {data} -> pf "%s" data
     | Nondet {msg} -> pf "nondet \"%s\"" msg
@@ -189,10 +196,10 @@ let rec pp ?is_x fs term =
     | Ap2 (Ashr, x, y) -> pf "(%a@ ashr %a)" pp x pp y
     | Ap3 (Conditional, cnd, thn, els) ->
         pf "(%a@ ? %a@ : %a)" pp cnd pp thn pp els
-    | Ap2 (Splat, byt, siz) -> pf "%a^%a" pp byt pp siz
+    | Ap1 (Splat, byt) -> pf "%a^" pp byt
     | Ap2 (Memory, siz, arr) -> pf "@<1>⟨%a,%a@<1>⟩" pp siz pp arr
     | ApN (Concat, args) -> pf "%a" (Vector.pp "@,^" pp) args
-    | ApN (Record, elts) -> pf "{%a}" pp_record elts
+    | ApN (Record, elts) -> pf "{%a}" (pp_record strength) elts
     | RecN (Record, elts) -> pf "{|%a|}" (Vector.pp ",@ " pp) elts
     | Ap1 (Select idx, rcd) -> pf "%a[%i]" pp rcd idx
     | Ap2 (Update idx, rcd, elt) ->
@@ -201,7 +208,7 @@ let rec pp ?is_x fs term =
   fix_flip pp_ (fun _ _ -> ()) fs term
   [@@warning "-9"]
 
-and pp_record fs elts =
+and pp_record strength fs elts =
   [%Trace.fprintf
     fs "%a"
       (fun fs elts ->
@@ -213,12 +220,13 @@ and pp_record fs elts =
         with
         | s -> Format.fprintf fs "@[<h>%s@]" (String.escaped s)
         | exception _ ->
-            Format.fprintf fs "@[<h>%a@]" (Vector.pp ",@ " pp) elts )
+            Format.fprintf fs "@[<h>%a@]"
+              (Vector.pp ",@ " (ppx strength))
+              elts )
       elts]
 
-let pp_t = pp ?is_x:None
-let pp_full = pp
-let pp = pp_t
+let pp = ppx (fun _ -> None)
+let pp_t = pp
 
 (** Invariant *)
 
@@ -275,7 +283,6 @@ let invariant e =
   match e with
   | Add _ -> assert_polynomial e |> Fn.id
   | Mul _ -> assert_monomial e |> Fn.id
-  | Ap2 (Splat, _, Integer {data}) -> assert (not (Z.equal Z.zero data))
   | ApN (Concat, mems) -> assert (Vector.length mems <> 1)
   | ApN (Record, elts) | RecN (Record, elts) ->
       assert (not (Vector.is_empty elts))
@@ -294,6 +301,10 @@ module Var = struct
 
   let pp = pp
 
+  type strength = t -> [`Universal | `Existential | `Anonymous] option
+
+  module Map = Map
+
   module Set = struct
     include (
       Set :
@@ -301,22 +312,18 @@ module Var = struct
 
     type t = Set.M(T).t [@@deriving compare, equal, sexp]
 
-    let pp_full ?is_x vs = Set.pp (pp_full ?is_x) vs
-    let pp = pp_full ?is_x:None
+    let pp vs = Set.pp pp_t vs
+    let ppx strength vs = Set.pp (ppx strength) vs
+
+    let pp_xs fs xs =
+      if not (is_empty xs) then
+        Format.fprintf fs "@<2>∃ @[%a@] .@;<1 2>" pp xs
+
     let empty = Set.empty (module T)
     let of_ = Set.add empty
     let of_option = Option.fold ~f:Set.add ~init:empty
     let of_list = Set.of_list (module T)
     let of_vector = Set.of_vector (module T)
-  end
-
-  module Map = struct
-    include (
-      Map :
-        module type of Map
-          with type ('key, 'value, 'cmp) t := ('key, 'value, 'cmp) Map.t )
-
-    type 'v t = 'v Map.M(T).t [@@deriving compare, equal, sexp]
   end
 
   let invariant x =
@@ -334,7 +341,7 @@ module Var = struct
   let program ?global name =
     Var {name; id= (if Option.is_some global then -1 else 0)}
 
-  let fresh name ~(wrt : Set.t) =
+  let fresh name ~wrt =
     let max = match Set.max_elt wrt with None -> 0 | Some max -> id max in
     let x' = Var {name; id= max + 1} in
     (x', Set.add wrt x')
@@ -360,17 +367,20 @@ module Var = struct
              Format.fprintf fs "@[%a ↦ %a@]" pp_t k pp_t v ))
         (Map.to_alist s)
 
-    let empty = empty_map
+    let empty = Map.empty
     let is_empty = Map.is_empty
 
     let freshen vs ~wrt =
       let xs = Set.inter wrt vs in
-      let wrt = Set.union wrt vs in
-      Set.fold xs ~init:(empty, wrt) ~f:(fun (sub, wrt) x ->
-          let x', wrt = fresh (name x) ~wrt in
-          let sub = Map.add_exn sub ~key:x ~data:x' in
-          (sub, wrt) )
-      |> fst |> check invariant
+      ( if Set.is_empty xs then empty
+      else
+        let wrt = Set.union wrt vs in
+        Set.fold xs ~init:(empty, wrt) ~f:(fun (sub, wrt) x ->
+            let x', wrt = fresh (name x) ~wrt in
+            let sub = Map.add_exn sub ~key:x ~data:x' in
+            (sub, wrt) )
+        |> fst )
+      |> check invariant
 
     let fold sub ~init ~f =
       Map.fold sub ~init ~f:(fun ~key ~data s -> f key data s)
@@ -674,9 +684,12 @@ let rec simp_eq x y =
   (* e = (c ? t : f) ==> (c ? e = t : e = f) *)
   | e, Ap3 (Conditional, c, t, f) | Ap3 (Conditional, c, t, f), e ->
       simp_cond c (simp_eq e t) (simp_eq e f)
-  (* e = e ==> true *)
-  | x, y when equal x y -> bool true
-  | x, y -> Ap2 (Eq, x, y)
+  | x, y -> (
+    match Int.sign (compare x y) with
+    (* e = e ==> true *)
+    | Zero -> bool true
+    | Neg -> Ap2 (Eq, x, y)
+    | Pos -> Ap2 (Eq, y, x) )
 
 and simp_dq x y =
   match (x, y) with
@@ -778,11 +791,7 @@ let simp_concat xs =
     in
     ApN (Concat, args)
 
-let simp_splat byt siz =
-  match siz with
-  | Integer {data} when Z.equal Z.zero data -> simp_concat Vector.empty
-  | _ -> Ap2 (Splat, byt, siz)
-
+let simp_splat byt = Ap1 (Splat, byt)
 let simp_memory siz arr = Ap2 (Memory, siz, arr)
 
 (* records *)
@@ -820,12 +829,12 @@ let norm1 op x =
   | Signed {bits} -> simp_signed bits x
   | Unsigned {bits} -> simp_unsigned bits x
   | Convert {src; dst} -> simp_convert src dst x
+  | Splat -> simp_splat x
   | Select idx -> simp_select idx x )
   |> check invariant
 
 let norm2 op x y =
   ( match op with
-  | Splat -> simp_splat x y
   | Memory -> simp_memory x y
   | Eq -> simp_eq x y
   | Dq -> simp_dq x y
@@ -878,13 +887,17 @@ let shl = norm2 Shl
 let lshr = norm2 Lshr
 let ashr = norm2 Ashr
 let conditional ~cnd ~thn ~els = norm3 Conditional cnd thn els
-let splat ~byt ~siz = norm2 Splat byt siz
+let splat byt = norm1 Splat byt
 let memory ~siz ~arr = norm2 Memory siz arr
 let concat xs = normN Concat (Vector.of_array xs)
 let record elts = normN Record elts
 let select ~rcd ~idx = norm1 (Select idx) rcd
 let update ~rcd ~idx ~elt = norm2 (Update idx) rcd elt
 let size_of t = integer (Z.of_int (Typ.size_of t))
+
+let eq_concat (siz, arr) ms =
+  eq (memory ~siz ~arr)
+    (concat (Array.map ~f:(fun (siz, arr) -> memory ~siz ~arr) ms))
 
 (** Transform *)
 
@@ -904,9 +917,9 @@ let map e ~f =
     let z' = f z in
     if x' == x && y' == y && z' == z then e else norm3 op x' y' z'
   in
-  let mapN mk ~f xs =
+  let mapN op ~f xs =
     let xs' = Vector.map_preserving_phys_equal ~f xs in
-    if xs' == xs then e else mk xs'
+    if xs' == xs then e else normN op xs'
   in
   let map_qset mk ~f args =
     let args' = Qset.map ~f:(fun arg q -> (f arg, q)) args in
@@ -918,13 +931,13 @@ let map e ~f =
   | Ap1 (op, x) -> map1 op ~f x
   | Ap2 (op, x, y) -> map2 op ~f x y
   | Ap3 (op, x, y, z) -> map3 op ~f x y z
-  | ApN (op, xs) -> mapN (normN op) ~f xs
+  | ApN (op, xs) -> mapN op ~f xs
   | RecN (_, xs) ->
       assert (
         xs == Vector.map_preserving_phys_equal ~f xs
         || fail "Term.map does not support updating subterms of RecN." () ) ;
       e
-  | _ -> e
+  | Var _ | Label _ | Nondet _ | Float _ | Integer _ -> e
 
 (** Pre-order transformation that preserves cycles. Each subterm [x] from
     root to leaves is presented to [f]. If [f x = Some x'] then the subterms
@@ -969,7 +982,7 @@ let iter e ~f =
   | Ap3 (_, x, y, z) -> f x ; f y ; f z
   | ApN (_, xs) | RecN (_, xs) -> Vector.iter ~f xs
   | Add args | Mul args -> Qset.iter ~f:(fun arg _ -> f arg) args
-  | _ -> ()
+  | Var _ | Label _ | Nondet _ | Float _ | Integer _ -> ()
 
 let fold e ~init:s ~f =
   match e with
@@ -979,7 +992,7 @@ let fold e ~init:s ~f =
   | ApN (_, xs) | RecN (_, xs) ->
       Vector.fold ~f:(fun s x -> f x s) xs ~init:s
   | Add args | Mul args -> Qset.fold ~f:(fun e _ s -> f e s) args ~init:s
-  | _ -> s
+  | Var _ | Label _ | Nondet _ | Float _ | Integer _ -> s
 
 let fold_terms e ~init ~f =
   let fold_terms_ fold_terms_ e s =
@@ -992,15 +1005,15 @@ let fold_terms e ~init ~f =
           Vector.fold ~f:(fun s x -> fold_terms_ x s) xs ~init:s
       | Add args | Mul args ->
           Qset.fold args ~init:s ~f:(fun arg _ s -> fold_terms_ arg s)
-      | _ -> s
+      | Var _ | Label _ | Nondet _ | Float _ | Integer _ -> s
     in
     f s e
   in
   fix fold_terms_ (fun _ s -> s) e init
 
 let fold_vars e ~init ~f =
-  fold_terms e ~init ~f:(fun z -> function
-    | Var _ as v -> f z (v :> Var.t) | _ -> z )
+  fold_terms e ~init ~f:(fun s -> function
+    | Var _ as v -> f s (v :> Var.t) | _ -> s )
 
 (** Query *)
 
@@ -1008,69 +1021,13 @@ let fv e = fold_vars e ~f:Set.add ~init:Var.Set.empty
 let is_true = function Integer {data} -> Z.is_true data | _ -> false
 let is_false = function Integer {data} -> Z.is_false data | _ -> false
 
-let rec is_constant e =
-  match e with
-  | Var _ | Nondet _ -> false
-  | Ap1 (_, x) -> is_constant x
-  | Ap2 (_, x, y) -> is_constant x && is_constant y
-  | Ap3 (_, x, y, z) -> is_constant x && is_constant y && is_constant z
-  | ApN (_, xs) | RecN (_, xs) -> Vector.for_all ~f:is_constant xs
-  | Add args | Mul args ->
-      Qset.for_all ~f:(fun arg _ -> is_constant arg) args
-  | _ -> true
+(** Solve *)
 
-let classify = function
-  | Add _ | Mul _ -> `Interpreted
-  | Ap2 ((Eq | Dq), _, _) -> `Simplified
-  | Ap1 _ | Ap2 _ | Ap3 _ | ApN _ -> `Uninterpreted
-  | RecN _ | Var _ | Integer _ | Float _ | Nondet _ | Label _ -> `Atomic
-
-let solve e f =
-  [%Trace.call fun {pf} -> pf "%a@ %a" pp e pp f]
-  ;
-  let rec solve_ e f s =
-    let solve_uninterp e f =
-      match (e, f) with
-      | Integer {data= m}, Integer {data= n} when not (Z.equal m n) -> None
-      | _ -> (
-        match (is_constant e, is_constant f) with
-        (* orient equation to discretionarily prefer term that is constant
-           or compares smaller as class representative *)
-        | true, false -> Some (Map.add_exn s ~key:f ~data:e)
-        | false, true -> Some (Map.add_exn s ~key:e ~data:f)
-        | _ ->
-            let key, data = if compare e f > 0 then (e, f) else (f, e) in
-            Some (Map.add_exn s ~key ~data) )
-    in
-    let concat_size args =
-      Vector.fold_until args ~init:zero
-        ~f:(fun sum -> function
-          | Ap2 (Memory, siz, _) -> Continue (add siz sum) | _ -> Stop None
-          )
-        ~finish:(fun _ -> None)
-    in
-    match (e, f) with
-    | (Add _ | Mul _ | Integer _), _ | _, (Add _ | Mul _ | Integer _) -> (
-      match sub e f with
-      | Add args ->
-          let c, q = Qset.min_elt_exn args in
-          let n = Sum.to_term (Qset.remove args c) in
-          let d = rational (Q.neg q) in
-          let r = div n d in
-          Some (Map.add_exn s ~key:c ~data:r)
-      | e_f -> solve_uninterp e_f zero )
-    | ApN (Concat, ms), ApN (Concat, ns) -> (
-      match (concat_size ms, concat_size ns) with
-      | Some p, Some q -> solve_uninterp e f >>= solve_ p q
-      | _ -> solve_uninterp e f )
-    | Ap2 (Memory, m, _), ApN (Concat, ns)
-     |ApN (Concat, ns), Ap2 (Memory, m, _) -> (
-      match concat_size ns with
-      | Some p -> solve_uninterp e f >>= solve_ p m
-      | _ -> solve_uninterp e f )
-    | _ -> solve_uninterp e f
-  in
-  solve_ e f empty_map
-  |>
-  [%Trace.retn fun {pf} ->
-    function Some s -> pf "%a" Var.Subst.pp s | None -> pf "false"]
+let solve_zero_eq = function
+  | Add args ->
+      let c, q = Qset.min_elt_exn args in
+      let n = Sum.to_term (Qset.remove args c) in
+      let d = rational (Q.neg q) in
+      let r = div n d in
+      Some (c, r)
+  | _ -> None

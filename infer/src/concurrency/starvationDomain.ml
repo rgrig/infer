@@ -9,7 +9,7 @@ module F = Format
 module L = Logging
 module MF = MarkupFormatter
 
-let pname_pp = MF.wrap_monospaced Typ.Procname.pp
+let pname_pp = MF.wrap_monospaced Procname.pp
 
 module ThreadDomain = struct
   type t = UnknownThread | UIThread | BGThread | AnyThread [@@deriving compare, equal]
@@ -83,24 +83,89 @@ module ThreadDomain = struct
 end
 
 module Lock = struct
-  (* TODO (T37174859): change to [HilExp.t] *)
-  type t = AccessPath.t
+  (** var type used only for printing, not comparisons *)
+  module IgnoreVar = struct
+    type t = Var.t
 
-  type var = Var.t
+    let compare _x _y = 0
 
-  let compare_var = Var.compare_modulo_this
+    let equal _x _y = true
+  end
 
-  (* compare type, base variable modulo this and access list *)
-  let compare lock lock' =
-    if phys_equal lock lock' then 0
-    else [%compare: (var * Typ.t) * AccessPath.access list] lock lock'
+  (** access path that does not ignore the type (like the original AccessPath.t) but which instead
+      ignores the root variable for comparisons; this is taken care of by the root type *)
+  type path = (IgnoreVar.t * Typ.t) * AccessPath.access list [@@deriving compare, equal]
+
+  type root =
+    | Global of Mangled.t
+    | Class of Typ.name
+    | Parameter of int  (** method parameter represented by its 0-indexed position *)
+  [@@deriving compare, equal]
+
+  type t = {root: root; path: path} [@@deriving compare, equal]
+
+  (* using an indentifier for a class object, create an access path representing that lock;
+     this is for synchronizing on Java class objects only *)
+  let path_of_java_class =
+    let typ = Typ.(mk (Tstruct Name.Java.java_lang_class)) in
+    let typ' = Typ.(mk (Tptr (typ, Pk_pointer))) in
+    fun class_id ->
+      let ident = Ident.create_normal class_id 0 in
+      AccessPath.of_id ident typ'
 
 
-  let equal = [%compare.equal: t]
+  let make_global path mangled = {root= Global mangled; path}
 
-  let pp = AccessPath.pp
+  let make_parameter path index = {root= Parameter index; path}
 
-  let owner_class ((_, {Typ.desc}), _) =
+  let make_class path typename = {root= Class typename; path}
+
+  (** convert an expression to a canonical form for a lock identifier *)
+  let rec make formal_map (hilexp : HilExp.t) =
+    match hilexp with
+    | AccessExpression access_exp -> (
+        let path = HilExp.AccessExpression.to_access_path access_exp in
+        match fst (fst path) with
+        | Var.LogicalVar _ ->
+            (* ignore logical variables *)
+            None
+        | Var.ProgramVar pvar when Pvar.is_global pvar ->
+            Some (make_global path (Pvar.get_name pvar))
+        | Var.ProgramVar _ ->
+            let norm_path = AccessPath.inner_class_normalize path in
+            FormalMap.get_formal_index (fst norm_path) formal_map
+            (* ignores non-formals *)
+            |> Option.map ~f:(make_parameter norm_path) )
+    | Constant (Cclass class_id) ->
+        (* this is a synchronized/lock(CLASSNAME.class) construct *)
+        let path = path_of_java_class class_id in
+        let typename = Ident.name_to_string class_id |> Typ.Name.Java.from_string in
+        Some (make_class path typename)
+    | Cast (_, hilexp) | Exception hilexp | UnaryOperator (_, hilexp, _) ->
+        make formal_map hilexp
+    | BinaryOperator _ | Closure _ | Constant _ | Sizeof _ ->
+        None
+
+
+  let make_java_synchronized formals procname =
+    match procname with
+    | Procname.Java java_pname when Procname.Java.is_static java_pname ->
+        (* this is crafted so as to match synchronized(CLASSNAME.class) constructs *)
+        let typename = Procname.Java.get_class_type_name java_pname in
+        let path = Typ.Name.name typename |> Ident.string_to_name |> path_of_java_class in
+        Some (make_class path typename)
+    | Procname.Java _ ->
+        FormalMap.get_formal_base 0 formals
+        |> Option.map ~f:(fun base -> make_parameter (base, []) 0)
+    | _ ->
+        L.die InternalError "Non-Java methods cannot be synchronized.@\n"
+
+
+  let get_access_path {path} = path
+
+  let pp fmt {path} = AccessPath.pp fmt path
+
+  let owner_class {path= (_, {Typ.desc}), _} =
     match desc with Typ.Tstruct name | Typ.Tptr ({desc= Tstruct name}, _) -> Some name | _ -> None
 
 
@@ -165,8 +230,7 @@ end
 (** A lock acquisition with source location and procname in which it occurs. The location & procname
     are *ignored* for comparisons, and are only for reporting. *)
 module Acquisition = struct
-  type t =
-    {lock: Lock.t; loc: Location.t [@compare.ignore]; procname: Typ.Procname.t [@compare.ignore]}
+  type t = {lock: Lock.t; loc: Location.t [@compare.ignore]; procname: Procname.t [@compare.ignore]}
   [@@deriving compare]
 
   let pp fmt {lock} = Lock.pp_locks fmt lock
@@ -180,7 +244,7 @@ module Acquisition = struct
     Errlog.make_trace_element 0 acquisition.loc description []
 
 
-  let make_dummy lock = {lock; loc= Location.dummy; procname= Typ.Procname.Linters_dummy_method}
+  let make_dummy lock = {lock; loc= Location.dummy; procname= Procname.Linters_dummy_method}
 end
 
 (** Set of acquisitions; due to order over acquisitions, each lock appears at most once. *)
@@ -194,7 +258,7 @@ end
 module LockState : sig
   include AbstractDomain.WithTop
 
-  val acquire : procname:Typ.Procname.t -> loc:Location.t -> Lock.t -> t -> t
+  val acquire : procname:Procname.t -> loc:Location.t -> Lock.t -> t -> t
 
   val release : Lock.t -> t -> t
 
@@ -342,8 +406,7 @@ module CriticalPair = struct
     let initial_loc = get_loc t in
     Acquisitions.fold
       (fun {procname= acq_procname; loc= acq_loc} acc ->
-        if
-          Typ.Procname.equal procname acq_procname && Int.is_negative (Location.compare acq_loc acc)
+        if Procname.equal procname acq_procname && Int.is_negative (Location.compare acq_loc acc)
         then acq_loc
         else acc )
       acquisitions initial_loc
@@ -355,11 +418,11 @@ module CriticalPair = struct
       if include_acquisitions then
         Acquisitions.fold
           (fun ({procname} as acq : Acquisition.t) acc ->
-            Typ.Procname.Map.update procname
+            Procname.Map.update procname
               (function None -> Some [acq] | Some acqs -> Some (acq :: acqs))
               acc )
-          acquisitions Typ.Procname.Map.empty
-      else Typ.Procname.Map.empty
+          acquisitions Procname.Map.empty
+      else Procname.Map.empty
     in
     let header_step =
       let description = F.asprintf "%s%a" header pname_pp top_pname in
@@ -370,7 +433,7 @@ module CriticalPair = struct
     let make_call_stack_step fake_first_call call_site =
       let procname = CallSite.pname call_site in
       let trace =
-        Typ.Procname.Map.find_opt procname acquisitions_map
+        Procname.Map.find_opt procname acquisitions_map
         |> Option.value ~default:[]
         (* many acquisitions can be on same line (eg, std::lock) so use stable sort
            to produce a deterministic trace *)
@@ -412,7 +475,7 @@ let is_recursive_lock event tenv =
   in
   match event with
   | Event.LockAcquire lock_path ->
-      AccessPath.get_typ lock_path tenv |> Option.exists ~f:is_class_and_recursive_lock
+      AccessPath.get_typ lock_path.path tenv |> Option.exists ~f:is_class_and_recursive_lock
   | _ ->
       false
 
@@ -456,7 +519,9 @@ module Attribute = struct
   type t =
     | Nothing
     | ThreadGuard
-    | Runnable of Typ.Procname.t
+    | FutureDoneGuard of HilExp.AccessExpression.t
+    | FutureDoneState of bool
+    | Runnable of Procname.t
     | WorkScheduler of StarvationModels.scheduler_thread_constraint
     | Looper of StarvationModels.scheduler_thread_constraint
   [@@deriving equal]
@@ -476,8 +541,12 @@ module Attribute = struct
         F.pp_print_string fmt "Nothing"
     | ThreadGuard ->
         F.pp_print_string fmt "ThreadGuard"
+    | FutureDoneGuard exp ->
+        F.fprintf fmt "FutureDoneGuard(%a)" HilExp.AccessExpression.pp exp
+    | FutureDoneState state ->
+        F.fprintf fmt "FutureDoneState(%b)" state
     | Runnable runproc ->
-        F.fprintf fmt "Runnable(%a)" Typ.Procname.pp runproc
+        F.fprintf fmt "Runnable(%a)" Procname.pp runproc
     | WorkScheduler c ->
         F.fprintf fmt "WorkScheduler(%a)" pp_constr c
     | Looper c ->
@@ -498,8 +567,9 @@ module AttributeDomain = struct
     find_opt acc_exp t |> Option.exists ~f:(function Attribute.ThreadGuard -> true | _ -> false)
 
 
-  let get_scheduler_constraint acc_exp t =
-    find_opt acc_exp t |> Option.bind ~f:(function Attribute.WorkScheduler c -> Some c | _ -> None)
+  let is_future_done_guard acc_exp t =
+    find_opt acc_exp t
+    |> Option.exists ~f:(function Attribute.FutureDoneGuard _ -> true | _ -> false)
 
 
   let exit_scope vars t =
@@ -512,10 +582,10 @@ module AttributeDomain = struct
 end
 
 module ScheduledWorkItem = struct
-  type t = {procname: Typ.Procname.t; loc: Location.t; thread: ThreadDomain.t} [@@deriving compare]
+  type t = {procname: Procname.t; loc: Location.t; thread: ThreadDomain.t} [@@deriving compare]
 
   let pp fmt {procname; loc; thread} =
-    F.fprintf fmt "{procname= %a; loc= %a; thread= %a}" Typ.Procname.pp procname Location.pp loc
+    F.fprintf fmt "{procname= %a; loc= %a; thread= %a}" Procname.pp procname Location.pp loc
       ThreadDomain.pp thread
 end
 
@@ -606,11 +676,25 @@ let blocking_call ~callee sev ~loc astate =
   make_call_with_event new_event ~loc astate
 
 
-let wait_on_monitor ~loc actuals astate =
+let wait_on_monitor ~loc formals actuals astate =
   match actuals with
-  | HilExp.AccessExpression exp :: _ ->
-      let lock = HilExp.AccessExpression.to_access_path exp in
-      let new_event = Event.make_object_wait lock in
+  | exp :: _ ->
+      Lock.make formals exp
+      |> Option.value_map ~default:astate ~f:(fun lock ->
+             let new_event = Event.make_object_wait lock in
+             make_call_with_event new_event ~loc astate )
+  | _ ->
+      astate
+
+
+let future_get ~callee ~loc actuals astate =
+  match actuals with
+  | HilExp.AccessExpression exp :: _
+    when AttributeDomain.find_opt exp astate.attributes
+         |> Option.exists ~f:(function Attribute.FutureDoneState x -> x | _ -> false) ->
+      astate
+  | HilExp.AccessExpression _ :: _ ->
+      let new_event = Event.make_blocking_call callee Low in
       make_call_with_event new_event ~loc astate
   | _ ->
       astate
@@ -711,10 +795,10 @@ let summary_of_astate : Procdesc.t -> t -> summary =
   let attributes =
     let var_predicate =
       match proc_name with
-      | Typ.Procname.Java jname when Typ.Procname.Java.is_class_initializer jname ->
+      | Procname.Java jname when Procname.Java.is_class_initializer jname ->
           (* only keep static attributes for the class initializer *)
           fun v -> Var.is_global v
-      | Typ.Procname.Java jname when Typ.Procname.Java.is_constructor jname ->
+      | Procname.Java jname when Procname.Java.is_constructor jname ->
           (* only keep static attributes or ones that have [this] as their root *)
           fun v -> Var.is_this v || Var.is_global v
       | _ ->

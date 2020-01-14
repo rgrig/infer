@@ -45,9 +45,9 @@ let setup () =
           (* In Buck mode, delete infer-out directories inside buck-out to start fresh and to
              avoid getting errors because some of their contents is missing (removed by
              [Driver.clean_results_dir ()]). *)
-          (buck && flavors) || genrule_mode)
+          (buck && Option.exists buck_mode ~f:BuckMode.is_clang_flavors) || genrule_mode)
         || not
-             ( Driver.(equal_mode driver_mode Analyze)
+             ( Driver.is_analyze_mode driver_mode
              || Config.(
                   continue_capture || infer_is_clang || infer_is_javac || reactive_mode
                   || incremental_analysis) )
@@ -55,7 +55,7 @@ let setup () =
       ResultsDir.create_results_dir () ;
       if
         CLOpt.is_originator && (not Config.continue_capture)
-        && not Driver.(equal_mode driver_mode Analyze)
+        && not (Driver.is_analyze_mode driver_mode)
       then ( db_start () ; SourceFiles.mark_all_stale () )
   | Explore ->
       ResultsDir.assert_results_dir "please run an infer analysis first"
@@ -87,8 +87,12 @@ let log_environment_info () =
     |> Option.map ~f:(String.split ~on:CLOpt.env_var_sep)
     |> Option.value ~default:["<not set>"]
   in
-  L.environment_info "INFER_ARGS = %a@\n" Pp.cli_args infer_args ;
-  L.environment_info "command line arguments: %a@\n" Pp.cli_args (Array.to_list Sys.argv) ;
+  L.environment_info "INFER_ARGS = %a@\n"
+    (Pp.cli_args_with_verbosity ~verbose:Config.debug_mode)
+    infer_args ;
+  L.environment_info "command line arguments: %a@\n"
+    (Pp.cli_args_with_verbosity ~verbose:Config.debug_mode)
+    (Array.to_list Sys.argv) ;
   ( match Utils.get_available_memory_MB () with
   | None ->
       L.environment_info "Could not retrieve available memory (possibly not on Linux)@\n"
@@ -184,10 +188,10 @@ let () =
                 DB.Results_dir.init ~debug:true source_file ;
                 (* collect the CFGs for all the procedures in [source_file] *)
                 let proc_names = SourceFiles.proc_names_of_source source_file in
-                let cfgs = Typ.Procname.Hash.create (List.length proc_names) in
+                let cfgs = Procname.Hash.create (List.length proc_names) in
                 List.iter proc_names ~f:(fun proc_name ->
                     Procdesc.load proc_name
-                    |> Option.iter ~f:(fun cfg -> Typ.Procname.Hash.add cfgs proc_name cfg) ) ;
+                    |> Option.iter ~f:(fun cfg -> Procname.Hash.add cfgs proc_name cfg) ) ;
                 (* emit the dot file in captured/... *)
                 DotCfg.emit_frontend_cfg source_file cfgs ) ;
             L.result "CFGs written in %s/*/%s@." Config.captured_dir Config.dotty_frontend_output )

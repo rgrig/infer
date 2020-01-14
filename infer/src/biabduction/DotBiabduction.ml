@@ -53,15 +53,22 @@ type dotty_node =
   (* Dotpointsto(coo,e,c): basic memory cell box for expression e at coordinate coo and color c *)
   | Dotpointsto of coordinate * Exp.t * string
   (* Dotstruct(coo,e,l,c): struct box for expression e  with field list l at coordinate coo and color c *)
-  | Dotstruct of coordinate * Exp.t * (Typ.Fieldname.t * Sil.strexp) list * string * Exp.t
+  | Dotstruct of coordinate * Exp.t * (Fieldname.t * Predicates.strexp) list * string * Exp.t
   (* Dotarray(coo,e1,e2,l,t,c): array box for expression e1  with field list l at coordinate coo and color c*)
   (* e2 is the len and t is the type *)
-  | Dotarray of coordinate * Exp.t * Exp.t * (Exp.t * Sil.strexp) list * Typ.t * string
+  | Dotarray of coordinate * Exp.t * Exp.t * (Exp.t * Predicates.strexp) list * Typ.t * string
   (* Dotlseg(coo,e1,e2,k,h,c): list box from e1 to e2 at coordinate coo and color c*)
-  | Dotlseg of coordinate * Exp.t * Exp.t * Sil.lseg_kind * Sil.hpred list * string
+  | Dotlseg of coordinate * Exp.t * Exp.t * Predicates.lseg_kind * Predicates.hpred list * string
   (* Dotlseg(coo,e1,e2,e3,e4,k,h,c): doubly linked-list box from with parameters (e1,e2,e3,e4) at coordinate coo and color c*)
   | Dotdllseg of
-      coordinate * Exp.t * Exp.t * Exp.t * Exp.t * Sil.lseg_kind * Sil.hpred list * string
+      coordinate
+      * Exp.t
+      * Exp.t
+      * Exp.t
+      * Exp.t
+      * Predicates.lseg_kind
+      * Predicates.hpred list
+      * string
 
 let mk_coordinate i l = {id= i; lambda= l}
 
@@ -126,17 +133,17 @@ let strip_special_chars b =
 
 
 let rec strexp_to_string pe coo f se =
-  match se with
-  | Sil.Eexp (Exp.Lvar pvar, _) ->
+  match (se : Predicates.strexp) with
+  | Eexp (Exp.Lvar pvar, _) ->
       (Pvar.pp pe) f pvar
-  | Sil.Eexp (Exp.Var id, _) ->
+  | Eexp (Exp.Var id, _) ->
       if !print_full_prop then Ident.pp f id else ()
-  | Sil.Eexp (e, _) ->
-      if !print_full_prop then (Sil.pp_exp_printenv pe) f e else F.pp_print_char f '_'
-  | Sil.Estruct (ls, _) ->
+  | Eexp (e, _) ->
+      if !print_full_prop then (Exp.pp_diff pe) f e else F.pp_print_char f '_'
+  | Estruct (ls, _) ->
       F.fprintf f " STRUCT | { %a } " (struct_to_dotty_str pe coo) ls
-  | Sil.Earray (e, idx, _) ->
-      F.fprintf f " ARRAY[%a] | { %a } " (Sil.pp_exp_printenv pe) e (get_contents pe coo) idx
+  | Earray (e, idx, _) ->
+      F.fprintf f " ARRAY[%a] | { %a } " (Exp.pp_diff pe) e (get_contents pe coo) idx
 
 
 and struct_to_dotty_str pe coo f ls : unit =
@@ -144,30 +151,29 @@ and struct_to_dotty_str pe coo f ls : unit =
   | [] ->
       ()
   | [(fn, se)] ->
-      F.fprintf f "{ <%s%iL%i> %s: %a } " (Typ.Fieldname.to_string fn) coo.id coo.lambda
-        (Typ.Fieldname.to_string fn) (strexp_to_string pe coo) se
+      F.fprintf f "{ <%s%iL%i> %s: %a } " (Fieldname.to_string fn) coo.id coo.lambda
+        (Fieldname.to_string fn) (strexp_to_string pe coo) se
   | (fn, se) :: ls' ->
-      F.fprintf f " { <%s%iL%i> %s: %a } | %a" (Typ.Fieldname.to_string fn) coo.id coo.lambda
-        (Typ.Fieldname.to_string fn) (strexp_to_string pe coo) se (struct_to_dotty_str pe coo) ls'
+      F.fprintf f " { <%s%iL%i> %s: %a } | %a" (Fieldname.to_string fn) coo.id coo.lambda
+        (Fieldname.to_string fn) (strexp_to_string pe coo) se (struct_to_dotty_str pe coo) ls'
 
 
 and get_contents_sexp pe coo f se =
-  match se with
-  | Sil.Eexp (e', _) ->
-      (Sil.pp_exp_printenv pe) f e'
-  | Sil.Estruct (se', _) ->
+  match (se : Predicates.strexp) with
+  | Eexp (e', _) ->
+      (Exp.pp_diff pe) f e'
+  | Estruct (se', _) ->
       F.fprintf f "| { %a }" (struct_to_dotty_str pe coo) se'
-  | Sil.Earray (e', [], _) ->
-      F.fprintf f "(ARRAY Size: %a) | { }" (Sil.pp_exp_printenv pe) e'
-  | Sil.Earray (e', (idx, a) :: linner, _) ->
-      F.fprintf f "(ARRAY Size: %a) | { %a: %a | %a }" (Sil.pp_exp_printenv pe) e'
-        (Sil.pp_exp_printenv pe) idx (strexp_to_string pe coo) a (get_contents pe coo) linner
+  | Earray (e', [], _) ->
+      F.fprintf f "(ARRAY Size: %a) | { }" (Exp.pp_diff pe) e'
+  | Earray (e', (idx, a) :: linner, _) ->
+      F.fprintf f "(ARRAY Size: %a) | { %a: %a | %a }" (Exp.pp_diff pe) e' (Exp.pp_diff pe) idx
+        (strexp_to_string pe coo) a (get_contents pe coo) linner
 
 
 and get_contents_single pe coo f (e, se) =
   let e_no_special_char = strip_special_chars (Exp.to_string e) in
-  F.fprintf f "{ <%s> %a : %a }" e_no_special_char (Sil.pp_exp_printenv pe) e
-    (get_contents_sexp pe coo) se
+  F.fprintf f "{ <%s> %a : %a }" e_no_special_char (Exp.pp_diff pe) e (get_contents_sexp pe coo) se
 
 
 and get_contents pe coo f = function
@@ -258,7 +264,7 @@ let color_to_str (c : Pp.color) =
       "red"
 
 
-let make_dangling_boxes pe allocated_nodes (sigma_lambda : (Sil.hpred * int) list) =
+let make_dangling_boxes pe allocated_nodes (sigma_lambda : (Predicates.hpred * int) list) =
   let exp_color hpred (exp : Exp.t) =
     if Pp.equal_color (pe.Pp.cmap_norm (Obj.repr hpred)) Pp.Red then Pp.Red
     else pe.Pp.cmap_norm (Obj.repr exp)
@@ -267,21 +273,21 @@ let make_dangling_boxes pe allocated_nodes (sigma_lambda : (Sil.hpred * int) lis
     let n = !dotty_state_count in
     incr dotty_state_count ;
     let coo = mk_coordinate n lambda in
-    match hpred with
-    | Sil.Hpointsto (_, Sil.Eexp (e, _), _) when (not (Exp.equal e Exp.zero)) && !print_full_prop ->
+    match (hpred : Predicates.hpred) with
+    | Hpointsto (_, Eexp (e, _), _) when (not (Exp.equal e Exp.zero)) && !print_full_prop ->
         let e_color_str = color_to_str (exp_color hpred e) in
         [Dotdangling (coo, e, e_color_str)]
-    | Sil.Hlseg (_, _, _, e2, _) when not (Exp.equal e2 Exp.zero) ->
+    | Hlseg (_, _, _, e2, _) when not (Exp.equal e2 Exp.zero) ->
         let e2_color_str = color_to_str (exp_color hpred e2) in
         [Dotdangling (coo, e2, e2_color_str)]
-    | Sil.Hdllseg (_, _, _, e2, e3, _, _) ->
+    | Hdllseg (_, _, _, e2, e3, _, _) ->
         let e2_color_str = color_to_str (exp_color hpred e2) in
         let e3_color_str = color_to_str (exp_color hpred e3) in
         let ll =
           if not (Exp.equal e2 Exp.zero) then [Dotdangling (coo, e2, e2_color_str)] else []
         in
         if not (Exp.equal e3 Exp.zero) then Dotdangling (coo, e3, e3_color_str) :: ll else ll
-    | Sil.Hpointsto (_, _, _) | _ ->
+    | Hpointsto (_, _, _) | _ ->
         []
     (* arrays and struct do not give danglings*)
   in
@@ -330,36 +336,36 @@ let make_dangling_boxes pe allocated_nodes (sigma_lambda : (Sil.hpred * int) lis
 let rec dotty_mk_node pe sigma =
   let n = !dotty_state_count in
   incr dotty_state_count ;
-  let do_hpred_lambda exp_color = function
-    | ( Sil.Hpointsto (e, Sil.Earray (e', l, _), Exp.Sizeof {typ= {Typ.desc= Tarray {elt= t}}})
-      , lambda ) ->
+  let do_hpred_lambda exp_color (hpred : Predicates.hpred) lambda =
+    match (hpred, lambda) with
+    | Hpointsto (e, Earray (e', l, _), Exp.Sizeof {typ= {Typ.desc= Tarray {elt= t}}}), lambda ->
         incr dotty_state_count ;
         (* increment once more n+1 is the box for the array *)
         let e_color_str = color_to_str (exp_color e) in
         let e_color_str' = color_to_str (exp_color e') in
         [ Dotpointsto (mk_coordinate n lambda, e, e_color_str)
         ; Dotarray (mk_coordinate (n + 1) lambda, e, e', l, t, e_color_str') ]
-    | Sil.Hpointsto (e, Sil.Estruct (l, _), te), lambda ->
+    | Hpointsto (e, Estruct (l, _), te), lambda ->
         incr dotty_state_count ;
         (* increment once more n+1 is the box for the struct *)
         let e_color_str = color_to_str (exp_color e) in
         (*      [Dotpointsto((mk_coordinate n lambda), e, l, true, e_color_str)] *)
         [ Dotpointsto (mk_coordinate n lambda, e, e_color_str)
         ; Dotstruct (mk_coordinate (n + 1) lambda, e, l, e_color_str, te) ]
-    | Sil.Hpointsto (e, _, _), lambda ->
+    | Hpointsto (e, _, _), lambda ->
         let e_color_str = color_to_str (exp_color e) in
         if List.mem ~equal:Exp.equal !struct_exp_nodes e then []
         else [Dotpointsto (mk_coordinate n lambda, e, e_color_str)]
-    | Sil.Hlseg (k, hpara, e1, e2, _), lambda ->
+    | Hlseg (k, hpara, e1, e2, _), lambda ->
         incr dotty_state_count ;
         (* increment once more n+1 is the box for last element of the list *)
         let eq_color_str = color_to_str (exp_color e1) in
-        [Dotlseg (mk_coordinate n lambda, e1, e2, k, hpara.Sil.body, eq_color_str)]
-    | Sil.Hdllseg (k, hpara_dll, e1, e2, e3, e4, _), lambda ->
+        [Dotlseg (mk_coordinate n lambda, e1, e2, k, hpara.body, eq_color_str)]
+    | Hdllseg (k, hpara_dll, e1, e2, e3, e4, _), lambda ->
         let e1_color_str = color_to_str (exp_color e1) in
         incr dotty_state_count ;
         (* increment once more n+1 is the box for e4 *)
-        [Dotdllseg (mk_coordinate n lambda, e1, e2, e3, e4, k, hpara_dll.Sil.body_dll, e1_color_str)]
+        [Dotdllseg (mk_coordinate n lambda, e1, e2, e3, e4, k, hpara_dll.body_dll, e1_color_str)]
   in
   match sigma with
   | [] ->
@@ -369,12 +375,12 @@ let rec dotty_mk_node pe sigma =
         if Pp.equal_color (pe.Pp.cmap_norm (Obj.repr hpred)) Pp.Red then Pp.Red
         else pe.Pp.cmap_norm (Obj.repr exp)
       in
-      do_hpred_lambda exp_color (hpred, lambda) @ dotty_mk_node pe sigma'
+      do_hpred_lambda exp_color hpred lambda @ dotty_mk_node pe sigma'
 
 
 let set_exps_neq_zero pi =
   let f = function
-    | Sil.Aneq (e, Exp.Const (Const.Cint i)) when IntLit.iszero i ->
+    | Predicates.Aneq (e, Const (Cint i)) when IntLit.iszero i ->
         exps_neq_zero := e :: !exps_neq_zero
     | _ ->
         ()
@@ -404,19 +410,19 @@ let make_nil_node lambda =
 let compute_fields_struct sigma =
   fields_structs := [] ;
   let rec do_strexp se in_struct =
-    match se with
-    | Sil.Eexp (e, _) ->
+    match (se : Predicates.strexp) with
+    | Eexp (e, _) ->
         if in_struct then fields_structs := e :: !fields_structs else ()
-    | Sil.Estruct (l, _) ->
+    | Estruct (l, _) ->
         List.iter ~f:(fun e -> do_strexp e true) (snd (List.unzip l))
-    | Sil.Earray (_, l, _) ->
+    | Earray (_, l, _) ->
         List.iter ~f:(fun e -> do_strexp e false) (snd (List.unzip l))
   in
   let rec fs s =
     match s with
     | [] ->
         ()
-    | Sil.Hpointsto (_, se, _) :: s' ->
+    | Predicates.Hpointsto (_, se, _) :: s' ->
         do_strexp se false ; fs s'
     | _ :: s' ->
         fs s'
@@ -430,7 +436,7 @@ let compute_struct_exp_nodes sigma =
     match s with
     | [] ->
         ()
-    | Sil.Hpointsto (e, Sil.Estruct _, _) :: s' ->
+    | Predicates.Hpointsto (e, Estruct _, _) :: s' ->
         struct_exp_nodes := e :: !struct_exp_nodes ;
         sen s'
     | _ :: s' ->
@@ -450,7 +456,7 @@ let in_cycle cycle edge =
   | Some cycle' ->
       let fn, se = edge in
       List.exists
-        ~f:(fun (_, fn', se') -> Typ.Fieldname.equal fn fn' && Sil.equal_strexp se se')
+        ~f:(fun (_, fn', se') -> Fieldname.equal fn fn' && Predicates.equal_strexp se se')
         cycle'
   | _ ->
       false
@@ -468,11 +474,11 @@ let node_in_cycle cycle node =
 (* compute a list of (kind of link, field name, coo.id target, name_target) *)
 let rec compute_target_struct_fields dotnodes list_fld p f lambda cycle =
   let find_target_one_fld (fn, se) =
-    match se with
-    | Sil.Eexp (e, _) -> (
+    match (se : Predicates.strexp) with
+    | Eexp (e, _) -> (
         if is_nil e p then
           let n' = make_nil_node lambda in
-          if !print_full_prop then [(LinkStructToExp, Typ.Fieldname.to_string fn, n', "")] else []
+          if !print_full_prop then [(LinkStructToExp, Fieldname.to_string fn, n', "")] else []
         else
           let nodes_e = select_nodes_exp_lambda dotnodes e lambda in
           match nodes_e with
@@ -481,7 +487,7 @@ let rec compute_target_struct_fields dotnodes list_fld p f lambda cycle =
             | None ->
                 []
             | Some n' ->
-                [(LinkStructToExp, Typ.Fieldname.to_string fn, n', "")] )
+                [(LinkStructToExp, Fieldname.to_string fn, n', "")] )
           | [node] | [Dotpointsto _; node] | [node; Dotpointsto _] ->
               let n = get_coordinate_id node in
               if List.mem ~equal:Exp.equal !struct_exp_nodes e then
@@ -490,15 +496,15 @@ let rec compute_target_struct_fields dotnodes list_fld p f lambda cycle =
                   if in_cycle cycle (fn, se) && not !print_full_prop then LinkRetainCycle
                   else LinkStructToStruct
                 in
-                [(link_kind, Typ.Fieldname.to_string fn, n, e_no_special_char)]
-              else [(LinkStructToExp, Typ.Fieldname.to_string fn, n, "")]
+                [(link_kind, Fieldname.to_string fn, n, e_no_special_char)]
+              else [(LinkStructToExp, Fieldname.to_string fn, n, "")]
           | _ ->
               (* by construction there must be at most 2 nodes for an expression*)
               L.internal_error "@\n Too many nodes! Error! @\n@." ;
               assert false )
-    | Sil.Estruct (_, _) ->
+    | Estruct (_, _) ->
         [] (* inner struct are printed by print_struc function *)
-    | Sil.Earray _ ->
+    | Earray _ ->
         []
     (* inner arrays are printed by print_array function *)
   in
@@ -513,8 +519,8 @@ let rec compute_target_struct_fields dotnodes list_fld p f lambda cycle =
 (* compute a list of (kind of link, field name, coo.id target, name_target) *)
 let rec compute_target_array_elements dotnodes list_elements p f lambda =
   let find_target_one_element (idx, se) =
-    match se with
-    | Sil.Eexp (e, _) -> (
+    match (se : Predicates.strexp) with
+    | Eexp (e, _) -> (
         if is_nil e p then
           let n' = make_nil_node lambda in
           [(LinkArrayToExp, Exp.to_string idx, n', "")]
@@ -537,9 +543,9 @@ let rec compute_target_array_elements dotnodes list_elements p f lambda =
               (* by construction there must be at most 2 nodes for an expression*)
               L.internal_error "@\nToo many nodes! Error!@\n@." ;
               assert false )
-    | Sil.Estruct (_, _) ->
+    | Estruct (_, _) ->
         [] (* inner struct are printed by print_struc function *)
-    | Sil.Earray _ ->
+    | Earray _ ->
         []
     (* inner arrays are printed by print_array function *)
   in
@@ -596,9 +602,9 @@ let rec dotty_mk_set_links dotnodes sigma p f cycle =
   match sigma with
   | [] ->
       []
-  | (Sil.Hpointsto (e, Sil.Earray (_, lie, _), _), lambda) :: sigma' ->
+  | (Predicates.Hpointsto (e, Earray (_, lie, _), _), lambda) :: sigma' ->
       make_links_for_arrays e lie lambda sigma'
-  | (Sil.Hpointsto (e, Sil.Estruct (lfld, _), _), lambda) :: sigma' -> (
+  | (Predicates.Hpointsto (e, Estruct (lfld, _), _), lambda) :: sigma' -> (
       let src = look_up dotnodes e lambda in
       match src with
       | [] ->
@@ -631,7 +637,7 @@ let rec dotty_mk_set_links dotnodes sigma p f cycle =
           in
           lnk_from_address_struct @ links_from_fields @ dotty_mk_set_links dotnodes sigma' p f cycle
       )
-  | (Sil.Hpointsto (e, Sil.Eexp (e', _), _), lambda) :: sigma' -> (
+  | (Predicates.Hpointsto (e, Eexp (e', _), _), lambda) :: sigma' -> (
       let src = look_up dotnodes e lambda in
       match src with
       | [] ->
@@ -649,7 +655,7 @@ let rec dotty_mk_set_links dotnodes sigma p f cycle =
             let ll = List.concat_map ~f:ff nl in
             ll @ dotty_mk_set_links dotnodes sigma' p f cycle
           else dotty_mk_set_links dotnodes sigma' p f cycle )
-  | (Sil.Hlseg (_, _, e1, e2, _), lambda) :: sigma' -> (
+  | (Predicates.Hlseg (_, _, e1, e2, _), lambda) :: sigma' -> (
       let src = look_up dotnodes e1 lambda in
       match src with
       | [] ->
@@ -660,7 +666,7 @@ let rec dotty_mk_set_links dotnodes sigma p f cycle =
             mk_link LinkToSSL (mk_coordinate (n + 1) lambda) "" (mk_coordinate m lambda) lab
           in
           lnk :: dotty_mk_set_links dotnodes sigma' p f cycle )
-  | (Sil.Hdllseg (_, _, e1, e2, e3, _, _), lambda) :: sigma' -> (
+  | (Predicates.Hdllseg (_, _, e1, e2, e3, _, _), lambda) :: sigma' -> (
       let src = look_up dotnodes e1 lambda in
       match src with
       | [] ->
@@ -832,7 +838,7 @@ let rec print_struct f pe e te l coo c =
   if !print_full_prop then
     F.fprintf f
       " node [%s]; @\n struct%iL%i [label=\"{<%s%iL%i> STRUCT: %a } | %a\" ] fontcolor=%s@\n"
-      "shape=record" n lambda e_no_special_char n lambda (Sil.pp_exp_printenv pe) e
+      "shape=record" n lambda e_no_special_char n lambda (Exp.pp_diff pe) e
       (struct_to_dotty_str pe coo) l c
   else
     F.fprintf f
@@ -848,8 +854,7 @@ and print_array f pe e1 e2 l coo c =
   F.fprintf f "subgraph structs_%iL%i {@\n" n lambda ;
   F.fprintf f
     " node [%s]; @\n struct%iL%i [label=\"{<%s%iL%i> ARRAY| SIZE: %a } | %a\" ] fontcolor=%s@\n"
-    "shape=record" n lambda e_no_special_char n lambda (Sil.pp_exp_printenv pe) e2
-    (get_contents pe coo) l c ;
+    "shape=record" n lambda e_no_special_char n lambda (Exp.pp_diff pe) e2 (get_contents pe coo) l c ;
   F.fprintf f "}@\n"
 
 
@@ -858,15 +863,15 @@ and print_sll f pe nesting k e1 coo =
   let lambda = coo.lambda in
   let n' = !dotty_state_count in
   incr dotty_state_count ;
-  ( match k with
-  | Sil.Lseg_NE ->
+  ( match (k : Predicates.lseg_kind) with
+  | Lseg_NE ->
       F.fprintf f "subgraph cluster_%iL%i { %s node [style=filled,color=white];  label=\"list NE\";"
         n' lambda "style=filled; color=lightgrey;"
-  | Sil.Lseg_PE ->
+  | Lseg_PE ->
       F.fprintf f
         "subgraph cluster_%iL%i { %s node [style=filled,color=white];   label=\"list PE\";" n'
         lambda "style=filled; color=lightgrey;" ) ;
-  F.fprintf f "state%iL%i [label=\"%a\"]@\n" n lambda (Sil.pp_exp_printenv pe) e1 ;
+  F.fprintf f "state%iL%i [label=\"%a\"]@\n" n lambda (Exp.pp_diff pe) e1 ;
   let n' = !dotty_state_count in
   incr dotty_state_count ;
   F.fprintf f "state%iL%i [label=\"... \" style=filled color=lightgrey] @\n" n' lambda ;
@@ -885,20 +890,20 @@ and print_dll f pe nesting k e1 e4 coo =
   let lambda = coo.lambda in
   let n' = !dotty_state_count in
   incr dotty_state_count ;
-  ( match k with
-  | Sil.Lseg_NE ->
+  ( match (k : Predicates.lseg_kind) with
+  | Lseg_NE ->
       F.fprintf f "subgraph cluster_%iL%i { %s node [style=filled,color=white];  label=\"%s\";" n'
         lambda "style=filled; color=lightgrey;" "doubly-linked list NE"
-  | Sil.Lseg_PE ->
+  | Lseg_PE ->
       F.fprintf f "subgraph cluster_%iL%i { %s node [style=filled,color=white];  label=\"%s\";" n'
         lambda "style=filled; color=lightgrey;" "doubly-linked list PE" ) ;
-  F.fprintf f "state%iL%i [label=\"%a\"]@\n" n lambda (Sil.pp_exp_printenv pe) e1 ;
+  F.fprintf f "state%iL%i [label=\"%a\"]@\n" n lambda (Exp.pp_diff pe) e1 ;
   let n' = !dotty_state_count in
   incr dotty_state_count ;
   F.fprintf f "state%iL%i [label=\"... \" style=filled color=lightgrey] @\n" n' lambda ;
   F.fprintf f "state%iL%i -> state%iL%i [label=\" \"]@\n" n lambda n' lambda ;
   F.fprintf f "state%iL%i -> state%iL%i [label=\" \"]@\n" n' lambda n lambda ;
-  F.fprintf f "state%iL%i [label=\"%a\"]@\n" (n + 1) lambda (Sil.pp_exp_printenv pe) e4 ;
+  F.fprintf f "state%iL%i [label=\"%a\"]@\n" (n + 1) lambda (Exp.pp_diff pe) e4 ;
   F.fprintf f "state%iL%i -> state%iL%i [label=\" \"]@\n" (n + 1) lambda n' lambda ;
   F.fprintf f "state%iL%i -> state%iL%i [label=\" \"]}@\n" n' lambda (n + 1) lambda ;
   incr lambda_counter ;
@@ -914,9 +919,8 @@ and dotty_pp_state f pe cycle dotnode =
     let lambda = coo.lambda in
     if is_dangling then
       F.fprintf f "state%iL%i [label=\"%a \", color=red, style=dashed, fontcolor=%s]@\n" n lambda
-        (Sil.pp_exp_printenv pe) e c
-    else
-      F.fprintf f "state%iL%i [label=\"%a\" fontcolor=%s]@\n" n lambda (Sil.pp_exp_printenv pe) e c
+        (Exp.pp_diff pe) e c
+    else F.fprintf f "state%iL%i [label=\"%a\" fontcolor=%s]@\n" n lambda (Exp.pp_diff pe) e c
   in
   match dotnode with
   | Dotnil coo when !print_full_prop ->
@@ -930,14 +934,14 @@ and dotty_pp_state f pe cycle dotnode =
       print_struct f pe e1 te l' coo c
   | Dotarray (coo, e1, e2, l, _, c) when !print_full_prop ->
       print_array f pe e1 e2 l coo c
-  | Dotlseg (coo, e1, _, Sil.Lseg_NE, nesting, _) when !print_full_prop ->
-      print_sll f pe nesting Sil.Lseg_NE e1 coo
-  | Dotlseg (coo, e1, _, Sil.Lseg_PE, nesting, _) when !print_full_prop ->
-      print_sll f pe nesting Sil.Lseg_PE e1 coo
-  | Dotdllseg (coo, e1, _, _, e4, Sil.Lseg_NE, nesting, _) when !print_full_prop ->
-      print_dll f pe nesting Sil.Lseg_NE e1 e4 coo
-  | Dotdllseg (coo, e1, _, _, e4, Sil.Lseg_PE, nesting, _) when !print_full_prop ->
-      print_dll f pe nesting Sil.Lseg_PE e1 e4 coo
+  | Dotlseg (coo, e1, _, Lseg_NE, nesting, _) when !print_full_prop ->
+      print_sll f pe nesting Predicates.Lseg_NE e1 coo
+  | Dotlseg (coo, e1, _, Lseg_PE, nesting, _) when !print_full_prop ->
+      print_sll f pe nesting Predicates.Lseg_PE e1 coo
+  | Dotdllseg (coo, e1, _, _, e4, Lseg_NE, nesting, _) when !print_full_prop ->
+      print_dll f pe nesting Predicates.Lseg_NE e1 e4 coo
+  | Dotdllseg (coo, e1, _, _, e4, Lseg_PE, nesting, _) when !print_full_prop ->
+      print_dll f pe nesting Predicates.Lseg_PE e1 e4 coo
   | _ ->
       ()
 
@@ -948,10 +952,10 @@ and build_visual_graph f pe p cycle =
   compute_fields_struct sigma ;
   compute_struct_exp_nodes sigma ;
   (* L.out "@\n@\n Computed fields structs: ";
-     List.iter ~f:(fun e -> L.out " %a " (Sil.pp_exp_printenv pe) e) !fields_structs;
+     List.iter ~f:(fun e -> L.out " %a " (Exp.pp_diff pe) e) !fields_structs;
      L.out "@\n@.";
      L.out "@\n@\n Computed exp structs nodes: ";
-     List.iter ~f:(fun e -> L.out " %a " (Sil.pp_exp_printenv pe) e) !struct_exp_nodes;
+     List.iter ~f:(fun e -> L.out " %a " (Exp.pp_diff pe) e) !struct_exp_nodes;
      L.out "@\n@."; *)
   let sigma_lambda = List.map ~f:(fun hp -> (hp, !lambda_counter)) sigma in
   let nodes = dotty_mk_node pe sigma_lambda in

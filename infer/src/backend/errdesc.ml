@@ -22,8 +22,8 @@ let is_one_of_classes = QualifiedCppName.Match.match_qualifiers
 
 let is_method_of_objc_cpp_class pname matcher =
   match pname with
-  | Typ.Procname.ObjC_Cpp objc_cpp ->
-      let class_qual_opt = Typ.Procname.ObjC_Cpp.get_class_qualifiers objc_cpp in
+  | Procname.ObjC_Cpp objc_cpp ->
+      let class_qual_opt = Procname.ObjC_Cpp.get_class_qualifiers objc_cpp in
       is_one_of_classes matcher class_qual_opt
   | _ ->
       false
@@ -32,8 +32,7 @@ let is_method_of_objc_cpp_class pname matcher =
 let is_vector_method pname = is_method_of_objc_cpp_class pname vector_matcher
 
 let is_special_field matcher field_name_opt field =
-  let field_name = Typ.Fieldname.to_flat_string field in
-  let class_qual_opt = Typ.Fieldname.clang_get_qual_class field in
+  let field_name = Fieldname.get_field_name field in
   let field_ok =
     match field_name_opt with
     | Some field_name' ->
@@ -41,12 +40,14 @@ let is_special_field matcher field_name_opt field =
     | None ->
         true
   in
-  field_ok && Option.value_map ~f:(is_one_of_classes matcher) ~default:false class_qual_opt
+  field_ok
+  && (not (Fieldname.is_java field))
+  && Fieldname.get_class_name field |> Typ.Name.qual_name |> is_one_of_classes matcher
 
 
 (** Check whether the hpred is a |-> representing a resource in the Racquire state *)
 let hpred_is_open_resource tenv prop = function
-  | Sil.Hpointsto (e, _, _) -> (
+  | Predicates.Hpointsto (e, _, _) -> (
     match Attribute.get_resource tenv prop e with
     | Some (Apred (Aresource {ra_kind= Racquire; ra_res= res}, _)) ->
         Some res
@@ -161,21 +162,21 @@ let rec find_normal_variable_load_ tenv (seen : Exp.Set.t) node id : DExp.t opti
     | Sil.Load {id= id0; e} when Ident.equal id id0 ->
         if verbose then (
           L.d_str "find_normal_variable_load defining " ;
-          Sil.d_exp e ;
+          Exp.d_exp e ;
           L.d_ln () ) ;
         exp_lv_dexp_ tenv seen node e
     | Sil.Call ((id0, _), Exp.Const (Const.Cfun pn), (e, _) :: _, _, _)
-      when Ident.equal id id0 && Typ.Procname.equal pn (Typ.Procname.from_string_c_fun "__cast") ->
+      when Ident.equal id id0 && Procname.equal pn (Procname.from_string_c_fun "__cast") ->
         if verbose then (
           L.d_str "find_normal_variable_load cast on " ;
-          Sil.d_exp e ;
+          Exp.d_exp e ;
           L.d_ln () ) ;
         exp_rv_dexp_ tenv seen node e
     | Sil.Call ((id0, _), (Exp.Const (Const.Cfun pname) as fun_exp), args, loc, call_flags)
       when Ident.equal id id0 ->
         if verbose then (
           L.d_str "find_normal_variable_load function call " ;
-          Sil.d_exp fun_exp ;
+          Exp.d_exp fun_exp ;
           L.d_ln () ) ;
         let fun_dexp = DExp.Dconst (Const.Cfun pname) in
         let args_dexp =
@@ -208,19 +209,19 @@ let rec find_normal_variable_load_ tenv (seen : Exp.Set.t) node id : DExp.t opti
 and exp_lv_dexp_ tenv (seen_ : Exp.Set.t) node e : DExp.t option =
   if Exp.Set.mem e seen_ then (
     L.d_str "exp_lv_dexp: cycle detected" ;
-    Sil.d_exp e ;
+    Exp.d_exp e ;
     L.d_ln () ;
     None )
   else
     let seen = Exp.Set.add e seen_ in
-    match Prop.exp_normalize_noabs tenv Sil.sub_empty e with
+    match Prop.exp_normalize_noabs tenv Predicates.sub_empty e with
     | Exp.Const c ->
-        if verbose then (L.d_str "exp_lv_dexp: constant " ; Sil.d_exp e ; L.d_ln ()) ;
+        if verbose then (L.d_str "exp_lv_dexp: constant " ; Exp.d_exp e ; L.d_ln ()) ;
         Some (DExp.Dderef (DExp.Dconst c))
     | Exp.BinOp (Binop.PlusPI, e1, e2) -> (
         if verbose then (
           L.d_str "exp_lv_dexp: (e1 +PI e2) " ;
-          Sil.d_exp e ;
+          Exp.d_exp e ;
           L.d_ln () ) ;
         match (exp_lv_dexp_ tenv seen node e1, exp_rv_dexp_ tenv seen node e2) with
         | Some de1, Some de2 ->
@@ -230,7 +231,7 @@ and exp_lv_dexp_ tenv (seen_ : Exp.Set.t) node e : DExp.t option =
     | Exp.Var id when Ident.is_normal id -> (
         if verbose then (
           L.d_str "exp_lv_dexp: normal var " ;
-          Sil.d_exp e ;
+          Exp.d_exp e ;
           L.d_ln () ) ;
         match find_normal_variable_load_ tenv seen node id with
         | None ->
@@ -240,7 +241,7 @@ and exp_lv_dexp_ tenv (seen_ : Exp.Set.t) node e : DExp.t option =
     | Exp.Lvar pvar ->
         if verbose then (
           L.d_str "exp_lv_dexp: program var " ;
-          Sil.d_exp e ;
+          Exp.d_exp e ;
           L.d_ln () ) ;
         if Pvar.is_frontend_tmp pvar then
           match find_program_variable_assignment node pvar with
@@ -266,8 +267,8 @@ and exp_lv_dexp_ tenv (seen_ : Exp.Set.t) node e : DExp.t option =
     | Exp.Lfield (Exp.Var id, f, _) when Ident.is_normal id -> (
         if verbose then (
           L.d_str "exp_lv_dexp: Lfield with var " ;
-          Sil.d_exp (Exp.Var id) ;
-          L.d_printfln " %a" Typ.Fieldname.pp f ) ;
+          Exp.d_exp (Exp.Var id) ;
+          L.d_printfln " %a" Fieldname.pp f ) ;
         match find_normal_variable_load_ tenv seen node id with
         | None ->
             None
@@ -275,9 +276,7 @@ and exp_lv_dexp_ tenv (seen_ : Exp.Set.t) node e : DExp.t option =
             Some (DExp.Darrow (de, f)) )
     | Exp.Lfield (e1, f, _) -> (
         if verbose then (
-          L.d_str "exp_lv_dexp: Lfield " ;
-          Sil.d_exp e1 ;
-          L.d_printfln " %a" Typ.Fieldname.pp f ) ;
+          L.d_str "exp_lv_dexp: Lfield " ; Exp.d_exp e1 ; L.d_printfln " %a" Fieldname.pp f ) ;
         match exp_lv_dexp_ tenv seen node e1 with
         | None ->
             None
@@ -285,7 +284,7 @@ and exp_lv_dexp_ tenv (seen_ : Exp.Set.t) node e : DExp.t option =
             Some (DExp.Ddot (de, f)) )
     | Exp.Lindex (e1, e2) -> (
         if verbose then (
-          L.d_str "exp_lv_dexp: Lindex " ; Sil.d_exp e1 ; L.d_str " " ; Sil.d_exp e2 ; L.d_ln () ) ;
+          L.d_str "exp_lv_dexp: Lindex " ; Exp.d_exp e1 ; L.d_str " " ; Exp.d_exp e2 ; L.d_ln () ) ;
         match (exp_lv_dexp_ tenv seen node e1, exp_rv_dexp_ tenv seen node e2) with
         | None, _ ->
             None
@@ -297,7 +296,7 @@ and exp_lv_dexp_ tenv (seen_ : Exp.Set.t) node e : DExp.t option =
     | _ ->
         if verbose then (
           L.d_str "exp_lv_dexp: no match for  " ;
-          Sil.d_exp e ;
+          Exp.d_exp e ;
           L.d_ln () ) ;
         None
 
@@ -306,19 +305,19 @@ and exp_lv_dexp_ tenv (seen_ : Exp.Set.t) node e : DExp.t option =
 and exp_rv_dexp_ tenv (seen_ : Exp.Set.t) node e : DExp.t option =
   if Exp.Set.mem e seen_ then (
     L.d_str "exp_rv_dexp: cycle detected" ;
-    Sil.d_exp e ;
+    Exp.d_exp e ;
     L.d_ln () ;
     None )
   else
     let seen = Exp.Set.add e seen_ in
     match e with
     | Exp.Const c ->
-        if verbose then (L.d_str "exp_rv_dexp: constant " ; Sil.d_exp e ; L.d_ln ()) ;
+        if verbose then (L.d_str "exp_rv_dexp: constant " ; Exp.d_exp e ; L.d_ln ()) ;
         Some (DExp.Dconst c)
     | Exp.Lvar pv ->
         if verbose then (
           L.d_str "exp_rv_dexp: program var " ;
-          Sil.d_exp e ;
+          Exp.d_exp e ;
           L.d_ln () ) ;
         if Pvar.is_frontend_tmp pv then
           exp_lv_dexp_ tenv seen_ (* avoid spurious cycle detection *) node e
@@ -326,14 +325,12 @@ and exp_rv_dexp_ tenv (seen_ : Exp.Set.t) node e : DExp.t option =
     | Exp.Var id when Ident.is_normal id ->
         if verbose then (
           L.d_str "exp_rv_dexp: normal var " ;
-          Sil.d_exp e ;
+          Exp.d_exp e ;
           L.d_ln () ) ;
         find_normal_variable_load_ tenv seen node id
     | Exp.Lfield (e1, f, _) -> (
         if verbose then (
-          L.d_str "exp_rv_dexp: Lfield " ;
-          Sil.d_exp e1 ;
-          L.d_printfln " %a" Typ.Fieldname.pp f ) ;
+          L.d_str "exp_rv_dexp: Lfield " ; Exp.d_exp e1 ; L.d_printfln " %a" Fieldname.pp f ) ;
         match exp_rv_dexp_ tenv seen node e1 with
         | None ->
             None
@@ -341,37 +338,37 @@ and exp_rv_dexp_ tenv (seen_ : Exp.Set.t) node e : DExp.t option =
             Some (DExp.Ddot (de, f)) )
     | Exp.Lindex (e1, e2) -> (
         if verbose then (
-          L.d_str "exp_rv_dexp: Lindex " ; Sil.d_exp e1 ; L.d_str " " ; Sil.d_exp e2 ; L.d_ln () ) ;
+          L.d_str "exp_rv_dexp: Lindex " ; Exp.d_exp e1 ; L.d_str " " ; Exp.d_exp e2 ; L.d_ln () ) ;
         match (exp_rv_dexp_ tenv seen node e1, exp_rv_dexp_ tenv seen node e2) with
         | None, _ | _, None ->
             None
         | Some de1, Some de2 ->
             Some (DExp.Darray (de1, de2)) )
     | Exp.BinOp (op, e1, e2) -> (
-        if verbose then (L.d_str "exp_rv_dexp: BinOp " ; Sil.d_exp e ; L.d_ln ()) ;
+        if verbose then (L.d_str "exp_rv_dexp: BinOp " ; Exp.d_exp e ; L.d_ln ()) ;
         match (exp_rv_dexp_ tenv seen node e1, exp_rv_dexp_ tenv seen node e2) with
         | None, _ | _, None ->
             None
         | Some de1, Some de2 ->
             Some (DExp.Dbinop (op, de1, de2)) )
     | Exp.UnOp (op, e1, _) -> (
-        if verbose then (L.d_str "exp_rv_dexp: UnOp " ; Sil.d_exp e ; L.d_ln ()) ;
+        if verbose then (L.d_str "exp_rv_dexp: UnOp " ; Exp.d_exp e ; L.d_ln ()) ;
         match exp_rv_dexp_ tenv seen node e1 with
         | None ->
             None
         | Some de1 ->
             Some (DExp.Dunop (op, de1)) )
     | Exp.Cast (_, e1) ->
-        if verbose then (L.d_str "exp_rv_dexp: Cast " ; Sil.d_exp e ; L.d_ln ()) ;
+        if verbose then (L.d_str "exp_rv_dexp: Cast " ; Exp.d_exp e ; L.d_ln ()) ;
         exp_rv_dexp_ tenv seen node e1
     | Exp.Sizeof {typ; dynamic_length; subtype} ->
-        if verbose then (L.d_str "exp_rv_dexp: type " ; Sil.d_exp e ; L.d_ln ()) ;
+        if verbose then (L.d_str "exp_rv_dexp: type " ; Exp.d_exp e ; L.d_ln ()) ;
         Some
           (DExp.Dsizeof (typ, Option.bind dynamic_length ~f:(exp_rv_dexp_ tenv seen node), subtype))
     | _ ->
         if verbose then (
           L.d_str "exp_rv_dexp: no match for  " ;
-          Sil.d_exp e ;
+          Exp.d_exp e ;
           L.d_ln () ) ;
         None
 
@@ -406,12 +403,13 @@ let explain_allocation_mismatch ra_alloc ra_dealloc =
 (** check whether the type of leaked [hpred] appears as a predicate
     in an inductive predicate in [prop] *)
 let leak_from_list_abstraction hpred prop =
-  let hpred_type = function
-    | Sil.Hpointsto (_, _, texp) ->
+  let hpred_type (hpred : Predicates.hpred) =
+    match hpred with
+    | Hpointsto (_, _, texp) ->
         Some texp
-    | Sil.Hlseg (_, {Sil.body= [Sil.Hpointsto (_, _, texp)]}, _, _, _) ->
+    | Hlseg (_, {body= [Hpointsto (_, _, texp)]}, _, _, _) ->
         Some texp
-    | Sil.Hdllseg (_, {Sil.body_dll= [Sil.Hpointsto (_, _, texp)]}, _, _, _, _, _) ->
+    | Hdllseg (_, {body_dll= [Hpointsto (_, _, texp)]}, _, _, _, _, _) ->
         Some texp
     | _ ->
         None
@@ -420,15 +418,15 @@ let leak_from_list_abstraction hpred prop =
   let check_hpred texp hp =
     match hpred_type hp with Some texp' when Exp.equal texp texp' -> found := true | _ -> ()
   in
-  let check_hpara texp _ hpara = List.iter ~f:(check_hpred texp) hpara.Sil.body in
-  let check_hpara_dll texp _ hpara = List.iter ~f:(check_hpred texp) hpara.Sil.body_dll in
+  let check_hpara texp _ hpara = List.iter ~f:(check_hpred texp) hpara.Predicates.body in
+  let check_hpara_dll texp _ hpara = List.iter ~f:(check_hpred texp) hpara.Predicates.body_dll in
   match hpred_type hpred with
   | Some texp ->
       let env = Prop.prop_pred_env prop in
-      Sil.Predicates.iter env (check_hpara texp) (check_hpara_dll texp) ;
+      Predicates.Env.iter env (check_hpara texp) (check_hpara_dll texp) ;
       if !found then (
         L.d_str "leak_from_list_abstraction of predicate of type " ;
-        Sil.d_texp_full texp ;
+        Exp.d_texp_full texp ;
         L.d_ln () ) ;
       !found
   | None ->
@@ -436,13 +434,15 @@ let leak_from_list_abstraction hpred prop =
 
 
 (** find the type of hpred, if any *)
-let find_hpred_typ hpred = match hpred with Sil.Hpointsto (_, _, texp) -> Some texp | _ -> None
+let find_hpred_typ hpred =
+  match hpred with Predicates.Hpointsto (_, _, texp) -> Some texp | _ -> None
+
 
 (** find the type of pvar and remove the pointer, if any *)
 let find_typ_without_ptr prop pvar =
   let res = ref None in
   let do_hpred = function
-    | Sil.Hpointsto (e, _, te) when Exp.equal e (Exp.Lvar pvar) ->
+    | Predicates.Hpointsto (e, _, te) when Exp.equal e (Exp.Lvar pvar) ->
         res := Some te
     | _ ->
         ()
@@ -533,7 +533,7 @@ let explain_leak tenv hpred prop alloc_att_opt bucket =
     | Some (Sil.Store {e1= lexp}) when is_none vpath -> (
         if verbose then (
           L.d_str "explain_leak: current instruction Set for " ;
-          Sil.d_exp lexp ;
+          Exp.d_exp lexp ;
           L.d_ln () ) ;
         match exp_lv_dexp tenv node lexp with
         | Some dexp when not (DExp.has_tmp_var dexp) ->
@@ -566,11 +566,11 @@ let explain_leak tenv hpred prop alloc_att_opt bucket =
 (** find the dexp, if any, where the given value is stored
     also return the type of the value if found *)
 let vpath_find tenv prop exp_ : DExp.t option * Typ.t option =
-  if verbose then (L.d_str "in vpath_find exp:" ; Sil.d_exp exp_ ; L.d_ln ()) ;
+  if verbose then (L.d_str "in vpath_find exp:" ; Exp.d_exp exp_ ; L.d_ln ()) ;
   let rec find sigma_acc sigma_todo exp =
     let do_fse res sigma_acc' sigma_todo' lexp texp (f, se) =
       match se with
-      | Sil.Eexp (e, _) when Exp.equal exp e -> (
+      | Predicates.Eexp (e, _) when Exp.equal exp e -> (
           let sigma' = List.rev_append sigma_acc' sigma_todo' in
           match lexp with
           | Exp.Lvar pv ->
@@ -579,7 +579,7 @@ let vpath_find tenv prop exp_ : DExp.t option * Typ.t option =
                 | Exp.Sizeof {typ= {Typ.desc= Tstruct name}} -> (
                   match Tenv.lookup tenv name with
                   | Some {fields} ->
-                      List.find ~f:(fun (f', _, _) -> Typ.Fieldname.equal f' f) fields
+                      List.find ~f:(fun (f', _, _) -> Fieldname.equal f' f) fields
                       |> Option.map ~f:snd3
                   | _ ->
                       None )
@@ -596,14 +596,14 @@ let vpath_find tenv prop exp_ : DExp.t option * Typ.t option =
           | lexp ->
               if verbose then (
                 L.d_str "vpath_find do_fse: no match on Eexp " ;
-                Sil.d_exp lexp ;
+                Exp.d_exp lexp ;
                 L.d_ln () ) )
       | _ ->
           ()
     in
     let do_sexp sigma_acc' sigma_todo' lexp sexp texp =
       match sexp with
-      | Sil.Eexp (e, _) when Exp.equal exp e -> (
+      | Predicates.Eexp (e, _) when Exp.equal exp e -> (
           let sigma' = List.rev_append sigma_acc' sigma_todo' in
           match lexp with
           | Exp.Lvar pv when not (Pvar.is_frontend_tmp pv) ->
@@ -618,10 +618,10 @@ let vpath_find tenv prop exp_ : DExp.t option * Typ.t option =
           | lexp ->
               if verbose then (
                 L.d_str "vpath_find do_sexp: no match on Eexp " ;
-                Sil.d_exp lexp ;
+                Exp.d_exp lexp ;
                 L.d_ln () ) ;
               (None, None) )
-      | Sil.Estruct (fsel, _) ->
+      | Predicates.Estruct (fsel, _) ->
           let res = ref (None, None) in
           List.iter ~f:(do_fse res sigma_acc' sigma_todo' lexp texp) fsel ;
           !res
@@ -636,13 +636,13 @@ let vpath_find tenv prop exp_ : DExp.t option * Typ.t option =
           | _ ->
               false
         in
-        List.exists ~f:filter (Sil.sub_to_list prop.Prop.sub)
+        List.exists ~f:filter (Predicates.sub_to_list prop.Prop.sub)
       in
       function
-      | Sil.Hpointsto (Exp.Lvar pv, sexp, texp)
+      | Predicates.Hpointsto (Exp.Lvar pv, sexp, texp)
         when Pvar.is_local pv || Pvar.is_global pv || Pvar.is_seed pv ->
           do_sexp sigma_acc' sigma_todo' (Exp.Lvar pv) sexp texp
-      | Sil.Hpointsto (Exp.Var id, sexp, texp)
+      | Predicates.Hpointsto (Exp.Var id, sexp, texp)
         when Ident.is_normal id || (Ident.is_footprint id && substituted_from_normal id) ->
           do_sexp sigma_acc' sigma_todo' (Exp.Var id) sexp texp
       | _ ->
@@ -663,7 +663,7 @@ let vpath_find tenv prop exp_ : DExp.t option * Typ.t option =
     match res with
     | None, _ ->
         L.d_str "vpath_find: cannot find " ;
-        Sil.d_exp exp_ ;
+        Exp.d_exp exp_ ;
         L.d_ln ()
     | Some de, typo -> (
         L.d_printf "vpath_find: found %a :" DExp.pp de ;
@@ -672,17 +672,18 @@ let vpath_find tenv prop exp_ : DExp.t option * Typ.t option =
 
 
 let access_opt ?(is_nullable = false) inst =
-  match inst with
-  | Sil.Iupdate (_, ncf, n, _) ->
+  match (inst : Predicates.inst) with
+  | Iupdate (_, ncf, n, _) ->
       Some (Localise.Last_assigned (n, ncf))
-  | Sil.Irearrange (_, _, n, _) ->
+  | Irearrange (_, _, n, _) ->
       Some (Localise.Last_accessed (n, is_nullable))
-  | Sil.Ireturn_from_call n ->
+  | Ireturn_from_call n ->
       Some (Localise.Returned_from_call n)
-  | Sil.Ialloc when Language.curr_language_is Java ->
+  | Ialloc when Language.curr_language_is Java ->
       Some Localise.Initialized_automatically
   | inst ->
-      if verbose then L.d_printfln "explain_dexp_access: inst is not an update %a" Sil.pp_inst inst ;
+      if verbose then
+        L.d_printfln "explain_dexp_access: inst is not an update %a" Predicates.pp_inst inst ;
       None
 
 
@@ -692,19 +693,19 @@ let explain_dexp_access prop dexp is_nullable =
   let sexpo_to_inst = function
     | None ->
         None
-    | Some (Sil.Eexp (_, inst)) ->
+    | Some (Predicates.Eexp (_, inst)) ->
         Some inst
     | Some se ->
         if verbose then (
           L.d_str "sexpo_to_inst: can't find inst " ;
-          Sil.d_sexp se ;
+          Predicates.d_sexp se ;
           L.d_ln () ) ;
         None
   in
-  let find_ptsto (e : Exp.t) : Sil.strexp option =
+  let find_ptsto (e : Exp.t) : Predicates.strexp option =
     let res = ref None in
     let do_hpred = function
-      | Sil.Hpointsto (e', se, _) when Exp.equal e e' ->
+      | Predicates.Hpointsto (e', se, _) when Exp.equal e e' ->
           res := Some se
       | _ ->
           ()
@@ -714,44 +715,44 @@ let explain_dexp_access prop dexp is_nullable =
   let rec lookup_fld fsel f =
     match fsel with
     | [] ->
-        if verbose then L.d_printfln "lookup_fld: can't find field %a" Typ.Fieldname.pp f ;
+        if verbose then L.d_printfln "lookup_fld: can't find field %a" Fieldname.pp f ;
         None
     | (f1, se) :: fsel' ->
-        if Typ.Fieldname.equal f1 f then Some se else lookup_fld fsel' f
+        if Fieldname.equal f1 f then Some se else lookup_fld fsel' f
   in
   let rec lookup_esel esel e =
     match esel with
     | [] ->
         if verbose then (
           L.d_str "lookup_esel: can't find index " ;
-          Sil.d_exp e ;
+          Exp.d_exp e ;
           L.d_ln () ) ;
         None
     | (e1, se) :: esel' ->
         if Exp.equal e1 e then Some se else lookup_esel esel' e
   in
-  let rec lookup : DExp.t -> Sil.strexp option = function
+  let rec lookup : DExp.t -> Predicates.strexp option = function
     | DExp.Dconst c ->
-        Some (Sil.Eexp (Exp.Const c, Sil.inst_none))
+        Some (Predicates.Eexp (Exp.Const c, Predicates.inst_none))
     | DExp.Darray (de1, de2) -> (
       match (lookup de1, lookup de2) with
       | None, _ | _, None ->
           None
-      | Some (Sil.Earray (_, esel, _)), Some (Sil.Eexp (e, _)) ->
+      | Some (Predicates.Earray (_, esel, _)), Some (Predicates.Eexp (e, _)) ->
           lookup_esel esel e
       | Some se1, Some se2 ->
           if verbose then (
             L.d_str "lookup: case not matched on Darray " ;
-            Sil.d_sexp se1 ;
+            Predicates.d_sexp se1 ;
             L.d_str " " ;
-            Sil.d_sexp se2 ;
+            Predicates.d_sexp se2 ;
             L.d_ln () ) ;
           None )
     | DExp.Darrow (DExp.Dpvaraddr pvar, f) -> (
       match lookup (DExp.Dpvaraddr pvar) with
       | None ->
           None
-      | Some (Sil.Estruct (fsel, _)) ->
+      | Some (Predicates.Estruct (fsel, _)) ->
           lookup_fld fsel f
       | Some _ ->
           if verbose then L.d_strln "lookup: case not matched on Darrow" ;
@@ -760,7 +761,7 @@ let explain_dexp_access prop dexp is_nullable =
       match lookup (DExp.Dderef de1) with
       | None ->
           None
-      | Some (Sil.Estruct (fsel, _)) ->
+      | Some (Predicates.Estruct (fsel, _)) ->
           lookup_fld fsel f
       | Some _ ->
           if verbose then L.d_strln "lookup: case not matched on Darrow" ;
@@ -769,9 +770,9 @@ let explain_dexp_access prop dexp is_nullable =
       match lookup de1 with
       | None ->
           None
-      | Some (Sil.Estruct (fsel, _)) ->
+      | Some (Predicates.Estruct (fsel, _)) ->
           lookup_fld fsel f
-      | Some (Sil.Eexp (Const (Cfun _), _) as fun_strexp) ->
+      | Some (Predicates.Eexp (Const (Cfun _), _) as fun_strexp) ->
           Some fun_strexp
       | Some _ ->
           if verbose then L.d_strln "lookup: case not matched on Ddot" ;
@@ -780,7 +781,13 @@ let explain_dexp_access prop dexp is_nullable =
         if verbose then L.d_strln "lookup: found Dpvar" ;
         find_ptsto (Exp.Lvar pvar)
     | DExp.Dderef de -> (
-      match lookup de with None -> None | Some (Sil.Eexp (e, _)) -> find_ptsto e | Some _ -> None )
+      match lookup de with
+      | None ->
+          None
+      | Some (Predicates.Eexp (e, _)) ->
+          find_ptsto e
+      | Some _ ->
+          None )
     | DExp.Dbinop (Binop.PlusPI, DExp.Dpvar _, DExp.Dconst _) as de ->
         if verbose then L.d_printfln "lookup: case )pvar + constant) %a" DExp.pp de ;
         None
@@ -789,7 +796,7 @@ let explain_dexp_access prop dexp is_nullable =
         match c with
         | Const.Cfun _ ->
             (* Treat function as an update *)
-            Some (Sil.Eexp (Exp.Const c, Sil.Ireturn_from_call loc.Location.line))
+            Some (Predicates.Eexp (Exp.Const c, Predicates.Ireturn_from_call loc.Location.line))
         | _ ->
             None )
     | DExp.Dpvaraddr pvar ->
@@ -885,50 +892,50 @@ let rec find_outermost_dereference tenv node e =
   | Exp.Const _ ->
       if verbose then (
         L.d_str "find_outermost_dereference: constant " ;
-        Sil.d_exp e ;
+        Exp.d_exp e ;
         L.d_ln () ) ;
       exp_lv_dexp tenv node e
   | Exp.Var id when Ident.is_normal id ->
       (* look up the normal variable declaration *)
       if verbose then (
         L.d_str "find_outermost_dereference: normal var " ;
-        Sil.d_exp e ;
+        Exp.d_exp e ;
         L.d_ln () ) ;
       find_normal_variable_load tenv node id
   | Exp.Lfield (e', _, _) ->
       if verbose then (
         L.d_str "find_outermost_dereference: Lfield " ;
-        Sil.d_exp e ;
+        Exp.d_exp e ;
         L.d_ln () ) ;
       find_outermost_dereference tenv node e'
   | Exp.Lindex (e', _) ->
       if verbose then (
         L.d_str "find_outermost_dereference: Lindex " ;
-        Sil.d_exp e ;
+        Exp.d_exp e ;
         L.d_ln () ) ;
       find_outermost_dereference tenv node e'
   | Exp.Lvar _ ->
       if verbose then (
         L.d_str "find_outermost_dereference: Lvar " ;
-        Sil.d_exp e ;
+        Exp.d_exp e ;
         L.d_ln () ) ;
       exp_lv_dexp tenv node e
   | Exp.BinOp (Binop.PlusPI, Exp.Lvar _, _) ->
       if verbose then (
         L.d_str "find_outermost_dereference: Lvar+index " ;
-        Sil.d_exp e ;
+        Exp.d_exp e ;
         L.d_ln () ) ;
       exp_lv_dexp tenv node e
   | Exp.Cast (_, e') ->
       if verbose then (
         L.d_str "find_outermost_dereference: cast " ;
-        Sil.d_exp e ;
+        Exp.d_exp e ;
         L.d_ln () ) ;
       find_outermost_dereference tenv node e'
   | _ ->
       if verbose then (
         L.d_str "find_outermost_dereference: no match for " ;
-        Sil.d_exp e ;
+        Exp.d_exp e ;
         L.d_ln () ) ;
       None
 
@@ -945,27 +952,27 @@ let explain_access_ proc_name tenv ?(use_buckets = false) ?(outermost_array = fa
     | Some (Sil.Store {e1= e}) ->
         if verbose then (
           L.d_str "explain_dereference Sil.Store " ;
-          Sil.d_exp e ;
+          Exp.d_exp e ;
           L.d_ln () ) ;
         Some e
     | Some (Sil.Load {e}) ->
         if verbose then (
           L.d_str "explain_dereference Binop.Leteref " ;
-          Sil.d_exp e ;
+          Exp.d_exp e ;
           L.d_ln () ) ;
         Some e
     | Some (Sil.Call (_, Exp.Const (Const.Cfun fn), [(e, _)], _, _))
-      when List.exists ~f:(Typ.Procname.equal fn)
+      when List.exists ~f:(Procname.equal fn)
              [BuiltinDecl.free; BuiltinDecl.__delete; BuiltinDecl.__delete_array] ->
         if verbose then (
           L.d_str "explain_dereference Sil.Call " ;
-          Sil.d_exp e ;
+          Exp.d_exp e ;
           L.d_ln () ) ;
         Some e
     | Some (Sil.Call (_, (Exp.Var _ as e), _, _, _)) ->
         if verbose then (
           L.d_str "explain_dereference Sil.Call " ;
-          Sil.d_exp e ;
+          Exp.d_exp e ;
           L.d_ln () ) ;
         Some e
     | _ ->
@@ -1005,7 +1012,7 @@ type pvar_off =
   (* value of a pvar *)
   | Fpvar
   (* value obtained by dereferencing the pvar and following a sequence of fields *)
-  | Fstruct of Typ.Fieldname.t list
+  | Fstruct of Fieldname.t list
 
 let dexp_apply_pvar_off dexp pvar_off =
   let rec add_ddot de = function [] -> de | f :: fl -> add_ddot (DExp.Ddot (de, f)) fl in
@@ -1050,21 +1057,21 @@ let find_with_exp prop exp =
     if is_none !res then res := Some (pv, Fstruct (List.rev fld_lst))
   in
   let rec search_struct pv fld_lst = function
-    | Sil.Eexp (e, _) ->
+    | Predicates.Eexp (e, _) ->
         if Exp.equal e exp then found_in_struct pv fld_lst
-    | Sil.Estruct (fsel, _) ->
+    | Predicates.Estruct (fsel, _) ->
         List.iter ~f:(fun (f, se) -> search_struct pv (f :: fld_lst) se) fsel
     | _ ->
         ()
   in
   let do_hpred_pointed_by_pvar pv e = function
-    | Sil.Hpointsto (e1, se, _) ->
+    | Predicates.Hpointsto (e1, se, _) ->
         if Exp.equal e e1 then search_struct pv [] se
     | _ ->
         ()
   in
   let do_hpred = function
-    | Sil.Hpointsto (Exp.Lvar pv, Sil.Eexp (e, _), _) ->
+    | Predicates.Hpointsto (Lvar pv, Eexp (e, _), _) ->
         if Exp.equal e exp then found_in_pvar pv
         else List.iter ~f:(do_hpred_pointed_by_pvar pv e) prop.Prop.sigma
     | _ ->
@@ -1105,7 +1112,7 @@ let explain_dereference_as_caller_expression proc_name tenv ?(use_buckets = fals
   | None ->
       if verbose then (
         L.d_str "explain_dereference_as_caller_expression " ;
-        Sil.d_exp exp ;
+        Exp.d_exp exp ;
         L.d_strln ": cannot explain None" ) ;
       Localise.no_desc
 

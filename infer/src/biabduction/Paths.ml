@@ -15,8 +15,8 @@ module L = Logging
 
 type edge_label =
   | Epsilon
-  | Call of Typ.Procname.t
-  | Return of Typ.Procname.t
+  | Call of Procname.t
+  | Return of Procname.t
 type path_calls =
   { start_node : int
   ; stop_node : int
@@ -30,11 +30,11 @@ module Path : sig
 
   type session = int
 
-  val add_call : bool -> t -> Typ.Procname.t -> t -> t
+  val add_call : bool -> t -> Procname.t -> t -> t
   (** add a call with its sub-path, the boolean indicates whether the subtrace for the procedure
       should be included *)
 
-  val add_skipped_call : t -> Typ.Procname.t -> string -> Location.t option -> t
+  val add_skipped_call : t -> Procname.t -> string -> Location.t option -> t
   (** add a call to a procname that's had to be skipped, along with the reason and the location of
       the procname when known *)
 
@@ -66,7 +66,7 @@ module Path : sig
 
   val get_calls :
     ?coalesce:bool -> ?with_epsilon:bool
-    -> Typ.Procname.t -> t -> path_calls
+    -> Procname.t -> t -> path_calls
   (** keep only information about calls, perhaps coalescing vertices that
   correspond to the same place in the program *)
 
@@ -90,7 +90,7 @@ end = struct
 
   let compare_stats_ _ _ = 0
 
-  type procname_ = Typ.Procname.t
+  type procname_ = Procname.t
 
   let compare_procname_ _ _ = 0
 
@@ -486,7 +486,7 @@ end = struct
     { g with edges }
 
   module ProcPathMap = Caml.Map.Make (struct
-    type t = Typ.Procname.t * path [@@deriving compare]
+    type t = Procname.t * path [@@deriving compare]
   end)
 
   (* Mostly for debug: a simpler version of [get_path_ids], which is below. *)
@@ -509,7 +509,7 @@ end = struct
           go (go ids pname path1) pname2 path2 in
     (go ProcPathMap.empty pname path, next_id)
 
-  (** Maps (pname, path) pairs (of type Typ.Procname.t * path) to unique ids
+  (** Maps (pname, path) pairs (of type Procname.t * path) to unique ids
   (of type int), with one important exception. A path is eligible for
   coalescing when it corresponds to a node (of type Procdesc.Node.t) and has no
   predecessor that corresponds to the same node. If path1 and path2 are
@@ -518,7 +518,7 @@ end = struct
   let get_path_ids pname path : (int ProcPathMap.t * (unit -> int)) =
     let next_id = let n = ref (-1) in fun () -> incr n; !n in
     let module NodeMap = Procdesc.NodeMap in
-    let module ProcMap = Typ.Procname.Map in
+    let module ProcMap = Procname.Map in
     let add pname path (ids : (int PathMap.t * int NodeMap.t) ProcMap.t) =
       let is_coalescing =
         let (<>) a b = match a, b with
@@ -584,12 +584,12 @@ end = struct
         let s1, s2 = get_starts' pname p1, get_starts' pname p2 in
         let n1, sp1 = s1 in
         let n2, sp2 = s2 in
-        if not (Typ.Procname.equal n1 n2 && equal sp1 sp2) then
+        if not (Procname.equal n1 n2 && equal sp1 sp2) then
           L.(die InternalError) "Path with two starts?";
         s1
 
   (* Redefines and memoizes the one from above. Also, returns all cache! *)
-  let get_starts pname path : (Typ.Procname.t * t) ProcPathMap.t =
+  let get_starts pname path : (Procname.t * t) ProcPathMap.t =
     let module C = ProcPathMap in
     let cache = ref C.empty in
     let rec memo pname path =
@@ -642,17 +642,17 @@ end = struct
           let curr_loc = Procdesc.Node.get_loc curr_node in
           let descr =
             Format.asprintf "Skipping %a: %s"
-              (Typ.Procname.pp_simplified_string ~withclass:false)
+              (Procname.pp_simplified_string ~withclass:false)
               pname reason
           in
           let node_tags = [] in
           trace := Errlog.make_trace_element level curr_loc descr node_tags :: !trace ;
           Option.iter
             ~f:(fun loc ->
-              if Typ.Procname.is_java pname && not (SourceFile.is_invalid loc.Location.file) then
+              if Procname.is_java pname && not (SourceFile.is_invalid loc.Location.file) then
                 let definition_descr =
                   Format.asprintf "Definition of %a"
-                    (Typ.Procname.pp_simplified_string ~withclass:false)
+                    (Procname.pp_simplified_string ~withclass:false)
                     pname
                 in
                 trace := Errlog.make_trace_element (level + 1) loc definition_descr [] :: !trace )
@@ -666,7 +666,7 @@ end = struct
               let pname = Procdesc.Node.get_proc_name curr_node in
               let descr =
                 F.asprintf "start of procedure %a"
-                  (Typ.Procname.pp_simplified_string ~withclass:false)
+                  (Procname.pp_simplified_string ~withclass:false)
                   pname
               in
               let node_tags = [Errlog.Procedure_start pname] in
@@ -695,7 +695,7 @@ end = struct
               trace := Errlog.make_trace_element level curr_loc descr node_tags :: !trace
           | Procdesc.Node.Exit_node ->
               let pname = Procdesc.Node.get_proc_name curr_node in
-              let descr = F.asprintf "return from a call to %a" Typ.Procname.pp pname in
+              let descr = F.asprintf "return from a call to %a" Procname.pp pname in
               let node_tags = [Errlog.Procedure_end pname] in
               trace := Errlog.make_trace_element level curr_loc descr node_tags :: !trace
           | _ ->

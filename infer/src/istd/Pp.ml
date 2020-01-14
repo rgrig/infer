@@ -100,6 +100,25 @@ let color_string = function
       "color_red"
 
 
+let html_with_color color pp f x =
+  F.fprintf f "<span class='%s'>%a</span>" (color_string color) pp x
+
+
+let color_wrapper pe ppf x ~f =
+  match pe.kind with
+  | HTML when pe.cmap_norm (Obj.repr x) <> pe.color ->
+      let color = pe.cmap_norm (Obj.repr x) in
+      let pe' =
+        if equal_color color Red then
+          (* All subexpressions red *)
+          {pe with cmap_norm= colormap_red; color= Red}
+        else {pe with color}
+      in
+      html_with_color color (f pe') ppf x
+  | _ ->
+      f pe ppf x
+
+
 let seq ?(print_env = text) ?sep:(sep_text = " ") ?(sep_html = sep_text) pp =
   let rec aux f = function
     | [] ->
@@ -117,6 +136,20 @@ let seq ?(print_env = text) ?sep:(sep_text = " ") ?(sep_html = sep_text) pp =
 let comma_seq ?print_env pp f l = seq ?print_env ~sep:"," pp f l
 
 let semicolon_seq ?print_env pp f l = seq ?print_env ~sep:"; " pp f l
+
+let comma_seq_diff pp pe0 f =
+  let rec doit = function
+    | [] ->
+        ()
+    | [x] ->
+        color_wrapper pe0 f x ~f:(fun _pe -> pp)
+    | x :: l ->
+        color_wrapper pe0 f x ~f:(fun _pe -> pp) ;
+        F.pp_print_string f ", " ;
+        doit l
+  in
+  doit
+
 
 (** Print the current time and date in a format similar to the "date" command *)
 let current_time f () =
@@ -136,7 +169,7 @@ let of_string ~f fmt x = F.pp_print_string fmt (f x)
 
 let string_of_pp pp = Format.asprintf "%a" pp
 
-let cli_args fmt args =
+let cli_args_with_verbosity ~verbose fmt args =
   let pp_args fmt args =
     F.fprintf fmt "@[<hov2>  " ;
     seq ~sep:"" ~print_env:text_break F.pp_print_string fmt args ;
@@ -168,8 +201,10 @@ let cli_args fmt args =
             Exn.pp exn
   in
   pp_args fmt args ;
-  pp_argfile_args String.Set.empty fmt args
+  if verbose then pp_argfile_args String.Set.empty fmt args
 
+
+let cli_args fmt args = cli_args_with_verbosity ~verbose:true fmt args
 
 let pair ~fst ~snd fmt (a, b) = F.fprintf fmt "(%a,@,%a)" fst a snd b
 

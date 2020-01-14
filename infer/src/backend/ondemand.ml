@@ -15,21 +15,20 @@ module F = Format
 let exe_env_ref = ref None
 
 module LocalCache = struct
-  let results = lazy (Typ.Procname.Hash.create 128)
+  let results = lazy (Procname.Hash.create 128)
 
-  let clear () = Typ.Procname.Hash.clear (Lazy.force results)
+  let clear () = Procname.Hash.clear (Lazy.force results)
 
-  let remove pname = Typ.Procname.Hash.remove (Lazy.force results) pname
+  let remove pname = Procname.Hash.remove (Lazy.force results) pname
 
   let get proc_name =
-    let summ_opt_opt = Typ.Procname.Hash.find_opt (Lazy.force results) proc_name in
+    let summ_opt_opt = Procname.Hash.find_opt (Lazy.force results) proc_name in
     if Option.is_some summ_opt_opt then BackendStats.incr_ondemand_local_cache_hits ()
     else BackendStats.incr_ondemand_local_cache_misses () ;
     summ_opt_opt
 
 
-  let add proc_name summary_option =
-    Typ.Procname.Hash.add (Lazy.force results) proc_name summary_option
+  let add proc_name summary_option = Procname.Hash.add (Lazy.force results) proc_name summary_option
 end
 
 let set_exe_env (env : Exe_env.t) = exe_env_ref := Some env
@@ -46,12 +45,11 @@ let max_nesting_to_print = 8
 let current_taskbar_status : (Mtime.t * string) option ref = ref None
 
 let is_active, add_active, remove_active =
-  let currently_analyzed = ref Typ.Procname.Set.empty in
-  let is_active proc_name = Typ.Procname.Set.mem proc_name !currently_analyzed
-  and add_active proc_name =
-    currently_analyzed := Typ.Procname.Set.add proc_name !currently_analyzed
+  let currently_analyzed = ref Procname.Set.empty in
+  let is_active proc_name = Procname.Set.mem proc_name !currently_analyzed
+  and add_active proc_name = currently_analyzed := Procname.Set.add proc_name !currently_analyzed
   and remove_active proc_name =
-    currently_analyzed := Typ.Procname.Set.remove proc_name !currently_analyzed
+    currently_analyzed := Procname.Set.remove proc_name !currently_analyzed
   in
   (is_active, add_active, remove_active)
 
@@ -135,89 +133,6 @@ let restore_global_state st =
         (new_t0, status) ) ;
   Timeout.resume_previous_timeout ()
 
-(* XXX *)
-let add_topl_warnings summary =
-  let env = Tenv.create () in (* HACK *)
-  let get_topl field sigma =
-    let is_topl_class e = (* HACK *)
-      String.is_suffix (Exp.to_string e) ~suffix:"topl.Property" in
-    let is_field fn = (* HACK *)
-      String.equal
-        (Typ.Fieldname.to_string fn)
-        (Printf.sprintf "topl.Property.%s" field) in
-    let from_strexp = Sil.(function
-      | Eexp (e,_) -> e
-      | _ -> L.(die InternalError "(mbzmj)")) in
-    let from_one_field (fn, e) =
-      if is_field fn then Some (from_strexp e) else None in
-    let get_field = function
-      | Some x -> (fun _ -> Some x)
-      | None -> from_one_field in
-    let from_fields = Sil.(function
-      | Estruct (fs, _) -> List.fold ~init:None ~f:get_field fs
-      | _ -> None) in
-    let from_pointsto = Sil.(function
-      | Hpointsto (a, b, _) -> if is_topl_class a then from_fields b else None
-      | _ -> None) in
-    let get = function Some x -> (fun _ -> Some x) | None -> from_pointsto in
-    (match List.fold ~init:None ~f:get sigma with
-    | Some x -> x
-    | None -> raise Caml.Not_found)
-(*XXX    let dbg = Sil.(function
-      | Hpointsto (a, b, c) ->
-          Printf.(
-            let rec p_strexp = function
-              | Eexp (e,_) -> printf "%s" (Exp.to_string e)
-              | Estruct (fs, _) ->
-                  printf "struct";
-                  List.iter ~f:p_field fs;
-                  printf "\n"
-              | Earray _ -> printf "array"
-            and p_field (fn, e) =
-              printf " (%s=" (Typ.Fieldname.to_string fn);
-              p_strexp e;
-              printf ")"
-            in
-            printf "(start\n";
-            printf "  a = %s\n" (Exp.to_string a);
-            printf "  b = "; p_strexp b; printf "\n";
-            printf "  c = %s\n" (Exp.to_string c);
-            printf "stop)\n")
-      | _ -> Printf.printf "nonpointsto\n"
-    ) in
-    List.iter ~f:dbg sigma;
-    raise Not_found *)
-  in
-  let handle_preposts {BiabductionSummary.pre;posts;_} =
-    let pre =
-      (match pre with Prop (_, p) | Joined (_, p, _, _) -> p) in
-    let handle_post (post, _) = (* look at (pre, post) *)
-      try
-        let pre_s = Prop.(pre.sigma) in
-        let post_s = Prop.(post.sigma) in
-        let pre_state = get_topl "state" pre_s in
-        let post_state = get_topl "state" post_s in
-        let pre_qsize = get_topl "q_size" pre_s in
-        let ceq = Prop.conjoin_eq env in
-        let post = ceq pre_state Exp.zero post in
-        let post = ceq pre_qsize Exp.zero post in
-        let post = ceq post_state Exp.one post in
-        let dbg = false in (* XXX to remove *)
-        if dbg then Format.printf "ASK if consistent: %a@\n" (Prop.pp_prop Pp.text) post;
-        if not (Prover.check_inconsistency env post) then
-          ((if dbg then Format.printf "YES adding TOPL_ERR@\n");
-          let loc = Summary.get_loc summary in
-          Reporting.log_error summary IssueType.topl_error ~loc "")
-        else (if dbg then Format.printf "NOT adding TOPL_ERR@\n")
-      with Caml.Not_found -> () in
-    List.iter ~f:handle_post posts in
-  let handle_all_preposts xs =
-    let xs = BiabductionSummary.normalized_specs_to_specs xs in
-    List.iter ~f:handle_preposts xs in
-  let preposts = match summary.Summary.payloads.Payloads.biabduction with
-    | None -> []
-    | Some summary -> summary.BiabductionSummary.preposts in
-  handle_all_preposts preposts
 
 (** reference to log errors only at the innermost recursive call *)
 let logged_error = ref false
@@ -234,7 +149,7 @@ let analyze callee_summary =
       if !nesting <= max_nesting_to_print then String.make !nesting '>'
       else Printf.sprintf "%d>" !nesting
     in
-    F.asprintf "%s%a: %a" nesting SourceFile.pp source_file Typ.Procname.pp proc_name
+    F.asprintf "%s%a: %a" nesting SourceFile.pp source_file Procname.pp proc_name
   in
   current_taskbar_status := Some (t0, status) ;
   !ProcessPoolState.update_status t0 status ;
@@ -249,13 +164,13 @@ let run_proc_analysis ~caller_pdesc callee_pdesc =
     let start_time = Mtime_clock.counter () in
     fun () ->
       L.(debug Analysis Medium)
-        "Elapsed analysis time: %a: %a@\n" Typ.Procname.pp callee_pname Mtime.Span.pp
+        "Elapsed analysis time: %a: %a@\n" Procname.pp callee_pname Mtime.Span.pp
         (Mtime_clock.count start_time)
   in
   if Config.trace_ondemand then
-    L.progress "[%d] run_proc_analysis %a -> %a@." !nesting (Pp.option Typ.Procname.pp)
+    L.progress "[%d] run_proc_analysis %a -> %a@." !nesting (Pp.option Procname.pp)
       (Option.map caller_pdesc ~f:Procdesc.get_proc_name)
-      Typ.Procname.pp callee_pname ;
+      Procname.pp callee_pname ;
   let preprocess () =
     incr nesting ;
     Preanal.do_preanalysis (Option.value_exn !exe_env_ref) callee_pdesc ;
@@ -307,11 +222,11 @@ let run_proc_analysis ~caller_pdesc callee_pdesc =
           let source_file = attributes.ProcAttributes.translation_unit in
           let location = attributes.ProcAttributes.loc in
           L.internal_error "While analysing function %a:%a at %a@\n" SourceFile.pp source_file
-            Typ.Procname.pp callee_pname Location.pp_file_pos location ;
+            Procname.pp callee_pname Location.pp_file_pos location ;
           logged_error := true ) ;
         restore_global_state old_state ;
         not Config.keep_going ) ;
-    L.internal_error "@\nERROR RUNNING BACKEND: %a %s@\n@\nBACK TRACE@\n%s@?" Typ.Procname.pp
+    L.internal_error "@\nERROR RUNNING BACKEND: %a %s@\n@\nBACK TRACE@\n%s@?" Procname.pp
       callee_pname (Exn.to_string exn) backtrace ;
     match exn with
     | SymOp.Analysis_failure_exe kind ->
@@ -329,7 +244,7 @@ let run_proc_analysis ~caller_pdesc callee_pdesc =
     log (fun logger ->
         let callee_pname = Procdesc.get_proc_name callee_pdesc in
         log_begin_event logger ~name:"ondemand" ~categories:["backend"]
-          ~arguments:[("proc", `String (Typ.Procname.to_string callee_pname))]
+          ~arguments:[("proc", `String (Procname.to_string callee_pname))]
           () )) ;
   let summary = run_proc_analysis ~caller_pdesc callee_pdesc in
   PerfEvent.(log (fun logger -> log_end_event logger ())) ;
@@ -361,7 +276,7 @@ let dump_duplicate_procs source_file procs =
         let fmt = F.formatter_of_out_channel outc in
         List.iter duplicate_procs ~f:(fun (pname, source_captured) ->
             F.fprintf fmt "DUPLICATE_SYMBOLS source:%a source_captured:%a pname:%a@\n" SourceFile.pp
-              source_file SourceFile.pp source_captured Typ.Procname.pp pname ) ;
+              source_file SourceFile.pp source_captured Procname.pp pname ) ;
         F.pp_print_flush fmt () )
   in
   if not (List.is_empty duplicate_procs) then output_to_file duplicate_procs
@@ -375,7 +290,7 @@ let create_perf_stats_report source_file =
 let register_callee ?caller_summary callee_pname =
   Option.iter
     ~f:(fun (summary : Summary.t) ->
-      summary.callee_pnames <- Typ.Procname.Set.add callee_pname summary.callee_pnames )
+      summary.callee_pnames <- Procname.Set.add callee_pname summary.callee_pnames )
     caller_summary
 
 
@@ -386,7 +301,7 @@ let get_proc_desc callee_pname =
     ; lazy (Topl.get_proc_desc callee_pname) ]
 
 
-type callee = ProcName of Typ.Procname.t | ProcDesc of Procdesc.t
+type callee = ProcName of Procname.t | ProcDesc of Procdesc.t
 
 let proc_name_of_callee = function
   | ProcName proc_name ->
@@ -429,7 +344,7 @@ let analyze_callee ?caller_summary callee =
             | None ->
                 Summary.OnDisk.get callee_pname
           else (
-            EventLogger.log_skipped_pname (F.asprintf "%a" Typ.Procname.pp callee_pname) ;
+            EventLogger.log_skipped_pname (F.asprintf "%a" Procname.pp callee_pname) ;
             Summary.OnDisk.get callee_pname )
         in
         LocalCache.add callee_pname summ_opt ;

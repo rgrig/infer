@@ -25,8 +25,8 @@ let check ~what ~by_rhs_upper_bound =
 
 
 type violation_type =
-  | FieldOverAnnoted of Typ.Fieldname.t
-  | ReturnOverAnnotated of Typ.Procname.t  (** Return value of a method can be made non-nullable *)
+  | FieldOverAnnoted of Fieldname.t
+  | ReturnOverAnnotated of Procname.t  (** Return value of a method can be made non-nullable *)
 [@@deriving compare]
 
 let violation_description _ violation_type =
@@ -36,9 +36,9 @@ let violation_description _ violation_type =
   | FieldOverAnnoted field_name ->
       Format.asprintf "Field %a is always initialized in the constructor but is declared %a"
         MF.pp_monospaced
-        (Typ.Fieldname.to_simplified_string field_name)
+        (Fieldname.to_simplified_string field_name)
         MF.pp_monospaced nullable_annotation
   | ReturnOverAnnotated proc_name ->
       Format.asprintf "Method %a is annotated with %a but never returns null." MF.pp_monospaced
-        (Typ.Procname.to_simplified_string proc_name)
+        (Procname.to_simplified_string proc_name)
         MF.pp_monospaced nullable_annotation

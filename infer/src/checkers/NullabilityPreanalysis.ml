@@ -10,10 +10,10 @@ open! IStd
 module F = Format
 
 module FieldsAssignedInConstructors = AbstractDomain.FiniteSet (struct
-  type t = Typ.Fieldname.t * Typ.t [@@deriving compare]
+  type t = Fieldname.t * Typ.t [@@deriving compare]
 
   let pp fmt (fieldname, typ) =
-    F.fprintf fmt "(%a, %a)" Typ.Fieldname.pp fieldname (Typ.pp_full Pp.text) typ
+    F.fprintf fmt "(%a, %a)" Fieldname.pp fieldname (Typ.pp_full Pp.text) typ
 end)
 
 module TransferFunctions (CFG : ProcCfg.S) = struct
@@ -67,7 +67,7 @@ module FieldsAssignedInConstructorsChecker =
 let add_annot annot annot_name = ({Annot.class_name= annot_name; parameters= []}, true) :: annot
 
 let add_nonnull_to_selected_field given_field ((fieldname, typ, annot) as field) =
-  if Typ.Fieldname.equal fieldname given_field && not (Annotations.ia_is_nullable annot) then
+  if Fieldname.equal fieldname given_field && not (Annotations.ia_is_nullable annot) then
     let new_annot = add_annot annot Annotations.nonnull in
     (fieldname, typ, new_annot)
   else field
@@ -94,7 +94,7 @@ let add_nonnull_to_fields fields tenv =
 let analysis cfg tenv =
   let initial = FieldsAssignedInConstructors.empty in
   let f proc_name pdesc domain =
-    if Procdesc.is_defined pdesc && Typ.Procname.is_constructor proc_name then
+    if Procdesc.is_defined pdesc && Procname.is_constructor proc_name then
       match
         FieldsAssignedInConstructorsChecker.compute_post ~initial
           (ProcData.make (Summary.OnDisk.reset pdesc) tenv (Ident.Hash.create 10))
@@ -105,5 +105,5 @@ let analysis cfg tenv =
           domain
     else domain
   in
-  let fields_assigned_in_constructor = Typ.Procname.Hash.fold f cfg initial in
+  let fields_assigned_in_constructor = Procname.Hash.fold f cfg initial in
   add_nonnull_to_fields fields_assigned_in_constructor tenv

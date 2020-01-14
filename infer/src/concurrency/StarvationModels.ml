@@ -11,11 +11,11 @@ module F = Format
 let is_synchronized_library_call =
   let targets = ["java.lang.StringBuffer"; "java.util.Hashtable"; "java.util.Vector"] in
   fun tenv pn ->
-    (not (Typ.Procname.is_constructor pn))
+    (not (Procname.is_constructor pn))
     &&
     match pn with
-    | Typ.Procname.Java java_pname ->
-        let classname = Typ.Procname.Java.get_class_type_name java_pname in
+    | Procname.Java java_pname ->
+        let classname = Procname.Java.get_class_type_name java_pname in
         List.exists targets ~f:(PatternMatch.is_subtype_of_str tenv classname)
     | _ ->
         false
@@ -40,8 +40,9 @@ let secs_of_timeunit =
   in
   let str_of_access_path = function
     | _, [AccessPath.FieldAccess field]
-      when String.equal "java.util.concurrent.TimeUnit" (Typ.Fieldname.Java.get_class field) ->
-        Some (Typ.Fieldname.Java.get_field field)
+      when String.equal "java.util.concurrent.TimeUnit"
+             (Typ.Name.name (Fieldname.get_class_name field)) ->
+        Some (Fieldname.get_field_name field)
     | _ ->
         None
   in
@@ -123,10 +124,6 @@ let standard_matchers =
   in
   let low_sev =
     [ { default with
-        classname= "java.util.concurrent.Future"
-      ; methods= ["get"]
-      ; actuals_pred= no_args_or_excessive_timeout_and_timeunit }
-    ; { default with
         classname= "android.os.AsyncTask"
       ; methods= ["get"]
       ; actuals_pred= no_args_or_excessive_timeout_and_timeunit } ]
@@ -134,6 +131,20 @@ let standard_matchers =
   let high_sev_matcher = List.map high_sev ~f:of_record |> of_list in
   let low_sev_matcher = List.map low_sev ~f:of_record |> of_list in
   [(high_sev_matcher, High); (low_sev_matcher, Low)]
+
+
+let is_future_get =
+  let open MethodMatcher in
+  of_record
+    { default with
+      classname= "java.util.concurrent.Future"
+    ; methods= ["get"]
+    ; actuals_pred= no_args_or_excessive_timeout_and_timeunit }
+
+
+let is_future_is_done =
+  MethodMatcher.(
+    of_record {default with classname= "java.util.concurrent.Future"; methods= ["isDone"]})
 
 
 (* sort from High to Low *)
@@ -171,7 +182,7 @@ let strict_mode_matcher =
       (* all public constructors of Socket with two or more arguments call connect *)
     ; { dont_search_superclasses with
         classname= "java.net.Socket"
-      ; methods= [Typ.Procname.Java.constructor_method_name]
+      ; methods= [Procname.Java.constructor_method_name]
       ; actuals_pred= (function [] | [_] -> false | _ -> true) }
     ; {dont_search_superclasses with classname= "java.net.DatagramSocket"; methods= ["connect"]}
     ; { dont_search_superclasses with
@@ -238,7 +249,13 @@ let schedules_work_on_ui_thread =
   let matcher =
     [ { default with
         classname= "java.lang.Object"
-      ; methods= ["postOnUiThread"; "runOnUiThread"; "postOnUiThreadDelayed"] } ]
+      ; methods=
+          [ "postOnUiThread"
+          ; "postOnUiThreadDelayed"
+          ; "postToUiThread"
+          ; "runOnUiThread"
+          ; "runOnUiThreadAsync"
+          ; "runOnUiThreadAsyncWithDelay" ] } ]
     |> of_records
   in
   fun tenv pname -> matcher tenv pname []
@@ -262,11 +279,11 @@ type scheduler_thread_constraint = ForUIThread | ForNonUIThread | ForUnknownThre
    annotation constraint, if any. *)
 let rec get_executor_thread_annotation_constraint tenv (receiver : HilExp.AccessExpression.t) =
   match receiver with
-  | FieldOffset (_, field_name) when Typ.Fieldname.is_java field_name ->
-      Typ.Fieldname.Java.get_class field_name
-      |> Typ.Name.Java.from_string |> Tenv.lookup tenv
-      |> Option.map ~f:(fun (tstruct : Typ.Struct.t) -> tstruct.fields @ tstruct.statics)
-      |> Option.bind ~f:(List.find ~f:(fun (fld, _, _) -> Typ.Fieldname.equal fld field_name))
+  | FieldOffset (_, field_name) when Fieldname.is_java field_name ->
+      Fieldname.get_class_name field_name
+      |> Tenv.lookup tenv
+      |> Option.map ~f:(fun (tstruct : Struct.t) -> tstruct.fields @ tstruct.statics)
+      |> Option.bind ~f:(List.find ~f:(fun (fld, _, _) -> Fieldname.equal fld field_name))
       |> Option.bind ~f:(fun (_, _, annot) ->
              if Annotations.(ia_ends_with annot for_ui_thread) then Some ForUIThread
              else if Annotations.(ia_ends_with annot for_non_ui_thread) then Some ForNonUIThread
@@ -281,9 +298,9 @@ let rec get_executor_thread_annotation_constraint tenv (receiver : HilExp.Access
 let get_run_method_from_runnable tenv runnable =
   let run_like_methods = ["run"; "call"] in
   let is_run_method = function
-    | Typ.Procname.Java pname when Typ.Procname.Java.(not (is_static pname)) ->
+    | Procname.Java pname when Procname.Java.(not (is_static pname)) ->
         (* confusingly, the parameter list in (non-static?) Java procnames does not contain [this] *)
-        Typ.Procname.Java.(
+        Procname.Java.(
           List.is_empty (get_parameters pname)
           &&
           let methodname = get_method pname in
@@ -295,7 +312,7 @@ let get_run_method_from_runnable tenv runnable =
   |> Option.map ~f:(function Typ.{desc= Tptr (typ, _)} -> typ | typ -> typ)
   |> Option.bind ~f:Typ.name
   |> Option.bind ~f:(Tenv.lookup tenv)
-  |> Option.map ~f:(fun (tstruct : Typ.Struct.t) -> tstruct.methods)
+  |> Option.map ~f:(fun (tstruct : Struct.t) -> tstruct.methods)
   |> Option.bind ~f:(List.find ~f:is_run_method)
 
 
@@ -312,10 +329,12 @@ let get_returned_executor ~attrs_of_pname tenv callee actuals =
                  false ) )
   in
   match (callee, actuals) with
-  | Typ.Procname.Java java_pname, [] -> (
-    match Typ.Procname.Java.get_method java_pname with
+  | Procname.Java java_pname, [] -> (
+    match Procname.Java.get_method java_pname with
     | ("getForegroundExecutor" | "getBackgroundExecutor") when Lazy.force type_check ->
         Some ForNonUIThread
+    | "getUiThreadExecutorService" when Lazy.force type_check ->
+        Some ForUIThread
     | _ ->
         None )
   | _ ->
@@ -324,26 +343,40 @@ let get_returned_executor ~attrs_of_pname tenv callee actuals =
 
 let is_getMainLooper =
   let open MethodMatcher in
-  [ { default with
+  of_record
+    { default with
       classname= "android.os.Looper"
     ; methods= ["getMainLooper"]
-    ; actuals_pred= List.is_empty } ]
-  |> of_records
+    ; actuals_pred= List.is_empty }
 
 
 let is_handler_constructor =
   let open MethodMatcher in
-  [ { default with
+  of_record
+    { default with
       classname= "android.os.Handler"
-    ; methods= [Typ.Procname.Java.constructor_method_name]
-    ; actuals_pred= (fun actuals -> not (List.is_empty actuals)) } ]
-  |> of_records
+    ; methods= [Procname.Java.constructor_method_name]
+    ; actuals_pred= (fun actuals -> not (List.is_empty actuals)) }
 
 
 let is_thread_constructor =
   let open MethodMatcher in
-  [ { default with
+  of_record
+    { default with
       classname= "java.lang.Thread"
     ; search_superclasses= false
-    ; methods= [Typ.Procname.Java.constructor_method_name] } ]
-  |> of_records
+    ; methods= [Procname.Java.constructor_method_name] }
+
+
+let is_assume_true =
+  let open MethodMatcher in
+  of_records
+    [ { default with
+        classname= "com.facebook.common.internal.Preconditions"
+      ; methods= ["checkArgument"; "checkState"] }
+    ; { default with
+        classname= "com.facebook.infer.annotation.Assertions"
+      ; methods= ["assertCondition"; "assumeCondition"] }
+    ; { default with
+        classname= "com.google.common.base.Preconditions"
+      ; methods= ["checkArgument"; "checkState"] } ]

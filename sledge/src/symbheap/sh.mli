@@ -25,10 +25,10 @@ and disjunction = starjunction list
 
 type t = starjunction [@@deriving equal, compare, sexp]
 
-val pp_seg : ?is_x:(Term.t -> bool) -> seg pp
 val pp_seg_norm : Equality.t -> seg pp
 val pp_us : ?pre:('a, 'a) fmt -> Var.Set.t pp
 val pp : t pp
+val pp_diff_eq : Equality.t -> t pp
 val pp_djn : disjunction pp
 val simplify : t -> t
 
@@ -67,9 +67,9 @@ val and_cong : Equality.t -> t -> t
 
 val with_pure : Term.t list -> t -> t
 (** [with_pure pure q] is [{q with pure}], which assumes that [q.pure] and
-    [pure] are defined in the same vocabulary, induce the same congruence,
-    etc. It can essentially only be used when [pure] is logically equivalent
-    to [q.pure], but perhaps syntactically simpler. *)
+    [pure] are defined in the same vocabulary. Note that [cong] is not
+    weakened, so if [pure] and [q.pure] do not induce the same congruence,
+    then the result will have a stronger [cong] than induced by its [pure]. *)
 
 val rem_seg : seg -> t -> t
 (** [star (seg s) (rem_seg s q)] is equivalent to [q], assuming that [s] is
@@ -106,7 +106,7 @@ val extend_us : Var.Set.t -> t -> t
 (** Query *)
 
 val is_emp : t -> bool
-(** Holds of [emp]. *)
+(** Holds of [emp], with any vocabulary, existentials, and congruence. *)
 
 val is_false : t -> bool
 (** Holds only of inconsistent formulas, does not hold of all inconsistent

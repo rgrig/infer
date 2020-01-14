@@ -31,15 +31,15 @@ let log_issue_from_summary severity summary ~node ~session ~loc ~ltr ?extras exn
   let procname = attrs.proc_name in
   let is_java_generated_method =
     match procname with
-    | Typ.Procname.Java java_pname ->
-        Typ.Procname.Java.is_generated java_pname
+    | Procname.Java java_pname ->
+        Procname.Java.is_generated java_pname
     | _ ->
         false
   in
   let is_java_external_package =
     match procname with
-    | Typ.Procname.Java java_pname ->
-        Typ.Procname.Java.is_external java_pname
+    | Procname.Java java_pname ->
+        Procname.Java.is_external java_pname
     | _ ->
         false
   in
@@ -73,7 +73,7 @@ let log_issue_deprecated_using_state severity proc_name ?node ?loc ?ltr exn =
         L.(die InternalError)
           "Trying to report error on procedure %a, but cannot because no summary exists for this \
            procedure. Did you mean to log the error on the caller of %a instead?"
-          Typ.Procname.pp proc_name Typ.Procname.pp proc_name
+          Procname.pp proc_name Procname.pp proc_name
 
 
 let checker_exception issue_type error_message =
@@ -145,7 +145,7 @@ let is_suppressed ?(field_name = None) tenv proc_desc kind =
   let is_field_suppressed () =
     match (field_name, PatternMatch.get_this_type_nonstatic_methods_only proc_attributes) with
     | Some field_name, Some t -> (
-      match Typ.Struct.get_field_type_and_annotation ~lookup field_name t with
+      match Struct.get_field_type_and_annotation ~lookup field_name t with
       | Some (_, ia) ->
           Annotations.ia_has_annotation_with ia annotation_matches
       | None ->

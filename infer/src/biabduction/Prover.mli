@@ -10,9 +10,9 @@ open! IStd
 
 (** Functions for Theorem Proving *)
 
-open Sil
+open Predicates
 
-val atom_negate : Tenv.t -> Sil.atom -> Sil.atom
+val atom_negate : Tenv.t -> atom -> atom
 (** Negate an atom *)
 
 (** {2 Ordinary Theorem Proving} *)
@@ -49,7 +49,7 @@ val is_root : Tenv.t -> Prop.normal Prop.t -> Exp.t -> Exp.t -> offset list opti
     [offlist]. If so, it returns [Some(offlist)]. Otherwise, it returns [None]. Assumes that
     [base_exp] points to the beginning of a structure, not the middle. *)
 
-val expand_hpred_pointer : Tenv.t -> bool -> Sil.hpred -> bool * bool * Sil.hpred
+val expand_hpred_pointer : Tenv.t -> bool -> hpred -> bool * bool * hpred
 (** [expand_hpred_pointer calc_index_frame hpred] expands [hpred] if it is a |-> whose lhs is a
     Lfield or Lindex or ptr+off. Return [(changed, calc_index_frame', hpred')] where [changed]
     indicates whether the predicate has changed. *)
@@ -59,8 +59,7 @@ val get_bounds : Tenv.t -> Prop.normal Prop.t -> Exp.t -> IntLit.t option * IntL
 
 (** {2 Abduction prover} *)
 
-val check_implication :
-  Typ.Procname.t -> Tenv.t -> Prop.normal Prop.t -> Prop.exposed Prop.t -> bool
+val check_implication : Procname.t -> Tenv.t -> Prop.normal Prop.t -> Prop.exposed Prop.t -> bool
 (** [check_implication p1 p2] returns true if [p1|-p2] *)
 
 type check = Bounds_check | Class_cast_check of Exp.t * Exp.t * Exp.t
@@ -70,27 +69,26 @@ val d_typings : (Exp.t * Exp.t) list -> unit
 type implication_result =
   | ImplOK of
       ( check list
-      * Sil.subst
-      * Sil.subst
-      * Sil.hpred list
-      * Sil.atom list
-      * Sil.hpred list
-      * Sil.hpred list
-      * Sil.hpred list
+      * subst
+      * subst
+      * hpred list
+      * atom list
+      * hpred list
+      * hpred list
+      * hpred list
       * (Exp.t * Exp.t) list
       * (Exp.t * Exp.t) list )
   | ImplFail of check list
 
 val check_implication_for_footprint :
-  Typ.Procname.t -> Tenv.t -> Prop.normal Prop.t -> Prop.exposed Prop.t -> implication_result
+  Procname.t -> Tenv.t -> Prop.normal Prop.t -> Prop.exposed Prop.t -> implication_result
 (** [check_implication_for_footprint p1 p2] returns [Some(sub, frame, missing)] if
     [sub(p1 * missing) |- sub(p2 * frame)] where [sub] is a substitution which instantiates the
     primed vars of [p1] and [p2], which are assumed to be disjoint. *)
 
 (** {2 Cover: minimum set of pi's whose disjunction is equivalent to true} *)
 
-val find_minimum_pure_cover :
-  Tenv.t -> (Sil.atom list * 'a) list -> (Sil.atom list * 'a) list option
+val find_minimum_pure_cover : Tenv.t -> (atom list * 'a) list -> (atom list * 'a) list option
 (** Find minimum set of pi's in [cases] whose disjunction covers true *)
 
 (** {2 Subtype checking} *)

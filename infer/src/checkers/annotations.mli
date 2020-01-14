@@ -119,8 +119,8 @@ val pdesc_has_return_annot : Procdesc.t -> (Annot.Item.t -> bool) -> bool
 (** return true if the given predicate evaluates to true on the annotation of [pdesc]'s return value *)
 
 val pname_has_return_annot :
-     Typ.Procname.t
-  -> attrs_of_pname:(Typ.Procname.t -> ProcAttributes.t option)
+     Procname.t
+  -> attrs_of_pname:(Procname.t -> ProcAttributes.t option)
   -> (Annot.Item.t -> bool)
   -> bool
 (** return true if the given predicate evaluates to true on the annotation of [pname]'s return
@@ -132,7 +132,7 @@ val pdesc_return_annot_ends_with : Procdesc.t -> string -> bool
 
 val ma_has_annotation_with : Annot.Method.t -> (Annot.t -> bool) -> bool
 
-val field_has_annot : Typ.Fieldname.t -> Typ.Struct.t -> (Annot.Item.t -> bool) -> bool
+val field_has_annot : Fieldname.t -> Struct.t -> (Annot.Item.t -> bool) -> bool
 
-val struct_typ_has_annot : Typ.Struct.t -> (Annot.Item.t -> bool) -> bool
+val struct_typ_has_annot : Struct.t -> (Annot.Item.t -> bool) -> bool
 (** return true if the given predicate evaluates to true on some annotation of [struct_typ] *)

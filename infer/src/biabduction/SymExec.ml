@@ -17,10 +17,10 @@ let rec fldlist_assoc fld = function
   | [] ->
       raise Caml.Not_found
   | (fld', x, _) :: l ->
-      if Typ.Fieldname.equal fld fld' then x else fldlist_assoc fld l
+      if Fieldname.equal fld fld' then x else fldlist_assoc fld l
 
 
-let unroll_type tenv (typ : Typ.t) (off : Sil.offset) =
+let unroll_type tenv (typ : Typ.t) (off : Predicates.offset) =
   let fail pp_fld fld =
     L.d_strln ".... Invalid Field Access ...." ;
     L.d_printfln "Fld : %a" pp_fld fld ;
@@ -33,15 +33,15 @@ let unroll_type tenv (typ : Typ.t) (off : Sil.offset) =
   | Tstruct name, Off_fld (fld, _) -> (
     match Tenv.lookup tenv name with
     | Some {fields; statics} -> (
-      try fldlist_assoc fld (fields @ statics) with Caml.Not_found -> fail Typ.Fieldname.pp fld )
+      try fldlist_assoc fld (fields @ statics) with Caml.Not_found -> fail Fieldname.pp fld )
     | None ->
-        fail Typ.Fieldname.pp fld )
+        fail Fieldname.pp fld )
   | Tarray {elt}, Off_index _ ->
       elt
   | _, Off_index (Const (Cint i)) when IntLit.iszero i ->
       typ
   | _ ->
-      fail (Sil.pp_offset Pp.text) off
+      fail (Predicates.pp_offset Pp.text) off
 
 
 (** Apply function [f] to the expression at position [offlist] in [strexp]. If not found, expand
@@ -60,10 +60,10 @@ let rec apply_offlist pdesc tenv p fp_root nullify_struct (root_lexp, strexp, ty
   let pp_error () =
     L.d_strln ".... Invalid Field ...." ;
     L.d_str "strexp : " ;
-    Sil.d_sexp strexp ;
+    Predicates.d_sexp strexp ;
     L.d_ln () ;
     L.d_str "offlist : " ;
-    Sil.d_offset_list offlist ;
+    Predicates.d_offset_list offlist ;
     L.d_ln () ;
     L.d_str "type : " ;
     Typ.d_full typ ;
@@ -74,50 +74,50 @@ let rec apply_offlist pdesc tenv p fp_root nullify_struct (root_lexp, strexp, ty
     L.d_ln ()
   in
   match (offlist, strexp, typ.Typ.desc) with
-  | [], Sil.Eexp (e, inst_curr), _ ->
+  | [], Predicates.Eexp (e, inst_curr), _ ->
       let inst_new =
         match inst with
-        | Sil.Ilookup ->
+        | Predicates.Ilookup ->
             (* a lookup does not change an inst unless it is inst_initial *)
             lookup_inst := Some inst_curr ;
             inst_curr
         | _ ->
-            Sil.update_inst inst_curr inst
+            Predicates.update_inst inst_curr inst
       in
       let e' = f (Some e) in
-      (e', Sil.Eexp (e', inst_new), typ, None)
-  | [], Sil.Estruct (fesl, inst'), _ ->
-      if not nullify_struct then (f None, Sil.Estruct (fesl, inst'), typ, None)
+      (e', Predicates.Eexp (e', inst_new), typ, None)
+  | [], Predicates.Estruct (fesl, inst'), _ ->
+      if not nullify_struct then (f None, Predicates.Estruct (fesl, inst'), typ, None)
       else if fp_root then (
         pp_error () ;
         assert false )
       else (
         L.d_strln "WARNING: struct assignment treated as nondeterministic assignment" ;
         (f None, Prop.create_strexp_of_type tenv Prop.Fld_init typ None inst, typ, None) )
-  | [], Sil.Earray _, _ ->
-      let offlist' = Sil.Off_index Exp.zero :: offlist in
+  | [], Predicates.Earray _, _ ->
+      let offlist' = Predicates.Off_index Exp.zero :: offlist in
       apply_offlist pdesc tenv p fp_root nullify_struct (root_lexp, strexp, typ) offlist' f inst
         lookup_inst
-  | Sil.Off_fld _ :: _, Sil.Earray _, _ ->
-      let offlist_new = Sil.Off_index Exp.zero :: offlist in
+  | Predicates.Off_fld _ :: _, Predicates.Earray _, _ ->
+      let offlist_new = Predicates.Off_index Exp.zero :: offlist in
       apply_offlist pdesc tenv p fp_root nullify_struct (root_lexp, strexp, typ) offlist_new f inst
         lookup_inst
-  | Sil.Off_fld (fld, fld_typ) :: offlist', Sil.Estruct (fsel, inst'), Typ.Tstruct name -> (
+  | ( Predicates.Off_fld (fld, fld_typ) :: offlist'
+    , Predicates.Estruct (fsel, inst')
+    , Typ.Tstruct name ) -> (
     match Tenv.lookup tenv name with
     | Some ({fields} as struct_typ) -> (
-        let t' = unroll_type tenv typ (Sil.Off_fld (fld, fld_typ)) in
-        match List.find ~f:(fun fse -> Typ.Fieldname.equal fld (fst fse)) fsel with
+        let t' = unroll_type tenv typ (Predicates.Off_fld (fld, fld_typ)) in
+        match List.find ~f:(fun fse -> Fieldname.equal fld (fst fse)) fsel with
         | Some (_, se') ->
             let res_e', res_se', res_t', res_pred_insts_op' =
               apply_offlist pdesc tenv p fp_root nullify_struct (root_lexp, se', t') offlist' f inst
                 lookup_inst
             in
-            let replace_fse fse =
-              if Typ.Fieldname.equal fld (fst fse) then (fld, res_se') else fse
-            in
-            let res_se = Sil.Estruct (List.map ~f:replace_fse fsel, inst') in
+            let replace_fse fse = if Fieldname.equal fld (fst fse) then (fld, res_se') else fse in
+            let res_se = Predicates.Estruct (List.map ~f:replace_fse fsel, inst') in
             let replace_fta (f, t, a) =
-              if Typ.Fieldname.equal fld f then (fld, res_t', a) else (f, t, a)
+              if Fieldname.equal fld f then (fld, res_t', a) else (f, t, a)
             in
             let fields' = List.map ~f:replace_fta fields in
             ignore (Tenv.mk_struct tenv ~default:struct_typ ~fields:fields' name) ;
@@ -130,11 +130,11 @@ let rec apply_offlist pdesc tenv p fp_root nullify_struct (root_lexp, strexp, ty
     | None ->
         pp_error () ;
         assert false )
-  | Sil.Off_fld _ :: _, _, _ ->
+  | Predicates.Off_fld _ :: _, _, _ ->
       pp_error () ;
       assert false
-  | ( Sil.Off_index idx :: offlist'
-    , Sil.Earray (len, esel, inst1)
+  | ( Predicates.Off_index idx :: offlist'
+    , Predicates.Earray (len, esel, inst1)
     , Typ.Tarray {elt= t'; length= len'; stride= stride'} ) -> (
       let nidx = Prop.exp_normalize_prop tenv p idx in
       match List.find ~f:(fun ese -> Prover.check_equal tenv p nidx (fst ese)) esel with
@@ -144,17 +144,17 @@ let rec apply_offlist pdesc tenv p fp_root nullify_struct (root_lexp, strexp, ty
               lookup_inst
           in
           let replace_ese ese = if Exp.equal idx_ese' (fst ese) then (idx_ese', res_se') else ese in
-          let res_se = Sil.Earray (len, List.map ~f:replace_ese esel, inst1) in
+          let res_se = Predicates.Earray (len, List.map ~f:replace_ese esel, inst1) in
           let res_t = Typ.mk_array ~default:typ res_t' ?length:len' ?stride:stride' in
           (res_e', res_se, res_t, res_pred_insts_op')
       | None ->
           (* return a nondeterministic value if the index is not found after rearrangement *)
           L.d_str "apply_offlist: index " ;
-          Sil.d_exp idx ;
+          Exp.d_exp idx ;
           L.d_strln " not materialized -- returning nondeterministic value" ;
           let res_e' = Exp.Var (Ident.create_fresh Ident.kprimed) in
           (res_e', strexp, typ, None) )
-  | Sil.Off_index _ :: _, _, _ ->
+  | Predicates.Off_index _ :: _, _, _ ->
       (* This case should not happen. The rearrangement should
          have materialized all the accessed cells. *)
       pp_error () ;
@@ -176,12 +176,16 @@ let ptsto_lookup pdesc tenv p (lexp, se, sizeof) offlist id =
   let fp_root = match lexp with Exp.Var id -> Ident.is_footprint id | _ -> false in
   let lookup_inst = ref None in
   let e', se', typ', pred_insts_op' =
-    apply_offlist pdesc tenv p fp_root false (lexp, se, sizeof.Exp.typ) offlist f Sil.inst_lookup
-      lookup_inst
+    apply_offlist pdesc tenv p fp_root false (lexp, se, sizeof.Exp.typ) offlist f
+      Predicates.inst_lookup lookup_inst
   in
   let lookup_uninitialized =
     (* true if we have looked up an uninitialized value *)
-    match !lookup_inst with Some (Sil.Iinitial | Sil.Ialloc | Sil.Ilookup) -> true | _ -> false
+    match !lookup_inst with
+    | Some (Predicates.Iinitial | Predicates.Ialloc | Predicates.Ilookup) ->
+        true
+    | _ ->
+        false
   in
   let ptsto' = Prop.mk_ptsto tenv lexp se' (Exp.Sizeof {sizeof with typ= typ'}) in
   (e', ptsto', pred_insts_op', lookup_uninitialized)
@@ -214,14 +218,14 @@ let update_iter iter pi sigma =
 
 (** Precondition: se should not include hpara_psto that could mean nonempty heaps. *)
 let rec execute_nullify_se = function
-  | Sil.Eexp _ ->
-      Sil.Eexp (Exp.zero, Sil.inst_nullify)
-  | Sil.Estruct (fsel, _) ->
+  | Predicates.Eexp _ ->
+      Predicates.Eexp (Exp.zero, Predicates.inst_nullify)
+  | Predicates.Estruct (fsel, _) ->
       let fsel' = List.map ~f:(fun (fld, se) -> (fld, execute_nullify_se se)) fsel in
-      Sil.Estruct (fsel', Sil.inst_nullify)
-  | Sil.Earray (len, esel, _) ->
+      Predicates.Estruct (fsel', Predicates.inst_nullify)
+  | Predicates.Earray (len, esel, _) ->
       let esel' = List.map ~f:(fun (idx, se) -> (idx, execute_nullify_se se)) esel in
-      Sil.Earray (len, esel', Sil.inst_nullify)
+      Predicates.Earray (len, esel', Predicates.inst_nullify)
 
 
 (** Do pruning for conditional [if (e1 != e2)] if [positive] is true and [(if (e1 == e2)] if
@@ -331,11 +335,11 @@ and prune_union tenv ~positive condition1 condition2 prop =
 
 let dangerous_functions =
   let dangerous_list = ["gets"] in
-  ref (List.map ~f:Typ.Procname.from_string_c_fun dangerous_list)
+  ref (List.map ~f:Procname.from_string_c_fun dangerous_list)
 
 
 let check_inherently_dangerous_function caller_pname callee_pname =
-  if List.exists ~f:(Typ.Procname.equal callee_pname) !dangerous_functions then
+  if List.exists ~f:(Procname.equal callee_pname) !dangerous_functions then
     let exn =
       Exceptions.Inherently_dangerous_function
         (Localise.desc_inherently_dangerous_function callee_pname)
@@ -350,7 +354,7 @@ let reason_to_skip ~callee_desc : string option =
     else None
   in
   let reason_from_pname pname =
-    if Typ.Procname.is_method_in_objc_protocol pname then
+    if Procname.is_method_in_objc_protocol pname then
       Some "no implementation found for method declared in Objective-C protocol"
     else None
   in
@@ -422,7 +426,7 @@ let check_arith_norm_exp tenv pname exp prop =
 let check_already_dereferenced tenv pname cond prop =
   let find_hpred lhs =
     List.find
-      ~f:(function Sil.Hpointsto (e, _, _) -> Exp.equal e lhs | _ -> false)
+      ~f:(function Predicates.Hpointsto (e, _, _) -> Exp.equal e lhs | _ -> false)
       prop.Prop.sigma
   in
   let rec is_check_zero = function
@@ -452,7 +456,7 @@ let check_already_dereferenced tenv pname cond prop =
     match is_check_zero cond with
     | Some id -> (
       match find_hpred (Prop.exp_normalize_prop tenv prop (Exp.Var id)) with
-      | Some (Sil.Hpointsto (_, se, _)) -> (
+      | Some (Predicates.Hpointsto (_, se, _)) -> (
         match Tabulation.find_dereference_without_null_check_in_sexp se with
         | Some n ->
             Some (id, n)
@@ -479,11 +483,11 @@ let check_already_dereferenced tenv pname cond prop =
     exception in that case *)
 let check_deallocate_static_memory prop_after =
   let check_deallocated_attribute = function
-    | Sil.Apred (Aresource ({ra_kind= Rrelease} as ra), [Lvar pv])
+    | Predicates.Apred (Aresource ({ra_kind= Rrelease} as ra), [Lvar pv])
       when Pvar.is_local pv || Pvar.is_global pv ->
         let freed_desc = Errdesc.explain_deallocate_stack_var pv ra in
         raise (Exceptions.Deallocate_stack_variable freed_desc)
-    | Sil.Apred (Aresource ({ra_kind= Rrelease} as ra), [Const (Cstr s)]) ->
+    | Predicates.Apred (Aresource ({ra_kind= Rrelease} as ra), [Const (Cstr s)]) ->
         let freed_desc = Errdesc.explain_deallocate_constant_string s ra in
         raise (Exceptions.Deallocate_static_memory freed_desc)
     | _ ->
@@ -496,7 +500,7 @@ let check_deallocate_static_memory prop_after =
 
 let method_exists right_proc_name methods =
   if Language.curr_language_is Java then
-    List.exists ~f:(fun meth_name -> Typ.Procname.equal right_proc_name meth_name) methods
+    List.exists ~f:(fun meth_name -> Procname.equal right_proc_name meth_name) methods
   else
     (* ObjC/C++ case : The attribute map will only exist when we have code for the method or
        the method has been called directly somewhere. It can still be that this is not the
@@ -513,7 +517,7 @@ let resolve_method tenv class_name proc_name =
     let visited = ref Typ.Name.Set.empty in
     let rec resolve (class_name : Typ.Name.t) =
       visited := Typ.Name.Set.add class_name !visited ;
-      let right_proc_name = Typ.Procname.replace_class proc_name class_name in
+      let right_proc_name = Procname.replace_class proc_name class_name in
       match Tenv.lookup tenv class_name with
       | Some {methods; supers} when Typ.Name.is_class class_name -> (
           if method_exists right_proc_name methods then Some right_proc_name
@@ -543,7 +547,7 @@ let resolve_typename prop receiver_exp =
     let rec loop = function
       | [] ->
           None
-      | Sil.Hpointsto (e, _, typexp) :: _ when Exp.equal e receiver_exp ->
+      | Predicates.Hpointsto (e, _, typexp) :: _ when Exp.equal e receiver_exp ->
           Some typexp
       | _ :: hpreds ->
           loop hpreds
@@ -555,7 +559,7 @@ let resolve_typename prop receiver_exp =
 
 (** If the dynamic type of the receiver actual T_actual is a subtype of the receiver type T_formal
     in the signature of [pname], resolve [pname] to T_actual.[pname]. *)
-let resolve_virtual_pname tenv prop actuals callee_pname call_flags : Typ.Procname.t list =
+let resolve_virtual_pname tenv prop actuals callee_pname call_flags : Procname.t list =
   let resolve receiver_exp pname prop =
     match resolve_typename prop receiver_exp with
     | Some class_name ->
@@ -565,8 +569,8 @@ let resolve_virtual_pname tenv prop actuals callee_pname call_flags : Typ.Procna
   in
   let get_receiver_typ pname fallback_typ =
     match pname with
-    | Typ.Procname.Java pname_java -> (
-        let name = Typ.Procname.Java.get_class_type_name pname_java in
+    | Procname.Java pname_java -> (
+        let name = Procname.Java.get_class_type_name pname_java in
         match Tenv.lookup tenv name with
         | Some _ ->
             Typ.mk (Typ.Tptr (Typ.mk (Tstruct name), Pk_pointer))
@@ -601,16 +605,16 @@ let resolve_virtual_pname tenv prop actuals callee_pname call_flags : Typ.Procna
 
 
 (** Resolve the name of the procedure to call based on the type of the arguments *)
-let resolve_pname ~caller_pdesc tenv prop args pname call_flags : Typ.Procname.t =
+let resolve_pname ~caller_pdesc tenv prop args pname call_flags : Procname.t =
   let resolve_from_args resolved_pname args =
-    let resolved_parameters = Typ.Procname.get_parameters resolved_pname in
+    let resolved_parameters = Procname.get_parameters resolved_pname in
     let resolved_params =
       try
         List.fold2_exn
           ~f:(fun accu (arg_exp, _) name ->
             match resolve_typename prop arg_exp with
             | Some class_name ->
-                Typ.Procname.parameter_of_name resolved_pname class_name :: accu
+                Procname.parameter_of_name resolved_pname class_name :: accu
             | None ->
                 name :: accu )
           ~init:[] args resolved_parameters
@@ -620,14 +624,14 @@ let resolve_pname ~caller_pdesc tenv prop args pname call_flags : Typ.Procname.t
         let file = loc.Location.file in
         L.(debug Analysis Medium)
           "Call mismatch: method %a has %i paramters but is called with %i arguments, in %a, %a@."
-          Typ.Procname.pp pname (List.length resolved_parameters) (List.length args) SourceFile.pp
-          file Location.pp loc ;
+          Procname.pp pname (List.length resolved_parameters) (List.length args) SourceFile.pp file
+          Location.pp loc ;
         raise SpecializeProcdesc.UnmatchedParameters
     in
-    Typ.Procname.replace_parameters resolved_params resolved_pname
+    Procname.replace_parameters resolved_params resolved_pname
   in
   let resolved_pname, other_args =
-    let parameters = Typ.Procname.get_parameters pname in
+    let parameters = Procname.get_parameters pname in
     let match_parameters args = Int.equal (List.length args) (List.length parameters) in
     match args with
     | [] ->
@@ -652,7 +656,7 @@ let resolve_pname ~caller_pdesc tenv prop args pname call_flags : Typ.Procname.t
         let file = loc.Location.file in
         L.(debug Analysis Medium)
           "Call mismatch: method %a has %i paramters but is called with %i arguments, in %a, %a@."
-          Typ.Procname.pp pname (List.length parameters) (List.length args) SourceFile.pp file
+          Procname.pp pname (List.length parameters) (List.length args) SourceFile.pp file
           Location.pp loc ;
         raise SpecializeProcdesc.UnmatchedParameters
   in
@@ -677,7 +681,7 @@ let resolve_args prop args =
 
 
 type resolve_and_analyze_result =
-  { resolved_pname: Typ.Procname.t
+  { resolved_pname: Procname.t
   ; resolved_procdesc_opt: Procdesc.t option
   ; resolved_summary_opt: Summary.t option
   ; dynamic_dispatch_status: EventLogger.dynamic_dispatch option }
@@ -689,7 +693,7 @@ let resolve_and_analyze tenv ~caller_summary ?(has_clang_model = false) prop arg
   (* TODO (#15748878): Fix conflict with method overloading by encoding in the procedure name
      whether the method is defined or generated by the specialization *)
   let analyze_ondemand resolved_pname : Procdesc.t option * Summary.t option =
-    if Typ.Procname.equal resolved_pname callee_proc_name then
+    if Procname.equal resolved_pname callee_proc_name then
       ( Ondemand.get_proc_desc callee_proc_name
       , Ondemand.analyze_proc_name ~caller_summary callee_proc_name )
     else
@@ -718,7 +722,7 @@ let resolve_and_analyze tenv ~caller_summary ?(has_clang_model = false) prop arg
       tenv prop args callee_proc_name call_flags
   in
   let dynamic_dispatch_status =
-    if Typ.Procname.equal callee_proc_name resolved_pname then None
+    if Procname.equal callee_proc_name resolved_pname then None
     else Some EventLogger.Dynamic_dispatch_successful
   in
   let resolved_procdesc_opt, resolved_summary_opt = analyze_ondemand resolved_pname in
@@ -729,14 +733,14 @@ let resolve_and_analyze tenv ~caller_summary ?(has_clang_model = false) prop arg
     protocol. *)
 let call_constructor_url_update_args pname actual_params =
   let url_pname =
-    Typ.Procname.Java
-      (Typ.Procname.Java.make
+    Procname.Java
+      (Procname.Java.make
          (Typ.Name.Java.from_string "java.net.URL")
          None "<init>"
          [Typ.Name.Java.Split.java_lang_string]
-         Typ.Procname.Java.Non_Static)
+         Procname.Java.Non_Static)
   in
-  if Typ.Procname.equal url_pname pname then
+  if Procname.equal url_pname pname then
     match actual_params with
     | [this; (Exp.Const (Const.Cstr s), atype)] -> (
         let parts = Str.split (Str.regexp_string "://") s in
@@ -760,7 +764,7 @@ let receiver_self receiver prop =
   List.exists
     ~f:(fun hpred ->
       match hpred with
-      | Sil.Hpointsto (Exp.Lvar pv, Sil.Eexp (e, _), _) ->
+      | Predicates.Hpointsto (Lvar pv, Eexp (e, _), _) ->
           Exp.equal e receiver && Pvar.is_seed pv && Pvar.is_self pv
       | _ ->
           false )
@@ -774,9 +778,9 @@ let receiver_self receiver prop =
 let force_objc_init_return_nil pdesc callee_pname tenv ret_id pre path receiver =
   let current_pname = Procdesc.get_proc_name pdesc in
   if
-    Typ.Procname.is_constructor callee_pname
+    Procname.is_constructor callee_pname
     && receiver_self receiver pre && !BiabductionConfig.footprint
-    && Typ.Procname.is_constructor current_pname
+    && Procname.is_constructor current_pname
   then
     let propset = prune_ne tenv ~positive:false (Exp.Var ret_id) Exp.zero pre in
     if Propset.is_empty propset then []
@@ -796,7 +800,7 @@ let handle_objc_instance_method_call_or_skip pdesc tenv actual_pars path callee_
     =
   let path_description =
     F.sprintf "Message %s with receiver nil returns nil."
-      (Typ.Procname.to_simplified_string callee_pname)
+      (Procname.to_simplified_string callee_pname)
   in
   let receiver =
     match actual_pars with
@@ -826,7 +830,7 @@ let handle_objc_instance_method_call_or_skip pdesc tenv actual_pars path callee_
   if is_receiver_null then (
     (* objective-c instance method with a null receiver just return objc_null(res). *)
     let path = Paths.Path.add_description path path_description in
-    L.d_printfln "Object-C method %a called with nil receiver. Returning 0/nil" Typ.Procname.pp
+    L.d_printfln "Object-C method %a called with nil receiver. Returning 0/nil" Procname.pp
       callee_pname ;
     (* We wish to nullify the result. However, in some cases,
        we want to add the attribute OBJC_NULL to it so that we
@@ -890,7 +894,7 @@ let add_strexp_to_footprint tenv strexp abduced_pv typ prop =
 let add_to_footprint tenv abduced_pv typ prop =
   let fresh_fp_var = Exp.Var (Ident.create_fresh Ident.kfootprint) in
   let prop' =
-    add_strexp_to_footprint tenv (Sil.Eexp (fresh_fp_var, Sil.Inone)) abduced_pv typ prop
+    add_strexp_to_footprint tenv (Eexp (fresh_fp_var, Predicates.Inone)) abduced_pv typ prop
   in
   (prop', fresh_fp_var)
 
@@ -900,25 +904,26 @@ let add_to_footprint tenv abduced_pv typ prop =
    footprint. regular abduction just adds a fresh footprint value of the correct type to the
    footprint. we can get rid of this special case if we fix the abduction on struct values *)
 let add_struct_value_to_footprint tenv abduced_pv typ prop =
-  let struct_strexp = Prop.create_strexp_of_type tenv Prop.Fld_init typ None Sil.inst_none in
+  let struct_strexp = Prop.create_strexp_of_type tenv Prop.Fld_init typ None Predicates.inst_none in
   let prop' = add_strexp_to_footprint tenv struct_strexp abduced_pv typ prop in
   (prop', struct_strexp)
 
 
 let is_rec_call callee_pname caller_pdesc =
   (* TODO: (t7147096) extend this to detect mutual recursion *)
-  Typ.Procname.equal callee_pname (Procdesc.get_proc_name caller_pdesc)
+  Procname.equal callee_pname (Procdesc.get_proc_name caller_pdesc)
 
 
 let add_constraints_on_retval tenv pdesc prop ret_exp ~has_nonnull_annot typ callee_pname callee_loc
     =
-  if Typ.Procname.is_infer_undefined callee_pname then prop
+  if Procname.is_infer_undefined callee_pname then prop
   else
     let lookup_abduced_expression p abduced_ret_pv =
       List.find_map
         ~f:(fun hpred ->
           match hpred with
-          | Sil.Hpointsto (Exp.Lvar pv, Sil.Eexp (exp, _), _) when Pvar.equal pv abduced_ret_pv ->
+          | Predicates.Hpointsto (Exp.Lvar pv, Eexp (exp, _), _) when Pvar.equal pv abduced_ret_pv
+            ->
               Some exp
           | _ ->
               None )
@@ -927,7 +932,7 @@ let add_constraints_on_retval tenv pdesc prop ret_exp ~has_nonnull_annot typ cal
     (* find an hpred [abduced] |-> A in [prop] and add [exp] = A to prop *)
     let bind_exp_to_abduced_val exp_to_bind abduced prop =
       let bind_exp prop = function
-        | Sil.Hpointsto (Exp.Lvar pv, Sil.Eexp (rhs, _), _) when Pvar.equal pv abduced ->
+        | Predicates.Hpointsto (Exp.Lvar pv, Eexp (rhs, _), _) when Pvar.equal pv abduced ->
             Prop.conjoin_eq tenv exp_to_bind rhs prop
         | _ ->
             prop
@@ -945,7 +950,7 @@ let add_constraints_on_retval tenv pdesc prop ret_exp ~has_nonnull_annot typ cal
       let prop_with_abduced_var =
         let abduced_ret_pv =
           (* in Java, always re-use the same abduced ret var to prevent false alarms with repeated method calls *)
-          let loc = if Typ.Procname.is_java callee_pname then Location.dummy else callee_loc in
+          let loc = if Procname.is_java callee_pname then Location.dummy else callee_loc in
           Pvar.mk_abduced_ret callee_pname loc
         in
         if !BiabductionConfig.footprint then
@@ -968,7 +973,7 @@ let execute_load ?(report_deref_errors = true) pname pdesc tenv id rhs_exp typ l
     let iter_ren = Prop.prop_iter_make_id_primed tenv id iter in
     let prop_ren = Prop.prop_iter_to_prop tenv iter_ren in
     match Prop.prop_iter_current tenv iter_ren with
-    | Sil.Hpointsto (lexp, strexp, Exp.Sizeof sizeof_data), offlist -> (
+    | Predicates.Hpointsto (lexp, strexp, Exp.Sizeof sizeof_data), offlist -> (
         let contents, new_ptsto, pred_insts_op, lookup_uninitialized =
           ptsto_lookup pdesc tenv prop_ren (lexp, strexp, sizeof_data) offlist id
         in
@@ -980,7 +985,7 @@ let execute_load ?(report_deref_errors = true) pname pdesc tenv id rhs_exp typ l
               false
         in
         let update acc (pi, sigma) =
-          let pi' = Sil.Aeq (Exp.Var id, contents) :: pi in
+          let pi' = Predicates.Aeq (Exp.Var id, contents) :: pi in
           let sigma' = new_ptsto :: sigma in
           let iter' = update_iter iter_ren pi' sigma' in
           let prop' = Prop.prop_iter_to_prop tenv iter' in
@@ -997,7 +1002,7 @@ let execute_load ?(report_deref_errors = true) pname pdesc tenv id rhs_exp typ l
             update acc_in ([], [])
         | Some pred_insts ->
             List.rev (List.fold ~f:update ~init:acc_in pred_insts) )
-    | Sil.Hpointsto _, _ ->
+    | Predicates.Hpointsto _, _ ->
         Errdesc.warning_err loc "no offset access in execute_load -- treating as skip@." ;
         Prop.prop_iter_to_prop tenv iter_ren :: acc_in
     | _ ->
@@ -1043,7 +1048,7 @@ let execute_store ?(report_deref_errors = true) pname pdesc tenv lhs_exp typ rhs
   let execute_store_ pdesc tenv rhs_exp acc_in iter =
     let lexp, strexp, sizeof, offlist =
       match Prop.prop_iter_current tenv iter with
-      | Sil.Hpointsto (lexp, strexp, Exp.Sizeof sizeof), offlist ->
+      | Predicates.Hpointsto (lexp, strexp, Exp.Sizeof sizeof), offlist ->
           (lexp, strexp, sizeof, offlist)
       | _ ->
           assert false
@@ -1106,8 +1111,8 @@ let resolve_and_analyze_clang current_summary tenv prop_r n_actual_params callee
   if
     Config.dynamic_dispatch
     && (not (is_variadic_procname callee_pname))
-    && Typ.Procname.is_objc_method callee_pname
-    || Typ.Procname.is_objc_block callee_pname
+    && Procname.is_objc_method callee_pname
+    || Procname.is_objc_block callee_pname
     (* to be extended to other methods *)
   then
     try
@@ -1154,7 +1159,7 @@ let declare_locals_and_ret tenv pdesc (prop_ : Prop.normal Prop.t) =
       let ptsto =
         (pvar, Exp.Sizeof {typ; nbytes= None; dynamic_length= None; subtype= Subtype.exact}, None)
       in
-      Prop.mk_ptsto_lvar tenv Prop.Fld_init Sil.inst_initial ptsto
+      Prop.mk_ptsto_lvar tenv Prop.Fld_init Predicates.inst_initial ptsto
     in
     let sigma_locals_and_ret () =
       let pname = Procdesc.get_proc_name pdesc in
@@ -1218,7 +1223,7 @@ let rec sym_exec exe_env tenv current_summary instr_ (prop_ : Prop.normal Prop.t
     let skip_res () =
       let exn = Exceptions.Skip_function (Localise.desc_skip_function callee_pname) in
       Reporting.log_issue_deprecated_using_state Exceptions.Info current_pname exn ;
-      L.d_printfln "Skipping function '%a': %s" Typ.Procname.pp callee_pname reason ;
+      L.d_printfln "Skipping function '%a': %s" Procname.pp callee_pname reason ;
       Tabulation.log_call_trace ~caller_name:current_pname ~callee_name:callee_pname
         ?callee_attributes ~reason loc Tabulation.CR_skip ;
       unknown_or_scan_call ~is_scan:false ~reason ret_typ ret_annots
@@ -1286,7 +1291,7 @@ let rec sym_exec exe_env tenv current_summary instr_ (prop_ : Prop.normal Prop.t
           | _ ->
               ()
       in
-      if not (Typ.Procname.is_java current_pname) then
+      if not (Procname.is_java current_pname) then
         check_already_dereferenced tenv current_pname cond prop__ ;
       check_condition_always_true_false () ;
       let n_cond, prop = check_arith_norm_exp tenv current_pname cond prop__ in
@@ -1311,7 +1316,7 @@ let rec sym_exec exe_env tenv current_summary instr_ (prop_ : Prop.normal Prop.t
           let resolved_pname = resolve_and_analyze_result.resolved_pname in
           match resolve_and_analyze_result.resolved_summary_opt with
           | None ->
-              let ret_typ = Typ.Procname.Java.get_return_typ callee_pname_java in
+              let ret_typ = Procname.Java.get_return_typ callee_pname_java in
               let ret_annots = load_ret_annots callee_pname in
               exec_skip_call ~reason:"unknown method" resolved_pname ret_annots ret_typ
           | Some resolved_summary -> (
@@ -1337,7 +1342,7 @@ let rec sym_exec exe_env tenv current_summary instr_ (prop_ : Prop.normal Prop.t
             in
             match Ondemand.analyze_proc_name ~caller_summary:current_summary pname with
             | None ->
-                let ret_typ = Typ.Procname.Java.get_return_typ callee_pname_java in
+                let ret_typ = Procname.Java.get_return_typ callee_pname_java in
                 let ret_annots = load_ret_annots callee_pname in
                 exec_skip_call ~reason:"unknown method" ret_annots ret_typ
             | Some callee_summary -> (
@@ -1379,8 +1384,8 @@ let rec sym_exec exe_env tenv current_summary instr_ (prop_ : Prop.normal Prop.t
               let resolved_pdesc_opt = resolve_and_analyze_result.resolved_procdesc_opt in
               let resolved_summary_opt = resolve_and_analyze_result.resolved_summary_opt in
               let dynamic_dispatch_status = resolve_and_analyze_result.dynamic_dispatch_status in
-              Logging.d_printfln "Original callee %s" (Typ.Procname.to_unique_id callee_pname) ;
-              Logging.d_printfln "Resolved callee %s" (Typ.Procname.to_unique_id resolved_pname) ;
+              Logging.d_printfln "Original callee %s" (Procname.to_unique_id callee_pname) ;
+              Logging.d_printfln "Resolved callee %s" (Procname.to_unique_id resolved_pname) ;
               let sentinel_result =
                 if Language.curr_language_is Clang then
                   check_variadic_sentinel_if_present
@@ -1415,14 +1420,14 @@ let rec sym_exec exe_env tenv current_summary instr_ (prop_ : Prop.normal Prop.t
                           ||
                           match Config.biabduction_model_alloc_pattern with
                           | Some pat ->
-                              Str.string_match pat (Typ.Procname.to_string resolved_pname) 0
+                              Str.string_match pat (Procname.to_string resolved_pname) 0
                           | None ->
                               false
                         in
                         let model_as_free resolved_pname =
                           match Config.biabduction_model_free_pattern with
                           | Some pat ->
-                              Str.string_match pat (Typ.Procname.to_string resolved_pname) 0
+                              Str.string_match pat (Procname.to_string resolved_pname) 0
                           | None ->
                               false
                         in
@@ -1466,9 +1471,9 @@ let rec sym_exec exe_env tenv current_summary instr_ (prop_ : Prop.normal Prop.t
       then Rearrange.check_call_to_objc_block_error tenv current_pdesc prop_r fun_exp loc ;
       Rearrange.check_dereference_error tenv current_pdesc prop_r fun_exp loc ;
       L.d_str "Unknown function pointer " ;
-      Sil.d_exp fun_exp ;
+      Exp.d_exp fun_exp ;
       L.d_strln ", returning undefined value." ;
-      let callee_pname = Typ.Procname.from_string_c_fun "__function_pointer__" in
+      let callee_pname = Procname.from_string_c_fun "__function_pointer__" in
       unknown_or_scan_call ~is_scan:false ~reason:"unresolved function pointer" (snd ret_id_typ)
         Annot.Item.empty
         Builtin.
@@ -1486,13 +1491,14 @@ let rec sym_exec exe_env tenv current_summary instr_ (prop_ : Prop.normal Prop.t
       let eprop = Prop.expose prop_ in
       match
         List.partition_tf
-          ~f:(function Sil.Hpointsto (Exp.Lvar pvar', _, _) -> Pvar.equal pvar pvar' | _ -> false)
+          ~f:(function
+            | Predicates.Hpointsto (Exp.Lvar pvar', _, _) -> Pvar.equal pvar pvar' | _ -> false )
           eprop.Prop.sigma
       with
-      | [Sil.Hpointsto (e, se, typ)], sigma' ->
+      | [Predicates.Hpointsto (e, se, typ)], sigma' ->
           let sigma'' =
             let se' = execute_nullify_se se in
-            Sil.Hpointsto (e, se', typ) :: sigma'
+            Predicates.Hpointsto (e, se', typ) :: sigma'
           in
           let eprop_res = Prop.set eprop ~sigma:sigma'' in
           ret_old_path [Prop.normalize tenv eprop_res]
@@ -1561,8 +1567,11 @@ and add_constraints_on_actuals_by_ref tenv caller_pdesc prop actuals_by_ref call
     let already_has_abduced_retval p =
       List.exists
         ~f:(fun hpred ->
-          match hpred with Sil.Hpointsto (Exp.Lvar pv, _, _) -> Pvar.equal pv abduced | _ -> false
-          )
+          match hpred with
+          | Predicates.Hpointsto (Exp.Lvar pv, _, _) ->
+              Pvar.equal pv abduced
+          | _ ->
+              false )
         p.Prop.sigma_fp
     in
     (* prevent introducing multiple abduced retvals for a single call site in a loop *)
@@ -1577,7 +1586,7 @@ and add_constraints_on_actuals_by_ref tenv caller_pdesc prop actuals_by_ref call
         | Typ.Tptr (typ, _) ->
             (* for pointer types passed by reference, do abduction directly on the pointer *)
             let prop', fresh_fp_var = add_to_footprint tenv abduced typ prop in
-            (prop', Sil.Eexp (fresh_fp_var, Sil.Inone))
+            (prop', Predicates.Eexp (fresh_fp_var, Predicates.Inone))
         | _ ->
             L.(die InternalError)
               "No need for abduction on non-pointer type %s" (Typ.to_string actual_typ)
@@ -1585,8 +1594,8 @@ and add_constraints_on_actuals_by_ref tenv caller_pdesc prop actuals_by_ref call
       let filtered_sigma =
         List.map
           ~f:(function
-            | Sil.Hpointsto (lhs, _, typ_exp) when Exp.equal lhs actual ->
-                Sil.Hpointsto (lhs, abduced_strexp, typ_exp)
+            | Predicates.Hpointsto (lhs, _, typ_exp) when Exp.equal lhs actual ->
+                Predicates.Hpointsto (lhs, abduced_strexp, typ_exp)
             | hpred ->
                 hpred )
           prop'.Prop.sigma
@@ -1597,7 +1606,8 @@ and add_constraints_on_actuals_by_ref tenv caller_pdesc prop actuals_by_ref call
       let prop' =
         let filtered_sigma =
           List.filter
-            ~f:(function Sil.Hpointsto (lhs, _, _) when Exp.equal lhs actual -> false | _ -> true)
+            ~f:(function
+              | Predicates.Hpointsto (lhs, _, _) when Exp.equal lhs actual -> false | _ -> true )
             prop.Prop.sigma
         in
         Prop.normalize tenv (Prop.set prop ~sigma:filtered_sigma)
@@ -1605,8 +1615,8 @@ and add_constraints_on_actuals_by_ref tenv caller_pdesc prop actuals_by_ref call
       List.fold
         ~f:(fun p hpred ->
           match hpred with
-          | Sil.Hpointsto (Exp.Lvar pv, rhs, texp) when Pvar.equal pv abduced ->
-              let new_hpred = Sil.Hpointsto (actual, rhs, texp) in
+          | Predicates.Hpointsto (Exp.Lvar pv, rhs, texp) when Pvar.equal pv abduced ->
+              let new_hpred = Predicates.Hpointsto (actual, rhs, texp) in
               Prop.normalize tenv (Prop.set p ~sigma:(new_hpred :: prop'.Prop.sigma))
           | _ ->
               p )
@@ -1619,7 +1629,7 @@ and add_constraints_on_actuals_by_ref tenv caller_pdesc prop actuals_by_ref call
           let is_const = List.mem ~equal:Int.equal attrs.ProcAttributes.const_formals i in
           if is_const then (
             L.d_printf "Not havocing const argument number %d: " i ;
-            Sil.d_exp e ;
+            Exp.d_exp e ;
             L.d_ln () ) ;
           not is_const
       | None ->
@@ -1638,7 +1648,7 @@ and unknown_or_scan_call ~is_scan ~reason ret_typ ret_annots
     let do_exp p (e, _) =
       let do_attribute q atom =
         match atom with
-        | Sil.Apred ((Aresource {ra_res= Rfile} as res), _) ->
+        | Predicates.Apred ((Aresource {ra_res= Rfile} as res), _) ->
             Attribute.remove_for_attr tenv q res
         | _ ->
             q
@@ -1656,7 +1666,7 @@ and unknown_or_scan_call ~is_scan ~reason ret_typ ret_annots
     List.fold ~f:do_exp ~init:prop filtered_args
   in
   let should_abduce_param_value pname =
-    let open Typ.Procname in
+    let open Procname in
     match pname with
     | Java _ ->
         (* FIXME (T19882766): we need to disable this for Java because it breaks too many tests *)
@@ -1665,9 +1675,9 @@ and unknown_or_scan_call ~is_scan ~reason ret_typ ret_annots
         (* FIXME: we need to work around a frontend hack for std::shared_ptr
          * to silent some of the uninitialization warnings *)
         if
-          String.is_suffix ~suffix:"_std__shared_ptr" (Typ.Procname.to_string callee_pname)
+          String.is_suffix ~suffix:"_std__shared_ptr" (Procname.to_string callee_pname)
           (* Abduced parameters for the empty destructor body cause `Cannot star` *)
-          || Typ.Procname.ObjC_Cpp.is_destructor cpp_name
+          || Procname.ObjC_Cpp.is_destructor cpp_name
         then false
         else true
     | _ ->
@@ -1689,7 +1699,7 @@ and unknown_or_scan_call ~is_scan ~reason ret_typ ret_annots
   let pre_final =
     let pdesc = Summary.get_proc_desc summary in
     (* in Java, assume that skip functions close resources passed as params *)
-    let pre_1 = if Typ.Procname.is_java callee_pname then remove_file_attribute pre else pre in
+    let pre_1 = if Procname.is_java callee_pname then remove_file_attribute pre else pre in
     let pre_2 =
       (* TODO(jjb): Should this use the type of ret_id, or ret_type from the procedure type? *)
       add_constraints_on_retval tenv pdesc pre_1
@@ -1769,7 +1779,7 @@ and check_variadic_sentinel_if_present ({Builtin.prop_; path; proc_name} as buil
 and sym_exec_objc_getter field ret_typ tenv ret_id pdesc pname loc args prop =
   let field_name, _, _ = field in
   L.d_printfln "No custom getter found. Executing the ObjC builtin getter with ivar %a."
-    Typ.Fieldname.pp field_name ;
+    Fieldname.pp field_name ;
   match args with
   | [ ( lexp
       , ( ({Typ.desc= Tstruct struct_name} as typ)
@@ -1785,7 +1795,7 @@ and sym_exec_objc_getter field ret_typ tenv ret_id pdesc pname loc args prop =
 and sym_exec_objc_setter field _ tenv _ pdesc pname loc args prop =
   let field_name, _, _ = field in
   L.d_printfln "No custom setter found. Executing the ObjC builtin setter with ivar %a."
-    Typ.Fieldname.pp field_name ;
+    Fieldname.pp field_name ;
   match args with
   | ( lexp1
     , ( ({Typ.desc= Tstruct struct_name} as typ1)
@@ -1813,7 +1823,7 @@ and sym_exec_objc_accessor callee_pname property_accesor ret_typ tenv ret_id pde
   let path_description =
     F.sprintf "Executing synthesized %s %s"
       (ProcAttributes.kind_of_objc_accessor_type property_accesor)
-      (Typ.Procname.to_simplified_string callee_pname)
+      (Procname.to_simplified_string callee_pname)
   in
   let path = Paths.Path.add_description path path_description in
   f_accessor ret_typ tenv ret_id pdesc cur_pname loc args prop |> List.map ~f:(fun p -> (p, path))
@@ -1862,7 +1872,7 @@ and proc_call ?dynamic_dispatch exe_env callee_summary
         L.d_warning "likely use of variable-arguments function, or function prototype missing" ;
         L.d_ln () ;
         L.d_str "actual parameters: " ;
-        Sil.d_exp_list (List.map ~f:fst actual_pars) ;
+        Exp.d_list (List.map ~f:fst actual_pars) ;
         L.d_ln () ;
         L.d_str "formal parameters: " ;
         Typ.d_list formal_types ;
@@ -1870,9 +1880,9 @@ and proc_call ?dynamic_dispatch exe_env callee_summary
         actual_pars
     | [], _ ->
         L.d_printfln "**** ERROR: Procedure %a mismatch in the number of parameters ****"
-          Typ.Procname.pp callee_pname ;
+          Procname.pp callee_pname ;
         L.d_str "actual parameters: " ;
-        Sil.d_exp_list (List.map ~f:fst actual_pars) ;
+        Exp.d_list (List.map ~f:fst actual_pars) ;
         L.d_ln () ;
         L.d_str "formal parameters: " ;
         Typ.d_list formal_types ;
@@ -1913,7 +1923,8 @@ and sym_exec_wrapper exe_env handle_exn tenv summary proc_cfg instr
       List.map ~f:(fun id -> (id, Ident.create_fresh Ident.knormal)) ids_primed
     in
     let ren_sub =
-      Sil.subst_of_list (List.map ~f:(fun (id1, id2) -> (id1, Exp.Var id2)) ids_primed_normal)
+      Predicates.subst_of_list
+        (List.map ~f:(fun (id1, id2) -> (id1, Exp.Var id2)) ids_primed_normal)
     in
     let p' = Prop.normalize tenv (Prop.prop_sub ren_sub p) in
     let fav_normal = List.map ~f:snd ids_primed_normal in

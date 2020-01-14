@@ -11,7 +11,7 @@ open! IStd
 
 module L = Logging
 
-type field_type = Typ.Fieldname.t * Typ.t * (Annot.t * bool) list
+type field_type = Fieldname.t * Typ.t * (Annot.t * bool) list
 
 let rec get_fields_super_classes tenv super_class =
   L.(debug Capture Verbose)
@@ -78,7 +78,7 @@ let get_fields qual_type_to_sil_type tenv class_tname decl_list =
     | ObjCPropertyDecl (_, _, obj_c_property_decl_info) -> (
         let ivar_decl_ref = obj_c_property_decl_info.Clang_ast_t.opdi_ivar_decl in
         let property_attributes = obj_c_property_decl_info.Clang_ast_t.opdi_property_attributes in
-        match CAst_utils.get_decl_opt_with_decl_ref ivar_decl_ref with
+        match CAst_utils.get_decl_opt_with_decl_ref_opt ivar_decl_ref with
         | Some (ObjCIvarDecl (_, name_info, qual_type, _, _)) ->
             let field = get_sil_field name_info qual_type property_attributes in
             CGeneral_utils.add_no_duplicates_fields field fields
@@ -86,7 +86,7 @@ let get_fields qual_type_to_sil_type tenv class_tname decl_list =
             fields )
     | ObjCPropertyImplDecl (_, obj_c_property_impl_decl_info) -> (
         let property_decl_opt = obj_c_property_impl_decl_info.Clang_ast_t.opidi_property_decl in
-        match CAst_utils.get_decl_opt_with_decl_ref property_decl_opt with
+        match CAst_utils.get_decl_opt_with_decl_ref_opt property_decl_opt with
         | Some decl ->
             get_field fields decl
         | None ->
@@ -123,7 +123,7 @@ let modelled_field class_name_info =
   let modelled_field_in_class res (class_name, field_name, typ) =
     if String.equal class_name class_name_info.Clang_ast_t.ni_name then
       let class_tname = Typ.Name.Objc.from_string class_name in
-      let name = Typ.Fieldname.Clang.from_class_name class_tname field_name in
+      let name = Fieldname.make class_tname field_name in
       (name, typ, Annot.Item.empty) :: res
     else res
   in

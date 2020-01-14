@@ -22,8 +22,8 @@ let topl_call ret_id (ret_typ : Typ.desc) loc name arg_ts : Sil.instr =
     let args_typ = List.map arg_ts ~f:(fun _ -> Typ.Name.Java.Split.java_lang_object) in
     Exp.Const
       (Const.Cfun
-         (Typ.Procname.Java
-            (Typ.Procname.Java.make topl_class_name ret_typ name args_typ Typ.Procname.Java.Static)))
+         (Procname.Java
+            (Procname.Java.make topl_class_name ret_typ name args_typ Procname.Java.Static)))
   in
   Sil.Call ((ret_id, Typ.mk ret_typ), e_fun, arg_ts, loc, CallFlags.default)
 
@@ -34,21 +34,24 @@ let topl_class_exp =
   Exp.Lvar var_name
 
 
-let static_var x : Exp.t =
-  Exp.Lfield (topl_class_exp, Typ.Fieldname.Java.from_string x, topl_class_typ)
+let make_field field_name =
+  Fieldname.make (Typ.Name.Java.from_string ToplName.topl_property) field_name
 
+
+let static_var x : Exp.t = Exp.Lfield (topl_class_exp, make_field x, topl_class_typ)
 
 let local_var proc_name x : Exp.t = Exp.Lvar (Pvar.mk (Mangled.from_string x) proc_name)
 
 let constant_int (x : int) : Exp.t = Exp.int (IntLit.of_int x)
 
 let is_synthesized = function
-  | Typ.Procname.Java j ->
-      String.equal ToplName.topl_property (Typ.Procname.Java.get_class_name j)
+  | Procname.Java j ->
+      String.equal ToplName.topl_property (Procname.Java.get_class_name j)
   | _ ->
       false
 
 
 let debug fmt =
-  Logging.debug Analysis Verbose "ToplTrace: " ;
-  Logging.debug Analysis Verbose fmt
+  let mode = if Config.trace_topl then Logging.Quiet else Logging.Verbose in
+  Logging.debug Analysis mode "ToplTrace: " ;
+  Logging.debug Analysis mode fmt

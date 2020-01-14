@@ -21,9 +21,11 @@ module SymbolPath : sig
   type partial = private
     | Pvar of Pvar.t
     | Deref of deref_kind * partial
-    | Field of {fn: Typ.Fieldname.t; prefix: partial; typ: Typ.t option}
-    | Callsite of {ret_typ: Typ.t; cs: CallSite.t}
-    | StarField of {last_field: Typ.Fieldname.t; prefix: partial}
+    | Field of {fn: Fieldname.t; prefix: partial; typ: Typ.t option}
+    | Callsite of {ret_typ: Typ.t; cs: CallSite.t; obj_path: partial option}
+        (** [obj_path] represents the varaible name object when a method of which is called at the
+            [cs] callsite. *)
+    | StarField of {last_field: Fieldname.t; prefix: partial}
         (** Represents a path starting with [prefix] and ending with the field [last_field], the
             middle can be anything. Invariants:
 
@@ -37,6 +39,7 @@ module SymbolPath : sig
     | Offset of {p: partial; is_void: bool}
     | Length of {p: partial; is_void: bool}
     | Modeled of partial
+  [@@deriving equal]
 
   val equal_partial : partial -> partial -> bool
 
@@ -46,17 +49,15 @@ module SymbolPath : sig
 
   val pp_partial_paren : paren:bool -> F.formatter -> partial -> unit
 
-  val pp_pointer : paren:bool -> F.formatter -> partial -> unit
-
   val of_pvar : Pvar.t -> partial
 
-  val of_callsite : ret_typ:Typ.t -> CallSite.t -> partial
+  val of_callsite : ?obj_path:partial -> ret_typ:Typ.t -> CallSite.t -> partial
 
   val deref : deref_kind:deref_kind -> partial -> partial
 
-  val field : ?typ:Typ.t -> partial -> Typ.Fieldname.t -> partial
+  val field : ?typ:Typ.t -> partial -> Fieldname.t -> partial
 
-  val star_field : partial -> Typ.Fieldname.t -> partial
+  val star_field : partial -> Fieldname.t -> partial
 
   val normal : partial -> t
 
@@ -119,8 +120,6 @@ module Symbol : sig
   val of_pulse_value : PulseAbstractValue.t -> t
 
   val exists_str : f:(string -> bool) -> t -> bool
-
-  val is_pulse_value : t -> bool
 
   val get_pulse_value_exn : t -> PulseAbstractValue.t
 end

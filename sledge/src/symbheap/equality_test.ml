@@ -14,7 +14,10 @@ let%test_module _ =
     (* let () = Trace.init ~margin:160 ~config:all () *)
     let printf pp = Format.printf "@\n%a@." pp
     let pp = printf pp
-    let pp_classes = printf pp_classes
+
+    let pp_classes =
+      Format.printf "@\n@[<hv>  %a@]@." (pp_classes (fun _ -> None))
+
     let of_eqs = List.fold ~init:true_ ~f:(fun r (a, b) -> and_eq a b r)
     let ( ! ) i = Term.integer (Z.of_int i)
     let ( + ) = Term.add
@@ -84,7 +87,7 @@ let%test_module _ =
       pp r1 ;
       [%expect
         {|
-          %x_5 = %y_6
+            %x_5 = %y_6
 
           {sat= true; rep= [[%y_6 ↦ %x_5]]} |}]
 
@@ -97,7 +100,7 @@ let%test_module _ =
       pp r2 ;
       [%expect
         {|
-          %x_5 = %y_6 = %z_7 = ((u8) %x_5)
+            %x_5 = %y_6 = %z_7 = ((u8) %x_5)
 
           {sat= true;
            rep= [[%y_6 ↦ %x_5]; [%z_7 ↦ %x_5]; [((u8) %x_5) ↦ %x_5]]} |}]
@@ -140,8 +143,8 @@ let%test_module _ =
       pp r3 ;
       [%expect
         {|
-      %t_1 = %u_2 = %v_3 = %w_4 = %x_5 = %z_7 = (%y_6 rem %v_3)
-      = (%y_6 rem %z_7)
+        %t_1 = %u_2 = %v_3 = %w_4 = %x_5 = %z_7 = (%y_6 rem %t_1)
+        = (%y_6 rem %t_1)
 
       {sat= true;
        rep= [[%u_2 ↦ %t_1];
@@ -163,8 +166,7 @@ let%test_module _ =
       pp r4 ;
       [%expect
         {|
-      (%z_7 + -4) = %y_6 ∧ (%z_7 + 3) = %w_4
-      ∧ (%z_7 + 8) = %x_5
+        (%z_7 + -4) = %y_6 ∧ (%z_7 + 3) = %w_4 ∧ (%z_7 + 8) = %x_5
 
       {sat= true;
        rep= [[%w_4 ↦ (%z_7 + 3)];
@@ -186,7 +188,7 @@ let%test_module _ =
       pp r6 ;
       [%expect
         {|
-      1 = %x_5 = %y_6
+        1 = %x_5 = %y_6
 
       {sat= true; rep= [[%x_5 ↦ 1]; [%y_6 ↦ 1]]} |}]
 
@@ -201,15 +203,14 @@ let%test_module _ =
       pp_classes (and_eq x z r7) ;
       [%expect
         {|
-      %v_3 = %x_5
-      ∧ %w_4 = %y_6 = %z_7
+        %v_3 = %x_5 ∧ %w_4 = %y_6 = %z_7
 
       {sat= true; rep= [[%x_5 ↦ %v_3]; [%y_6 ↦ %w_4]; [%z_7 ↦ %w_4]]}
 
       {sat= true;
        rep= [[%w_4 ↦ %v_3]; [%x_5 ↦ %v_3]; [%y_6 ↦ %v_3]; [%z_7 ↦ %v_3]]}
 
-      %v_3 = %w_4 = %x_5 = %y_6 = %z_7 |}]
+        %v_3 = %w_4 = %x_5 = %y_6 = %z_7 |}]
 
     let%expect_test _ =
       printf (List.pp " , " Term.pp) (Equality.class_of r7 t) ;
@@ -230,7 +231,7 @@ let%test_module _ =
       pp r7' ;
       [%expect
         {|
-      %v_3 = %w_4 = %x_5 = %y_6 = %z_7
+        %v_3 = %w_4 = %x_5 = %y_6 = %z_7
 
       {sat= true;
        rep= [[%w_4 ↦ %v_3]; [%x_5 ↦ %v_3]; [%y_6 ↦ %v_3]; [%z_7 ↦ %v_3]]} |}]
@@ -250,8 +251,7 @@ let%test_module _ =
       pp r8 ;
       [%expect
         {|
-      (13 × %z_7) = %x_5
-      ∧ 14 = %y_6
+        (13 × %z_7) = %x_5 ∧ 14 = %y_6
 
       {sat= true; rep= [[%x_5 ↦ (13 × %z_7)]; [%y_6 ↦ 14]]} |}]
 
@@ -264,7 +264,7 @@ let%test_module _ =
       pp r9 ;
       [%expect
         {|
-       (%z_7 + -16) = %x_5
+         (%z_7 + -16) = %x_5
 
        {sat= true; rep= [[%x_5 ↦ (%z_7 + -16)]]} |}]
 
@@ -281,7 +281,7 @@ let%test_module _ =
       Format.printf "@.%a@." Term.pp (normalize r10 (x + !8 - z)) ;
       [%expect
         {|
-      (%z_7 + -16) = %x_5
+        (%z_7 + -16) = %x_5
 
       {sat= true; rep= [[%x_5 ↦ (%z_7 + -16)]]}
 
@@ -343,9 +343,54 @@ let%test_module _ =
     let r15 = of_eqs [(b, b); (x, !1)]
 
     let%expect_test _ =
-      pp r15 ; [%expect {|
-          {sat= true; rep= [[%x_5 ↦ 1]]} |}]
+      pp r15 ; [%expect {| {sat= true; rep= [[%x_5 ↦ 1]]} |}]
 
     let%test _ = entails_eq r15 b (Term.signed 1 !1)
     let%test _ = entails_eq r15 (Term.unsigned 1 b) !1
+
+    (* f(x−1)−1=x+1, f(y)+1=y−1, y+1=x ⊢ false *)
+    let r16 =
+      of_eqs [(f (x - !1) - !1, x + !1); (f y + !1, y - !1); (y + !1, x)]
+
+    let%expect_test _ =
+      pp r16 ;
+      [%expect
+        {|
+        {sat= false;
+         rep= [[%x_5 ↦ (((u8) %y_6) + 3)];
+               [%y_6 ↦ (((u8) %y_6) + 2)];
+               [((u8) (%x_5 + -1)) ↦ (((u8) %y_6) + 5)];
+               [((u8) %y_6) ↦ ]]} |}]
+
+    let%test _ = is_false r16
+
+    (* f(x) = x, f(y) = y − 1, y = x ⊢ false *)
+    let r17 = of_eqs [(f x, x); (f y, y - !1); (y, x)]
+
+    let%expect_test _ =
+      pp r17 ;
+      [%expect
+        {|
+        {sat= false;
+         rep= [[%x_5 ↦ (((u8) %y_6) + 1)];
+               [%y_6 ↦ (((u8) %y_6) + 1)];
+               [((u8) %x_5) ↦ (((u8) %y_6) + 1)];
+               [((u8) %y_6) ↦ ]]} |}]
+
+    let%test _ = is_false r17
+
+    let%expect_test _ =
+      let r18 = of_eqs [(f x, x); (f y, y - !1)] in
+      pp r18 ;
+      pp_classes r18 ;
+      [%expect
+        {|
+        {sat= true;
+         rep= [[%y_6 ↦ (((u8) %y_6) + 1)];
+               [((u8) %x_5) ↦ %x_5];
+               [((u8) %y_6) ↦ ]]}
+
+          (((u8) %y_6) + 1) = %y_6
+        ∧ %x_5 = ((u8) %x_5)
+        ∧ ((u8) %y_6) = ((u8) (((u8) %y_6) + 1)) |}]
   end )

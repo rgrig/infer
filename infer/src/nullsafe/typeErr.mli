@@ -38,9 +38,9 @@ type err_instance =
   | Inconsistent_subclass of
       { inheritance_violation: InheritanceRule.violation
       ; violation_type: InheritanceRule.violation_type
-      ; base_proc_name: Typ.Procname.t
-      ; overridden_proc_name: Typ.Procname.t }
-  | Field_not_initialized of Typ.Fieldname.t
+      ; base_proc_name: Procname.t
+      ; overridden_proc_name: Procname.t }
+  | Field_not_initialized of Fieldname.t
   | Over_annotation of
       { over_annotated_violation: OverAnnotatedRule.violation
       ; violation_type: OverAnnotatedRule.violation_type }
@@ -60,11 +60,11 @@ type err_instance =
 val node_reset_forall : Procdesc.Node.t -> unit
 
 type st_report_error =
-     Typ.Procname.t
+     Procname.t
   -> Procdesc.t
   -> IssueType.t
   -> Location.t
-  -> ?field_name:Typ.Fieldname.t option
+  -> ?field_name:Fieldname.t option
   -> ?exception_kind:(IssueType.t -> Localise.error_desc -> exn)
   -> ?severity:Exceptions.severity
   -> string

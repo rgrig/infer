@@ -6,11 +6,11 @@
 TESTS_DIR = ../..
 ROOT_DIR = $(TESTS_DIR)/../..
 
-BUCK_TARGET = //src:hello @buck_target.txt 
+BUCK_TARGET = //src:hello @buck_target.txt
 SOURCES = $(wildcard src/*.c) $(wildcard src/subtarget1/*.c) $(wildcard src/subtarget2/*.c)
 OBJECTS = buck-out/gen/src/hello\#compile-hello.c.o1f717d69,default/hello.c.o
-INFER_OPTIONS = --report-custom-error --developer-mode --project-root $(TESTS_DIR) --no-linters
-INFERPRINT_OPTIONS = --project-root $(TESTS_DIR) --issues-tests
+INFER_OPTIONS = --report-custom-error --developer-mode --no-linters
+INFERPRINT_OPTIONS = --issues-tests
 CLEAN_EXTRA = buck-out
 
 include $(TESTS_DIR)/infer.make
@@ -22,6 +22,6 @@ $(OBJECTS): $(JAVA_SOURCE_FILES)
 infer-out/report.json: $(CLANG_DEPS) $(SOURCES) $(MAKEFILE_LIST)
 	$(QUIET)$(REMOVE_DIR) buck-out && \
 	$(call silent_on_success,Testing Buck flavors integration,\
-	$(INFER_BIN) $(INFER_OPTIONS) capture --flavors --results-dir $(CURDIR)/infer-out -- \
+	$(INFER_BIN) $(INFER_OPTIONS) capture --buck-clang --results-dir $(CURDIR)/infer-out -- \
 	  $(BUCK) build --no-cache $(BUCK_TARGET) &&\
 	$(INFER_BIN) $(INFER_OPTIONS) --merge analyze)

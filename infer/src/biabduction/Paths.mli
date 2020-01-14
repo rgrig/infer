@@ -12,8 +12,8 @@ open! IStd
 vertices are integers. *)
 type edge_label =
   | Epsilon
-  | Call of Typ.Procname.t
-  | Return of Typ.Procname.t
+  | Call of Procname.t
+  | Return of Procname.t
 type path_calls =
   { start_node : int
   ; stop_node : int
@@ -27,11 +27,11 @@ module Path : sig
 
   type session = int
 
-  val add_call : bool -> t -> Typ.Procname.t -> t -> t
+  val add_call : bool -> t -> Procname.t -> t -> t
   (** add a call with its sub-path, the boolean indicates whether the subtrace for the procedure
       should be included *)
 
-  val add_skipped_call : t -> Typ.Procname.t -> string -> Location.t option -> t
+  val add_skipped_call : t -> Procname.t -> string -> Location.t option -> t
   (** add a call to a procname that's had to be skipped, along with the reason and the location of
       the procname when known *)
 
@@ -65,7 +65,7 @@ module Path : sig
 
   val get_calls :
     ?coalesce:bool -> ?with_epsilon:bool
-    -> Typ.Procname.t -> t -> path_calls
+    -> Procname.t -> t -> path_calls
   (** keep only information about calls, perhaps coalescing vertices that
   correspond to the same place in the program *)
 

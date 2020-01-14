@@ -170,24 +170,23 @@ OPTIONS
 
        --  Stop argument processing, use remaining arguments as a build
            command
-BUCK COMPILATION DATABASE OPTIONS
+BUCK OPTIONS
+       --buck-blacklist +regex
+           Skip capture of files matched by the specified regular expression.
+           Only the clang, non-compilation-database                Buck integration is supported, not Java.
+
        --buck-targets-blacklist +regex
            Skip capture of buck targets matched by the specified regular
-           expression.
-BUCK FLAVORS OPTIONS
-       --buck-blacklist +regex
-           Skip capture of files matched by the specified regular expression
-           (only the "flavors (C++)" Buck integration is supported, not
-           Java).
-
-       --capture-blacklist regex
-           Skip capture of files matched by the specified OCaml regular
-           expression (only supported by the javac integration for now).
+           expression. Only valid for --buck-compilation-database.
 CLANG OPTIONS
        --compute-analytics
            Activates: Emit analytics as info-level issues, like component kit
            line count and component kit file cyclomatic complexity
            (Conversely: --no-compute-analytics)
+JAVA OPTIONS
+       --capture-blacklist regex
+           Skip capture of files matched by the specified OCaml regular
+           expression (only supported by the javac integration for now).
 
 
 ENVIRONMENT

@@ -32,8 +32,6 @@ val find_opt : AbstractValue.t -> t -> cell option
 
 val fold_attrs : (AbstractValue.t -> Attributes.t -> 'acc -> 'acc) -> t -> 'acc -> 'acc
 
-val set_attrs : AbstractValue.t -> Attributes.t -> t -> t
-
 val set_edges : AbstractValue.t -> edges -> t -> t
 
 val set_cell : AbstractValue.t -> cell -> t -> t
@@ -58,11 +56,11 @@ val invalidate : AbstractValue.t * ValueHistory.t -> Invalidation.t -> Location.
 
 val check_valid : AbstractValue.t -> t -> (unit, Invalidation.t * Trace.t) result
 
-val get_closure_proc_name : AbstractValue.t -> t -> Typ.Procname.t option
+val get_closure_proc_name : AbstractValue.t -> t -> Procname.t option
 
 val get_arithmetic : AbstractValue.t -> t -> (Arithmetic.t * Trace.t) option
 
-val get_bo_itv : AbstractValue.t -> t -> Itv.t
+val get_bo_itv : AbstractValue.t -> t -> Itv.ItvPure.t
 
 val get_must_be_valid : AbstractValue.t -> t -> Trace.t option
 

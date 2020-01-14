@@ -19,7 +19,7 @@ module Raw = struct
 
   let equal_base = [%compare.equal: base]
 
-  type access = ArrayAccess of typ_ * t list | FieldAccess of Typ.Fieldname.t
+  type access = ArrayAccess of typ_ * t list | FieldAccess of Fieldname.t
 
   and t = base * access list [@@deriving compare]
 
@@ -33,7 +33,7 @@ module Raw = struct
 
   let rec pp_access fmt = function
     | FieldAccess field_name ->
-        F.pp_print_string fmt (Typ.Fieldname.to_flat_string field_name)
+        F.pp_print_string fmt (Fieldname.get_field_name field_name)
     | ArrayAccess (typ, []) ->
         F.pp_print_string fmt "[_]" ; may_pp_typ fmt typ
     | ArrayAccess (typ, index_aps) ->
@@ -65,7 +65,7 @@ module Raw = struct
 
   let lookup_field_type_annot tenv base_typ field_name =
     let lookup = Tenv.lookup tenv in
-    Typ.Struct.get_field_type_and_annotation ~lookup field_name base_typ
+    Struct.get_field_type_and_annotation ~lookup field_name base_typ
 
 
   (* Get the type of an access, or None if the type cannot be determined *)
@@ -136,6 +136,10 @@ module Raw = struct
   let of_pvar pvar typ = (base_of_pvar pvar typ, [])
 
   let of_id id typ = (base_of_id id typ, [])
+
+  let of_var var typ =
+    match var with Var.LogicalVar id -> of_id id typ | Var.ProgramVar pvar -> of_pvar pvar typ
+
 
   let of_exp ~include_array_indexes exp0 typ0 ~(f_resolve_id : Var.t -> t option) =
     (* [typ] is the type of the last element of the access path (e.g., typeof(g) for x.f.g) *)
@@ -290,7 +294,7 @@ let inner_class_normalize p =
         ( ( (Var.ProgramVar pvar as root)
           , ({desc= Tptr (({desc= Tstruct name} as cls), pkind)} as ptr) )
         , FieldAccess first :: accesses )
-      when Pvar.is_this pvar && Fieldname.Java.is_outer_instance first ->
+      when Pvar.is_this pvar && Fieldname.is_java_outer_instance first ->
         Name.Java.get_outer_class name
         |> Option.map ~f:(fun outer_name ->
                let outer_class = mk ~default:cls (Tstruct outer_name) in
@@ -301,12 +305,12 @@ let inner_class_normalize p =
     | Some
         ( (Var.ProgramVar pvar, ({desc= Tptr (({desc= Tstruct name} as cls), pkind)} as ptr))
         , FieldAccess first :: accesses )
-      when is_synthetic_this pvar && Fieldname.Java.is_outer_instance first ->
+      when is_synthetic_this pvar && Fieldname.is_java_outer_instance first ->
         Name.Java.get_outer_class name
         |> Option.bind ~f:(fun outer_name ->
                let outer_class = mk ~default:cls (Tstruct outer_name) in
                let outer_ptr = mk ~default:ptr (Tptr (outer_class, pkind)) in
-               let varname = Fieldname.to_flat_string first |> Mangled.from_string in
+               let varname = Fieldname.get_field_name first |> Mangled.from_string in
                mk_pvar_as varname pvar
                |> Option.map ~f:(fun new_pvar ->
                       let base = base_of_pvar new_pvar outer_ptr in

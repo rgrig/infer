@@ -10,8 +10,8 @@ type violation = {is_strict_mode: bool; lhs: Nullability.t; rhs: Nullability.t} 
 
 type assignment_type =
   | PassingParamToFunction of function_info
-  | AssigningToField of Typ.Fieldname.t
-  | ReturningFromFunction of Typ.Procname.t
+  | AssigningToField of Fieldname.t
+  | ReturningFromFunction of Procname.t
 [@@deriving compare]
 
 and function_info =
@@ -19,7 +19,7 @@ and function_info =
   ; model_source: AnnotatedSignature.model_source option
   ; actual_param_expression: string
   ; param_position: int
-  ; function_procname: Typ.Procname.t }
+  ; function_procname: Procname.t }
 
 let is_whitelisted_assignment ~is_strict_mode ~lhs ~rhs =
   match (is_strict_mode, lhs, rhs) with
@@ -103,7 +103,7 @@ let bad_param_description
          param can be nullable according to API but it was just not annotated.
          So we phrase it differently to remain truthful, but as specific as possible.
       *)
-      let procname_str = Typ.Procname.to_simplified_string ~withclass:true function_procname in
+      let procname_str = Procname.to_simplified_string ~withclass:true function_procname in
       Format.asprintf
         "Third-party %a is missing a signature that would allow passing a nullable to param #%d%a. \
          Actual argument %s%s. Consider adding the correct signature of %a to %s."
@@ -125,7 +125,7 @@ let bad_param_description
       in
       Format.asprintf "%a: parameter #%d%a is declared non-nullable%s but the argument %s%s."
         MF.pp_monospaced
-        (Typ.Procname.to_simplified_string ~withclass:true function_procname)
+        (Procname.to_simplified_string ~withclass:true function_procname)
         param_position pp_param_name param_signature.mangled nonnull_evidence argument_description
         nullability_evidence_as_suffix
 
@@ -175,7 +175,7 @@ let violation_description {is_strict_mode; lhs; rhs} ~assignment_location assign
                 Logging.die InternalError "Invariant violation: unexpected nullability"
           in
           Format.asprintf "%a is declared non-nullable but is assigned %s%s." MF.pp_monospaced
-            (Typ.Fieldname.to_flat_string field_name)
+            (Fieldname.get_field_name field_name)
             rhs_description nullability_evidence_as_suffix
       | ReturningFromFunction function_proc_name ->
           let return_description =
@@ -190,7 +190,7 @@ let violation_description {is_strict_mode; lhs; rhs} ~assignment_location assign
           in
           Format.asprintf "%a: return type is declared non-nullable but the method returns %s%s."
             MF.pp_monospaced
-            (Typ.Procname.to_simplified_string ~withclass:false function_proc_name)
+            (Procname.to_simplified_string ~withclass:false function_proc_name)
             return_description nullability_evidence_as_suffix
     in
     let issue_type = get_issue_type assignment_type in

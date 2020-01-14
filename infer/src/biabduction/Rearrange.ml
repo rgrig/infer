@@ -73,12 +73,12 @@ let check_bad_index tenv pname p len index loc =
 (** Perform bounds checking *)
 let bounds_check tenv pname prop len e =
   if Config.trace_rearrange then (
-    L.d_str "Bounds check index:" ; Sil.d_exp e ; L.d_str " len: " ; Sil.d_exp len ; L.d_ln () ) ;
+    L.d_str "Bounds check index:" ; Exp.d_exp e ; L.d_str " len: " ; Exp.d_exp len ; L.d_ln () ) ;
   check_bad_index tenv pname prop len e
 
 
 let rec create_struct_values pname tenv orig_prop footprint_part kind max_stamp (t : Typ.t)
-    (off : Sil.offset list) inst : Sil.atom list * Sil.strexp * Typ.t =
+    (off : Predicates.offset list) inst : Predicates.atom list * Predicates.strexp * Typ.t =
   if Config.trace_rearrange then (
     L.d_increase_indent () ;
     L.d_strln "entering create_struct_values" ;
@@ -86,7 +86,7 @@ let rec create_struct_values pname tenv orig_prop footprint_part kind max_stamp 
     Typ.d_full t ;
     L.d_ln () ;
     L.d_str "off: " ;
-    Sil.d_offset_list off ;
+    Predicates.d_offset_list off ;
     L.d_ln () ;
     L.d_ln () ) ;
   let new_id () = incr max_stamp ; Ident.create kind !max_stamp in
@@ -95,27 +95,27 @@ let rec create_struct_values pname tenv orig_prop footprint_part kind max_stamp 
       L.d_str "create_struct_values type:" ;
       Typ.d_full t ;
       L.d_str " off: " ;
-      Sil.d_offset_list off ;
+      Predicates.d_offset_list off ;
       L.d_ln () ;
       raise (Exceptions.Bad_footprint pos)
     in
     match (t.desc, off) with
     | Tstruct _, [] ->
-        ([], Sil.Estruct ([], inst), t)
+        ([], Predicates.Estruct ([], inst), t)
     | Tstruct name, Off_fld (f, _) :: off' -> (
       match Tenv.lookup tenv name with
       | Some ({fields; statics} as struct_typ) -> (
-        match List.find ~f:(fun (f', _, _) -> Typ.Fieldname.equal f f') (fields @ statics) with
+        match List.find ~f:(fun (f', _, _) -> Fieldname.equal f f') (fields @ statics) with
         | Some (_, t', _) ->
             let atoms', se', res_t' =
               create_struct_values pname tenv orig_prop footprint_part kind max_stamp t' off' inst
             in
-            let se = Sil.Estruct ([(f, se')], inst) in
+            let se = Predicates.Estruct ([(f, se')], inst) in
             let replace_typ_of_f (f', t', a') =
-              if Typ.Fieldname.equal f f' then (f, res_t', a') else (f', t', a')
+              if Fieldname.equal f f' then (f, res_t', a') else (f', t', a')
             in
             let fields' =
-              List.sort ~compare:Typ.Struct.compare_field (List.map ~f:replace_typ_of_f fields)
+              List.sort ~compare:Struct.compare_field (List.map ~f:replace_typ_of_f fields)
             in
             ignore (Tenv.mk_struct tenv ~default:struct_typ ~fields:fields' name) ;
             (atoms', se, t)
@@ -129,30 +129,30 @@ let rec create_struct_values pname tenv orig_prop footprint_part kind max_stamp 
         in
         let e' = Absarray.array_clean_new_index footprint_part e in
         let len = Exp.Var (new_id ()) in
-        let se = Sil.Earray (len, [(e', se')], inst) in
+        let se = Predicates.Earray (len, [(e', se')], inst) in
         let res_t = Typ.mk_array res_t' in
-        (Sil.Aeq (e, e') :: atoms', se, res_t)
+        (Predicates.Aeq (e, e') :: atoms', se, res_t)
     | Tarray {elt= t'; length; stride}, off -> (
         let len =
           match length with None -> Exp.Var (new_id ()) | Some len -> Exp.Const (Const.Cint len)
         in
         match off with
         | [] ->
-            ([], Sil.Earray (len, [], inst), t)
-        | Sil.Off_index e :: off' ->
+            ([], Predicates.Earray (len, [], inst), t)
+        | Predicates.Off_index e :: off' ->
             bounds_check tenv pname orig_prop len e (State.get_loc_exn ()) ;
             let atoms', se', res_t' =
               create_struct_values pname tenv orig_prop footprint_part kind max_stamp t' off' inst
             in
             let e' = Absarray.array_clean_new_index footprint_part e in
-            let se = Sil.Earray (len, [(e', se')], inst) in
+            let se = Predicates.Earray (len, [(e', se')], inst) in
             let res_t = Typ.mk_array ~default:t res_t' ?length ?stride in
-            (Sil.Aeq (e, e') :: atoms', se, res_t)
-        | Sil.Off_fld _ :: _ ->
+            (Predicates.Aeq (e, e') :: atoms', se, res_t)
+        | Predicates.Off_fld _ :: _ ->
             assert false )
     | Tint _, [] | Tfloat _, [] | Tvoid, [] | Tfun, [] | Tptr _, [] | TVar _, [] ->
         let id = new_id () in
-        ([], Sil.Eexp (Exp.Var id, inst), t)
+        ([], Predicates.Eexp (Exp.Var id, inst), t)
     | (Tint _ | Tfloat _ | Tvoid | Tfun | Tptr _ | TVar _), Off_index e :: off' ->
         (* In this case, we lift t to the t array. *)
         let t', mk_typ_f =
@@ -167,16 +167,16 @@ let rec create_struct_values pname tenv orig_prop footprint_part kind max_stamp 
           create_struct_values pname tenv orig_prop footprint_part kind max_stamp t' off' inst
         in
         let e' = Absarray.array_clean_new_index footprint_part e in
-        let se = Sil.Earray (len, [(e', se')], inst) in
+        let se = Predicates.Earray (len, [(e', se')], inst) in
         let res_t = mk_typ_f (Tarray {elt= res_t'; length= None; stride= None}) in
-        (Sil.Aeq (e, e') :: atoms', se, res_t)
+        (Predicates.Aeq (e, e') :: atoms', se, res_t)
     | Tint _, _ | Tfloat _, _ | Tvoid, _ | Tfun, _ | Tptr _, _ | TVar _, _ ->
         fail t off __POS__
   in
   if Config.trace_rearrange then (
     let _, se, _ = res in
     L.d_strln "exiting create_struct_values, returning" ;
-    Sil.d_sexp se ;
+    Predicates.d_sexp se ;
     L.d_decrease_indent () ;
     L.d_ln () ;
     L.d_ln () ) ;
@@ -189,23 +189,23 @@ let rec create_struct_values pname tenv orig_prop footprint_part kind max_stamp 
     If we want to implement the checks for array bounds errors,
     we need to change this function. *)
 let rec strexp_extend_values_ pname tenv orig_prop footprint_part kind max_stamp se (typ : Typ.t)
-    (off : Sil.offset list) inst =
+    (off : Predicates.offset list) inst =
   let new_id () = incr max_stamp ; Ident.create kind !max_stamp in
   match (off, se, typ.desc) with
-  | [], Sil.Eexp _, _ | [], Sil.Estruct _, _ ->
+  | [], Predicates.Eexp _, _ | [], Predicates.Estruct _, _ ->
       [([], se, typ)]
-  | [], Sil.Earray _, _ ->
-      let off_new = Sil.Off_index Exp.zero :: off in
+  | [], Predicates.Earray _, _ ->
+      let off_new = Predicates.Off_index Exp.zero :: off in
       strexp_extend_values_ pname tenv orig_prop footprint_part kind max_stamp se typ off_new inst
-  | Off_fld _ :: _, Sil.Earray _, Tarray _ ->
-      let off_new = Sil.Off_index Exp.zero :: off in
+  | Off_fld _ :: _, Predicates.Earray _, Tarray _ ->
+      let off_new = Predicates.Off_index Exp.zero :: off in
       strexp_extend_values_ pname tenv orig_prop footprint_part kind max_stamp se typ off_new inst
-  | Off_fld (f, _) :: off', Sil.Estruct (fsel, inst'), Tstruct name -> (
+  | Off_fld (f, _) :: off', Predicates.Estruct (fsel, inst'), Tstruct name -> (
     match Tenv.lookup tenv name with
     | Some ({fields; statics} as struct_typ) -> (
-      match List.find ~f:(fun (f', _, _) -> Typ.Fieldname.equal f f') (fields @ statics) with
+      match List.find ~f:(fun (f', _, _) -> Fieldname.equal f f') (fields @ statics) with
       | Some (_, typ', _) -> (
-        match List.find ~f:(fun (f', _) -> Typ.Fieldname.equal f f') fsel with
+        match List.find ~f:(fun (f', _) -> Fieldname.equal f f') fsel with
         | Some (_, se') ->
             let atoms_se_typ_list' =
               strexp_extend_values_ pname tenv orig_prop footprint_part kind max_stamp se' typ' off'
@@ -213,20 +213,20 @@ let rec strexp_extend_values_ pname tenv orig_prop footprint_part kind max_stamp
             in
             let replace acc (res_atoms', res_se', res_typ') =
               let replace_fse ((f1, _) as ft1) =
-                if Typ.Fieldname.equal f1 f then (f1, res_se') else ft1
+                if Fieldname.equal f1 f then (f1, res_se') else ft1
               in
               let res_fsel' =
-                List.sort ~compare:[%compare: Typ.Fieldname.t * Sil.strexp]
+                List.sort ~compare:[%compare: Fieldname.t * Predicates.strexp]
                   (List.map ~f:replace_fse fsel)
               in
               let replace_fta ((f1, _, a1) as fta1) =
-                if Typ.Fieldname.equal f f1 then (f1, res_typ', a1) else fta1
+                if Fieldname.equal f f1 then (f1, res_typ', a1) else fta1
               in
               let fields' =
-                List.sort ~compare:Typ.Struct.compare_field (List.map ~f:replace_fta fields)
+                List.sort ~compare:Struct.compare_field (List.map ~f:replace_fta fields)
               in
               ignore (Tenv.mk_struct tenv ~default:struct_typ ~fields:fields' name) ;
-              (res_atoms', Sil.Estruct (res_fsel', inst'), typ) :: acc
+              (res_atoms', Predicates.Estruct (res_fsel', inst'), typ) :: acc
             in
             List.fold ~f:replace ~init:[] atoms_se_typ_list'
         | None ->
@@ -234,39 +234,39 @@ let rec strexp_extend_values_ pname tenv orig_prop footprint_part kind max_stamp
               create_struct_values pname tenv orig_prop footprint_part kind max_stamp typ' off' inst
             in
             let res_fsel' =
-              List.sort ~compare:[%compare: Typ.Fieldname.t * Sil.strexp] ((f, se') :: fsel)
+              List.sort ~compare:[%compare: Fieldname.t * Predicates.strexp] ((f, se') :: fsel)
             in
             let replace_fta (f', t', a') =
-              if Typ.Fieldname.equal f' f then (f, res_typ', a') else (f', t', a')
+              if Fieldname.equal f' f then (f, res_typ', a') else (f', t', a')
             in
             let fields' =
-              List.sort ~compare:Typ.Struct.compare_field (List.map ~f:replace_fta fields)
+              List.sort ~compare:Struct.compare_field (List.map ~f:replace_fta fields)
             in
             ignore (Tenv.mk_struct tenv ~default:struct_typ ~fields:fields' name) ;
-            [(atoms', Sil.Estruct (res_fsel', inst'), typ)] )
+            [(atoms', Predicates.Estruct (res_fsel', inst'), typ)] )
       | None ->
           raise (Exceptions.Missing_fld (f, __POS__)) )
     | None ->
         raise (Exceptions.Missing_fld (f, __POS__)) )
   | Off_fld _ :: _, _, _ ->
       raise (Exceptions.Bad_footprint __POS__)
-  | Off_index _ :: _, Sil.Eexp _, (Tint _ | Tfloat _ | Tvoid | Tfun | Tptr _)
-  | Off_index _ :: _, Sil.Estruct _, Tstruct _ ->
+  | Off_index _ :: _, Predicates.Eexp _, (Tint _ | Tfloat _ | Tvoid | Tfun | Tptr _)
+  | Off_index _ :: _, Predicates.Estruct _, Tstruct _ ->
       (* L.d_strln ~color:Orange "turn into an array"; *)
       let len =
         match se with
-        | Sil.Eexp (_, Sil.Ialloc) ->
+        | Predicates.Eexp (_, Predicates.Ialloc) ->
             Exp.one (* if allocated explicitly, we know len is 1 *)
         | _ ->
             if Config.type_size then Exp.one (* Exp.Sizeof (typ, Subtype.exact) *)
             else Exp.Var (new_id ())
       in
-      let se_new = Sil.Earray (len, [(Exp.zero, se)], inst) in
+      let se_new = Predicates.Earray (len, [(Exp.zero, se)], inst) in
       let typ_new = Typ.mk_array typ in
       strexp_extend_values_ pname tenv orig_prop footprint_part kind max_stamp se_new typ_new off
         inst
   | ( Off_index e :: off'
-    , Sil.Earray (len, esel, inst_arr)
+    , Predicates.Earray (len, esel, inst_arr)
     , Tarray {elt= typ'; length= len_for_typ'; stride} ) -> (
       bounds_check tenv pname orig_prop len e (State.get_loc_exn ()) ;
       match List.find ~f:(fun (e', _) -> Exp.equal e e') esel with
@@ -280,7 +280,7 @@ let rec strexp_extend_values_ pname tenv orig_prop footprint_part kind max_stamp
             let res_esel' = List.map ~f:replace_ise esel in
             if Typ.equal res_typ' typ' || Int.equal (List.length res_esel') 1 then
               ( res_atoms'
-              , Sil.Earray (len, res_esel', inst_arr)
+              , Predicates.Earray (len, res_esel', inst_arr)
               , Typ.mk_array ~default:typ res_typ' ?length:len_for_typ' ?stride )
               :: acc
             else raise (Exceptions.Bad_footprint __POS__)
@@ -310,7 +310,7 @@ and array_case_analysis_index pname tenv orig_prop footprint_part kind max_stamp
         false
   in
   if index_in_array then
-    let array_default = Sil.Earray (array_len, array_cont, inst_arr) in
+    let array_default = Predicates.Earray (array_len, array_cont, inst_arr) in
     let typ_default = Typ.mk_array ~default:typ_array typ_cont ?length:typ_array_len in
     [([], array_default, typ_default)]
   else if !BiabductionConfig.footprint then (
@@ -319,9 +319,9 @@ and array_case_analysis_index pname tenv orig_prop footprint_part kind max_stamp
     in
     check_sound elem_typ ;
     let cont_new =
-      List.sort ~compare:[%compare: Exp.t * Sil.strexp] ((index, elem_se) :: array_cont)
+      List.sort ~compare:[%compare: Exp.t * Predicates.strexp] ((index, elem_se) :: array_cont)
     in
-    let array_new = Sil.Earray (array_len, cont_new, inst_arr) in
+    let array_new = Predicates.Earray (array_len, cont_new, inst_arr) in
     let typ_new = Typ.mk_array ~default:typ_array elem_typ ?length:typ_array_len in
     [(atoms, array_new, typ_new)] )
   else
@@ -333,9 +333,9 @@ and array_case_analysis_index pname tenv orig_prop footprint_part kind max_stamp
         in
         check_sound elem_typ ;
         let cont_new =
-          List.sort ~compare:[%compare: Exp.t * Sil.strexp] ((index, elem_se) :: array_cont)
+          List.sort ~compare:[%compare: Exp.t * Predicates.strexp] ((index, elem_se) :: array_cont)
         in
-        let array_new = Sil.Earray (array_len, cont_new, inst_arr) in
+        let array_new = Predicates.Earray (array_len, cont_new, inst_arr) in
         let typ_new = Typ.mk_array ~default:typ_array elem_typ ?length:typ_array_len in
         [(atoms, array_new, typ_new)]
     in
@@ -351,9 +351,9 @@ and array_case_analysis_index pname tenv orig_prop footprint_part kind max_stamp
             List.fold
               ~f:(fun acc' (atoms', se', typ') ->
                 check_sound typ' ;
-                let atoms_new = Sil.Aeq (index, i) :: atoms' in
+                let atoms_new = Predicates.Aeq (index, i) :: atoms' in
                 let isel_new = list_rev_and_concat isel_seen_rev ((i, se') :: isel_unseen) in
-                let array_new = Sil.Earray (array_len, isel_new, inst_arr) in
+                let array_new = Predicates.Earray (array_len, isel_new, inst_arr) in
                 let typ_new = Typ.mk_array ~default:typ_array typ' ?length:typ_array_len in
                 (atoms_new, array_new, typ_new) :: acc' )
               ~init:[] atoms_se_typ_list
@@ -372,10 +372,10 @@ let laundry_offset_for_footprint max_stamp offs_in =
     match offs with
     | [] ->
         (List.rev offs_seen, List.rev eqs)
-    | (Sil.Off_fld _ as off) :: offs' ->
+    | (Predicates.Off_fld _ as off) :: offs' ->
         let offs_seen' = off :: offs_seen in
         laundry offs_seen' eqs offs'
-    | (Sil.Off_index idx as off) :: offs' ->
+    | (Predicates.Off_index idx as off) :: offs' ->
         if exp_has_only_footprint_ids idx then
           let offs_seen' = off :: offs_seen in
           laundry offs_seen' eqs offs'
@@ -383,7 +383,7 @@ let laundry_offset_for_footprint max_stamp offs_in =
           let () = incr max_stamp in
           let fid_new = Ident.create Ident.kfootprint !max_stamp in
           let exp_new = Exp.Var fid_new in
-          let off_new = Sil.Off_index exp_new in
+          let off_new = Predicates.Off_index exp_new in
           let offs_seen' = off_new :: offs_seen in
           let eqs' = (fid_new, idx) :: eqs in
           laundry offs_seen' eqs' offs'
@@ -392,7 +392,7 @@ let laundry_offset_for_footprint max_stamp offs_in =
 
 
 let strexp_extend_values pname tenv orig_prop footprint_part kind max_stamp se te
-    (off : Sil.offset list) inst =
+    (off : Predicates.offset list) inst =
   let typ = Exp.texp_to_typ None te in
   let off', laundry_atoms =
     let off', eqs = laundry_offset_for_footprint max_stamp off in
@@ -402,11 +402,11 @@ let strexp_extend_values pname tenv orig_prop footprint_part kind max_stamp se t
   in
   if Config.trace_rearrange then (
     L.d_str "entering strexp_extend_values se: " ;
-    Sil.d_sexp se ;
+    Predicates.d_sexp se ;
     L.d_str " typ: " ;
     Typ.d_full typ ;
     L.d_str " off': " ;
-    Sil.d_offset_list off' ;
+    Predicates.d_offset_list off' ;
     L.d_strln (if footprint_part then " FP" else " RE") ) ;
   let atoms_se_typ_list =
     strexp_extend_values_ pname tenv orig_prop footprint_part kind max_stamp se typ off' inst
@@ -432,13 +432,13 @@ let strexp_extend_values pname tenv orig_prop footprint_part kind max_stamp se t
 
 let collect_root_offset exp =
   let root = Exp.root_of_lexp exp in
-  let offsets = Sil.exp_get_offsets exp in
+  let offsets = Predicates.exp_get_offsets exp in
   (root, offsets)
 
 
 (** Exp.Construct a points-to predicate for an expression, to add to a footprint. *)
 let mk_ptsto_exp_footprint pname tenv orig_prop (lexp, typ) max_stamp inst :
-    Sil.hpred * Sil.hpred * Sil.atom list =
+    Predicates.hpred * Predicates.hpred * Predicates.atom list =
   let root, off = collect_root_offset lexp in
   if not (exp_has_only_footprint_ids root) then
     if
@@ -451,7 +451,7 @@ let mk_ptsto_exp_footprint pname tenv orig_prop (lexp, typ) max_stamp inst :
       let err_desc =
         Errdesc.explain_dereference pname tenv deref_str orig_prop (State.get_loc_exn ())
       in
-      raise (Exceptions.Dangling_pointer_dereference (None, err_desc, __POS__)) ) ;
+      raise (Exceptions.Dangling_pointer_dereference (false, err_desc, __POS__)) ) ;
   let off_foot, eqs = laundry_offset_for_footprint max_stamp off in
   let subtype =
     match !Language.curr_language with Clang -> Subtype.exact | Java -> Subtype.subtypes
@@ -459,11 +459,11 @@ let mk_ptsto_exp_footprint pname tenv orig_prop (lexp, typ) max_stamp inst :
   let create_ptsto footprint_part off0 =
     match (root, off0, typ.Typ.desc) with
     | Exp.Lvar pvar, [], Typ.Tfun ->
-        let fun_name = Typ.Procname.from_string_c_fun (Mangled.to_string (Pvar.get_name pvar)) in
+        let fun_name = Procname.from_string_c_fun (Mangled.to_string (Pvar.get_name pvar)) in
         let fun_exp = Exp.Const (Const.Cfun fun_name) in
         ( []
         , Prop.mk_ptsto tenv root
-            (Sil.Eexp (fun_exp, inst))
+            (Predicates.Eexp (fun_exp, inst))
             (Exp.Sizeof {typ; nbytes= None; dynamic_length= None; subtype}) )
     | _, [], Typ.Tfun ->
         let atoms, se, typ =
@@ -483,8 +483,8 @@ let mk_ptsto_exp_footprint pname tenv orig_prop (lexp, typ) max_stamp inst :
         )
   in
   let atoms, ptsto_foot = create_ptsto true off_foot in
-  let sub = Sil.subst_of_list eqs in
-  let ptsto = Sil.hpred_sub sub ptsto_foot in
+  let sub = Predicates.subst_of_list eqs in
+  let ptsto = Predicates.hpred_sub sub ptsto_foot in
   let atoms' = List.map ~f:(fun (id, e) -> Prop.mk_eq tenv (Exp.Var id) e) eqs in
   (ptsto, ptsto_foot, atoms @ atoms')
 
@@ -492,10 +492,10 @@ let mk_ptsto_exp_footprint pname tenv orig_prop (lexp, typ) max_stamp inst :
 (** Check if the path in exp exists already in the current ptsto predicate.
     If it exists, return None. Otherwise, return [Some fld] with [fld] the missing field. *)
 let prop_iter_check_fields_ptsto_shallow tenv iter lexp =
-  let offset = Sil.exp_get_offsets lexp in
+  let offset = Predicates.exp_get_offsets lexp in
   let _, se, _ =
     match Prop.prop_iter_current tenv iter with
-    | Sil.Hpointsto (e, se, t), _ ->
+    | Predicates.Hpointsto (e, se, t), _ ->
         (e, se, t)
     | _ ->
         assert false
@@ -503,17 +503,17 @@ let prop_iter_check_fields_ptsto_shallow tenv iter lexp =
   let rec check_offset se = function
     | [] ->
         None
-    | Sil.Off_fld (fld, _) :: off' -> (
+    | Predicates.Off_fld (fld, _) :: off' -> (
       match se with
-      | Sil.Estruct (fsel, _) -> (
-        match List.find ~f:(fun (fld', _) -> Typ.Fieldname.equal fld fld') fsel with
+      | Predicates.Estruct (fsel, _) -> (
+        match List.find ~f:(fun (fld', _) -> Fieldname.equal fld fld') fsel with
         | Some (_, se') ->
             check_offset se' off'
         | None ->
             Some fld )
       | _ ->
           Some fld )
-    | Sil.Off_index _ :: _ ->
+    | Predicates.Off_index _ :: _ ->
         None
   in
   check_offset se offset
@@ -526,38 +526,39 @@ let prop_iter_check_fields_ptsto_shallow tenv iter lexp =
 let prop_iter_extend_ptsto pname tenv orig_prop iter lexp inst =
   if Config.trace_rearrange then (
     L.d_str "entering prop_iter_extend_ptsto lexp: " ;
-    Sil.d_exp lexp ;
+    Exp.d_exp lexp ;
     L.d_ln () ) ;
-  let offset = Sil.exp_get_offsets lexp in
+  let offset = Predicates.exp_get_offsets lexp in
   let max_stamp = Prop.prop_iter_max_stamp iter in
   let extend_footprint_pred = function
-    | Sil.Hpointsto (e, se, te) ->
+    | Predicates.Hpointsto (e, se, te) ->
         let atoms_se_te_list =
           strexp_extend_values pname tenv orig_prop true Ident.kfootprint (ref max_stamp) se te
             offset inst
         in
         List.map
-          ~f:(fun (atoms', se', te') -> (atoms', Sil.Hpointsto (e, se', te')))
+          ~f:(fun (atoms', se', te') -> (atoms', Predicates.Hpointsto (e, se', te')))
           atoms_se_te_list
-    | Sil.Hlseg (k, hpara, e1, e2, el) -> (
-      match hpara.Sil.body with
-      | Sil.Hpointsto (e', se', te') :: body_rest ->
+    | Predicates.Hlseg (k, hpara, e1, e2, el) -> (
+      match hpara.Predicates.body with
+      | Predicates.Hpointsto (e', se', te') :: body_rest ->
           let atoms_se_te_list =
             strexp_extend_values pname tenv orig_prop true Ident.kfootprint (ref max_stamp) se' te'
               offset inst
           in
           let atoms_body_list =
             List.map
-              ~f:(fun (atoms0, se0, te0) -> (atoms0, Sil.Hpointsto (e', se0, te0) :: body_rest))
+              ~f:(fun (atoms0, se0, te0) ->
+                (atoms0, Predicates.Hpointsto (e', se0, te0) :: body_rest) )
               atoms_se_te_list
           in
           let atoms_hpara_list =
             List.map
-              ~f:(fun (atoms, body') -> (atoms, {hpara with Sil.body= body'}))
+              ~f:(fun (atoms, body') -> (atoms, {hpara with Predicates.body= body'}))
               atoms_body_list
           in
           List.map
-            ~f:(fun (atoms, hpara') -> (atoms, Sil.Hlseg (k, hpara', e1, e2, el)))
+            ~f:(fun (atoms, hpara') -> (atoms, Predicates.Hlseg (k, hpara', e1, e2, el)))
             atoms_hpara_list
       | _ ->
           assert false )
@@ -568,17 +569,17 @@ let prop_iter_extend_ptsto pname tenv orig_prop iter lexp inst =
     let iter' =
       List.fold ~f:(Prop.prop_iter_add_atom !BiabductionConfig.footprint) ~init:iter atoms
     in
-    Prop.prop_iter_update_current iter' (Sil.Hpointsto (e, se, te))
+    Prop.prop_iter_update_current iter' (Predicates.Hpointsto (e, se, te))
   in
   let do_extend e se te =
     if Config.trace_rearrange then (
       L.d_strln "entering do_extend" ;
       L.d_str "e: " ;
-      Sil.d_exp e ;
+      Exp.d_exp e ;
       L.d_str " se : " ;
-      Sil.d_sexp se ;
+      Predicates.d_sexp se ;
       L.d_str " te: " ;
-      Sil.d_texp_full te ;
+      Exp.d_texp_full te ;
       L.d_ln () ;
       L.d_ln () ) ;
     let extend_kind =
@@ -608,11 +609,11 @@ let prop_iter_extend_ptsto pname tenv orig_prop iter lexp inst =
           let sigma_pto, sigma_rest =
             List.partition_tf
               ~f:(function
-                | Sil.Hpointsto (e', _, _) ->
+                | Predicates.Hpointsto (e', _, _) ->
                     Exp.equal e e'
-                | Sil.Hlseg (_, _, e1, _, _) ->
+                | Predicates.Hlseg (_, _, e1, _, _) ->
                     Exp.equal e e1
-                | Sil.Hdllseg (_, _, e_iF, _, _, e_iB, _) ->
+                | Predicates.Hdllseg (_, _, e_iF, _, _, e_iB, _) ->
                     Exp.equal e e_iF || Exp.equal e e_iB )
               footprint_sigma
           in
@@ -623,14 +624,15 @@ let prop_iter_extend_ptsto pname tenv orig_prop iter lexp inst =
                 List.map ~f:(fun (atoms, hpred') -> (atoms, hpred' :: sigma_rest)) atoms_hpred_list
             | _ ->
                 L.d_warning "Cannot extend " ;
-                Sil.d_exp lexp ;
+                Exp.d_exp lexp ;
                 L.d_strln " in" ;
                 Prop.d_prop (Prop.prop_iter_to_prop tenv iter) ;
                 L.d_ln () ;
                 [([], footprint_sigma)]
           in
           List.map
-            ~f:(fun (atoms, sigma') -> (atoms, List.stable_sort ~compare:Sil.compare_hpred sigma'))
+            ~f:(fun (atoms, sigma') ->
+              (atoms, List.stable_sort ~compare:Predicates.compare_hpred sigma') )
             atoms_sigma_list
         in
         let iter_atoms_fp_sigma_list = list_product iter_list atoms_fp_sigma_list in
@@ -644,7 +646,7 @@ let prop_iter_extend_ptsto pname tenv orig_prop iter lexp inst =
     in
     let res_prop_list = List.map ~f:(Prop.prop_iter_to_prop tenv) res_iter_list in
     L.d_str "in prop_iter_extend_ptsto lexp: " ;
-    Sil.d_exp lexp ;
+    Exp.d_exp lexp ;
     L.d_ln () ;
     L.d_strln "prop before:" ;
     let prop_before = Prop.prop_iter_to_prop tenv iter in
@@ -660,7 +662,7 @@ let prop_iter_extend_ptsto pname tenv orig_prop iter lexp inst =
     res_iter_list
   in
   match Prop.prop_iter_current tenv iter with
-  | Sil.Hpointsto (e, se, te), _ ->
+  | Predicates.Hpointsto (e, se, te), _ ->
       do_extend e se te
   | _ ->
       assert false
@@ -695,7 +697,7 @@ let prop_iter_add_hpred_footprint_to_prop pname tenv prop (lexp, typ) inst =
     | Some iter ->
         Prop.prop_iter_prev_then_insert iter ptsto
   in
-  let offsets_default = Sil.exp_get_offsets lexp in
+  let offsets_default = Predicates.exp_get_offsets lexp in
   Prop.prop_iter_set_state iter offsets_default
 
 
@@ -723,9 +725,9 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
       (dollar_normalize (class_str ^ ".class"))
   in
   let guarded_by_str_is_current_class guarded_by_str = function
-    | Typ.Procname.Java java_pname ->
+    | Procname.Java java_pname ->
         (* programmers write @GuardedBy("MyClass.class") when the field is guarded by the class *)
-        guarded_by_str_is_class guarded_by_str (Typ.Procname.Java.get_class_name java_pname)
+        guarded_by_str_is_class guarded_by_str (Procname.Java.get_class_name java_pname)
     | _ ->
         false
   in
@@ -736,8 +738,8 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
   (* return true if [guarded_by_str] is a suffix of "<name_of_super_class>.this" *)
   let guarded_by_str_is_super_class_this guarded_by_str pname =
     match pname with
-    | Typ.Procname.Java java_pname ->
-        let current_class_type_name = Typ.Procname.Java.get_class_type_name java_pname in
+    | Procname.Java java_pname ->
+        let current_class_type_name = Procname.Java.get_class_type_name java_pname in
         let comparison class_type_name _ =
           guarded_by_str_is_class_this (Typ.Name.to_string class_type_name) guarded_by_str
         in
@@ -747,8 +749,8 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
   in
   (* return true if [guarded_by_str] is as suffix of "<name_of_current_class>.this" *)
   let guarded_by_str_is_current_class_this guarded_by_str = function
-    | Typ.Procname.Java java_pname ->
-        guarded_by_str_is_class_this (Typ.Procname.Java.get_class_name java_pname) guarded_by_str
+    | Procname.Java java_pname ->
+        guarded_by_str_is_class_this (Procname.Java.get_class_name java_pname) guarded_by_str
     | _ ->
         false
   in
@@ -774,12 +776,12 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
   in
   (* if [fld] is annotated with @GuardedBy("mLock"), return mLock *)
   let get_guarded_by_fld_str fld typ =
-    match Typ.Struct.get_field_type_and_annotation ~lookup fld typ with
+    match Struct.get_field_type_and_annotation ~lookup fld typ with
     | Some (_, item_annot) -> (
       match extract_guarded_by_str item_annot with
       | Some "this" ->
           (* expand "this" into <classname>.this *)
-          Some (Printf.sprintf "%s.this" (Typ.Fieldname.Java.get_class fld))
+          Some (Printf.sprintf "%s.this" (Typ.Name.name (Fieldname.get_class_name fld)))
       | guarded_by_str_opt ->
           guarded_by_str_opt )
     | _ ->
@@ -790,12 +792,12 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
     let is_guarded_by_fld guarded_by_str fld _ =
       (* this comparison needs to be somewhat fuzzy, since programmers are free to write
          @GuardedBy("mLock"), @GuardedBy("MyClass.mLock"), or use other conventions *)
-      String.equal (Typ.Fieldname.to_flat_string fld) guarded_by_str
-      || String.equal (Typ.Fieldname.to_string fld) guarded_by_str
+      String.equal (Fieldname.get_field_name fld) guarded_by_str
+      || String.equal (Fieldname.to_string fld) guarded_by_str
     in
     let get_fld_strexp_and_typ typ f flds =
       let match_one (fld, strexp) =
-        match Typ.Struct.get_field_type_and_annotation ~lookup fld typ with
+        match Struct.get_field_type_and_annotation ~lookup fld typ with
         | Some (fld_typ, _) when f fld fld_typ ->
             Some (strexp, fld_typ)
         | _ ->
@@ -817,10 +819,10 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
                 false
           in
           match get_fld_strexp_and_typ typ typ_matches_guarded_by flds with
-          | Some (Sil.Eexp (matching_exp, _), _) ->
+          | Some (Predicates.Eexp (matching_exp, _), _) ->
               List.find_map
                 ~f:(function
-                  | Sil.Hpointsto (lhs_exp, Estruct (matching_flds, _), Sizeof {typ= fld_typ})
+                  | Predicates.Hpointsto (lhs_exp, Estruct (matching_flds, _), Sizeof {typ= fld_typ})
                     when Exp.equal lhs_exp matching_exp ->
                       get_fld_strexp_and_typ fld_typ (is_guarded_by_fld field_part) matching_flds
                   | _ ->
@@ -835,24 +837,25 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
       ~f:(fun hpred ->
         (* FIXME: silenced warning may be legit *)
         match[@warning "-57"] hpred with
-        | Sil.Hpointsto ((Const (Cclass clazz) as lhs_exp), _, Exp.Sizeof {typ})
-        | Sil.Hpointsto (_, Sil.Eexp ((Const (Cclass clazz) as lhs_exp), _), Exp.Sizeof {typ})
+        | Predicates.Hpointsto ((Const (Cclass clazz) as lhs_exp), _, Exp.Sizeof {typ})
+        | Predicates.Hpointsto
+            (_, Predicates.Eexp ((Const (Cclass clazz) as lhs_exp), _), Exp.Sizeof {typ})
           when guarded_by_str_is_class guarded_by_str0 (Ident.name_to_string clazz) ->
-            Some (Sil.Eexp (lhs_exp, Sil.inst_none), typ)
-        | Sil.Hpointsto (_, Estruct (flds, _), Exp.Sizeof {typ}) -> (
+            Some (Predicates.Eexp (lhs_exp, Predicates.inst_none), typ)
+        | Predicates.Hpointsto (_, Estruct (flds, _), Exp.Sizeof {typ}) -> (
           (* first, try to find a field that exactly matches the guarded-by string *)
           match get_fld_strexp_and_typ typ (is_guarded_by_fld guarded_by_str0) flds with
           | None when guarded_by_str_is_this guarded_by_str0 ->
               (* if the guarded-by string is "OuterClass.this", look for "this$n" for some n.
                  note that this is a bit sketchy when there are mutliple this$n's, but there's
                  nothing we can do to disambiguate them. *)
-              get_fld_strexp_and_typ typ (fun f _ -> Typ.Fieldname.Java.is_outer_instance f) flds
+              get_fld_strexp_and_typ typ (fun f _ -> Fieldname.is_java_outer_instance f) flds
           | None ->
               (* can't find an exact match. try a different convention. *)
               match_on_field_type typ flds
           | Some _ as res_opt ->
               res_opt )
-        | Sil.Hpointsto (Lvar pvar, rhs_exp, Exp.Sizeof {typ})
+        | Predicates.Hpointsto (Lvar pvar, rhs_exp, Exp.Sizeof {typ})
           when ( guarded_by_str_is_current_class_this guarded_by_str0 pname
                || guarded_by_str_is_super_class_this guarded_by_str0 pname )
                && Pvar.is_this pvar ->
@@ -876,11 +879,7 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
       guarded_by_str_is_current_class guarded_by_str pname
       && Procdesc.is_java_synchronized pdesc
       &&
-      match pname with
-      | Typ.Procname.Java java_pname ->
-          Typ.Procname.Java.is_static java_pname
-      | _ ->
-          false
+      match pname with Procname.Java java_pname -> Procname.Java.is_static java_pname | _ -> false
     in
     let warn accessed_fld guarded_by_str =
       let loc = State.get_loc_exn () in
@@ -909,18 +908,18 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
          && Procdesc.is_java_synchronized pdesc
          &&
          match pname with
-         | Typ.Procname.Java java_pname ->
-             Typ.Procname.Java.is_static java_pname
+         | Procname.Java java_pname ->
+             Procname.Java.is_static java_pname
          | _ ->
              false )
       || (* or the prop says we already have the lock *)
       List.exists
-        ~f:(function Sil.Apred (Alocked, _) -> true | _ -> false)
+        ~f:(function Predicates.Apred (Alocked, _) -> true | _ -> false)
         (Attribute.get_for_exp tenv prop guarded_by_exp)
     in
     let guardedby_is_self_referential =
       String.equal "itself" (String.lowercase guarded_by_str)
-      || String.is_suffix ~suffix:guarded_by_str (Typ.Fieldname.to_string accessed_fld)
+      || String.is_suffix ~suffix:guarded_by_str (Fieldname.to_string accessed_fld)
     in
     let proc_has_suppress_guarded_by_annot pdesc =
       match extract_suppress_warnings_str (Annotations.pdesc_get_return_annot pdesc) with
@@ -937,14 +936,14 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
       let is_accessible_through_local_ref exp =
         List.exists
           ~f:(function
-            | Sil.Hpointsto (Lvar _, Eexp (rhs_exp, _), _) ->
+            | Predicates.Hpointsto (Lvar _, Eexp (rhs_exp, _), _) ->
                 Exp.equal exp rhs_exp
-            | Sil.Hpointsto (_, Estruct (flds, _), _) ->
+            | Predicates.Hpointsto (_, Estruct (flds, _), _) ->
                 List.exists
                   ~f:(fun (fld, strexp) ->
                     match strexp with
-                    | Sil.Eexp (rhs_exp, _) ->
-                        Exp.equal exp rhs_exp && not (Typ.Fieldname.equal fld accessed_fld)
+                    | Predicates.Eexp (rhs_exp, _) ->
+                        Exp.equal exp rhs_exp && not (Fieldname.equal fld accessed_fld)
                     | _ ->
                         false )
                   flds
@@ -956,8 +955,8 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
       && (not (Annotations.pdesc_return_annot_ends_with pdesc Annotations.visibleForTesting))
       && (not
             ( match Procdesc.get_proc_name pdesc with
-            | Typ.Procname.Java java_pname ->
-                Typ.Procname.Java.is_access_method java_pname
+            | Procname.Java java_pname ->
+                Procname.Java.is_access_method java_pname
             | _ ->
                 false ))
       && (not (is_accessible_through_local_ref lexp))
@@ -965,7 +964,7 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
       && not (proc_has_suppress_guarded_by_annot pdesc)
     in
     match find_guarded_by_exp guarded_by_str prop.Prop.sigma with
-    | Some (Sil.Eexp (guarded_by_exp, _), typ) ->
+    | Some (Predicates.Eexp (guarded_by_exp, _), typ) ->
         if is_read_write_lock typ then
           (* TODO: model/understand read-write locks rather than ignoring them *)
           prop
@@ -1006,13 +1005,13 @@ let add_guarded_by_constraints tenv prop lexp pdesc =
   in
   let check_fld_locks typ prop_acc (fld, strexp) =
     match strexp with
-    | Sil.Eexp (exp, _) when Exp.equal exp lexp ->
+    | Predicates.Eexp (exp, _) when Exp.equal exp lexp ->
         enforce_guarded_access fld typ prop_acc
     | _ ->
         prop_acc
   in
   let hpred_check_flds prop_acc = function
-    | Sil.Hpointsto (_, Estruct (flds, _), Sizeof {typ}) ->
+    | Predicates.Hpointsto (_, Estruct (flds, _), Sizeof {typ}) ->
         List.fold ~f:(check_fld_locks typ) ~init:prop_acc flds
     | _ ->
         prop_acc
@@ -1034,7 +1033,7 @@ let prop_iter_add_hpred_footprint pname tenv orig_prop iter (lexp, typ) inst =
   if Config.trace_rearrange then (
     L.d_strln "entering prop_iter_add_hpred_footprint" ;
     L.d_str "lexp: " ;
-    Sil.d_exp lexp ;
+    Exp.d_exp lexp ;
     L.d_ln () ;
     L.d_str "typ:" ;
     Typ.d_full typ ;
@@ -1053,7 +1052,7 @@ let prop_iter_add_hpred_footprint pname tenv orig_prop iter (lexp, typ) inst =
     List.fold ~f:(Prop.prop_iter_add_atom !BiabductionConfig.footprint) ~init:iter_foot atoms
   in
   let iter' = Prop.prop_iter_replace_footprint_sigma iter_foot_atoms sigma_fp in
-  let offsets_default = Sil.exp_get_offsets lexp in
+  let offsets_default = Predicates.exp_get_offsets lexp in
   Prop.prop_iter_set_state iter' offsets_default
 
 
@@ -1063,7 +1062,7 @@ let rearrange_arith tenv lexp prop =
   if Config.trace_rearrange then (
     L.d_strln "entering rearrange_arith" ;
     L.d_str "lexp: " ;
-    Sil.d_exp lexp ;
+    Exp.d_exp lexp ;
     L.d_ln () ;
     L.d_str "prop: " ;
     L.d_ln () ;
@@ -1080,7 +1079,7 @@ let rearrange_arith tenv lexp prop =
 let pp_rearrangement_error message prop lexp =
   L.d_printfln ".... Rearrangement Error .... %s" message ;
   L.d_str "Exp:" ;
-  Sil.d_exp lexp ;
+  Exp.d_exp lexp ;
   L.d_ln () ;
   L.d_str "Prop:" ;
   L.d_ln () ;
@@ -1095,7 +1094,7 @@ let iter_rearrange_ptsto pname tenv orig_prop iter lexp inst =
     L.d_increase_indent () ;
     L.d_strln "entering iter_rearrange_ptsto" ;
     L.d_str "lexp: " ;
-    Sil.d_exp lexp ;
+    Exp.d_exp lexp ;
     L.d_ln () ;
     L.d_strln "prop:" ;
     Prop.d_prop orig_prop ;
@@ -1117,7 +1116,7 @@ let iter_rearrange_ptsto pname tenv orig_prop iter lexp inst =
     else (
       check_field_splitting () ;
       match Prop.prop_iter_current tenv iter with
-      | Sil.Hpointsto (e, se, te), offset ->
+      | Predicates.Hpointsto (e, se, te), offset ->
           let max_stamp = Prop.prop_iter_max_stamp iter in
           let atoms_se_te_list =
             strexp_extend_values pname tenv orig_prop false Ident.kprimed (ref max_stamp) se te
@@ -1127,7 +1126,7 @@ let iter_rearrange_ptsto pname tenv orig_prop iter lexp inst =
             let iter' =
               List.fold ~f:(Prop.prop_iter_add_atom !BiabductionConfig.footprint) ~init:iter atoms'
             in
-            Prop.prop_iter_update_current iter' (Sil.Hpointsto (e, se', te'))
+            Prop.prop_iter_update_current iter' (Predicates.Hpointsto (e, se', te'))
           in
           let filter it =
             let p = Prop.prop_iter_to_prop tenv it in
@@ -1151,20 +1150,20 @@ let iter_rearrange_ne_lseg tenv recurse_on_iters iter para e1 e2 elist =
   if Config.nelseg then
     let iter_inductive_case =
       let n' = Exp.Var (Ident.create_fresh Ident.kprimed) in
-      let _, para_inst1 = Sil.hpara_instantiate para e1 n' elist in
-      let hpred_list1 = para_inst1 @ [Prop.mk_lseg tenv Sil.Lseg_NE para n' e2 elist] in
+      let _, para_inst1 = Predicates.hpara_instantiate para e1 n' elist in
+      let hpred_list1 = para_inst1 @ [Prop.mk_lseg tenv Lseg_NE para n' e2 elist] in
       Prop.prop_iter_update_current_by_list iter hpred_list1
     in
     let iter_base_case =
-      let _, para_inst = Sil.hpara_instantiate para e1 e2 elist in
+      let _, para_inst = Predicates.hpara_instantiate para e1 e2 elist in
       Prop.prop_iter_update_current_by_list iter para_inst
     in
     recurse_on_iters [iter_inductive_case; iter_base_case]
   else
     let iter_inductive_case =
       let n' = Exp.Var (Ident.create_fresh Ident.kprimed) in
-      let _, para_inst1 = Sil.hpara_instantiate para e1 n' elist in
-      let hpred_list1 = para_inst1 @ [Prop.mk_lseg tenv Sil.Lseg_PE para n' e2 elist] in
+      let _, para_inst1 = Predicates.hpara_instantiate para e1 n' elist in
+      let hpred_list1 = para_inst1 @ [Prop.mk_lseg tenv Lseg_PE para n' e2 elist] in
       Prop.prop_iter_update_current_by_list iter hpred_list1
     in
     recurse_on_iters [iter_inductive_case]
@@ -1174,14 +1173,12 @@ let iter_rearrange_ne_lseg tenv recurse_on_iters iter para e1 e2 elist =
 let iter_rearrange_ne_dllseg_first tenv recurse_on_iters iter para_dll e1 e2 e3 e4 elist =
   let iter_inductive_case =
     let n' = Exp.Var (Ident.create_fresh Ident.kprimed) in
-    let _, para_dll_inst1 = Sil.hpara_dll_instantiate para_dll e1 e2 n' elist in
-    let hpred_list1 =
-      para_dll_inst1 @ [Prop.mk_dllseg tenv Sil.Lseg_NE para_dll n' e1 e3 e4 elist]
-    in
+    let _, para_dll_inst1 = Predicates.hpara_dll_instantiate para_dll e1 e2 n' elist in
+    let hpred_list1 = para_dll_inst1 @ [Prop.mk_dllseg tenv Lseg_NE para_dll n' e1 e3 e4 elist] in
     Prop.prop_iter_update_current_by_list iter hpred_list1
   in
   let iter_base_case =
-    let _, para_dll_inst = Sil.hpara_dll_instantiate para_dll e1 e2 e3 elist in
+    let _, para_dll_inst = Predicates.hpara_dll_instantiate para_dll e1 e2 e3 elist in
     let iter' = Prop.prop_iter_update_current_by_list iter para_dll_inst in
     let prop' = Prop.prop_iter_to_prop tenv iter' in
     let prop'' = Prop.conjoin_eq tenv ~footprint:!BiabductionConfig.footprint e1 e4 prop' in
@@ -1194,14 +1191,12 @@ let iter_rearrange_ne_dllseg_first tenv recurse_on_iters iter para_dll e1 e2 e3 
 let iter_rearrange_ne_dllseg_last tenv recurse_on_iters iter para_dll e1 e2 e3 e4 elist =
   let iter_inductive_case =
     let n' = Exp.Var (Ident.create_fresh Ident.kprimed) in
-    let _, para_dll_inst1 = Sil.hpara_dll_instantiate para_dll e4 n' e3 elist in
-    let hpred_list1 =
-      para_dll_inst1 @ [Prop.mk_dllseg tenv Sil.Lseg_NE para_dll e1 e2 e4 n' elist]
-    in
+    let _, para_dll_inst1 = Predicates.hpara_dll_instantiate para_dll e4 n' e3 elist in
+    let hpred_list1 = para_dll_inst1 @ [Prop.mk_dllseg tenv Lseg_NE para_dll e1 e2 e4 n' elist] in
     Prop.prop_iter_update_current_by_list iter hpred_list1
   in
   let iter_base_case =
-    let _, para_dll_inst = Sil.hpara_dll_instantiate para_dll e4 e2 e3 elist in
+    let _, para_dll_inst = Predicates.hpara_dll_instantiate para_dll e4 e2 e3 elist in
     let iter' = Prop.prop_iter_update_current_by_list iter para_dll_inst in
     let prop' = Prop.prop_iter_to_prop tenv iter' in
     let prop'' = Prop.conjoin_eq tenv ~footprint:!BiabductionConfig.footprint e1 e4 prop' in
@@ -1214,8 +1209,8 @@ let iter_rearrange_ne_dllseg_last tenv recurse_on_iters iter para_dll e1 e2 e3 e
 let iter_rearrange_pe_lseg tenv recurse_on_iters default_case_iter iter para e1 e2 elist =
   let iter_nonemp_case =
     let n' = Exp.Var (Ident.create_fresh Ident.kprimed) in
-    let _, para_inst1 = Sil.hpara_instantiate para e1 n' elist in
-    let hpred_list1 = para_inst1 @ [Prop.mk_lseg tenv Sil.Lseg_PE para n' e2 elist] in
+    let _, para_inst1 = Predicates.hpara_instantiate para e1 n' elist in
+    let hpred_list1 = para_inst1 @ [Prop.mk_lseg tenv Lseg_PE para n' e2 elist] in
     Prop.prop_iter_update_current_by_list iter hpred_list1
   in
   let iter_subcases =
@@ -1236,10 +1231,8 @@ let iter_rearrange_pe_dllseg_first tenv recurse_on_iters default_case_iter iter 
     elist =
   let iter_inductive_case =
     let n' = Exp.Var (Ident.create_fresh Ident.kprimed) in
-    let _, para_dll_inst1 = Sil.hpara_dll_instantiate para_dll e1 e2 n' elist in
-    let hpred_list1 =
-      para_dll_inst1 @ [Prop.mk_dllseg tenv Sil.Lseg_PE para_dll n' e1 e3 e4 elist]
-    in
+    let _, para_dll_inst1 = Predicates.hpara_dll_instantiate para_dll e1 e2 n' elist in
+    let hpred_list1 = para_dll_inst1 @ [Prop.mk_dllseg tenv Lseg_PE para_dll n' e1 e3 e4 elist] in
     Prop.prop_iter_update_current_by_list iter hpred_list1
   in
   let iter_subcases =
@@ -1261,10 +1254,8 @@ let iter_rearrange_pe_dllseg_last tenv recurse_on_iters default_case_iter iter p
     elist =
   let iter_inductive_case =
     let n' = Exp.Var (Ident.create_fresh Ident.kprimed) in
-    let _, para_dll_inst1 = Sil.hpara_dll_instantiate para_dll e4 n' e3 elist in
-    let hpred_list1 =
-      para_dll_inst1 @ [Prop.mk_dllseg tenv Sil.Lseg_PE para_dll e1 e2 e4 n' elist]
-    in
+    let _, para_dll_inst1 = Predicates.hpara_dll_instantiate para_dll e4 n' e3 elist in
+    let hpred_list1 = para_dll_inst1 @ [Prop.mk_dllseg tenv Lseg_PE para_dll e1 e2 e4 n' elist] in
     Prop.prop_iter_update_current_by_list iter hpred_list1
   in
   let iter_subcases =
@@ -1283,14 +1274,14 @@ let iter_rearrange_pe_dllseg_last tenv recurse_on_iters default_case_iter iter p
 
 (** find the type at the offset from the given type expression, if any *)
 let type_at_offset tenv texp off =
-  let rec strip_offset (off : Sil.offset list) (typ : Typ.t) =
+  let rec strip_offset (off : Predicates.offset list) (typ : Typ.t) =
     match (off, typ.desc) with
     | [], _ ->
         Some typ
     | Off_fld (f, _) :: off', Tstruct name -> (
       match Tenv.lookup tenv name with
       | Some {fields} -> (
-        match List.find ~f:(fun (f', _, _) -> Typ.Fieldname.equal f f') fields with
+        match List.find ~f:(fun (f', _, _) -> Fieldname.equal f f') fields with
         | Some (_, typ', _) ->
             strip_offset off' typ'
         | None ->
@@ -1310,7 +1301,7 @@ let type_at_offset tenv texp off =
 let check_type_size tenv pname prop texp off typ_from_instr =
   L.d_strln ~color:Orange "check_type_size" ;
   L.d_str "off: " ;
-  Sil.d_offset_list off ;
+  Predicates.d_offset_list off ;
   L.d_ln () ;
   L.d_str "typ_from_instr: " ;
   Typ.d_full typ_from_instr ;
@@ -1332,7 +1323,7 @@ let check_type_size tenv pname prop texp off typ_from_instr =
         in
         Reporting.log_issue_deprecated_using_state Exceptions.Warning pname exn
   | None ->
-      L.d_str "texp: " ; Sil.d_texp_full texp ; L.d_ln ()
+      L.d_str "texp: " ; Exp.d_texp_full texp ; L.d_ln ()
 
 
 (** Exposes lexp |->- from iter. In case that it is not possible to
@@ -1345,15 +1336,15 @@ let check_type_size tenv pname prop texp off typ_from_instr =
  * that the theorem prover cannot prove the inconsistency of any of the
  * new iters in the result. *)
 let rec iter_rearrange pname tenv lexp typ_from_instr prop iter inst :
-    Sil.offset list Prop.prop_iter list =
+    Predicates.offset list Prop.prop_iter list =
   let rec root_typ_of_offsets = function
-    | Sil.Off_fld (f, fld_typ) :: _ -> (
+    | Predicates.Off_fld (f, fld_typ) :: _ -> (
       match fld_typ.desc with
       | Tstruct _ ->
           (* access through field: get the struct type from the field *)
           if Config.trace_rearrange then (
             L.d_increase_indent () ;
-            L.d_printfln "iter_rearrange: root of lexp accesses field %a" Typ.Fieldname.pp f ;
+            L.d_printfln "iter_rearrange: root of lexp accesses field %a" Fieldname.pp f ;
             L.d_str "  struct type from field: " ;
             Typ.d_full fld_typ ;
             L.d_ln () ;
@@ -1362,17 +1353,17 @@ let rec iter_rearrange pname tenv lexp typ_from_instr prop iter inst :
           fld_typ
       | _ ->
           typ_from_instr )
-    | Sil.Off_index _ :: off ->
+    | Predicates.Off_index _ :: off ->
         Typ.mk_array (root_typ_of_offsets off)
     | _ ->
         typ_from_instr
   in
-  let typ = root_typ_of_offsets (Sil.exp_get_offsets lexp) in
+  let typ = root_typ_of_offsets (Predicates.exp_get_offsets lexp) in
   if Config.trace_rearrange then (
     L.d_increase_indent () ;
     L.d_strln "entering iter_rearrange" ;
     L.d_str "lexp: " ;
-    Sil.d_exp lexp ;
+    Exp.d_exp lexp ;
     L.d_ln () ;
     L.d_str "typ: " ;
     Typ.d_full typ ;
@@ -1414,9 +1405,9 @@ let rec iter_rearrange pname tenv lexp typ_from_instr prop iter inst :
     f_many_iters [] iters
   in
   let filter = function
-    | Sil.Hpointsto (base, _, _) | Sil.Hlseg (_, _, base, _, _) ->
+    | Predicates.Hpointsto (base, _, _) | Predicates.Hlseg (_, _, base, _, _) ->
         Prover.is_root tenv prop base lexp
-    | Sil.Hdllseg (_, _, first, _, _, last, _) -> (
+    | Predicates.Hdllseg (_, _, first, _, _, last, _) -> (
         let result_first = Prover.is_root tenv prop first lexp in
         match result_first with
         | None ->
@@ -1430,14 +1421,14 @@ let rec iter_rearrange pname tenv lexp typ_from_instr prop iter inst :
         [default_case_iter iter]
     | Some iter -> (
       match Prop.prop_iter_current tenv iter with
-      | Sil.Hpointsto (_, _, texp), off ->
+      | Predicates.Hpointsto (_, _, texp), off ->
           if Config.type_size then check_type_size tenv pname prop texp off typ_from_instr ;
           iter_rearrange_ptsto pname tenv prop iter lexp inst
-      | Sil.Hlseg (Sil.Lseg_NE, para, e1, e2, elist), _ ->
+      | Predicates.Hlseg (Lseg_NE, para, e1, e2, elist), _ ->
           iter_rearrange_ne_lseg tenv recurse_on_iters iter para e1 e2 elist
-      | Sil.Hlseg (Sil.Lseg_PE, para, e1, e2, elist), _ ->
+      | Predicates.Hlseg (Lseg_PE, para, e1, e2, elist), _ ->
           iter_rearrange_pe_lseg tenv recurse_on_iters default_case_iter iter para e1 e2 elist
-      | Sil.Hdllseg (Sil.Lseg_NE, para_dll, e1, e2, e3, e4, elist), _ -> (
+      | Predicates.Hdllseg (Lseg_NE, para_dll, e1, e2, e3, e4, elist), _ -> (
         match (Prover.is_root tenv prop e1 lexp, Prover.is_root tenv prop e4 lexp) with
         | None, None ->
             assert false
@@ -1445,7 +1436,7 @@ let rec iter_rearrange pname tenv lexp typ_from_instr prop iter inst :
             iter_rearrange_ne_dllseg_first tenv recurse_on_iters iter para_dll e1 e2 e3 e4 elist
         | _, Some _ ->
             iter_rearrange_ne_dllseg_last tenv recurse_on_iters iter para_dll e1 e2 e3 e4 elist )
-      | Sil.Hdllseg (Sil.Lseg_PE, para_dll, e1, e2, e3, e4, elist), _ -> (
+      | Predicates.Hdllseg (Lseg_PE, para_dll, e1, e2, e3, e4, elist), _ -> (
         match (Prover.is_root tenv prop e1 lexp, Prover.is_root tenv prop e4 lexp) with
         | None, None ->
             assert false
@@ -1474,9 +1465,9 @@ let var_has_annotation pdesc is_annotation pvar =
 
 let attr_has_annot is_annotation tenv prop exp =
   let attr_has_annot = function
-    | Sil.Apred ((Aretval (pname, ret_attr) | Aundef (pname, ret_attr, _, _)), _)
+    | Predicates.Apred ((Aretval (pname, ret_attr) | Aundef (pname, ret_attr, _, _)), _)
       when is_annotation ret_attr ->
-        Some (Typ.Procname.to_string pname)
+        Some (Procname.to_string pname)
     | _ ->
         None
   in
@@ -1487,16 +1478,16 @@ let attr_has_annot is_annotation tenv prop exp =
 let is_strexp_pt_fld_with_annot tenv obj_str is_annotation typ deref_exp (fld, strexp) =
   let lookup = Tenv.lookup tenv in
   let fld_has_annot fld =
-    match Typ.Struct.get_field_type_and_annotation ~lookup fld typ with
+    match Struct.get_field_type_and_annotation ~lookup fld typ with
     | Some (_, annot) ->
         is_annotation annot
     | _ ->
         false
   in
   match strexp with
-  | Sil.Eexp ((Exp.Var _ as exp), _) when Exp.equal exp deref_exp ->
+  | Predicates.Eexp ((Exp.Var _ as exp), _) when Exp.equal exp deref_exp ->
       let has_annot = fld_has_annot fld in
-      if has_annot then obj_str := Some (Typ.Fieldname.to_simplified_string fld) ;
+      if has_annot then obj_str := Some (Fieldname.to_simplified_string fld) ;
       has_annot
   | _ ->
       true
@@ -1509,7 +1500,7 @@ let is_only_pt_by_fld_or_param_with_annot pdesc tenv prop deref_exp is_annotatio
   let obj_str = ref None in
   let is_pt_by_fld_or_param_with_annot hpred =
     match hpred with
-    | Sil.Hpointsto (Exp.Lvar pvar, Sil.Eexp ((Exp.Var _ as exp), _), _)
+    | Predicates.Hpointsto (Exp.Lvar pvar, Eexp ((Exp.Var _ as exp), _), _)
       when Exp.equal exp deref_exp ->
         let var_has_annotation = Pvar.is_seed pvar && var_has_annotation pdesc is_annotation pvar in
         if var_has_annotation then obj_str := Some (Pvar.to_string pvar) ;
@@ -1517,7 +1508,7 @@ let is_only_pt_by_fld_or_param_with_annot pdesc tenv prop deref_exp is_annotatio
         if Option.is_some procname_str_opt then obj_str := procname_str_opt ;
         (* it's ok for a local with no annotation to point to deref_exp *)
         var_has_annotation || Option.is_some procname_str_opt || Pvar.is_local pvar
-    | Sil.Hpointsto (_, Sil.Estruct (flds, _), Exp.Sizeof {typ}) ->
+    | Predicates.Hpointsto (_, Estruct (flds, _), Exp.Sizeof {typ}) ->
         List.for_all ~f:(is_strexp_pt_fld_with_annot tenv obj_str is_annotation typ deref_exp) flds
     | _ ->
         true
@@ -1598,7 +1589,7 @@ let check_dereference_error tenv pdesc (prop : Prop.normal Prop.t) lexp loc =
   | Some (Apred (Adangling dk, _)) ->
       let deref_str = Localise.deref_str_dangling (Some dk) in
       let err_desc = Errdesc.explain_dereference pname tenv deref_str prop (State.get_loc_exn ()) in
-      raise (Exceptions.Dangling_pointer_dereference (Some dk, err_desc, __POS__))
+      raise (Exceptions.Dangling_pointer_dereference (true, err_desc, __POS__))
   | Some (Apred (Aundef _, _)) ->
       ()
   | Some (Apred (Aresource ({ra_kind= Rrelease} as ra), _)) ->
@@ -1609,7 +1600,7 @@ let check_dereference_error tenv pdesc (prop : Prop.normal Prop.t) lexp loc =
       if Prover.check_equal tenv Prop.prop_emp (Exp.root_of_lexp root) Exp.minus_one then
         let deref_str = Localise.deref_str_dangling None in
         let err_desc = Errdesc.explain_dereference pname tenv deref_str prop loc in
-        raise (Exceptions.Dangling_pointer_dereference (None, err_desc, __POS__))
+        raise (Exceptions.Dangling_pointer_dereference (false, err_desc, __POS__))
 
 
 (* Check that an expression representin an objc block can be null and raise a [B1] null exception.*)
@@ -1648,7 +1639,7 @@ let check_call_to_objc_block_error tenv pdesc prop fun_exp loc =
   let get_exp_called () =
     (* Exp called in the block's function call*)
     match State.get_instr () with
-    | Some (Sil.Call (_, Exp.Var id, _, _, _)) ->
+    | Some (Sil.Call (_, Var id, _, _, _)) ->
         Errdesc.find_ident_assignment (State.get_node_exn ()) id
     | _ ->
         None
@@ -1708,7 +1699,7 @@ let check_call_to_objc_block_error tenv pdesc prop fun_exp loc =
     It returns an iterator with [lexp |-> strexp: typ] as current predicate
     and the path (an [offsetlist]) which leads to [lexp] as the iterator state. *)
 let rearrange ?(report_deref_errors = true) pdesc tenv lexp typ prop loc :
-    Sil.offset list Prop.prop_iter list =
+    Predicates.offset list Prop.prop_iter list =
   let nlexp =
     match Prop.exp_normalize_prop tenv prop lexp with
     | Exp.BinOp (Binop.PlusPI, ep, e) ->
@@ -1718,10 +1709,10 @@ let rearrange ?(report_deref_errors = true) pdesc tenv lexp typ prop loc :
         e
   in
   let ptr_tested_for_zero = Prover.check_disequal tenv prop (Exp.root_of_lexp nlexp) Exp.zero in
-  let inst = Sil.inst_rearrange (not ptr_tested_for_zero) loc (State.get_path_pos ()) in
+  let inst = Predicates.inst_rearrange (not ptr_tested_for_zero) loc (State.get_path_pos ()) in
   L.d_strln ".... Rearrangement Start ...." ;
   L.d_str "Exp: " ;
-  Sil.d_exp nlexp ;
+  Exp.d_exp nlexp ;
   L.d_ln () ;
   L.d_strln "Prop:" ;
   Prop.d_prop prop ;
@@ -1731,11 +1722,10 @@ let rearrange ?(report_deref_errors = true) pdesc tenv lexp typ prop loc :
   let pname = Procdesc.get_proc_name pdesc in
   let prop' =
     match pname with
-    | Typ.Procname.Java java_pname
+    | Procname.Java java_pname
       when Config.csl_analysis && !BiabductionConfig.footprint
-           && not
-                ( Typ.Procname.is_constructor pname
-                || Typ.Procname.Java.is_class_initializer java_pname ) ->
+           && not (Procname.is_constructor pname || Procname.Java.is_class_initializer java_pname)
+      ->
         add_guarded_by_constraints tenv prop lexp pdesc
     | _ ->
         prop

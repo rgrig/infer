@@ -11,13 +11,14 @@
 open! IStd
 module Hashtbl = Caml.Hashtbl
 module F = Format
+module L = Logging
 
 (* reverse the natural order on Var *)
 type ident_ = Ident.t
 
 let compare_ident_ x y = Ident.compare y x
 
-type closure = {name: Typ.Procname.t; captured_vars: (t * Pvar.t * Typ.t) list}
+type closure = {name: Procname.t; captured_vars: (t * Pvar.t * Typ.t) list}
 
 (** This records information about a [sizeof(typ)] expression.
 
@@ -41,7 +42,7 @@ and t =
   | Const of Const.t  (** Constants *)
   | Cast of Typ.t * t  (** Type cast *)
   | Lvar of Pvar.t  (** The address of a program variable *)
-  | Lfield of t * Typ.Fieldname.t * Typ.t
+  | Lfield of t * Fieldname.t * Typ.t
       (** A field offset, the type is the surrounding struct type *)
   | Lindex of t * t  (** An array index offset: [exp1\[exp2\]] *)
   | Sizeof of sizeof_data
@@ -239,7 +240,7 @@ let rec pp_ pe pp_t f e =
   | Lvar pv ->
       Pvar.pp pe f pv
   | Lfield (e, fld, _) ->
-      F.fprintf f "%a.%a" pp_exp e Typ.Fieldname.pp fld
+      F.fprintf f "%a.%a" pp_exp e Fieldname.pp fld
   | Lindex (e1, e2) ->
       F.fprintf f "%a[%a]" pp_exp e1 pp_exp e2
   | Sizeof {typ; nbytes; dynamic_length; subtype} ->
@@ -271,12 +272,54 @@ let pp f e = pp_printenv ~print_types:false Pp.text f e
 
 let to_string e = F.asprintf "%a" pp e
 
-let is_objc_block_closure = function
-  | Closure {name} ->
-      Typ.Procname.is_objc_block name
-  | _ ->
-      false
+let color_wrapper ~f = if Config.print_using_diff then Pp.color_wrapper ~f else f
 
+let pp_diff ?(print_types = false) =
+  color_wrapper ~f:(fun pe f e0 ->
+      let e =
+        match pe.Pp.obj_sub with
+        | Some sub ->
+            (* apply object substitution to expression *) Obj.obj (sub (Obj.repr e0))
+        | None ->
+            e0
+      in
+      if not (equal e0 e) then match e with Lvar pvar -> Pvar.pp_value f pvar | _ -> assert false
+      else pp_printenv ~print_types pe f e )
+
+
+(** dump an expression. *)
+let d_exp (e : t) = L.d_pp_with_pe pp_diff e
+
+(** Pretty print a list of expressions. *)
+let pp_list pe f expl = Pp.seq (pp_diff pe) f expl
+
+(** dump a list of expressions. *)
+let d_list (el : t list) = L.d_pp_with_pe pp_list el
+
+let pp_texp pe f = function
+  | Sizeof {typ; nbytes; dynamic_length; subtype} ->
+      let pp_len f l = Option.iter ~f:(F.fprintf f "[%a]" (pp_diff pe)) l in
+      let pp_size f size = Option.iter ~f:(Int.pp f) size in
+      F.fprintf f "%a%a%a%a" (Typ.pp pe) typ pp_size nbytes pp_len dynamic_length Subtype.pp subtype
+  | e ->
+      pp_diff pe f e
+
+
+(** Pretty print a type with all the details. *)
+let pp_texp_full pe f = function
+  | Sizeof {typ; nbytes; dynamic_length; subtype} ->
+      let pp_len f l = Option.iter ~f:(F.fprintf f "[%a]" (pp_diff pe)) l in
+      let pp_size f size = Option.iter ~f:(Int.pp f) size in
+      F.fprintf f "%a%a%a%a" (Typ.pp_full pe) typ pp_size nbytes pp_len dynamic_length Subtype.pp
+        subtype
+  | e ->
+      pp_diff ~print_types:true pe f e
+
+
+(** Dump a type expression with all the details. *)
+let d_texp_full (te : t) = L.d_pp_with_pe pp_texp_full te
+
+let is_objc_block_closure = function Closure {name} -> Procname.is_objc_block name | _ -> false
 
 let rec gen_free_vars =
   let open Sequence.Generator in
@@ -365,14 +408,12 @@ let rec ignore_integer_cast e =
 
 let rec get_java_class_initializer tenv = function
   | Lfield (Lvar pvar, fn, typ) when Pvar.is_global pvar -> (
-    match Typ.Struct.get_field_type_and_annotation ~lookup:(Tenv.lookup tenv) fn typ with
+    match Struct.get_field_type_and_annotation ~lookup:(Tenv.lookup tenv) fn typ with
     | Some (field_typ, annot) when Annot.Item.is_final annot ->
-        let java_class = Typ.JavaClass (Pvar.get_name pvar) in
-        Some
-          ( Typ.Procname.Java (Typ.Procname.Java.get_class_initializer java_class)
-          , pvar
-          , fn
-          , field_typ )
+        let java_class =
+          Typ.JavaClass (JavaClassName.from_string (Mangled.to_string_full (Pvar.get_name pvar)))
+        in
+        Some (Procname.Java (Procname.Java.get_class_initializer java_class), pvar, fn, field_typ)
     | _ ->
         None )
   | Cast (_, e) | Lfield (e, _, _) ->

@@ -26,7 +26,7 @@ end
 (** Abstraction of a path that represents a lock, special-casing comparison to work over type, base
     variable modulo this and access list *)
 module Lock : sig
-  include PrettyPrintable.PrintableOrderedType with type t = AccessPath.t
+  include PrettyPrintable.PrintableOrderedType
 
   val equal : t -> t -> bool
 
@@ -36,6 +36,15 @@ module Lock : sig
   val pp_locks : F.formatter -> t -> unit
 
   val describe : F.formatter -> t -> unit
+
+  val make : FormalMap.t -> HilExp.t -> t option
+  (** make a lock if the expression is rooted at a global or a formal parameter, or represents a
+      class object *)
+
+  val get_access_path : t -> AccessPath.t
+
+  val make_java_synchronized : FormalMap.t -> Procname.t -> t option
+  (** create the monitor locked when entering a synchronized java method *)
 end
 
 module Event : sig
@@ -54,7 +63,7 @@ module LockState : AbstractDomain.WithTop
 (** a lock acquisition with location information *)
 module Acquisition : sig
   type t = private
-    {lock: Lock.t; loc: Location.t [@compare.ignore]; procname: Typ.Procname.t [@compare.ignore]}
+    {lock: Lock.t; loc: Location.t [@compare.ignore]; procname: Procname.t [@compare.ignore]}
   [@@deriving compare]
 end
 
@@ -84,14 +93,14 @@ module CriticalPair : sig
   val get_loc : t -> Location.t
   (** outermost callsite location *)
 
-  val get_earliest_lock_or_call_loc : procname:Typ.Procname.t -> t -> Location.t
+  val get_earliest_lock_or_call_loc : procname:Procname.t -> t -> Location.t
   (** outermost callsite location OR lock acquisition *)
 
   val may_deadlock : t -> t -> bool
   (** two pairs can run in parallel and satisfy the conditions for deadlock *)
 
   val make_trace :
-    ?header:string -> ?include_acquisitions:bool -> Typ.Procname.t -> t -> Errlog.loc_trace
+    ?header:string -> ?include_acquisitions:bool -> Procname.t -> t -> Errlog.loc_trace
 
   val is_uithread : t -> bool
   (** is pair about an event on the UI thread *)
@@ -109,7 +118,9 @@ module Attribute : sig
   type t =
     | Nothing
     | ThreadGuard  (** is boolean equivalent to whether on UI thread *)
-    | Runnable of Typ.Procname.t  (** is a Runnable/Callable with given "run" procname *)
+    | FutureDoneGuard of HilExp.AccessExpression.t  (** boolean equivalent to [Future.isDone()] *)
+    | FutureDoneState of bool  (** is a [Future] ready for non-blocking consumption *)
+    | Runnable of Procname.t  (** is a Runnable/Callable with given "run" procname *)
     | WorkScheduler of StarvationModels.scheduler_thread_constraint
         (** exp is something that schedules work on the given thread *)
     | Looper of StarvationModels.scheduler_thread_constraint  (** Android looper on given thread *)
@@ -126,15 +137,15 @@ module AttributeDomain : sig
 
   val is_thread_guard : HilExp.AccessExpression.t -> t -> bool
 
-  val get_scheduler_constraint :
-    HilExp.AccessExpression.t -> t -> StarvationModels.scheduler_thread_constraint option
+  val is_future_done_guard : HilExp.AccessExpression.t -> t -> bool
+  (** does the given expr has attribute [FutureDone x] return [Some x] else [None] *)
 
   val exit_scope : Var.t list -> t -> t
 end
 
 (** A record of scheduled parallel work: the method scheduled to run, where, and on what thread. *)
 module ScheduledWorkItem : sig
-  type t = {procname: Typ.Procname.t; loc: Location.t; thread: ThreadDomain.t}
+  type t = {procname: Procname.t; loc: Location.t; thread: ThreadDomain.t}
 
   include PrettyPrintable.PrintableOrderedType with type t := t
 end
@@ -151,21 +162,23 @@ type t =
 
 include AbstractDomain.WithBottom with type t := t
 
-val acquire : ?tenv:Tenv.t -> t -> procname:Typ.Procname.t -> loc:Location.t -> Lock.t list -> t
+val acquire : ?tenv:Tenv.t -> t -> procname:Procname.t -> loc:Location.t -> Lock.t list -> t
 (** simultaneously acquire a number of locks, no-op if list is empty *)
 
 val release : t -> Lock.t list -> t
 (** simultaneously release a number of locks, no-op if list is empty *)
 
-val blocking_call : callee:Typ.Procname.t -> StarvationModels.severity -> loc:Location.t -> t -> t
+val blocking_call : callee:Procname.t -> StarvationModels.severity -> loc:Location.t -> t -> t
 
-val wait_on_monitor : loc:Location.t -> HilExp.t list -> t -> t
+val wait_on_monitor : loc:Location.t -> FormalMap.t -> HilExp.t list -> t -> t
 
-val strict_mode_call : callee:Typ.Procname.t -> loc:Location.t -> t -> t
+val future_get : callee:Procname.t -> loc:Location.t -> HilExp.t list -> t -> t
+
+val strict_mode_call : callee:Procname.t -> loc:Location.t -> t -> t
 
 val add_guard :
      acquire_now:bool
-  -> procname:Typ.Procname.t
+  -> procname:Procname.t
   -> loc:Location.t
   -> Tenv.t
   -> t
@@ -174,7 +187,7 @@ val add_guard :
   -> t
 (** Install a mapping from the guard expression to the lock provided, and optionally lock it. *)
 
-val lock_guard : procname:Typ.Procname.t -> loc:Location.t -> Tenv.t -> t -> HilExp.t -> t
+val lock_guard : procname:Procname.t -> loc:Location.t -> Tenv.t -> t -> HilExp.t -> t
 (** Acquire the lock the guard was constructed with. *)
 
 val remove_guard : t -> HilExp.t -> t
@@ -184,7 +197,7 @@ val unlock_guard : t -> HilExp.t -> t
 (** Release the lock the guard was constructed with. *)
 
 val schedule_work :
-  Location.t -> StarvationModels.scheduler_thread_constraint -> t -> Typ.Procname.t -> t
+  Location.t -> StarvationModels.scheduler_thread_constraint -> t -> Procname.t -> t
 (** record the fact that a method is scheduled to run on a certain thread/executor *)
 
 type summary =

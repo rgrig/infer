@@ -30,7 +30,6 @@ type checkers =
   ; impurity: bool ref
   ; inefficient_keyset_iterator: bool ref
   ; linters: bool ref
-  ; litho_graphql_field_access: bool ref
   ; litho_required_props: bool ref
   ; liveness: bool ref
   ; loop_hoisting: bool ref
@@ -80,13 +79,6 @@ let issues_fields_symbols =
 
 type os_type = Unix | Win32 | Cygwin
 
-type compilation_database_dependencies =
-  | Deps of int option
-  (* get the compilation database of the dependencies up to depth n
-     by [Deps (Some n)], or all by [Deps None] *)
-  | NoDeps
-[@@deriving compare]
-
 type build_system =
   | BAnt
   | BBuck
@@ -99,6 +91,8 @@ type build_system =
   | BNdk
   | BXcode
 [@@deriving compare]
+
+type scheduler = File | Restart | SyntacticCallGraph [@@deriving equal]
 
 let equal_build_system = [%compare.equal: build_system]
 
@@ -214,11 +208,7 @@ let lint_issues_dir_name = "lint_issues"
 
 let manual_biabduction = "BIABDUCTION CHECKER OPTIONS"
 
-let manual_buck_compilation_db = "BUCK COMPILATION DATABASE OPTIONS"
-
-let manual_buck_flavors = "BUCK FLAVORS OPTIONS"
-
-let manual_buck_java = "BUCK FOR JAVA OPTIONS"
+let manual_buck = "BUCK OPTIONS"
 
 let manual_buffer_overrun = "BUFFER OVERRUN OPTIONS"
 
@@ -641,7 +631,6 @@ and { annotation_reachability
     ; impurity
     ; inefficient_keyset_iterator
     ; linters
-    ; litho_graphql_field_access
     ; litho_required_props
     ; liveness
     ; loop_hoisting
@@ -690,9 +679,6 @@ and { annotation_reachability
     mk_checker ~long:"inefficient-keyset-iterator" ~default:true
       "Check for inefficient uses of keySet iterator that access both the key and the value."
   and linters = mk_checker ~long:"linters" ~default:true "syntactic linters"
-  and litho_graphql_field_access =
-    mk_checker ~long:"litho-graphql-field-access"
-      "[EXPERIMENTAL] GraphQL field access check for Litho"
   and litho_required_props =
     mk_checker ~long:"litho-required-props" "[EXPERIMENTAL] Required Prop check for Litho"
   and liveness =
@@ -772,7 +758,6 @@ and { annotation_reachability
   ; impurity
   ; inefficient_keyset_iterator
   ; linters
-  ; litho_graphql_field_access
   ; litho_required_props
   ; liveness
   ; loop_hoisting
@@ -834,7 +819,7 @@ Example format: for custom annotations com.my.annotation.{Source1,Source2,Sink1}
 
 and append_buck_flavors =
   CLOpt.mk_string_list ~long:"append-buck-flavors"
-    ~in_help:InferCommand.[(Capture, manual_buck_flavors)]
+    ~in_help:InferCommand.[(Capture, manual_buck)]
     "Additional Buck flavors to append to targets discovered by the \
      $(b,--buck-compilation-database) option."
 
@@ -860,13 +845,6 @@ and biabduction_model_free_pattern =
     "Regex of methods that should be modelled as free if definition is missing"
 
 
-and bo_relational_domain =
-  CLOpt.mk_symbol_opt ~long:"bo-relational-domain"
-    ~in_help:InferCommand.[(Analyze, manual_buffer_overrun)]
-    ~symbols:[("oct", `Bo_relational_domain_oct); ("poly", `Bo_relational_domain_poly)]
-    "Select a relational domain being used in the bufferoverrun checker (experimental)"
-
-
 and bootclasspath =
   CLOpt.mk_string_opt ~long:"bootclasspath"
     ~in_help:InferCommand.[(Capture, manual_java)]
@@ -880,57 +858,91 @@ and buck_blacklist =
   CLOpt.mk_string_list
     ~deprecated:["-blacklist-regex"; "-blacklist"]
     ~long:"buck-blacklist"
-    ~in_help:InferCommand.[(Run, manual_buck_flavors); (Capture, manual_buck_flavors)]
+    ~in_help:InferCommand.[(Run, manual_buck); (Capture, manual_buck)]
     ~meta:"regex"
-    "Skip capture of files matched by the specified regular expression (only the \"flavors (C++)\" \
-     Buck integration is supported, not Java)."
+    "Skip capture of files matched by the specified regular expression. Only the clang, \
+     non-compilation-database\n\
+    \     Buck integration is supported, not Java."
 
 
 and buck_build_args =
   CLOpt.mk_string_list ~long:"Xbuck"
-    ~in_help:InferCommand.[(Capture, manual_buck_flavors)]
-    "Pass values as command-line arguments to invocations of $(i,`buck build`)"
+    ~in_help:InferCommand.[(Capture, manual_buck)]
+    "Pass values as command-line arguments to invocations of $(i,`buck build`). Only valid for \
+     $(b,--buck-clang)."
 
 
 and buck_build_args_no_inline =
   CLOpt.mk_string_list ~long:"Xbuck-no-inline"
-    ~in_help:InferCommand.[(Capture, manual_buck_flavors)]
+    ~in_help:InferCommand.[(Capture, manual_buck)]
     "Pass values as command-line arguments to invocations of $(i,`buck build`), don't inline any \
-     args starting with '@'"
+     args starting with '@'. Only valid for $(b,--buck-clang)."
 
 
 and buck_compilation_database_depth =
   CLOpt.mk_int_opt ~long:"buck-compilation-database-depth"
-    ~in_help:InferCommand.[(Capture, manual_buck_compilation_db)]
+    ~in_help:InferCommand.[(Capture, manual_buck)]
     "Depth of dependencies used by the $(b,--buck-compilation-database deps) option. By default, \
      all recursive dependencies are captured."
     ~meta:"int"
 
 
-and buck_compilation_database =
-  CLOpt.mk_symbol_opt ~long:"buck-compilation-database" ~deprecated:["-use-compilation-database"]
-    ~in_help:InferCommand.[(Capture, manual_buck_compilation_db)]
-    "Buck integration using the compilation database, with or without dependencies."
-    ~symbols:[("no-deps", `NoDeps); ("deps", `DepsTmp)]
-
-
 and buck_merge_all_deps =
   CLOpt.mk_bool ~long:"buck-merge-all-deps" ~default:false
-    ~in_help:InferCommand.[(Capture, manual_buck_flavors)]
+    ~in_help:InferCommand.[(Capture, manual_buck)]
     "Find and merge all infer dependencies produced by buck. Use this flag if infer doesn't find \
-     any files to analyze after a successful capture."
+     any files to analyze after a successful capture. Only valid for $(b,--buck-clang)."
+
+
+and buck_mode =
+  let buck_mode = ref `None in
+  let set_mode mode b =
+    if b then buck_mode := mode
+    else (* TODO: change to [`None] when we kill [`JavaDeprecated] *) buck_mode := `JavaDeprecated ;
+    b
+  in
+  CLOpt.mk_bool ~deprecated:["-flavors"; "-use-flavors"] ~long:"buck-clang"
+    ~deprecated_no:["-no-flavors"]
+    ~in_help:InferCommand.[(Capture, manual_buck)]
+    ~f:(set_mode `ClangFlavors)
+    "Buck integration for clang-based targets (C/C++/Objective-C/Objective-C++)."
+  |> ignore ;
+  CLOpt.mk_bool ~long:"buck-java" ~deprecated:["-genrule-master-mode"]
+    ~deprecated_no:["-no-genrule-master-mode"]
+    ~in_help:InferCommand.[(Capture, manual_buck)]
+    ~f:(set_mode `Java)
+    "Make the master Infer process merge capture artefacts generated by the genrule integration, \
+     and report after analysis."
+  |> ignore ;
+  CLOpt.mk_symbol_opt ~long:"buck-compilation-database" ~deprecated:["-use-compilation-database"]
+    ~in_help:InferCommand.[(Capture, manual_buck)]
+    ~f:(fun s ->
+      buck_mode := `ClangCompilationDB s ;
+      s )
+    "Buck integration using the compilation database, with or without dependencies. Only includes \
+     clang targets, as per Buck's $(i,#compilation-database) flavor."
+    ~symbols:[("no-deps", `NoDeps); ("deps", `DepsTmp)]
+  |> ignore ;
+  (* TOOD: kill this *)
+  CLOpt.mk_bool ~long:"buck-java-deprecated"
+    ~f:(set_mode `JavaDeprecated)
+    "[DO NOT USE] old Buck Java integration. Used to be the default. Going away imminently"
+  |> ignore ;
+  buck_mode
 
 
 and buck_out =
   CLOpt.mk_path_opt ~long:"buck-out"
-    ~in_help:InferCommand.[(Capture, manual_buck_java)]
-    ~meta:"dir" "Specify the root directory of buck-out"
+    ~in_help:InferCommand.[(Capture, manual_buck)]
+    ~meta:"dir" "Specify the root directory of buck-out. Only valid for $(b,--buck-java)."
 
 
 and buck_targets_blacklist =
   CLOpt.mk_string_list ~long:"buck-targets-blacklist"
-    ~in_help:InferCommand.[(Run, manual_buck_compilation_db); (Capture, manual_buck_compilation_db)]
-    ~meta:"regex" "Skip capture of buck targets matched by the specified regular expression."
+    ~in_help:InferCommand.[(Run, manual_buck); (Capture, manual_buck)]
+    ~meta:"regex"
+    "Skip capture of buck targets matched by the specified regular expression. Only valid for \
+     $(b,--buck-compilation-database)."
 
 
 and call_graph_schedule =
@@ -944,7 +956,7 @@ and capture =
 
 and capture_blacklist =
   CLOpt.mk_string_opt ~long:"capture-blacklist"
-    ~in_help:InferCommand.[(Run, manual_buck_flavors); (Capture, manual_buck_flavors)]
+    ~in_help:InferCommand.[(Run, manual_java); (Capture, manual_java)]
     ~meta:"regex"
     "Skip capture of files matched by the specified OCaml regular expression (only supported by \
      the javac integration for now)."
@@ -1425,13 +1437,6 @@ and filter_paths =
   CLOpt.mk_bool ~long:"filter-paths" ~default:true "Filters specified in .inferconfig"
 
 
-and flavors =
-  CLOpt.mk_bool ~deprecated:["-use-flavors"] ~long:"flavors"
-    ~in_help:InferCommand.[(Capture, manual_buck_flavors)]
-    "Buck integration using the infer-capture-all Buck flavor (clang only). Use for clang-based \
-     Buck projects (as opposed to Java)."
-
-
 and force_delete_results_dir =
   CLOpt.mk_bool ~long:"force-delete-results-dir" ~default:false
     ~in_help:
@@ -1472,12 +1477,6 @@ and generated_classes =
   CLOpt.mk_path_opt ~long:"generated-classes"
     ~in_help:InferCommand.[(Capture, manual_java)]
     "Specify where to load the generated class files"
-
-
-and genrule_master_mode =
-  CLOpt.mk_bool ~default:false ~long:"genrule-master-mode"
-    "Make the master Infer process merge capture artefacts generated by the genrule integration, \
-     and report after analysis."
 
 
 and genrule_mode =
@@ -1716,8 +1715,8 @@ and method_decls_info =
 
 and merge =
   CLOpt.mk_bool ~deprecated:["merge"] ~long:"merge"
-    ~in_help:InferCommand.[(Analyze, manual_buck_flavors)]
-    "Merge the captured results directories specified in the dependency file"
+    ~in_help:InferCommand.[(Analyze, manual_buck)]
+    "Merge the captured results directories specified in the dependency file."
 
 
 and ml_buckets =
@@ -1742,8 +1741,6 @@ and monitor_prop_size =
 
 
 and nelseg = CLOpt.mk_bool ~deprecated:["nelseg"] ~long:"nelseg" "Use only nonempty lsegs"
-
-and new_litho_domain = CLOpt.mk_bool ~long:"new-litho-domain" "[EXPERIMENTAL] Use new litho domain"
 
 and nullable_annotation =
   CLOpt.mk_string_opt ~long:"nullable-annotation-name" "Specify custom nullable annotation name"
@@ -2007,6 +2004,12 @@ and racerd_guardedby =
     "Check @GuardedBy annotations with RacerD"
 
 
+and racerd_unknown_returns_owned =
+  CLOpt.mk_bool ~long:"racerd-unknown-returns-owned" ~default:false
+    ~in_help:InferCommand.[(Analyze, manual_racerd)]
+    "Assume that all methods without a CFG (including abstract methods) return owned objects"
+
+
 and reactive =
   CLOpt.mk_bool ~deprecated:["reactive"] ~long:"reactive" ~short:'r'
     ~in_help:InferCommand.[(Analyze, manual_generic)]
@@ -2257,14 +2260,6 @@ and starvation_whole_program =
     "Run whole-program starvation analysis"
 
 
-and spec_abs_level =
-  CLOpt.mk_int ~deprecated:["spec_abs_level"] ~long:"spec-abs-level" ~default:1 ~meta:"int"
-    {|Set the level of abstracting the postconditions of discovered specs:
-- 0 = nothing special
-- 1 = filter out redundant posts implied by other posts
-|}
-
-
 and specs_library =
   let specs_library =
     CLOpt.mk_path_list ~deprecated:["lib"] ~long:"specs-library" ~short:'L' ~meta:"dir|jar"
@@ -2379,6 +2374,12 @@ and export_changed_functions =
 and export_changed_functions_output =
   CLOpt.mk_path ~long:"export-changed-functions-output" ~default:"changed_functions.json"
     "Name of file for export-changed-functions results"
+
+
+and scheduler =
+  CLOpt.mk_symbol ~long:"scheduler" ~default:File ~eq:equal_scheduler
+    ~symbols:[("file", File); ("restart", Restart); ("callgraph", SyntacticCallGraph)]
+    "Specify the scheduler used for the analysis phase"
 
 
 and test_filtering =
@@ -2505,8 +2506,9 @@ and worklist_mode =
 
 and xcode_developer_dir =
   CLOpt.mk_path_opt ~long:"xcode-developer-dir"
-    ~in_help:InferCommand.[(Capture, manual_buck_flavors)]
-    ~meta:"XCODE_DEVELOPER_DIR" "Specify the path to Xcode developer directory"
+    ~in_help:InferCommand.[(Capture, manual_buck)]
+    ~meta:"XCODE_DEVELOPER_DIR"
+    "Specify the path to Xcode developer directory, to use for Buck clang targets"
 
 
 and xcpretty =
@@ -2785,8 +2787,6 @@ and bootclasspath = !bootclasspath
 
 and bo_debug = !bo_debug
 
-and bo_relational_domain = !bo_relational_domain
-
 and buck = !buck
 
 and buck_blacklist = !buck_blacklist
@@ -2797,17 +2797,25 @@ and buck_build_args_no_inline = !buck_build_args_no_inline
 
 and buck_cache_mode = (!buck || !genrule_mode) && not !debug
 
-and buck_compilation_database =
-  match !buck_compilation_database with
-  | Some `DepsTmp ->
-      Some (Deps !buck_compilation_database_depth)
-  | Some `NoDeps ->
-      Some NoDeps
-  | None ->
+and buck_merge_all_deps = !buck_merge_all_deps
+
+and buck_mode : BuckMode.t option =
+  match (!buck_mode, !buck_compilation_database_depth) with
+  | `None, _ ->
+      None
+  | `ClangFlavors, _ ->
+      Some ClangFlavors
+  | `Java, _ ->
+      Some JavaGenruleMaster
+  | `ClangCompilationDB `NoDeps, _ ->
+      Some (ClangCompilationDB NoDependencies)
+  | `ClangCompilationDB `DepsTmp, None ->
+      Some (ClangCompilationDB DepsAllDepths)
+  | `ClangCompilationDB `DepsTmp, Some depth ->
+      Some (ClangCompilationDB (DepsUpToDepth depth))
+  | `JavaDeprecated, _ ->
       None
 
-
-and buck_merge_all_deps = !buck_merge_all_deps
 
 and buck_out = !buck_out
 
@@ -2930,8 +2938,6 @@ and filter_paths = !filter_paths
 
 and filtering = !filtering
 
-and flavors = !flavors
-
 and force_delete_results_dir = !force_delete_results_dir
 
 and fragment_retains_view = !fragment_retains_view
@@ -2947,8 +2953,6 @@ and function_pointer_specialization = !function_pointer_specialization
 and frontend_tests = !frontend_tests
 
 and generated_classes = !generated_classes
-
-and genrule_master_mode = !genrule_master_mode
 
 and genrule_mode = !genrule_mode
 
@@ -3006,8 +3010,6 @@ and linters_ignore_clang_failures = !linters_ignore_clang_failures
 
 and linters_validate_syntax_only = !linters_validate_syntax_only
 
-and litho_graphql_field_access = !litho_graphql_field_access
-
 and litho_required_props = !litho_required_props
 
 and liveness = !liveness
@@ -3041,8 +3043,6 @@ and modified_lines = !modified_lines
 and monitor_prop_size = !monitor_prop_size
 
 and nelseg = !nelseg
-
-and new_litho_domain = !new_litho_domain
 
 and nullable_annotation = !nullable_annotation
 
@@ -3158,6 +3158,8 @@ and racerd = !racerd
 
 and racerd_guardedby = !racerd_guardedby
 
+and racerd_unknown_returns_owned = !racerd_unknown_returns_owned
+
 and reactive_mode = !reactive
 
 and reactive_capture = !reactive_capture
@@ -3194,9 +3196,7 @@ and resource_leak = !resource_leak
 
 and results_dir = !results_dir
 
-and seconds_per_iteration = !seconds_per_iteration
-
-and select = !select
+and scheduler = !scheduler
 
 and sfg_coalesce = !sfg_coalesce
 
@@ -3209,6 +3209,10 @@ and sfg_selmon = !sfg_selmon
 and scuba_logging = !scuba_logging
 
 and scuba_normals = !scuba_normals
+
+and seconds_per_iteration = !seconds_per_iteration
+
+and select = !select
 
 and show_buckets = !print_buckets
 
@@ -3243,8 +3247,6 @@ and source_files_freshly_captured = !source_files_freshly_captured
 and sources = !sources
 
 and sourcepath = !sourcepath
-
-and spec_abs_level = !spec_abs_level
 
 and sqlite_cache_size = !sqlite_cache_size
 

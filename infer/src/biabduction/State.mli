@@ -22,7 +22,7 @@ val get_diverging_states_node : unit -> Paths.PathSet.t
 val get_diverging_states_proc : unit -> Paths.PathSet.t
 (** Get the diverging states for the procedure *)
 
-val get_inst_update : PredSymb.path_pos -> Sil.inst
+val get_inst_update : PredSymb.path_pos -> Predicates.inst
 (** Get update instrumentation for the current loc *)
 
 val get_instr : unit -> Sil.instr option
@@ -77,9 +77,9 @@ val mk_find_duplicate_nodes : Procdesc.t -> Procdesc.Node.t -> Procdesc.NodeSet.
     same kind and location and normalized (w.r.t. renaming of let - bound ids) list of instructions. *)
 
 type log_issue =
-  Typ.Procname.t -> ?node:Procdesc.Node.t -> ?loc:Location.t -> ?ltr:Errlog.loc_trace -> exn -> unit
+  Procname.t -> ?node:Procdesc.Node.t -> ?loc:Location.t -> ?ltr:Errlog.loc_trace -> exn -> unit
 
-val process_execution_failures : log_issue -> Typ.Procname.t -> unit
+val process_execution_failures : log_issue -> Procname.t -> unit
 (** Process the failures during symbolic execution of a procedure *)
 
 val reset : unit -> unit

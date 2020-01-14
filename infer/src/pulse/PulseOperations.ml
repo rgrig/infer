@@ -28,7 +28,7 @@ module Closures = struct
   let fake_capture_field_prefix = "__capture_"
 
   let mk_fake_field ~id =
-    Typ.Fieldname.Clang.from_class_name
+    Fieldname.make
       (Typ.CStruct (QualifiedCppName.of_list ["std"; "function"]))
       (Printf.sprintf "%s%d" fake_capture_field_prefix id)
 
@@ -36,7 +36,7 @@ module Closures = struct
   let is_captured_fake_access (access : _ HilExp.Access.t) =
     match access with
     | FieldAccess fieldname
-      when String.is_prefix ~prefix:fake_capture_field_prefix (Typ.Fieldname.to_string fieldname) ->
+      when String.is_prefix ~prefix:fake_capture_field_prefix (Fieldname.to_string fieldname) ->
         true
     | _ ->
         false
@@ -122,15 +122,14 @@ let eval_bo_itv_binop binop_addr bop op_lhs op_rhs astate =
   let bo_itv_of_op op astate =
     match op with
     | LiteralOperand i ->
-        Itv.of_int_lit i
+        Itv.ItvPure.of_int_lit i
     | AbstractValueOperand v ->
         Memory.get_bo_itv v astate
   in
-  match Itv.arith_binop bop (bo_itv_of_op op_lhs astate) (bo_itv_of_op op_rhs astate) with
-  | None ->
-      astate
-  | Some itv ->
-      Memory.add_attribute binop_addr (BoItv itv) astate
+  let bo_itv =
+    Itv.ItvPure.arith_binop bop (bo_itv_of_op op_lhs astate) (bo_itv_of_op op_rhs astate)
+  in
+  Memory.add_attribute binop_addr (BoItv bo_itv) astate
 
 
 let eval_binop location binop op_lhs op_rhs binop_hist astate =
@@ -140,6 +139,35 @@ let eval_binop location binop op_lhs op_rhs binop_hist astate =
     |> eval_bo_itv_binop binop_addr binop op_lhs op_rhs
   in
   (astate, (binop_addr, binop_hist))
+
+
+let eval_unop_arith location unop_addr unop operand_addr unop_hist astate =
+  match
+    Memory.get_arithmetic operand_addr astate
+    |> Option.bind ~f:(function a, _ -> Arithmetic.unop unop a)
+  with
+  | None ->
+      astate
+  | Some unop_a ->
+      let unop_trace = Trace.Immediate {location; history= unop_hist} in
+      Memory.add_attribute unop_addr (Arithmetic (unop_a, unop_trace)) astate
+
+
+let eval_unop_bo_itv unop_addr unop operand_addr astate =
+  match Itv.ItvPure.arith_unop unop (Memory.get_bo_itv operand_addr astate) with
+  | None ->
+      astate
+  | Some itv ->
+      Memory.add_attribute unop_addr (BoItv itv) astate
+
+
+let eval_unop location unop addr unop_hist astate =
+  let unop_addr = AbstractValue.mk_fresh () in
+  let astate =
+    eval_unop_arith location unop_addr unop addr unop_hist astate
+    |> eval_unop_bo_itv unop_addr unop addr
+  in
+  (astate, (unop_addr, unop_hist))
 
 
 let eval location exp0 astate =
@@ -183,27 +211,14 @@ let eval location exp0 astate =
           Memory.add_attribute addr
             (Arithmetic (Arithmetic.equal_to i, Immediate {location; history= []}))
             astate
-          |> Memory.add_attribute addr (BoItv (Itv.of_int_lit i))
+          |> Memory.add_attribute addr (BoItv (Itv.ItvPure.of_int_lit i))
           |> Memory.invalidate
                (addr, [ValueHistory.Assignment location])
                (ConstantDereference i) location
         in
         Ok (astate, (addr, []))
-    | UnOp (unop, exp, _typ) -> (
-        eval exp astate
-        >>| fun (astate, (addr, hist)) ->
-        let unop_addr = AbstractValue.mk_fresh () in
-        match
-          Memory.get_arithmetic addr astate
-          |> Option.bind ~f:(function a, _ -> Arithmetic.unop unop a)
-        with
-        | None ->
-            (astate, (unop_addr, (* TODO history *) []))
-        | Some unop_a ->
-            let unop_hist = (* TODO: add event *) hist in
-            let unop_trace = Trace.Immediate {location; history= unop_hist} in
-            let astate = Memory.add_attribute unop_addr (Arithmetic (unop_a, unop_trace)) astate in
-            (astate, (unop_addr, unop_hist)) )
+    | UnOp (unop, exp, _typ) ->
+        eval exp astate >>| fun (astate, (addr, hist)) -> eval_unop location unop addr hist astate
     | BinOp (bop, e_lhs, e_rhs) ->
         eval e_lhs astate
         >>= fun (astate, (addr_lhs, hist_lhs)) ->
@@ -228,15 +243,12 @@ let eval_arith location exp astate =
         , None
         , Some
             ( Arithmetic.equal_to i
-            , Trace.Immediate {location; history= [ValueHistory.Assignment location]} ) )
-  | exp -> (
+            , Trace.Immediate {location; history= [ValueHistory.Assignment location]} )
+        , Itv.ItvPure.of_int_lit i )
+  | exp ->
       eval location exp astate
-      >>| fun (astate, (addr, _)) ->
-      match Memory.get_arithmetic addr astate with
-      | Some a ->
-          (astate, Some addr, Some a)
-      | None ->
-          (astate, Some addr, None) )
+      >>| fun (astate, (value, _)) ->
+      (astate, Some value, Memory.get_arithmetic value astate, Memory.get_bo_itv value astate)
 
 
 let record_abduced event location addr_opt orig_arith_hist_opt arith_opt astate =
@@ -256,26 +268,61 @@ let record_abduced event location addr_opt orig_arith_hist_opt arith_opt astate 
 
 
 let prune ~is_then_branch if_kind location ~condition astate =
+  let prune_with_bop ~negated v_opt arith bop arith' astate =
+    match
+      Option.both v_opt (if negated then Binop.negate bop else Some bop)
+      |> Option.map ~f:(fun (v, positive_bop) ->
+             (v, Itv.ItvPure.prune_binop positive_bop arith arith') )
+    with
+    | None ->
+        (astate, true)
+    | Some (_, Bottom) ->
+        (astate, false)
+    | Some (v, NonBottom arith_pruned) ->
+        let attr_arith = Attribute.BoItv arith_pruned in
+        let astate =
+          Memory.abduce_attribute v attr_arith astate |> Memory.add_attribute v attr_arith
+        in
+        (astate, true)
+  in
+  let bind_satisfiable ~satisfiable astate ~f = if satisfiable then f astate else (astate, false) in
   let rec prune_aux ~negated exp astate =
     match (exp : Exp.t) with
-    | BinOp (bop, e1, e2) -> (
-        eval_arith location e1 astate
-        >>= fun (astate, addr1, eval1) ->
-        eval_arith location e2 astate
-        >>| fun (astate, addr2, eval2) ->
+    | BinOp (bop, exp_lhs, exp_rhs) -> (
+        eval_arith location exp_lhs astate
+        >>= fun (astate, value_lhs_opt, arith_lhs_opt, bo_itv_lhs) ->
+        eval_arith location exp_rhs astate
+        >>| fun (astate, value_rhs_opt, arith_rhs_opt, bo_itv_rhs) ->
         match
-          Arithmetic.abduce_binop_is_true ~negated bop (Option.map ~f:fst eval1)
-            (Option.map ~f:fst eval2)
+          Arithmetic.abduce_binop_is_true ~negated bop (Option.map ~f:fst arith_lhs_opt)
+            (Option.map ~f:fst arith_rhs_opt)
         with
         | Unsatisfiable ->
             (astate, false)
-        | Satisfiable (abduced1, abduced2) ->
+        | Satisfiable (abduced_lhs, abduced_rhs) ->
             let event = ValueHistory.Conditional {is_then_branch; if_kind; location} in
             let astate =
-              record_abduced event location addr1 eval1 abduced1 astate
-              |> record_abduced event location addr2 eval2 abduced2
+              record_abduced event location value_lhs_opt arith_lhs_opt abduced_lhs astate
+              |> record_abduced event location value_rhs_opt arith_rhs_opt abduced_rhs
             in
-            (astate, true) )
+            let satisfiable =
+              match Itv.ItvPure.arith_binop bop bo_itv_lhs bo_itv_rhs |> Itv.ItvPure.to_boolean with
+              | False ->
+                  negated
+              | True ->
+                  not negated
+              | Top ->
+                  true
+              | Bottom ->
+                  false
+            in
+            let astate, satisfiable =
+              bind_satisfiable ~satisfiable astate ~f:(fun astate ->
+                  prune_with_bop ~negated value_lhs_opt bo_itv_lhs bop bo_itv_rhs astate )
+            in
+            Option.value_map (Binop.symmetric bop) ~default:(astate, satisfiable) ~f:(fun bop' ->
+                bind_satisfiable ~satisfiable astate ~f:(fun astate ->
+                    prune_with_bop ~negated value_rhs_opt bo_itv_rhs bop' bo_itv_lhs astate ) ) )
     | UnOp (LNot, exp', _) ->
         prune_aux ~negated:(not negated) exp' astate
     | exp ->
@@ -316,10 +363,6 @@ let write_deref location ~ref:addr_trace_ref ~obj:addr_trace_obj astate =
 
 let write_field location addr_trace_ref field addr_trace_obj astate =
   write_access location addr_trace_ref (FieldAccess field) addr_trace_obj astate
-
-
-let havoc_deref location addr_trace trace_obj astate =
-  write_deref location ~ref:addr_trace ~obj:(AbstractValue.mk_fresh (), trace_obj) astate
 
 
 let havoc_field location addr_trace field trace_obj astate =
@@ -438,13 +481,18 @@ let remove_vars vars location astate =
   if phys_equal astate' astate then astate else AbductiveDomain.discard_unreachable astate'
 
 
-let unknown_call call_loc reason ~ret ~actuals astate =
+let is_ptr_to_const formal_typ_opt =
+  Option.value_map formal_typ_opt ~default:false ~f:(fun (formal_typ : Typ.t) ->
+      match formal_typ.desc with Typ.Tptr (t, _) -> Typ.is_const t.quals | _ -> false )
+
+
+let unknown_call call_loc reason ~ret ~actuals ~formals_opt astate =
   let event = ValueHistory.Call {f= reason; location= call_loc; in_call= []} in
   let havoc_ret (ret, _) astate = havoc_id ret [event] astate in
-  let havoc_actual_if_ptr (actual, typ) astate =
-    if Typ.is_pointer typ then
-      (* TODO: to avoid false negatives, we should not havoc when the corresponding formal is a
-         pointer to const *)
+  let havoc_actual_if_ptr (actual, actual_typ) formal_typ_opt astate =
+    (* We should not havoc when the corresponding formal is a
+       pointer to const *)
+    if Typ.is_pointer actual_typ && not (is_ptr_to_const formal_typ_opt) then
       (* HACK: write through the pointer even if it is invalid. This is to avoid raising issues when
          havoc'ing pointer parameters (which normally causes a [check_valid] call. *)
       let fresh_value = AbstractValue.mk_fresh () in
@@ -452,11 +500,28 @@ let unknown_call call_loc reason ~ret ~actuals astate =
     else astate
   in
   L.d_printfln "skipping unknown procedure@." ;
-  List.fold actuals ~f:(fun astate actual_typ -> havoc_actual_if_ptr actual_typ astate) ~init:astate
+  ( match formals_opt with
+  | None ->
+      List.fold actuals
+        ~f:(fun astate actual_typ -> havoc_actual_if_ptr actual_typ None astate)
+        ~init:astate
+  | Some formals -> (
+    match
+      List.fold2 actuals formals
+        ~f:(fun astate actual_typ (_, formal_typ) ->
+          havoc_actual_if_ptr actual_typ (Some formal_typ) astate )
+        ~init:astate
+    with
+    | Unequal_lengths ->
+        L.d_printfln "ERROR: formals have length %d but actuals have length %d"
+          (List.length formals) (List.length actuals) ;
+        astate
+    | Ok result ->
+        result ) )
   |> havoc_ret ret
 
 
-let call ~caller_summary call_loc callee_pname ~ret ~actuals astate =
+let call ~caller_summary call_loc callee_pname ~ret ~actuals ~formals_opt astate =
   match PulsePayload.read_full ~caller_summary ~callee_pname with
   | Some (callee_proc_desc, preposts) ->
       let formals =
@@ -484,5 +549,5 @@ let call ~caller_summary call_loc callee_pname ~ret ~actuals astate =
               post :: posts )
   | None ->
       (* no spec found for some reason (unknown function, ...) *)
-      L.d_printfln "No spec found for %a@\n" Typ.Procname.pp callee_pname ;
-      Ok [unknown_call call_loc (SkippedKnownCall callee_pname) ~ret ~actuals astate]
+      L.d_printfln "No spec found for %a@\n" Procname.pp callee_pname ;
+      Ok [unknown_call call_loc (SkippedKnownCall callee_pname) ~ret ~actuals ~formals_opt astate]

@@ -132,6 +132,9 @@ module Bound : sig
   val is_same_one_symbol : t -> t -> bool
   (** It returns [true] when the two bounds are linear expressions of the same one symbol [1⋅s]. *)
 
+  val is_incr_of : Symb.SymbolPath.partial -> t -> bool
+  (** Check if [bound] is [path+1] when called [is_incr_of path bound] *)
+
   val exists_str : f:(string -> bool) -> t -> bool
 end
 
@@ -177,7 +180,7 @@ module NonNegativeBound : sig
   val classify : t -> (Ints.NonNegativeInt.t, t, BoundTrace.t) valclass
 
   val subst :
-       Typ.Procname.t
+       Procname.t
     -> Location.t
     -> t
     -> Bound.eval_sym

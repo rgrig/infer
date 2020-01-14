@@ -110,9 +110,9 @@ let instrs_normalize instrs =
   let subst =
     let count = ref Int.min_value in
     let gensym id = incr count ; Ident.set_stamp id !count in
-    Sil.subst_of_list (List.rev_map ~f:(fun id -> (id, Exp.Var (gensym id))) bound_ids)
+    Predicates.subst_of_list (List.rev_map ~f:(fun id -> (id, Exp.Var (gensym id))) bound_ids)
   in
-  let subst_and_add acc instr = Sil.instr_sub subst instr :: acc in
+  let subst_and_add acc instr = Predicates.instr_sub subst instr :: acc in
   Instrs.fold instrs ~init:[] ~f:subst_and_add
 
 
@@ -167,7 +167,7 @@ let mk_find_duplicate_nodes : Procdesc.t -> Procdesc.Node.t -> Procdesc.NodeSet.
 
 let get_inst_update pos =
   let loc = get_loc_exn () in
-  Sil.inst_update loc pos
+  Predicates.inst_update loc pos
 
 
 let get_path () =
@@ -191,7 +191,7 @@ let extract_pre p tenv pdesc abstract_fun =
   let sub =
     let idlist = Prop.free_vars p |> Ident.hashqueue_of_sequence |> Ident.HashQueue.keys in
     let count = ref 0 in
-    Sil.subst_of_list
+    Predicates.subst_of_list
       (List.map
          ~f:(fun id ->
            incr count ;
@@ -223,7 +223,7 @@ let get_path_pos () =
     | Some (_, _, pdesc) ->
         Procdesc.get_proc_name pdesc
     | None ->
-        Typ.Procname.from_string_c_fun "unknown_procedure"
+        Procname.from_string_c_fun "unknown_procedure"
   in
   let nid = Procdesc.Node.get_id (get_node_exn ()) in
   (pname, (nid :> int))
@@ -260,7 +260,7 @@ let mark_instr_fail exn =
 
 
 type log_issue =
-  Typ.Procname.t -> ?node:Procdesc.Node.t -> ?loc:Location.t -> ?ltr:Errlog.loc_trace -> exn -> unit
+  Procname.t -> ?node:Procdesc.Node.t -> ?loc:Location.t -> ?ltr:Errlog.loc_trace -> exn -> unit
 
 let process_execution_failures (log_issue : log_issue) pname =
   let do_failure _ fs =

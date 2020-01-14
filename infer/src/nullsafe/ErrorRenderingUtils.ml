@@ -31,7 +31,7 @@ let is_object_nullability_self_explanatory ~object_expression object_origin =
   | TypeOrigin.Field {field_name} ->
       (* Either local variable or expression like `<smth>.field_name`. Latter case is trivial:
          the user can quickly go to field_name definition and see if its annotation. *)
-      let field_name_str = Typ.Fieldname.to_flat_string field_name in
+      let field_name_str = Fieldname.get_field_name field_name in
       String.is_suffix object_expression ~suffix:field_name_str
   | TypeOrigin.MethodCall {pname; annotated_signature= {model_source}} ->
       let is_modelled = Option.is_some model_source in
@@ -42,7 +42,7 @@ let is_object_nullability_self_explanatory ~object_expression object_origin =
            Latter case is self-explanatory: it is easy to the user to jump to definition
            and check out the method annotation.
         *)
-        let method_name = Typ.Procname.to_simplified_string pname in
+        let method_name = Procname.to_simplified_string pname in
         String.is_suffix object_expression ~suffix:method_name
   (* These cases are not yet supported because they normally mean non-nullable case, for which
      we don't render important messages yet.
@@ -68,14 +68,14 @@ type message_info =
 
 let get_method_class_name procname =
   match procname with
-  | Typ.Procname.Java java_pname ->
-      Some (Typ.Procname.Java.get_simple_class_name java_pname)
+  | Procname.Java java_pname ->
+      Some (Procname.Java.get_simple_class_name java_pname)
   | _ ->
       None
 
 
 let get_field_class_name field_name =
-  let class_with_field = Typ.Fieldname.to_simplified_string field_name in
+  let class_with_field = Fieldname.to_simplified_string field_name in
   String.rsplit2 class_with_field ~on:'.'
   |> Option.value_map ~f:(fun (classname, _) -> classname) ~default:"the field class"
 
@@ -85,7 +85,7 @@ let get_info object_origin =
   | TypeOrigin.MethodCall {pname; call_loc} ->
       let offending_object =
         Format.asprintf "%a" MarkupFormatter.pp_monospaced
-          (Typ.Procname.to_simplified_string ~withclass:true pname)
+          (Procname.to_simplified_string ~withclass:true pname)
       in
       let object_loc = call_loc in
       let suggested_third_party_sig_file =
@@ -122,7 +122,7 @@ let get_info object_origin =
   | TypeOrigin.Field {field_name; access_loc} ->
       let offending_object =
         Format.asprintf "%a" MarkupFormatter.pp_monospaced
-          (Typ.Fieldname.to_simplified_string field_name)
+          (Fieldname.to_simplified_string field_name)
       in
       let object_loc = access_loc in
       (* TODO: currently we do not support third-party annotations for fields. Because of this,

@@ -15,7 +15,7 @@ let compare_typ_ _ _ = 0
 
 module Access = struct
   type 'array_index t =
-    | FieldAccess of Typ.Fieldname.t
+    | FieldAccess of Fieldname.t
     | ArrayAccess of typ_ * 'array_index
     | TakeAddress
     | Dereference
@@ -23,7 +23,7 @@ module Access = struct
 
   let pp pp_array_index fmt = function
     | FieldAccess field_name ->
-        Typ.Fieldname.pp fmt field_name
+        Fieldname.pp fmt field_name
     | ArrayAccess (_, index) ->
         F.fprintf fmt "[%a]" pp_array_index index
     | TakeAddress ->
@@ -48,14 +48,14 @@ module T : sig
     | UnaryOperator of Unop.t * t * Typ.t option
     | BinaryOperator of Binop.t * t * t
     | Exception of t
-    | Closure of Typ.Procname.t * (AccessPath.base * t) list
+    | Closure of Procname.t * (AccessPath.base * t) list
     | Constant of Const.t
     | Cast of Typ.t * t
     | Sizeof of Typ.t * t option
 
   and access_expression = private
     | Base of AccessPath.base
-    | FieldOffset of access_expression * Typ.Fieldname.t
+    | FieldOffset of access_expression * Fieldname.t
     | ArrayOffset of access_expression * typ_ * t option
     | AddressOf of access_expression
     | Dereference of access_expression
@@ -64,7 +64,7 @@ module T : sig
   module UnsafeAccessExpression : sig
     val base : AccessPath.base -> access_expression
 
-    val field_offset : access_expression -> Typ.Fieldname.t -> access_expression
+    val field_offset : access_expression -> Fieldname.t -> access_expression
 
     val array_offset : access_expression -> Typ.t -> t option -> access_expression
 
@@ -83,14 +83,14 @@ end = struct
     | UnaryOperator of Unop.t * t * Typ.t option
     | BinaryOperator of Binop.t * t * t
     | Exception of t
-    | Closure of Typ.Procname.t * (AccessPath.base * t) list
+    | Closure of Procname.t * (AccessPath.base * t) list
     | Constant of Const.t
     | Cast of Typ.t * t
     | Sizeof of Typ.t * t option
 
   and access_expression =
     | Base of AccessPath.base
-    | FieldOffset of access_expression * Typ.Fieldname.t
+    | FieldOffset of access_expression * Fieldname.t
     | ArrayOffset of access_expression * typ_ * t option
     | AddressOf of access_expression
     | Dereference of access_expression
@@ -149,9 +149,9 @@ let rec pp_access_expr fmt = function
   | Base (pvar, typ) ->
       Var.pp fmt pvar ; may_pp_typ fmt typ
   | FieldOffset (Dereference ae, fld) ->
-      F.fprintf fmt "%a->%a" pp_access_expr ae Typ.Fieldname.pp fld
+      F.fprintf fmt "%a->%a" pp_access_expr ae Fieldname.pp fld
   | FieldOffset (ae, fld) ->
-      F.fprintf fmt "%a.%a" pp_access_expr ae Typ.Fieldname.pp fld
+      F.fprintf fmt "%a.%a" pp_access_expr ae Fieldname.pp fld
   | ArrayOffset (ae, typ, index) ->
       F.fprintf fmt "%a[%a]%a" pp_access_expr ae (pp_array_offset_opt pp) index may_pp_typ typ
   | AddressOf (Base _ as ae) ->
@@ -181,7 +181,7 @@ and pp fmt = function
         | _ ->
             F.fprintf fmt "%a captured as %a" AccessPath.pp_base base pp exp
       in
-      F.fprintf fmt "closure(%a, %a)" Typ.Procname.pp pname
+      F.fprintf fmt "closure(%a, %a)" Procname.pp pname
         (PrettyPrintable.pp_collection ~pp_item)
         captured
   | Constant c ->
@@ -215,7 +215,7 @@ module AccessExpression = struct
 
   type nonrec t = access_expression = private
     | Base of AccessPath.base
-    | FieldOffset of access_expression * Typ.Fieldname.t
+    | FieldOffset of access_expression * Fieldname.t
     | ArrayOffset of access_expression * typ_ * t option
     | AddressOf of access_expression
     | Dereference of access_expression
@@ -259,7 +259,7 @@ module AccessExpression = struct
 
   let lookup_field_type_annot tenv base_typ field_name =
     let lookup = Tenv.lookup tenv in
-    Typ.Struct.get_field_type_and_annotation ~lookup field_name base_typ
+    Struct.get_field_type_and_annotation ~lookup field_name base_typ
 
 
   let rec get_typ t tenv : Typ.t option =
@@ -371,6 +371,9 @@ module AccessExpression = struct
     to_accesses y |> snd
     |> List.fold ~init:(Some onto) ~f:(fun acc access ->
            match acc with None -> acc | Some exp -> add_access exp access )
+
+
+  let is_return_var = function Base (var, _) -> Var.is_return var | _ -> false
 end
 
 let rec get_typ tenv = function

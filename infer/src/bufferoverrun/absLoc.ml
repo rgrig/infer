@@ -65,10 +65,8 @@ module Allocsite = struct
 
   let is_unknown = function Unknown -> true | Symbol _ | Known _ | LiteralString _ -> false
 
-  let to_string x = F.asprintf "%a" pp x
-
   let make :
-         Typ.Procname.t
+         Procname.t
       -> node_hash:int
       -> inst_num:int
       -> dimension:int
@@ -77,7 +75,7 @@ module Allocsite = struct
       -> t =
    fun proc_name ~node_hash ~inst_num ~dimension ~path ~represents_multiple_values ->
     Known
-      { proc_name= Typ.Procname.to_string proc_name
+      { proc_name= Procname.to_string proc_name
       ; node_hash
       ; inst_num
       ; dimension
@@ -136,8 +134,8 @@ module Loc = struct
       type t =
         | Var of Var.t
         | Allocsite of Allocsite.t
-        | Field of {prefix: t; fn: Typ.Fieldname.t; typ: field_typ}
-        | StarField of {prefix: t; last_field: Typ.Fieldname.t}
+        | Field of {prefix: t; fn: Fieldname.t; typ: field_typ}
+        | StarField of {prefix: t; last_field: Fieldname.t}
       [@@deriving compare]
 
       let of_var v = Var v
@@ -148,11 +146,11 @@ module Loc = struct
         let rec aux = function
           | Var _ | Allocsite _ ->
               Field {prefix= l0; fn; typ}
-          | StarField {last_field} as l when Typ.Fieldname.equal fn last_field ->
+          | StarField {last_field} as l when Fieldname.equal fn last_field ->
               l
           | StarField {prefix} ->
               StarField {prefix; last_field= fn}
-          | Field {fn= fn'} when Typ.Fieldname.equal fn fn' ->
+          | Field {fn= fn'} when Fieldname.equal fn fn' ->
               StarField {prefix= l0; last_field= fn}
           | Field {prefix= l} ->
               aux l
@@ -164,7 +162,7 @@ module Loc = struct
         let rec aux = function
           | Var _ | Allocsite _ ->
               StarField {prefix= l0; last_field= fn}
-          | StarField {last_field} as l when Typ.Fieldname.equal fn last_field ->
+          | StarField {last_field} as l when Fieldname.equal fn last_field ->
               l
           | StarField {prefix} ->
               StarField {prefix; last_field= fn}
@@ -177,17 +175,17 @@ module Loc = struct
         type t = private
           | Var of Var.t
           | Allocsite of Allocsite.t
-          | Field of {prefix: t; fn: Typ.Fieldname.t; typ: field_typ}
-          | StarField of {prefix: t; last_field: Typ.Fieldname.t}
+          | Field of {prefix: t; fn: Fieldname.t; typ: field_typ}
+          | StarField of {prefix: t; last_field: Fieldname.t}
         [@@deriving compare]
 
         val of_var : Var.t -> t
 
         val of_allocsite : Allocsite.t -> t
 
-        val append_field : ?typ:Typ.t -> t -> fn:Typ.Fieldname.t -> t
+        val append_field : ?typ:Typ.t -> t -> fn:Fieldname.t -> t
 
-        val append_star_field : t -> fn:Typ.Fieldname.t -> t
+        val append_star_field : t -> fn:Fieldname.t -> t
       end )
 
   let equal = [%compare.equal: t]
@@ -229,34 +227,29 @@ module Loc = struct
               (Allocsite.Known
                 {path= Some (SP.Deref ((SP.Deref_COneValuePointer | SP.Deref_CPointer), p))})
         ; fn= f } ->
-        BufferOverrunField.pp ~pp_lhs:(SP.pp_partial_paren ~paren:true)
-          ~pp_lhs_alone:(SP.pp_pointer ~paren) ~sep:"->" fmt p f
+        BufferOverrunField.pp ~pp_lhs:(SP.pp_partial_paren ~paren:true) ~sep:"->" fmt p f
     | Field {prefix= l; fn= f} ->
-        BufferOverrunField.pp ~pp_lhs:(pp_paren ~paren:true) ~pp_lhs_alone:(pp_paren ~paren)
-          ~sep:"." fmt l f
+        BufferOverrunField.pp ~pp_lhs:(pp_paren ~paren:true) ~sep:"." fmt l f
     | StarField {prefix; last_field} ->
-        BufferOverrunField.pp ~pp_lhs:(pp_star ~paren:true) ~pp_lhs_alone:(pp_star ~paren) ~sep:"."
-          fmt prefix last_field
+        BufferOverrunField.pp ~pp_lhs:(pp_star ~paren:true) ~sep:"." fmt prefix last_field
 
 
   and pp_star ~paren fmt l = pp_paren ~paren fmt l ; F.pp_print_string fmt ".*"
 
   let pp = pp_paren ~paren:false
 
-  let to_string x = F.asprintf "%a" pp x
-
   let is_var = function Var _ -> true | _ -> false
 
   let is_c_strlen = function
     | Field {fn} ->
-        Typ.Fieldname.equal fn (BufferOverrunField.c_strlen ())
+        Fieldname.equal fn (BufferOverrunField.c_strlen ())
     | _ ->
         false
 
 
   let is_java_collection_internal_array = function
     | Field {fn} ->
-        Typ.Fieldname.equal fn BufferOverrunField.java_collection_internal_array
+        Fieldname.equal fn BufferOverrunField.java_collection_internal_array
     | _ ->
         false
 
@@ -304,7 +297,7 @@ module Loc = struct
   let get_literal_string = function Allocsite a -> Allocsite.get_literal_string a | _ -> None
 
   let get_literal_string_strlen = function
-    | Field {prefix= l; fn} when Typ.Fieldname.equal (BufferOverrunField.c_strlen ()) fn ->
+    | Field {prefix= l; fn} when Fieldname.equal (BufferOverrunField.c_strlen ()) fn ->
         get_literal_string l
     | _ ->
         None

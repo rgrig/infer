@@ -123,6 +123,8 @@ module ItvPure = struct
 
   let of_big_int n = of_bound (Bound.of_big_int n)
 
+  let of_int_lit n = of_big_int (IntLit.to_big_int n)
+
   let of_pulse_value v = of_bound (Bound.of_pulse_value v)
 
   let mone = of_bound Bound.mone
@@ -147,7 +149,7 @@ module ItvPure = struct
 
   let zero_one = (Bound.zero, Bound.one)
 
-  let get_iterator_itv = set_lb_zero
+  let get_range_of_iterator = set_lb_zero
 
   let true_sem = one
 
@@ -199,11 +201,22 @@ module ItvPure = struct
     (l', u')
 
 
-  let to_bool : t -> Boolean.t =
+  let to_boolean : t -> Boolean.t =
    fun x -> if is_false x then Boolean.False else if is_true x then Boolean.True else Boolean.Top
 
 
-  let lnot : t -> Boolean.t = fun x -> to_bool x |> Boolean.not_
+  let of_boolean : Boolean.t -> t bottom_lifted = function
+    | True ->
+        NonBottom (of_int 1)
+    | False ->
+        NonBottom (of_int 0)
+    | Bottom ->
+        Bottom
+    | Top ->
+        NonBottom top
+
+
+  let lnot : t -> Boolean.t = fun x -> to_boolean x |> Boolean.not_
 
   let plus : t -> t -> t =
    fun (l1, u1) (l2, u2) -> (Bound.plus_l ~weak:false l1 l2, Bound.plus_u ~weak:false u1 u2)
@@ -366,9 +379,9 @@ module ItvPure = struct
     else Boolean.Top
 
 
-  let land_sem : t -> t -> Boolean.t = fun x y -> Boolean.and_ (to_bool x) (to_bool y)
+  let land_sem : t -> t -> Boolean.t = fun x y -> Boolean.and_ (to_boolean x) (to_boolean y)
 
-  let lor_sem : t -> t -> Boolean.t = fun x y -> Boolean.or_ (to_bool x) (to_bool y)
+  let lor_sem : t -> t -> Boolean.t = fun x y -> Boolean.or_ (to_boolean x) (to_boolean y)
 
   let lift_minmax_bound ~use_minmax_bound ~mk ~f x y =
     let r = f x y in
@@ -402,15 +415,49 @@ module ItvPure = struct
         Bottom
 
 
-  let arith_binop bop x y =
-    match bop with
-    | Binop.PlusA _ ->
-        Some (plus x y)
-    | Binop.MinusA _ ->
-        Some (minus x y)
-    | _ ->
-        None
+  let assert_no_bottom = function Bottom -> assert false | NonBottom x -> x
 
+  let arith_binop (bop : Binop.t) x y =
+    match bop with
+    | PlusA _ | PlusPI ->
+        plus x y
+    | MinusA _ | MinusPI | MinusPP ->
+        minus x y
+    | Mult _ ->
+        mult x y
+    | Div ->
+        div x y
+    | Mod ->
+        mod_sem x y
+    | Shiftlt ->
+        shiftlt x y
+    | Shiftrt ->
+        shiftrt x y
+    | Lt ->
+        of_boolean (lt_sem x y) |> assert_no_bottom
+    | Gt ->
+        of_boolean (gt_sem x y) |> assert_no_bottom
+    | Le ->
+        of_boolean (le_sem x y) |> assert_no_bottom
+    | Ge ->
+        of_boolean (ge_sem x y) |> assert_no_bottom
+    | Eq ->
+        of_boolean (eq_sem x y) |> assert_no_bottom
+    | Ne ->
+        of_boolean (ne_sem x y) |> assert_no_bottom
+    | BAnd ->
+        band_sem x y
+    | BXor ->
+        top
+    | BOr ->
+        top
+    | LAnd ->
+        of_boolean (land_sem x y) |> assert_no_bottom
+    | LOr ->
+        of_boolean (lor_sem x y) |> assert_no_bottom
+
+
+  let arith_unop (unop : Unop.t) x = match unop with Neg -> Some (neg x) | BNot | LNot -> None
 
   let prune_le : t -> t -> t = fun (l1, u1) (_, u2) -> (l1, Bound.overapprox_min u1 u2)
 
@@ -435,13 +482,13 @@ module ItvPure = struct
     else
       let x =
         match c with
-        | Binop.Le ->
+        | Le ->
             prune_le x y
-        | Binop.Ge ->
+        | Ge ->
             prune_ge x y
-        | Binop.Lt ->
+        | Lt ->
             prune_lt x y
-        | Binop.Gt ->
+        | Gt ->
             prune_gt x y
         | _ ->
             assert false
@@ -466,6 +513,33 @@ module ItvPure = struct
 
 
   let prune_ge_one : t -> t bottom_lifted = fun x -> prune_comp Binop.Ge x one
+
+  let prune_binop : Binop.t -> t -> t -> t bottom_lifted =
+   fun bop x y ->
+    match bop with
+    | Lt | Gt | Le | Ge ->
+        prune_comp bop x y
+    | Eq ->
+        prune_eq x y
+    | Ne ->
+        prune_ne x y
+    | PlusA _
+    | PlusPI
+    | MinusA _
+    | MinusPI
+    | MinusPP
+    | Mult _
+    | Div
+    | Mod
+    | Shiftlt
+    | Shiftrt
+    | BAnd
+    | BXor
+    | BOr
+    | LAnd
+    | LOr ->
+        NonBottom x
+
 
   let get_symbols : t -> SymbolSet.t =
    fun (l, u) -> SymbolSet.union (Bound.get_symbols l) (Bound.get_symbols u)
@@ -512,6 +586,8 @@ module ItvPure = struct
 
 
   let has_void_ptr_symb x = Bound.has_void_ptr_symb (lb x) || Bound.has_void_ptr_symb (ub x)
+
+  let is_incr_of path x = Bound.is_incr_of path (lb x) && Bound.is_incr_of path (ub x)
 end
 
 include AbstractDomain.BottomLifted (ItvPure)
@@ -586,9 +662,7 @@ let of_int : int -> t = fun n -> NonBottom (ItvPure.of_int n)
 
 let of_big_int : Z.t -> t = fun n -> NonBottom (ItvPure.of_big_int n)
 
-let of_int_lit : IntLit.t -> t = fun n -> of_big_int (IntLit.to_big_int n)
-
-let of_pulse_value : PulseAbstractValue.t -> t = fun v -> NonBottom (ItvPure.of_pulse_value v)
+let of_int_lit : IntLit.t -> t = fun n -> NonBottom (ItvPure.of_int_lit n)
 
 let is_false : t -> bool = function NonBottom x -> ItvPure.is_false x | Bottom -> false
 
@@ -628,15 +702,6 @@ let lift2 : (ItvPure.t -> ItvPure.t -> ItvPure.t) -> t -> t -> t =
       NonBottom (f x y)
 
 
-let lift2opt : (ItvPure.t -> ItvPure.t -> ItvPure.t option) -> t -> t -> t option =
- fun f x y ->
-  match (x, y) with
-  | Bottom, _ | _, Bottom ->
-      Some Bottom
-  | NonBottom x, NonBottom y ->
-      f x y |> Option.map ~f:(fun v -> NonBottom v)
-
-
 let bind2_gen : bot:'a -> (ItvPure.t -> ItvPure.t -> 'a) -> t -> t -> 'a =
  fun ~bot f x y ->
   match (x, y) with Bottom, _ | _, Bottom -> bot | NonBottom x, NonBottom y -> f x y
@@ -660,7 +725,7 @@ let set_lb lb = lift1 (ItvPure.set_lb lb)
 
 let set_lb_zero = lift1 ItvPure.set_lb_zero
 
-let get_iterator_itv : t -> t = lift1 ItvPure.get_iterator_itv
+let get_range_of_iterator : t -> t = lift1 ItvPure.get_range_of_iterator
 
 let get_const : t -> Z.t option = bind1zo ItvPure.get_const
 
@@ -714,15 +779,13 @@ let max_sem : ?use_minmax_bound:bool -> t -> t -> t =
  fun ?use_minmax_bound -> lift2 (ItvPure.max_sem ?use_minmax_bound)
 
 
-let arith_binop : Binop.t -> t -> t -> t option = fun bop -> lift2opt (ItvPure.arith_binop bop)
-
 let prune_eq_zero : t -> t = bind1 ItvPure.prune_eq_zero
 
 let prune_ne_zero : t -> t = bind1 ItvPure.prune_ne_zero
 
 let prune_ge_one : t -> t = bind1 ItvPure.prune_ge_one
 
-let prune_comp : Binop.t -> t -> t -> t = fun comp -> bind2 (ItvPure.prune_comp comp)
+let prune_binop : Binop.t -> t -> t -> t = fun comp -> bind2 (ItvPure.prune_binop comp)
 
 let prune_lt : t -> t -> t = lift2 ItvPure.prune_lt
 
@@ -766,3 +829,5 @@ let is_offset_path_of path = bind1_gen ~bot:false (ItvPure.is_offset_path_of pat
 let is_length_path_of path = bind1_gen ~bot:false (ItvPure.is_length_path_of path)
 
 let has_only_non_int_symbols = bind1bool ItvPure.has_only_non_int_symbols
+
+let is_incr_of path = bind1bool (ItvPure.is_incr_of path)

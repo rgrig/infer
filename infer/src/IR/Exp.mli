@@ -13,7 +13,7 @@
 open! IStd
 module F = Format
 
-type closure = {name: Typ.Procname.t; captured_vars: (t * Pvar.t * Typ.t) list}
+type closure = {name: Procname.t; captured_vars: (t * Pvar.t * Typ.t) list}
 
 (** This records information about a [sizeof(typ)] expression.
 
@@ -37,7 +37,7 @@ and t =
   | Const of Const.t  (** Constants *)
   | Cast of Typ.t * t  (** Type cast *)
   | Lvar of Pvar.t  (** The address of a program variable *)
-  | Lfield of t * Typ.Fieldname.t * Typ.t
+  | Lfield of t * Fieldname.t * Typ.t
       (** A field offset, the type is the surrounding struct type *)
   | Lindex of t * t  (** An array index offset: [exp1\[exp2\]] *)
   | Sizeof of sizeof_data
@@ -138,11 +138,26 @@ val rename_pvars : f:(string -> string) -> t -> t
 val fold_captured : f:('a -> t -> 'a) -> t -> 'a -> 'a
 (** Fold over the expressions captured by this expression. *)
 
-val pp_printenv : print_types:bool -> Pp.env -> F.formatter -> t -> unit
+val pp_diff : ?print_types:bool -> Pp.env -> F.formatter -> t -> unit
 
 val pp : F.formatter -> t -> unit
 
 val to_string : t -> string
+
+val d_exp : t -> unit
+(** dump an expression. *)
+
+val pp_texp : Pp.env -> F.formatter -> t -> unit
+(** Pretty print a type. *)
+
+val pp_texp_full : Pp.env -> F.formatter -> t -> unit
+(** Pretty print a type with all the details. *)
+
+val d_texp_full : t -> unit
+(** Dump a type expression with all the details. *)
+
+val d_list : t list -> unit
+(** Dump a list of expressions. *)
 
 val is_objc_block_closure : t -> bool
 
@@ -155,6 +170,5 @@ val ignore_cast : t -> t
 
 val ignore_integer_cast : t -> t
 
-val get_java_class_initializer :
-  Tenv.t -> t -> (Typ.Procname.t * Pvar.t * Typ.Fieldname.t * Typ.t) option
+val get_java_class_initializer : Tenv.t -> t -> (Procname.t * Pvar.t * Fieldname.t * Typ.t) option
 (** Returns the class initializer of the given expression in Java *)

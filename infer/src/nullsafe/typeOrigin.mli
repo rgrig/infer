@@ -31,12 +31,12 @@ type t =
 
 and field_origin =
   { object_origin: t  (** field's object origin (object is before field access operator `.`) *)
-  ; field_name: Typ.Fieldname.t
+  ; field_name: Fieldname.t
   ; field_type: AnnotatedType.t
   ; access_loc: Location.t }
 
 and method_call_origin =
-  { pname: Typ.Procname.t
+  { pname: Procname.t
   ; call_loc: Location.t
   ; annotated_signature: AnnotatedSignature.t
   ; is_library: bool }

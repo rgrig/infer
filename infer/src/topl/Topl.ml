@@ -39,14 +39,6 @@ let get_proc_attr proc_name =
   Option.map ~f:Procdesc.get_attributes (get_proc_desc proc_name)
 
 
-let max_args = ref 0
-
-let get_max_args () =
-  let instrument_max_args = !max_args in
-  let automaton_max_args = ToplAutomaton.max_args (Lazy.force automaton) in
-  Int.max instrument_max_args automaton_max_args
-
-
 let get_transitions_count () = ToplAutomaton.tcount (Lazy.force automaton)
 
 (** Checks whether the method name and the number of arguments matches the conditions in a
@@ -56,11 +48,10 @@ let evaluate_static_guard label (e_fun, arg_ts) =
     match e_fun with
     | Exp.Const (Const.Cfun n) ->
         (* TODO: perhaps handle inheritance *)
-        let name = Typ.Procname.hashable_name n in
+        let name = Procname.hashable_name n in
         let re = Str.regexp label.ToplAst.procedure_name in
         let result = Str.string_match re name 0 in
-        if Config.trace_topl then
-          tt "match name='%s' re='%s' result=%b@\n" name label.ToplAst.procedure_name result ;
+        tt "match name='%s' re='%s' result=%b@\n" name label.ToplAst.procedure_name result ;
         result
     | _ ->
         false
@@ -103,18 +94,20 @@ let call_execute loc =
   [|ToplUtils.topl_call dummy_ret_id Tvoid loc ToplName.execute []|]
 
 
-(* Side-effect: increases [!max_args] when it sees a call with more arguments. *)
 let instrument_instruction = function
   | Sil.Call ((ret_id, ret_typ), e_fun, arg_ts, loc, _call_flags) as i ->
       let active_transitions = get_active_transitions e_fun arg_ts in
-      if not (Array.exists ~f:(fun x -> x) active_transitions) then [|i|]
-      else (
-        max_args := Int.max !max_args (List.length arg_ts) ;
-        tt "found %d arguments@\n" (List.length arg_ts) ;
+      let instrument =
+        let a = Lazy.force automaton in
+        let is_interesting t active = active && not (ToplAutomaton.is_skip a t) in
+        Array.existsi ~f:is_interesting active_transitions
+      in
+      if not instrument then (* optimization*) [|i|]
+      else
         let i1s = set_transitions loc active_transitions in
         let i2s = call_save_args loc ret_id ret_typ arg_ts in
         let i3s = call_execute loc in
-        Array.concat [[|i|]; i1s; i2s; i3s] )
+        Array.concat [[|i|]; i1s; i2s; i3s]
   | i ->
       [|i|]
 
@@ -137,19 +130,15 @@ let add_types tenv =
     Hashtbl.keys h
   in
   let transition_field i =
-    (Typ.Fieldname.Java.from_string (ToplName.transition i), Typ.mk (Tint IBool), [])
+    (ToplUtils.make_field (ToplName.transition i), Typ.mk (Tint IBool), [])
   in
-  let saved_arg_field i =
-    (Typ.Fieldname.Java.from_string (ToplName.saved_arg i), ToplUtils.any_type, [])
-  in
-  let register_field name =
-    (Typ.Fieldname.Java.from_string (ToplName.reg name), ToplUtils.any_type, [])
-  in
+  let saved_arg_field i = (ToplUtils.make_field (ToplName.saved_arg i), ToplUtils.any_type, []) in
+  let register_field name = (ToplUtils.make_field (ToplName.reg name), ToplUtils.any_type, []) in
   let statics =
-    let state = (Typ.Fieldname.Java.from_string ToplName.state, Typ.mk (Tint IInt), []) in
-    let retval = (Typ.Fieldname.Java.from_string ToplName.retval, ToplUtils.any_type, []) in
+    let state = (ToplUtils.make_field ToplName.state, Typ.mk (Tint IInt), []) in
+    let retval = (ToplUtils.make_field ToplName.retval, ToplUtils.any_type, []) in
     let transitions = List.init (get_transitions_count ()) ~f:transition_field in
-    let saved_args = List.init (get_max_args ()) ~f:saved_arg_field in
+    let saved_args = List.init (ToplAutomaton.max_args (Lazy.force automaton)) ~f:saved_arg_field in
     let registers = List.map ~f:register_field (get_registers ()) in
     List.concat [[retval; state]; transitions; saved_args; registers]
   in
@@ -162,7 +151,7 @@ let instrument tenv procdesc =
     let f _node = instrument_instruction in
     tt "instrument@\n" ;
     let _updated = Procdesc.replace_instrs_by procdesc ~f in
-    tt "add types %d@\n" !max_args ; add_types tenv ; tt "done@\n" )
+    tt "add types@\n" ; add_types tenv ; tt "done@\n" )
 
 
 (** [lookup_static_var var prop] expects [var] to have the form [Exp.Lfield (obj, fieldname)], and
@@ -172,16 +161,16 @@ let instrument tenv procdesc =
     + one cannot do boolean-conjunction on symbolic heaps; and
     + the prover fails to see that 0!=o.f * o|-f->0 is inconsistent *)
 let lookup_static_var env (var : Exp.t) (prop : 'a Prop.t) : Exp.t option =
-  let from_strexp = function Sil.Eexp (e, _) -> Some e | _ -> None in
-  let get_field field (f, e) = if Typ.Fieldname.equal field f then from_strexp e else None in
+  let from_strexp = function Predicates.Eexp (e, _) -> Some e | _ -> None in
+  let get_field field (f, e) = if Fieldname.equal field f then from_strexp e else None in
   let get_strexp field = function
-    | Sil.Estruct (fs, _inst) ->
+    | Predicates.Estruct (fs, _inst) ->
         List.find_map ~f:(get_field field) fs
     | _ ->
         None
   in
   let get_hpred obj field = function
-    | Sil.Hpointsto (obj', se, _typ) when Exp.equal obj obj' ->
+    | Predicates.Hpointsto (obj', se, _typ) when Exp.equal obj obj' ->
         get_strexp field se
     | _ ->
         None

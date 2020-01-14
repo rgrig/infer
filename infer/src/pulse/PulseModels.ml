@@ -40,14 +40,32 @@ module Misc = struct
    fun i64 ~caller_summary:_ location ~ret:(ret_id, _) astate ->
     let ret_addr = AbstractValue.mk_fresh () in
     let astate =
-      Memory.add_attribute ret_addr
-        (Arithmetic (Arithmetic.equal_to (IntLit.of_int64 i64), Immediate {location; history= []}))
-        astate
+      let i = IntLit.of_int64 i64 in
+      Memory.add_attribute ret_addr (BoItv (Itv.ItvPure.of_int_lit i)) astate
+      |> Memory.add_attribute ret_addr
+           (Arithmetic (Arithmetic.equal_to i, Immediate {location; history= []}))
+    in
+    Ok [PulseOperations.write_id ret_id (ret_addr, []) astate]
+
+
+  let return_unknown_size : model =
+   fun ~caller_summary:_ location ~ret:(ret_id, _) astate ->
+    let ret_addr = AbstractValue.mk_fresh () in
+    let astate =
+      Memory.add_attribute ret_addr (BoItv Itv.ItvPure.nat) astate
+      |> Memory.add_attribute ret_addr
+           (Arithmetic (Arithmetic.zero_inf, Immediate {location; history= []}))
     in
     Ok [PulseOperations.write_id ret_id (ret_addr, []) astate]
 
 
   let skip : model = fun ~caller_summary:_ _ ~ret:_ astate -> Ok [astate]
+
+  let nondet ~fn_name : model =
+   fun ~caller_summary:_ location ~ret:(ret_id, _) astate ->
+    let event = ValueHistory.Call {f= Model fn_name; location; in_call= []} in
+    Ok [PulseOperations.havoc_id ret_id [event] astate]
+
 
   let id_first_arg arg_access_hist : model =
    fun ~caller_summary:_ _ ~ret astate ->
@@ -57,13 +75,18 @@ end
 module C = struct
   let free deleted_access : model =
    fun ~caller_summary:_ location ~ret:_ astate ->
-    match Memory.get_arithmetic (fst deleted_access) astate with
-    | Some (arith, _) when Arithmetic.is_equal_to_zero arith ->
-        (* freeing 0 is a no-op *)
-        Ok [astate]
-    | _ ->
-        PulseOperations.invalidate location Invalidation.CFree deleted_access astate
-        >>| fun astate -> [astate]
+    (* NOTE: we could introduce a case-split explicitly on =0 vs ≠0 but instead only act on what we
+       currently know about the value. This is purely to avoid contributing to path explosion. *)
+    let is_known_zero =
+      ( Memory.get_arithmetic (fst deleted_access) astate
+      |> function Some (arith, _) -> Arithmetic.is_equal_to_zero arith | None -> false )
+      || Itv.ItvPure.is_zero (Memory.get_bo_itv (fst deleted_access) astate)
+    in
+    if is_known_zero then (* freeing 0 is a no-op *)
+      Ok [astate]
+    else
+      PulseOperations.invalidate location Invalidation.CFree deleted_access astate
+      >>| fun astate -> [astate]
 end
 
 module Cplusplus = struct
@@ -84,7 +107,7 @@ end
 
 module StdAtomicInteger = struct
   let internal_int =
-    Typ.Fieldname.Clang.from_class_name
+    Fieldname.make
       (Typ.CStruct (QualifiedCppName.of_list ["std"; "atomic"]))
       "__infer_model_backing_int"
 
@@ -207,7 +230,7 @@ end
 
 module StdBasicString = struct
   let internal_string =
-    Typ.Fieldname.Clang.from_class_name
+    Fieldname.make
       (Typ.CStruct (QualifiedCppName.of_list ["std"; "basic_string"]))
       "__infer_model_backing_string"
 
@@ -259,12 +282,13 @@ module StdFunction = struct
           List.map actuals ~f:(fun ProcnameDispatcher.Call.FuncArg.{arg_payload; typ} ->
               (arg_payload, typ) )
         in
-        PulseOperations.call ~caller_summary location callee_proc_name ~ret ~actuals astate
+        PulseOperations.call ~caller_summary location callee_proc_name ~ret ~actuals
+          ~formals_opt:None astate
 end
 
 module StdVector = struct
   let internal_array =
-    Typ.Fieldname.Clang.from_class_name
+    Fieldname.make
       (Typ.CStruct (QualifiedCppName.of_list ["std"; "vector"]))
       "__infer_model_backing_array"
 
@@ -333,7 +357,7 @@ end
 module ProcNameDispatcher = struct
   let dispatch : (Tenv.t, model, arg_payload) ProcnameDispatcher.Call.dispatcher =
     let open ProcnameDispatcher.Call in
-    let match_builtin builtin _ s = String.equal s (Typ.Procname.get_method builtin) in
+    let match_builtin builtin _ s = String.equal s (Procname.get_method builtin) in
     make_dispatcher
       [ +match_builtin BuiltinDecl.free <>$ capt_arg_payload $--> C.free
       ; +match_builtin BuiltinDecl.__delete <>$ capt_arg_payload $--> Cplusplus.delete
@@ -342,6 +366,10 @@ module ProcNameDispatcher = struct
       ; +match_builtin BuiltinDecl.__cast <>$ capt_arg_payload $+...$--> Misc.id_first_arg
       ; +match_builtin BuiltinDecl.abort <>--> Misc.early_exit
       ; +match_builtin BuiltinDecl.exit <>--> Misc.early_exit
+      ; +match_builtin BuiltinDecl.__get_array_length <>--> Misc.return_unknown_size
+      ; (* consider that all fbstrings are small strings to avoid false positives due to manual
+           ref-counting *)
+        -"folly" &:: "fbstring_core" &:: "category" &--> Misc.return_int Int64.zero
       ; -"folly" &:: "DelayedDestruction" &:: "destroy" &--> Misc.skip
       ; -"folly" &:: "Optional" &:: "reset" &--> Misc.skip
       ; -"folly" &:: "SocketAddress" &:: "~SocketAddress" &--> Misc.skip
@@ -395,7 +423,16 @@ module ProcNameDispatcher = struct
       ; -"std" &:: "vector" &:: "reserve" <>$ capt_arg_payload $+...$--> StdVector.reserve
       ; +PatternMatch.implements_collection
         &:: "get" <>$ capt_arg_payload $+ capt_arg_payload
-        $--> StdVector.at ~desc:"Collection.get()" ]
+        $--> StdVector.at ~desc:"Collection.get()"
+      ; +PatternMatch.implements_iterator &:: "hasNext"
+        &--> Misc.nondet ~fn_name:"Iterator.hasNext()"
+      ; +PatternMatch.implements_lang "Object"
+        &:: "equals"
+        &--> Misc.nondet ~fn_name:"Object.equals"
+      ; +PatternMatch.implements_lang "Iterable"
+        &:: "iterator" <>$ capt_arg_payload $+...$--> Misc.id_first_arg
+      ; ( +PatternMatch.implements_iterator &:: "next" <>$ capt_arg_payload
+        $!--> fun x -> StdVector.at ~desc:"Iterator.next" x (AbstractValue.mk_fresh (), []) ) ]
 end
 
 let dispatch tenv proc_name args = ProcNameDispatcher.dispatch tenv proc_name args

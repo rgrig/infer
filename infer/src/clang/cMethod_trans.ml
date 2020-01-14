@@ -41,7 +41,7 @@ let get_method_name_from_clang tenv ms_opt =
         match ObjcCategory_decl.get_base_class_name_from_category decl with
         | Some class_typename ->
             let procname = ms.CMethodSignature.name in
-            let new_procname = Typ.Procname.replace_class procname class_typename in
+            let new_procname = Procname.replace_class procname class_typename in
             Some new_procname
         | None ->
             Some ms.CMethodSignature.name )
@@ -82,8 +82,8 @@ let get_class_name_method_call_from_clang tenv obj_c_message_expr_info =
     match method_signature_of_pointer tenv pointer with
     | Some ms -> (
       match ms.CMethodSignature.name with
-      | Typ.Procname.ObjC_Cpp objc_cpp ->
-          Some (Typ.Procname.ObjC_Cpp.get_class_type_name objc_cpp)
+      | Procname.ObjC_Cpp objc_cpp ->
+          Some (Procname.ObjC_Cpp.get_class_type_name objc_cpp)
       | _ ->
           None )
     | None ->
@@ -122,13 +122,12 @@ let get_objc_method_data obj_c_message_expr_info =
       (selector, pointer, MCStatic)
 
 
-let should_create_procdesc cfg procname defined set_objc_accessor_attr =
-  match Typ.Procname.Hash.find cfg procname with
+let should_create_procdesc cfg procname ~defined ~set_objc_accessor_attr =
+  match Procname.Hash.find cfg procname with
   | previous_procdesc ->
       let is_defined_previous = Procdesc.is_defined previous_procdesc in
       if (defined || set_objc_accessor_attr) && not is_defined_previous then (
-        Typ.Procname.Hash.remove cfg procname ;
-        true )
+        Procname.Hash.remove cfg procname ; true )
       else false
   | exception Caml.Not_found ->
       true
@@ -153,7 +152,7 @@ let get_objc_property_accessor tenv ms =
   match CAst_utils.get_decl_opt ms.CMethodSignature.pointer_to_property_opt with
   | Some (ObjCPropertyDecl (_, _, obj_c_property_decl_info)) -> (
       let ivar_decl_ref = obj_c_property_decl_info.Clang_ast_t.opdi_ivar_decl in
-      match CAst_utils.get_decl_opt_with_decl_ref ivar_decl_ref with
+      match CAst_utils.get_decl_opt_with_decl_ref_opt ivar_decl_ref with
       | Some (ObjCIvarDecl (_, name_decl_info, _, _, _)) -> (
           let class_tname =
             Typ.Name.Objc.from_qual_name
@@ -164,7 +163,7 @@ let get_objc_property_accessor tenv ms =
           match Tenv.lookup tenv class_tname with
           | Some {fields} -> (
               let field_opt =
-                List.find ~f:(fun (name, _, _) -> Typ.Fieldname.equal name field_name) fields
+                List.find ~f:(fun (name, _, _) -> Fieldname.equal name field_name) fields
               in
               match field_opt with
               | Some field when CMethodSignature.is_getter ms ->
@@ -224,7 +223,7 @@ let create_local_procdesc ?(set_objc_accessor_attr = false) trans_unit_ctx cfg t
     let const_formals = get_const_params_indices ~shift:(List.length captured_mangled) all_params in
     let source_range = ms.CMethodSignature.loc in
     L.(debug Capture Verbose)
-      "@\nCreating a new procdesc for function: '%a'@\n@." Typ.Procname.pp proc_name ;
+      "@\nCreating a new procdesc for function: '%a'@\n@." Procname.pp proc_name ;
     L.(debug Capture Verbose) "@\nms = %a@\n@." CMethodSignature.pp ms ;
     let loc_start =
       CLocation.location_of_source_range trans_unit_ctx.CFrontend_config.source_file source_range
@@ -266,14 +265,14 @@ let create_local_procdesc ?(set_objc_accessor_attr = false) trans_unit_ctx cfg t
       Procdesc.set_start_node procdesc start_node ;
       Procdesc.set_exit_node procdesc exit_node )
   in
-  if should_create_procdesc cfg proc_name defined set_objc_accessor_attr then (
+  if should_create_procdesc cfg proc_name ~defined ~set_objc_accessor_attr then (
     create_new_procdesc () ; true )
   else false
 
 
 (** Create a procdesc for objc methods whose signature cannot be found. *)
 let create_external_procdesc trans_unit_ctx cfg proc_name clang_method_kind type_opt =
-  if not (Typ.Procname.Hash.mem cfg proc_name) then
+  if not (Procname.Hash.mem cfg proc_name) then
     let ret_type, formals =
       match type_opt with
       | Some (ret_type, arg_types) ->

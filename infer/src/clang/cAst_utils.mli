@@ -25,7 +25,9 @@ val get_stmt_exn : Clang_ast_t.pointer -> Clang_ast_t.source_range -> Clang_ast_
 
 val get_stmt_opt : Clang_ast_t.pointer option -> Clang_ast_t.source_range -> Clang_ast_t.stmt option
 
-val get_decl_opt_with_decl_ref : Clang_ast_t.decl_ref option -> Clang_ast_t.decl option
+val get_decl_opt_with_decl_ref : Clang_ast_t.decl_ref -> Clang_ast_t.decl option
+
+val get_decl_opt_with_decl_ref_opt : Clang_ast_t.decl_ref option -> Clang_ast_t.decl option
 
 val get_property_of_ivar : Clang_ast_t.pointer -> Clang_ast_t.decl option
 
@@ -66,9 +68,9 @@ type qual_type_to_sil_type = Tenv.t -> Clang_ast_t.qual_type -> Typ.t
 type procname_from_decl =
      ?tenv:Tenv.t
   -> ?block_return_type:Clang_ast_t.qual_type
-  -> ?outer_proc:Typ.Procname.t
+  -> ?outer_proc:Procname.t
   -> Clang_ast_t.decl
-  -> Typ.Procname.t
+  -> Procname.t
 
 val qual_type_of_decl_ptr : Clang_ast_t.pointer -> Clang_ast_t.qual_type
 

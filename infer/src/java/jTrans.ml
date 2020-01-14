@@ -15,39 +15,6 @@ type invoke_kind = I_Virtual | I_Interface | I_Special | I_Static
 
 exception Frontend_error of string
 
-(** Fix the line associated to a method definition. Since Sawja often reports a method off by a few
-    lines, we search backwards for a line where the method name is. *)
-let fix_method_definition_line linereader proc_name loc =
-  let proc_name_java = match proc_name with Typ.Procname.Java p -> p | _ -> assert false in
-  let method_name =
-    if Typ.Procname.is_constructor proc_name then
-      let inner_class_name cname =
-        match String.rsplit2 cname ~on:'$' with Some (_, icn) -> icn | None -> cname
-      in
-      inner_class_name (Typ.Procname.Java.get_simple_class_name proc_name_java)
-    else Typ.Procname.Java.get_method proc_name_java
-  in
-  let regex = Str.regexp (Str.quote method_name) in
-  let method_is_defined_here linenum =
-    match Printer.LineReader.from_file_linenum linereader loc.Location.file linenum with
-    | None ->
-        raise Caml.Not_found
-    | Some line -> (
-      try
-        ignore (Str.search_forward regex line 0) ;
-        true
-      with Caml.Not_found -> false )
-  in
-  let line = ref loc.Location.line in
-  try
-    while not (method_is_defined_here !line) do
-      line := !line - 1 ;
-      if !line < 0 then raise Caml.Not_found
-    done ;
-    {loc with Location.line= !line}
-  with Caml.Not_found -> loc
-
-
 let get_location source_file impl pc =
   let line_number =
     let ln = try JBir.get_source_line_number pc impl with Invalid_argument _ -> None in
@@ -72,12 +39,12 @@ let get_exit_location source_file bytecode =
 
 
 let retrieve_fieldname fieldname =
-  let subs = Str.split (Str.regexp (Str.quote ".")) (Typ.Fieldname.to_string fieldname) in
+  let subs = Str.split (Str.regexp (Str.quote ".")) (Fieldname.to_string fieldname) in
   List.last_exn subs
 
 
 let get_field_name program static tenv cn fs =
-  let {Typ.Struct.fields; statics} = JTransType.get_class_struct_typ program tenv cn in
+  let {Struct.fields; statics} = JTransType.get_class_struct_typ program tenv cn in
   match
     List.find
       ~f:(fun (fieldname, _, _) -> String.equal (retrieve_fieldname fieldname) (JBasics.fs_name fs))
@@ -104,9 +71,9 @@ let formals_from_signature program tenv cn ms kind =
   in
   let init_arg_list =
     match kind with
-    | Typ.Procname.Java.Static ->
+    | Procname.Java.Static ->
         []
-    | Typ.Procname.Java.Non_Static ->
+    | Procname.Java.Non_Static ->
         [(JConfig.this, JTransType.get_class_type program tenv cn)]
   in
   List.rev (List.fold ~f:collect ~init:init_arg_list (JBasics.ms_args ms))
@@ -379,14 +346,12 @@ let create_native_procdesc source_file program icfg cm proc_name =
   create_empty_cfg source_file procdesc
 
 
-let create_empty_procdesc source_file program linereader icfg cm proc_name =
+let create_empty_procdesc source_file program icfg cm proc_name =
   let tenv = icfg.JContext.tenv in
   let m = Javalib.ConcreteMethod cm in
   let cn, ms = JBasics.cms_split (Javalib.get_class_method_signature m) in
   let bytecode = get_bytecode cm in
-  let loc_start =
-    get_start_location source_file bytecode |> fix_method_definition_line linereader proc_name
-  in
+  let loc_start = get_start_location source_file bytecode in
   let formals = formals_from_signature program tenv cn ms (JTransType.get_method_kind m) in
   let method_annotation = JAnnotation.translate_method cm.Javalib.cm_annotations in
   let proc_attributes =
@@ -407,7 +372,7 @@ let create_empty_procdesc source_file program linereader icfg cm proc_name =
 
 
 (** Creates a procedure description. *)
-let create_cm_procdesc source_file program linereader icfg cm proc_name =
+let create_cm_procdesc source_file program icfg cm proc_name =
   let cfg = icfg.JContext.cfg in
   let tenv = icfg.JContext.tenv in
   let m = Javalib.ConcreteMethod cm in
@@ -415,9 +380,7 @@ let create_cm_procdesc source_file program linereader icfg cm proc_name =
   try
     let bytecode = get_bytecode cm in
     let jbir_code = get_jbir_representation cm bytecode in
-    let loc_start =
-      get_start_location source_file bytecode |> fix_method_definition_line linereader proc_name
-    in
+    let loc_start = get_start_location source_file bytecode in
     let loc_exit = get_exit_location source_file bytecode in
     let formals = translate_formals program tenv cn jbir_code in
     let locals_ = translate_locals program tenv formals bytecode jbir_code in
@@ -452,7 +415,7 @@ let create_cm_procdesc source_file program linereader icfg cm proc_name =
     Some (procdesc, start_node, exit_node, exn_node, jbir_code)
   with JBir.Subroutine ->
     L.internal_error "create_procdesc raised JBir.Subroutine when translating %a in %a@."
-      Typ.Procname.pp proc_name SourceFile.pp source_file ;
+      Procname.pp proc_name SourceFile.pp source_file ;
     None
 
 
@@ -656,7 +619,7 @@ let method_invocation (context : JContext.t) loc pc var_opt cn ms sil_obj_opt ex
       ~init expr_list
   in
   let callee_procname =
-    let proc = Typ.Procname.from_string_c_fun (JBasics.ms_name ms) in
+    let proc = Procname.from_string_c_fun (JBasics.ms_name ms) in
     if
       JBasics.cn_equal cn' (JBasics.make_cn JConfig.infer_builtins_cl)
       && BuiltinDecl.is_declared proc
@@ -697,8 +660,8 @@ let method_invocation (context : JContext.t) loc pc var_opt cn ms sil_obj_opt ex
         call_ret_instrs sil_var
   in
   let is_close = function
-    | Typ.Procname.Java java_pname ->
-        Typ.Procname.Java.is_close java_pname
+    | Procname.Java java_pname ->
+        Procname.Java.is_close java_pname
     | _ ->
         false
   in
@@ -721,7 +684,7 @@ let method_invocation (context : JContext.t) loc pc var_opt cn ms sil_obj_opt ex
         call_instrs
     | ((_, {Typ.desc= Typ.Tptr ({desc= Tstruct typename}, _)}) as exp) :: _
     (* add a file attribute when calling the constructor of a subtype of Closeable *)
-      when Typ.Procname.is_constructor callee_procname
+      when Procname.is_constructor callee_procname
            && AndroidFramework.is_autocloseable tenv typename
            && not (PatternMatch.supertype_exists tenv is_non_resource_closeable typename) ->
         let set_file_attr =
@@ -846,7 +809,7 @@ let instruction (context : JContext.t) pc instr : translation =
     Instr (create_node node_kind (instrs @ [deref_instr; instr]))
   in
   let create_node_kind procname =
-    let procname_string = Typ.Procname.to_string procname in
+    let procname_string = Procname.to_string procname in
     Procdesc.Node.Stmt_node (Call procname_string)
   in
   try
@@ -982,7 +945,7 @@ let instruction (context : JContext.t) pc instr : translation =
         let constr_procname, call_instrs =
           let ret_opt = Some (Exp.Var ret_id, class_type) in
           method_invocation context loc pc None cn constr_ms ret_opt constr_arg_list I_Special
-            Typ.Procname.Java.Non_Static
+            Procname.Java.Non_Static
         in
         let pvar = JContext.set_pvar context var class_type in
         let set_instr =
@@ -1024,7 +987,7 @@ let instruction (context : JContext.t) pc instr : translation =
         in
         let callee_procname, call_instrs =
           method_invocation context loc pc var_opt cn ms sil_obj_opt args I_Static
-            Typ.Procname.Java.Static
+            Procname.Java.Static
         in
         let node_kind = create_node_kind callee_procname in
         let call_node = create_node node_kind (instrs @ call_instrs) in
@@ -1035,7 +998,7 @@ let instruction (context : JContext.t) pc instr : translation =
           let callee_procname, call_instrs =
             let ret_opt = Some (sil_obj_expr, sil_obj_type) in
             method_invocation context loc pc var_opt cn ms ret_opt args invoke_kind
-              Typ.Procname.Java.Non_Static
+              Procname.Java.Non_Static
           in
           let node_kind = create_node_kind callee_procname in
           let call_node = create_node node_kind (instrs @ call_instrs) in
@@ -1073,7 +1036,7 @@ let instruction (context : JContext.t) pc instr : translation =
         let callee_procname, call_instrs =
           method_invocation context loc pc var_opt cn ms
             (Some (sil_obj_expr, sil_obj_type))
-            args I_Special Typ.Procname.Java.Non_Static
+            args I_Special Procname.Java.Non_Static
         in
         let node_kind = create_node_kind callee_procname in
         let call_node = create_node node_kind (instrs @ call_instrs) in

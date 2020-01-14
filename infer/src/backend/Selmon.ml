@@ -447,9 +447,9 @@ let cost_optim filename comment { mon_mc; mon_decide_yes; mon_decide_no } =
 let string_of_label = Paths.(function
   | Epsilon -> "ε"
   | Call proc_name ->
-      Printf.sprintf "CALL %s" (Typ.Procname.to_filename proc_name)
+      Printf.sprintf "CALL %s" (Procname.to_filename proc_name)
   | Return proc_name ->
-      Printf.sprintf "RETURN %s" (Typ.Procname.to_filename proc_name))
+      Printf.sprintf "RETURN %s" (Procname.to_filename proc_name))
 
 let mc_of_calls (Paths.{ start_node; edges; _ } : Paths.path_calls) : mc =
   let mc = Int.Table.create () in

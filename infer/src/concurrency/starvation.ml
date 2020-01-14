@@ -10,7 +10,7 @@ module L = Logging
 module MF = MarkupFormatter
 module Domain = StarvationDomain
 
-let pname_pp = MF.wrap_monospaced Typ.Procname.pp
+let pname_pp = MF.wrap_monospaced Procname.pp
 
 let attrs_of_pname = Summary.OnDisk.proc_resolve_attributes
 
@@ -20,16 +20,6 @@ module Payload = SummaryPayload.Make (struct
   let field = Payloads.Fields.starvation
 end)
 
-(* using an indentifier for a class object, create an access path representing that lock;
-   this is for synchronizing on Java class objects only *)
-let lock_of_class =
-  let typ = Typ.(mk (Tstruct Name.Java.java_lang_class)) in
-  let typ' = Typ.(mk (Tptr (typ, Pk_pointer))) in
-  fun class_id ->
-    let ident = Ident.create_normal class_id 0 in
-    AccessPath.of_id ident typ'
-
-
 module TransferFunctions (CFG : ProcCfg.S) = struct
   module CFG = CFG
   module Domain = Domain
@@ -37,37 +27,33 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   type extras = FormalMap.t
 
   let log_parse_error error pname actuals =
-    L.debug Analysis Verbose "%s pname:%a actuals:%a@." error Typ.Procname.pp pname
+    L.debug Analysis Verbose "%s pname:%a actuals:%a@." error Procname.pp pname
       (PrettyPrintable.pp_collection ~pp_item:HilExp.pp)
       actuals
 
 
-  (** convert an expression to a canonical form for a lock identifier *)
-  let get_lock_path extras = function
-    | HilExp.AccessExpression access_exp -> (
-      match HilExp.AccessExpression.to_access_path access_exp with
-      | (((Var.ProgramVar pvar, _) as base), _) as path
-        when FormalMap.is_formal base extras || Pvar.is_global pvar ->
-          Some (AccessPath.inner_class_normalize path)
-      | _ ->
-          (* ignore paths on local or logical variables *)
-          None )
-    | HilExp.Constant (Const.Cclass class_id) ->
-        (* this is a synchronized/lock(CLASSNAME.class) construct *)
-        Some (lock_of_class class_id)
-    | _ ->
-        None
-
-
   let do_assume assume_exp (astate : Domain.t) =
     let open Domain in
-    let add_choice (acc : Domain.t) bool_value =
+    let add_thread_choice (acc : Domain.t) bool_value =
       let thread = if bool_value then ThreadDomain.UIThread else ThreadDomain.BGThread in
       {acc with thread}
     in
+    let add_future_done_choice acc_exp (acc : Domain.t) bool_value =
+      AttributeDomain.find_opt acc_exp acc.attributes
+      |> Option.bind ~f:(function Attribute.FutureDoneGuard future -> Some future | _ -> None)
+      |> Option.value_map ~default:acc ~f:(fun future ->
+             let attributes =
+               AttributeDomain.add future (Attribute.FutureDoneState bool_value) acc.attributes
+             in
+             {acc with attributes} )
+    in
     match HilExp.get_access_exprs assume_exp with
     | [access_expr] when AttributeDomain.is_thread_guard access_expr astate.attributes ->
-        HilExp.eval_boolean_exp access_expr assume_exp |> Option.fold ~init:astate ~f:add_choice
+        HilExp.eval_boolean_exp access_expr assume_exp
+        |> Option.fold ~init:astate ~f:add_thread_choice
+    | [access_expr] when AttributeDomain.is_future_done_guard access_expr astate.attributes ->
+        HilExp.eval_boolean_exp access_expr assume_exp
+        |> Option.fold ~init:astate ~f:(add_future_done_choice access_expr)
     | _ ->
         astate
 
@@ -142,6 +128,14 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       | UnknownThread ->
           None
     in
+    let get_future_is_done_summary () =
+      match actuals with
+      | HilExp.AccessExpression future :: _
+        when StarvationModels.is_future_is_done tenv callee actuals ->
+          Some (make_ret_attr (FutureDoneGuard future))
+      | _ ->
+          None
+    in
     let get_mainLooper_summary () =
       if StarvationModels.is_getMainLooper tenv callee actuals then
         Some (make_ret_attr (Looper ForUIThread))
@@ -189,6 +183,11 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             None
       else None
     in
+    let treat_assume () =
+      if StarvationModels.is_assume_true tenv callee actuals then
+        List.hd actuals |> Option.map ~f:(fun exp -> do_assume exp astate)
+      else None
+    in
     (* constructor calls are special-cased because they side-effect the receiver and do not
        return anything *)
     let treat_modeled_summaries () =
@@ -196,12 +195,13 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       IList.eval_until_first_some
         [ get_returned_executor_summary
         ; get_thread_assert_summary
+        ; get_future_is_done_summary
         ; get_mainLooper_summary
         ; get_callee_summary ]
       |> Option.map ~f:(Domain.integrate_summary ~tenv ~lhs callsite astate)
     in
     IList.eval_until_first_some
-      [treat_handler_constructor; treat_thread_constructor; treat_modeled_summaries]
+      [treat_handler_constructor; treat_thread_constructor; treat_assume; treat_modeled_summaries]
     |> Option.value ~default:astate
 
 
@@ -209,9 +209,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       (instr : HilInstr.t) =
     let open ConcurrencyModels in
     let open StarvationModels in
-    let get_lock_path = get_lock_path extras in
+    let get_lock_path = Domain.Lock.make extras in
     let procname = Summary.get_proc_name summary in
-    let is_java = Typ.Procname.is_java procname in
+    let is_java = Procname.is_java procname in
     let do_lock locks loc astate =
       List.filter_map ~f:get_lock_path locks |> Domain.acquire ~tenv astate ~procname ~loc
     in
@@ -257,7 +257,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       | NoEffect when is_java && is_strict_mode_violation tenv callee actuals ->
           Domain.strict_mode_call ~callee ~loc astate
       | NoEffect when is_java && is_monitor_wait tenv callee actuals ->
-          Domain.wait_on_monitor ~loc actuals astate
+          Domain.wait_on_monitor ~loc extras actuals astate
+      | NoEffect when is_java && is_future_get tenv callee actuals ->
+          Domain.future_get ~callee ~loc actuals astate
       | NoEffect when is_java -> (
           let ret_exp = HilExp.AccessExpression.base ret_base in
           let astate = do_work_scheduling tenv callee actuals loc astate in
@@ -281,8 +283,8 @@ module Analyzer = LowerHil.MakeAbstractInterpreter (TransferFunctions (ProcCfg.N
 let set_class_init_attributes procname (astate : Domain.t) =
   let open Domain in
   let attributes =
-    Typ.Procname.get_class_type_name procname
-    |> Option.map ~f:(fun tname -> Typ.Procname.(Java (Java.get_class_initializer tname)))
+    Procname.get_class_type_name procname
+    |> Option.map ~f:(fun tname -> Procname.(Java (Java.get_class_initializer tname)))
     |> Option.bind ~f:Payload.read_toplevel_procedure
     |> Option.value_map ~default:AttributeDomain.top ~f:(fun summary -> summary.attributes)
   in
@@ -308,13 +310,13 @@ let set_constructor_attributes tenv procname (astate : Domain.t) =
     AttributeDomain.(fold (fun exp attr acc -> add (make_local exp) attr acc) attributes empty)
   in
   let attributes =
-    Typ.Procname.get_class_type_name procname
+    Procname.get_class_type_name procname
     (* retrieve its definition *)
     |> Option.bind ~f:(Tenv.lookup tenv)
     (* get the list of methods in the class *)
-    |> Option.value_map ~default:[] ~f:(fun (tstruct : Typ.Struct.t) -> tstruct.methods)
+    |> Option.value_map ~default:[] ~f:(fun (tstruct : Struct.t) -> tstruct.methods)
     (* keep only the constructors *)
-    |> List.filter ~f:Typ.Procname.(function Java jname -> Java.is_constructor jname | _ -> false)
+    |> List.filter ~f:Procname.(function Java jname -> Java.is_constructor jname | _ -> false)
     (* get the summaries of the constructors *)
     |> List.filter_map ~f:Payload.read_toplevel_procedure
     (* make instances of [this] local to the current procedure and select only the attributes *)
@@ -328,15 +330,15 @@ let set_constructor_attributes tenv procname (astate : Domain.t) =
 
 let set_initial_attributes tenv procname astate =
   match procname with
-  | Typ.Procname.Java java_pname when Typ.Procname.Java.is_class_initializer java_pname ->
+  | Procname.Java java_pname when Procname.Java.is_class_initializer java_pname ->
       (* we are analyzing the class initializer, don't go through on-demand again *)
       astate
-  | Typ.Procname.Java java_pname
-    when Typ.Procname.Java.(is_constructor java_pname || is_static java_pname) ->
+  | Procname.Java java_pname when Procname.Java.(is_constructor java_pname || is_static java_pname)
+    ->
       (* analyzing a constructor or static method, so we need the attributes established by the
          class initializer *)
       set_class_init_attributes procname astate
-  | Typ.Procname.Java _ ->
+  | Procname.Java _ ->
       (* we are analyzing an instance method, so we need constructor-established attributes
          which will include those by the class initializer *)
       set_constructor_attributes tenv procname astate
@@ -355,16 +357,9 @@ let analyze_procedure {Callbacks.exe_env; summary} =
     let loc = Procdesc.get_loc proc_desc in
     let set_lock_state_for_synchronized_proc astate =
       if Procdesc.is_java_synchronized proc_desc then
-        let lock =
-          match procname with
-          | Typ.Procname.Java java_pname when Typ.Procname.Java.is_static java_pname ->
-              (* this is crafted so as to match synchronized(CLASSNAME.class) constructs *)
-              Typ.Procname.Java.get_class_type_name java_pname
-              |> Typ.Name.name |> Ident.string_to_name |> lock_of_class |> Option.some
-          | _ ->
-              FormalMap.get_formal_base 0 formals |> Option.map ~f:(fun base -> (base, []))
-        in
-        Domain.acquire ~tenv astate ~procname ~loc (Option.to_list lock)
+        Domain.Lock.make_java_synchronized formals procname
+        |> Option.to_list
+        |> Domain.acquire ~tenv astate ~procname ~loc
       else astate
     in
     let set_thread_status_by_annotation (astate : Domain.t) =
@@ -429,7 +424,7 @@ end = struct
         IssueType.lockless_violation
 
 
-  type report_t = {problem: problem; pname: Typ.Procname.t; ltr: Errlog.loc_trace; message: string}
+  type report_t = {problem: problem; pname: Procname.t; ltr: Errlog.loc_trace; message: string}
 
   type t = report_t list Location.Map.t SourceFile.Map.t
 
@@ -551,33 +546,35 @@ let should_report_deadlock_on_current_proc current_elem endpoint_elem =
       (* should never happen *)
       L.die InternalError "Deadlock cannot occur without two lock events: %a" CriticalPair.pp
         current_elem
-  | LockAcquire ((Var.LogicalVar _, _), []), _ ->
-      (* first elem is a class object (see [lock_of_class]), so always report because the
-         reverse ordering on the events will not occur since we don't search the class for static locks *)
-      true
-  | LockAcquire ((Var.LogicalVar _, _), _ :: _), _ | _, LockAcquire ((Var.LogicalVar _, _), _) ->
-      (* first elem has an ident root, but has a non-empty access path, which means we are
-         not filtering out local variables (see [exec_instr]), or,
-         second elem has an ident root, which should not happen if we are filtering locals *)
-      L.die InternalError "Deadlock cannot occur on these logical variables: %a @." CriticalPair.pp
-        current_elem
-  | LockAcquire ((_, typ1), _), LockAcquire ((_, typ2), _) ->
-      (* use string comparison on types as a stable order to decide whether to report a deadlock *)
-      let c = String.compare (Typ.to_string typ1) (Typ.to_string typ2) in
-      c < 0
-      || Int.equal 0 c
-         && (* same class, so choose depending on location *)
-         Location.compare current_elem.CriticalPair.loc endpoint_elem.CriticalPair.loc < 0
+  | LockAcquire endpoint_lock, LockAcquire current_lock -> (
+    match (Lock.get_access_path endpoint_lock, Lock.get_access_path current_lock) with
+    | ((Var.LogicalVar _, _), []), _ ->
+        (* first elem is a class object (see [lock_of_class]), so always report because the
+           reverse ordering on the events will not occur since we don't search the class for static locks *)
+        true
+    | ((Var.LogicalVar _, _), _ :: _), _ | _, ((Var.LogicalVar _, _), _) ->
+        (* first elem has an ident root, but has a non-empty access path, which means we are
+           not filtering out local variables (see [exec_instr]), or,
+           second elem has an ident root, which should not happen if we are filtering locals *)
+        L.die InternalError "Deadlock cannot occur on these logical variables: %a @."
+          CriticalPair.pp current_elem
+    | ((_, typ1), _), ((_, typ2), _) ->
+        (* use string comparison on types as a stable order to decide whether to report a deadlock *)
+        let c = String.compare (Typ.to_string typ1) (Typ.to_string typ2) in
+        c < 0
+        || Int.equal 0 c
+           && (* same class, so choose depending on location *)
+           Location.compare current_elem.CriticalPair.loc endpoint_elem.CriticalPair.loc < 0 )
 
 
 let should_report pdesc =
   Procdesc.get_access pdesc <> PredSymb.Private
   &&
   match Procdesc.get_proc_name pdesc with
-  | Typ.Procname.Java java_pname ->
-      (not (Typ.Procname.Java.is_autogen_method java_pname))
-      && not (Typ.Procname.Java.is_class_initializer java_pname)
-  | Typ.Procname.ObjC_Cpp _ ->
+  | Procname.Java java_pname ->
+      (not (Procname.Java.is_autogen_method java_pname))
+      && not (Procname.Java.is_class_initializer java_pname)
+  | Procname.ObjC_Cpp _ ->
       true
   | _ ->
       false
@@ -586,7 +583,7 @@ let should_report pdesc =
 let fold_reportable_summaries (tenv, current_summary) clazz ~init ~f =
   let methods =
     Tenv.lookup tenv clazz
-    |> Option.value_map ~default:[] ~f:(fun tstruct -> tstruct.Typ.Struct.methods)
+    |> Option.value_map ~default:[] ~f:(fun tstruct -> tstruct.Struct.methods)
   in
   let f acc mthd =
     Ondemand.get_proc_desc mthd
@@ -666,7 +663,7 @@ let report_on_pair ((tenv, summary) as env) (pair : Domain.CriticalPair.t) repor
   let pname = Summary.get_proc_name summary in
   let event = pair.elem.event in
   let should_report_starvation =
-    CriticalPair.is_uithread pair && not (Typ.Procname.is_constructor pname)
+    CriticalPair.is_uithread pair && not (Procname.is_constructor pname)
   in
   let make_trace_and_loc () =
     let loc = CriticalPair.get_loc pair in
@@ -771,7 +768,7 @@ let iter_summary ~f exe_env (summary : Summary.t) =
 
 module WorkHashSet = struct
   module T = struct
-    type t = Typ.Procname.t * Domain.CriticalPair.t
+    type t = Procname.t * Domain.CriticalPair.t
 
     (* [compare] for critical pairs ignore various fields, so using a generated equality here would
        break the polymorphic hash function.  We use [phys_equal] instead and rely on the clients to
@@ -799,7 +796,7 @@ let report exe_env work_set =
            match pair.elem.event with
            | LockAcquire lock ->
                let should_report_starvation =
-                 CriticalPair.is_uithread pair && not (Typ.Procname.is_constructor procname)
+                 CriticalPair.is_uithread pair && not (Procname.is_constructor procname)
                in
                WorkHashSet.fold
                  (fun (other_procname, (other_pair : CriticalPair.t)) () acc ->

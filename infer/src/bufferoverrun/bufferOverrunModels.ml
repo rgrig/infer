@@ -13,14 +13,8 @@ module BoUtils = BufferOverrunUtils
 module Dom = BufferOverrunDomain
 module PO = BufferOverrunProofObligations
 module Sem = BufferOverrunSemantics
-module Relation = BufferOverrunDomainRelation
 module Trace = BufferOverrunTrace
 open BoUtils.ModelEnv
-
-module Val = struct
-  type t = unit
-end
-
 open ProcnameDispatcher.Call.FuncArg
 
 type exec_fun = model_env -> ret:Ident.t * Typ.t -> Dom.Mem.t -> Dom.Mem.t
@@ -33,7 +27,7 @@ let no_check _model_env _mem cond_set = cond_set
 
 let no_model =
   let exec {pname; location} ~ret:(id, _) mem =
-    L.d_printfln_escaped "No model for %a" Typ.Procname.pp pname ;
+    L.d_printfln_escaped "No model for %a" Procname.pp pname ;
     Dom.Mem.add_unknown_from id ~callee_pname:pname ~location mem
   in
   {exec; check= no_check}
@@ -120,7 +114,7 @@ let fgets str_exp num_exp =
 
 let malloc ~can_be_zero size_exp =
   let exec ({pname; node_hash; location; tenv; integer_type_widths} as model_env) ~ret:(id, _) mem =
-    let size_exp = Prop.exp_normalize_noabs tenv Sil.sub_empty size_exp in
+    let size_exp = Prop.exp_normalize_noabs tenv Predicates.sub_empty size_exp in
     let typ, stride, length0, dyn_length = get_malloc_info size_exp in
     let length = Sem.eval integer_type_widths length0 mem in
     let traces = Trace.(Set.add_elem location ArrayDeclaration) (Dom.Val.get_traces length) in
@@ -132,10 +126,6 @@ let malloc ~can_be_zero size_exp =
     let represents_multiple_values = not (Itv.is_one size) in
     let allocsite =
       Allocsite.make pname ~node_hash ~inst_num:0 ~dimension:1 ~path ~represents_multiple_values
-    in
-    let size_exp_opt =
-      let size_exp = Option.value dyn_length ~default:length0 in
-      Relation.SymExp.of_exp ~get_sym_f:(Sem.get_sym_f integer_type_widths mem) size_exp
     in
     if Language.curr_language_is Java then
       let internal_arr =
@@ -153,7 +143,6 @@ let malloc ~can_be_zero size_exp =
       let v = Dom.Val.of_c_array_alloc allocsite ~stride ~offset ~size ~traces in
       mem
       |> Dom.Mem.add_stack (Loc.of_id id) v
-      |> Dom.Mem.init_array_relation allocsite ~offset_opt:(Some offset) ~size ~size_exp_opt
       |> BoUtils.Exec.init_c_array_fields model_env path typ (Dom.Val.get_array_locs v) ?dyn_length
   and check = check_alloc_size ~can_be_zero size_exp in
   {exec; check}
@@ -208,11 +197,10 @@ let strcpy dest_exp src_exp =
   and check {integer_type_widths; location} mem cond_set =
     let access_last_char =
       let idx = Dom.Mem.get_c_strlen (Sem.eval_locs src_exp mem) mem in
-      let relation = Dom.Mem.get_relation mem in
       let latest_prune = Dom.Mem.get_latest_prune mem in
       fun arr cond_set ->
-        BoUtils.Check.array_access ~arr ~idx ~idx_sym_exp:None ~relation ~is_plus:true
-          ~last_included:false ~latest_prune location cond_set
+        BoUtils.Check.array_access ~arr ~idx ~is_plus:true ~last_included:false ~latest_prune
+          location cond_set
     in
     cond_set
     |> access_last_char (Sem.eval integer_type_widths dest_exp mem)
@@ -251,10 +239,9 @@ let strcat dest_exp src_exp =
     |> Dom.Mem.add_stack (Loc.of_id id) (Sem.eval integer_type_widths dest_exp mem)
   and check {integer_type_widths; location} mem cond_set =
     let access_last_char arr idx cond_set =
-      let relation = Dom.Mem.get_relation mem in
       let latest_prune = Dom.Mem.get_latest_prune mem in
-      BoUtils.Check.array_access ~arr ~idx ~idx_sym_exp:None ~relation ~is_plus:true
-        ~last_included:false ~latest_prune location cond_set
+      BoUtils.Check.array_access ~arr ~idx ~is_plus:true ~last_included:false ~latest_prune location
+        cond_set
     in
     let src_strlen =
       let str_loc = Sem.eval_locs src_exp mem in
@@ -276,7 +263,7 @@ let strcat dest_exp src_exp =
 
 let realloc src_exp size_exp =
   let exec ({location; tenv; integer_type_widths} as model_env) ~ret:(id, _) mem =
-    let size_exp = Prop.exp_normalize_noabs tenv Sil.sub_empty size_exp in
+    let size_exp = Prop.exp_normalize_noabs tenv Predicates.sub_empty size_exp in
     let typ, _, length0, dyn_length = get_malloc_info size_exp in
     let length = Sem.eval integer_type_widths length0 mem in
     let v = Sem.eval integer_type_widths src_exp mem |> Dom.Val.set_array_length location ~length in
@@ -355,6 +342,14 @@ let cast exp size_exp =
   let exec {integer_type_widths} ~ret:(ret_id, _) mem =
     let v = Sem.eval integer_type_widths exp mem in
     let v = match size_exp with Exp.Sizeof {typ} -> Dom.Val.cast typ v | _ -> v in
+    model_by_value v ret_id mem
+  in
+  {exec; check= no_check}
+
+
+let id exp =
+  let exec {integer_type_widths} ~ret:(ret_id, _) mem =
+    let v = Sem.eval integer_type_widths exp mem in
     model_by_value v ret_id mem
   in
   {exec; check= no_check}
@@ -480,7 +475,7 @@ module Split = struct
   let std_vector ~adds_at_least_one {exp= vector_exp; typ= vector_typ} location mem =
     let increment = if adds_at_least_one then Dom.Val.Itv.pos else Dom.Val.Itv.nat in
     let vector_type_name = Option.value_exn (vector_typ |> Typ.strip_ptr |> Typ.name) in
-    let size_field = Typ.Fieldname.Clang.from_class_name vector_type_name "infer_size" in
+    let size_field = Fieldname.make vector_type_name "infer_size" in
     let vector_size_locs = Sem.eval_locs vector_exp mem |> PowLoc.append_field ~fn:size_field in
     let f_trace _ traces = Trace.(Set.add_elem location (through ~risky_fun:None)) traces in
     Dom.Mem.transform_mem ~f:(Dom.Val.plus_a ~f_trace increment) vector_size_locs mem
@@ -580,10 +575,9 @@ module ArrObjCommon = struct
     and check ({location; integer_type_widths} as model_env) mem cond_set =
       let idx = Sem.eval integer_type_widths index_exp mem in
       let arr = Dom.Mem.find_set (deref_of model_env arr_exp ~fn mem) mem in
-      let relation = Dom.Mem.get_relation mem in
       let latest_prune = Dom.Mem.get_latest_prune mem in
-      BoUtils.Check.array_access ~arr ~idx ~idx_sym_exp:None ~relation ~is_plus:true
-        ~last_included:false ~latest_prune location cond_set
+      BoUtils.Check.array_access ~arr ~idx ~is_plus:true ~last_included:false ~latest_prune location
+        cond_set
     in
     {exec; check}
 
@@ -901,7 +895,7 @@ module Collection = struct
   let iterator coll_exp =
     let exec {integer_type_widths} ~ret:(ret_id, _) mem =
       let itr = Sem.eval integer_type_widths coll_exp mem in
-      model_by_value itr ret_id mem |> Dom.Mem.add_iterator_offset_alias ret_id
+      model_by_value itr ret_id mem |> Dom.Mem.add_iterator_alias ret_id
     in
     {exec; check= no_check}
 
@@ -983,13 +977,9 @@ module Collection = struct
       Dom.Mem.find_set arr_locs mem
     in
     let idx = Sem.eval integer_type_widths index_exp mem in
-    let idx_sym_exp =
-      Relation.SymExp.of_exp ~get_sym_f:(Sem.get_sym_f integer_type_widths mem) index_exp
-    in
-    let relation = Dom.Mem.get_relation mem in
     let latest_prune = Dom.Mem.get_latest_prune mem in
-    BoUtils.Check.array_access ~arr ~idx ~idx_sym_exp ~relation ~is_plus:true ~last_included
-      ~latest_prune location cond_set
+    BoUtils.Check.array_access ~arr ~idx ~is_plus:true ~last_included ~latest_prune location
+      cond_set
 
 
   let add_at_index (coll_id : Ident.t) index_exp =
@@ -1077,6 +1067,11 @@ module JavaString = struct
     |> BufferOverrunDomain.Val.get_itv |> Itv.set_lb_zero |> Itv.decr
 
 
+  (** Given a string of length n, return itv [1, n_u -1]. *)
+  let range_itv_one_mone v =
+    BufferOverrunDomain.Val.get_itv v |> Itv.decr |> Itv.set_lb Itv.Bound.one
+
+
   let indexOf exp =
     let exec model_env ~ret:(ret_id, _) mem =
       (* if not found, indexOf returns -1. *)
@@ -1096,6 +1091,36 @@ module JavaString = struct
   let constructor tgt_exp src =
     let exec model_env ~ret:_ mem =
       constructor_from_char_ptr model_env (Sem.eval_locs tgt_exp mem) src mem
+    in
+    {exec; check= no_check}
+
+
+  let malloc_and_set_length exp ({location} as model_env) ~ret:((id, _) as ret) length mem =
+    let {exec} = malloc ~can_be_zero:false exp in
+    let mem = exec model_env ~ret mem in
+    let underlying_arr_loc = Dom.Mem.find_stack (Loc.of_id id) mem |> Dom.Val.get_pow_loc in
+    Dom.Mem.transform_mem ~f:(Dom.Val.set_array_length location ~length) underlying_arr_loc mem
+
+
+  (** If the expression does not match any part of the input then the resulting array has just one
+      element. *)
+  let split exp =
+    let exec model_env ~ret mem =
+      let length =
+        ArrObjCommon.eval_size model_env exp ~fn mem |> range_itv_one_mone |> Dom.Val.of_itv
+      in
+      malloc_and_set_length exp model_env ~ret length mem
+    in
+    {exec; check= no_check}
+
+
+  let split_with_limit limit_exp =
+    let exec ({integer_type_widths} as model_env) ~ret mem =
+      let dummy_exp = Exp.zero in
+      let length =
+        Sem.eval integer_type_widths dummy_exp mem |> range_itv_one_mone |> Dom.Val.of_itv
+      in
+      malloc_and_set_length limit_exp model_env ~ret length mem
     in
     {exec; check= no_check}
 
@@ -1211,6 +1236,7 @@ module Call = struct
       ; -"__new" <>$ capt_exp $+...$--> malloc ~can_be_zero:true
       ; -"__new_array" <>$ capt_exp $+...$--> malloc ~can_be_zero:true
       ; +PatternMatch.implements_arrays &:: "asList" <>$ capt_exp $!--> create_copy_array
+      ; +PatternMatch.implements_collection &:: "toArray" <>$ capt_exp $+...$--> create_copy_array
       ; +PatternMatch.implements_arrays &:: "copyOf" <>$ capt_exp $+ capt_exp
         $+...$--> Collection.copyOf
       ; -"__placement_new" <>$ capt_exp $+ capt_arg $+? capt_arg $!--> placement_new
@@ -1236,6 +1262,10 @@ module Call = struct
         &:: "concat" <>$ capt_exp $+ capt_exp $+...$--> JavaString.concat
       ; +PatternMatch.implements_lang "String"
         &:: "indexOf" <>$ capt_exp $+ any_arg $--> JavaString.indexOf
+      ; +PatternMatch.implements_lang "String"
+        &:: "split" <>$ any_arg $+ any_arg $+ capt_exp $--> JavaString.split_with_limit
+      ; +PatternMatch.implements_lang "String"
+        &:: "split" <>$ capt_exp $+ any_arg $--> JavaString.split
       ; -"strcpy" <>$ capt_exp $+ capt_exp $+...$--> strcpy
       ; -"strncpy" <>$ capt_exp $+ capt_exp $+ capt_exp $+...$--> strncpy
       ; -"snprintf" <>--> snprintf
@@ -1330,7 +1360,13 @@ module Call = struct
         (* model sets as lists *)
       ; +PatternMatch.implements_collections &::+ unmodifiable <>$ capt_exp $--> Collection.iterator
       ; +PatternMatch.implements_collections &:: "singleton" <>--> Collection.singleton_collection
+      ; +PatternMatch.implements_collections
+        &:: "singletonList" <>--> Collection.singleton_collection
+      ; +PatternMatch.implements_collections
+        &:: "singletonMap" <>--> Collection.singleton_collection
+      ; +PatternMatch.implements_collections &:: "emptyList" <>--> Collection.new_collection
       ; +PatternMatch.implements_collections &:: "emptySet" <>--> Collection.new_collection
+      ; +PatternMatch.implements_collections &:: "emptyMap" <>--> Collection.new_collection
         (* model maps as lists *)
       ; +PatternMatch.implements_collections
         &:: "singletonMap" <>--> Collection.singleton_collection
@@ -1370,7 +1406,11 @@ module Call = struct
         &:: "addAll" <>$ capt_var_exn $+ capt_exp $+ capt_exp $!--> Collection.addAll_at_index
       ; +PatternMatch.implements_collection &:: "size" <>$ capt_exp $!--> Collection.size
       ; +PatternMatch.implements_google "common.base.Preconditions"
-        &:: "checkArgument" <>$ capt_exp $--> Preconditions.check_argument
+        &:: "checkArgument" <>$ capt_exp $+...$--> Preconditions.check_argument
+      ; +PatternMatch.implements_google "common.base.Preconditions"
+        &:: "checkState" <>$ capt_exp $+...$--> Preconditions.check_argument
+      ; +PatternMatch.implements_google "common.base.Preconditions"
+        &:: "checkNotNull" <>$ capt_exp $+...$--> id
       ; +PatternMatch.implements_pseudo_collection &:: "size" <>$ capt_exp $!--> Collection.size
       ; +PatternMatch.implements_org_json "JSONArray"
         &:: "length" <>$ capt_exp $!--> Collection.size

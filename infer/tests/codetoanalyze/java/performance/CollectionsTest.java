@@ -65,4 +65,16 @@ class CollectionsTest {
     Set<String> set = Collections.emptySet();
     for (String s : set) {}
   }
+
+  void emptyList_constant() {
+    for (int i = 0; i < Collections.emptyList().size(); i++) {}
+  }
+
+  void singletonMap_constant() {
+    for (int i = 0; i < Collections.singletonMap(1, 1).size(); i++) {}
+  }
+
+  void globalEmptyList_constant() {
+    for (int i = 0; i < java.util.Collections.EMPTY_LIST.size(); i++) {}
+  }
 }

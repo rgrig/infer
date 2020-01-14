@@ -21,24 +21,24 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
   let add_method ?(is_destructor_wrapper = false) trans_unit_ctx tenv cfg class_decl_opt procname
       body ms has_return_param outer_context_opt extra_instrs =
     L.(debug Capture Verbose)
-      "@\n@\n>>---------- ADDING METHOD: '%a' ---------<<@\n@\n" Typ.Procname.pp procname ;
+      "@\n@\n>>---------- ADDING METHOD: '%a' ---------<<@\n@\n" Procname.pp procname ;
     incr CFrontend_config.procedures_attempted ;
     let recover () =
       incr CFrontend_config.procedures_failed ;
-      Typ.Procname.Hash.remove cfg procname ;
+      Procname.Hash.remove cfg procname ;
       let method_kind = ms.CMethodSignature.method_kind in
       CMethod_trans.create_external_procdesc trans_unit_ctx cfg procname method_kind None
     in
     let pp_context fmt () =
-      F.fprintf fmt "Aborting translation of method '%a' in file '%a'" Typ.Procname.pp procname
+      F.fprintf fmt "Aborting translation of method '%a' in file '%a'" Procname.pp procname
         SourceFile.pp trans_unit_ctx.CFrontend_config.source_file
     in
     let f () =
-      match Typ.Procname.Hash.find cfg procname with
+      match Procname.Hash.find cfg procname with
       | procdesc when Procdesc.is_defined procdesc && not (model_exists procname) -> (
           L.(debug Capture Verbose)
             "@\n@\n>>---------- Start translating body of function: '%s' ---------<<@\n@."
-            (Typ.Procname.to_string procname) ;
+            (Procname.to_string procname) ;
           let vars_to_destroy = CScope.Variables.compute_vars_to_destroy_map body in
           let context =
             CContext.create_context trans_unit_ctx tenv cfg procdesc class_decl_opt has_return_param
@@ -123,10 +123,10 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
                 add_method trans_unit_ctx tenv cfg curr_class procname body ms return_param_typ_opt
                   None extra_instrs ~is_destructor_wrapper:true ;
               let new_method_name =
-                Config.clang_inner_destructor_prefix ^ Typ.Procname.get_method procname
+                Config.clang_inner_destructor_prefix ^ Procname.get_method procname
               in
               let ms' =
-                {ms with name= Typ.Procname.objc_cpp_replace_method_name procname new_method_name}
+                {ms with name= Procname.objc_cpp_replace_method_name procname new_method_name}
               in
               let procname' = ms'.CMethodSignature.name in
               (ms', procname') )
@@ -151,10 +151,10 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
   let process_property_implementation trans_unit_ctx tenv cfg curr_class
       obj_c_property_impl_decl_info =
     let property_decl_opt = obj_c_property_impl_decl_info.Clang_ast_t.opidi_property_decl in
-    match CAst_utils.get_decl_opt_with_decl_ref property_decl_opt with
+    match CAst_utils.get_decl_opt_with_decl_ref_opt property_decl_opt with
     | Some (ObjCPropertyDecl (_, _, obj_c_property_decl_info)) ->
         let process_accessor pointer =
-          match CAst_utils.get_decl_opt_with_decl_ref pointer with
+          match CAst_utils.get_decl_opt_with_decl_ref_opt pointer with
           | Some (ObjCMethodDecl _ as dec) ->
               process_method_decl ~set_objc_accessor_attr:true trans_unit_ctx tenv cfg curr_class
                 dec
@@ -389,16 +389,22 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
             (* safe to Option.get because it's a global *)
             Option.value_exn (Pvar.get_initializer_pname global)
           in
-          let ms =
-            CMethodSignature.mk procname None [] (Typ.void, Annot.Item.empty) []
-              decl_info.Clang_ast_t.di_source_range ClangMethodKind.C_FUNCTION None None None `None
-          in
-          let stmt_info =
-            {si_pointer= CAst_utils.get_fresh_pointer (); si_source_range= decl_info.di_source_range}
-          in
-          let body = Clang_ast_t.DeclStmt (stmt_info, [], [dec]) in
-          ignore (CMethod_trans.create_local_procdesc trans_unit_ctx cfg tenv ms [body] []) ;
-          add_method trans_unit_ctx tenv cfg CContext.ContextNoCls procname body ms None None []
+          if
+            CMethod_trans.should_create_procdesc cfg procname ~defined:true
+              ~set_objc_accessor_attr:false
+          then (
+            let ms =
+              CMethodSignature.mk procname None [] (Typ.void, Annot.Item.empty) []
+                decl_info.Clang_ast_t.di_source_range ClangMethodKind.C_FUNCTION None None None
+                `None
+            in
+            let stmt_info =
+              { si_pointer= CAst_utils.get_fresh_pointer ()
+              ; si_source_range= decl_info.di_source_range }
+            in
+            let body = Clang_ast_t.DeclStmt (stmt_info, [], [dec]) in
+            ignore (CMethod_trans.create_local_procdesc trans_unit_ctx cfg tenv ms [body] []) ;
+            add_method trans_unit_ctx tenv cfg CContext.ContextNoCls procname body ms None None [] )
       (* Note that C and C++ records are treated the same way
          Skip translating implicit struct declarations, unless they have
          full definition (which happens with C++ lambdas) *)

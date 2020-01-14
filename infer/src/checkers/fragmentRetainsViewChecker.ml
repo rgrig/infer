@@ -25,10 +25,10 @@ let rec format_typ typ =
 
 let format_method pname =
   match pname with
-  | Typ.Procname.Java pname_java ->
-      Typ.Procname.Java.get_method pname_java
+  | Procname.Java pname_java ->
+      Procname.Java.get_method pname_java
   | _ ->
-      Typ.Procname.to_string pname
+      Procname.to_string pname
 
 
 let report_warning class_name fld fld_typ summary =
@@ -40,9 +40,8 @@ let report_warning class_name fld fld_typ summary =
       "Fragment %a does not nullify View field %a (type %a) in %a. If this Fragment is placed on \
        the back stack, a reference to this (probably dead) View will be retained. In general, it \
        is a good idea to initialize View's in %a, then nullify them in %a."
-      pp_m (Typ.Name.name class_name) pp_m
-      (Typ.Fieldname.to_flat_string fld)
-      pp_m (format_typ fld_typ) pp_m (format_method pname) pp_m on_create_view pp_m on_destroy_view
+      pp_m (Typ.Name.name class_name) pp_m (Fieldname.get_field_name fld) pp_m (format_typ fld_typ)
+      pp_m (format_method pname) pp_m on_create_view pp_m on_destroy_view
   in
   Reporting.log_warning summary ~loc IssueType.checkers_fragment_retain_view description
 
@@ -51,7 +50,7 @@ let callback_fragment_retains_view_java java_pname {Callbacks.summary; exe_env} 
   (* TODO: complain if onDestroyView is not defined, yet the Fragment has View fields *)
   (* TODO: handle fields nullified in callees in the same file *)
   let tenv = Exe_env.get_tenv exe_env (Summary.get_proc_name summary) in
-  let is_on_destroy_view = String.equal (Typ.Procname.Java.get_method java_pname) on_destroy_view in
+  let is_on_destroy_view = String.equal (Procname.Java.get_method java_pname) on_destroy_view in
   let fld_typ_is_view typ =
     match typ.Typ.desc with
     | Typ.Tptr ({desc= Tstruct tname}, _) ->
@@ -61,11 +60,11 @@ let callback_fragment_retains_view_java java_pname {Callbacks.summary; exe_env} 
   in
   (* is [fldname] a View type declared by [class_typename]? *)
   let is_declared_view_typ class_typename (fldname, fld_typ, _) =
-    let fld_classname = Typ.Name.Java.from_string (Typ.Fieldname.Java.get_class fldname) in
+    let fld_classname = Fieldname.get_class_name fldname in
     Typ.Name.equal fld_classname class_typename && fld_typ_is_view fld_typ
   in
   if is_on_destroy_view then
-    let class_name = Typ.Name.Java.from_string (Typ.Procname.Java.get_class_name java_pname) in
+    let class_name = Typ.Name.Java.from_string (Procname.Java.get_class_name java_pname) in
     match Tenv.lookup tenv class_name with
     | Some {fields} when AndroidFramework.is_fragment tenv class_name ->
         let declared_view_fields = List.filter ~f:(is_declared_view_typ class_name) fields in
@@ -76,7 +75,7 @@ let callback_fragment_retains_view_java java_pname {Callbacks.summary; exe_env} 
             if
               not
                 ( Annotations.ia_ends_with ia Annotations.auto_cleanup
-                || Typ.Fieldname.Set.mem fname fields_nullified )
+                || Fieldname.Set.mem fname fields_nullified )
             then report_warning class_name fname fld_typ summary )
           declared_view_fields
     | _ ->
@@ -86,7 +85,7 @@ let callback_fragment_retains_view_java java_pname {Callbacks.summary; exe_env} 
 let callback_fragment_retains_view ({Callbacks.summary} as args) : Summary.t =
   let proc_name = Summary.get_proc_name summary in
   ( match proc_name with
-  | Typ.Procname.Java java_pname ->
+  | Procname.Java java_pname ->
       callback_fragment_retains_view_java java_pname args
   | _ ->
       () ) ;

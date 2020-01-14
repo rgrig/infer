@@ -61,7 +61,7 @@ exception Dummy_exception of Localise.error_desc
 
 exception
   Dangling_pointer_dereference of
-    PredSymb.dangling_kind option * Localise.error_desc * Logging.ocaml_pos
+    bool (* is it user visible? *) * Localise.error_desc * Logging.ocaml_pos
 
 exception Deallocate_stack_variable of Localise.error_desc
 
@@ -88,15 +88,9 @@ exception Internal_error of Localise.error_desc
 exception Java_runtime_exception of Typ.Name.t * string * Localise.error_desc
 
 exception
-  Leak of
-    bool
-    * Sil.hpred
-    * (visibility * Localise.error_desc)
-    * bool
-    * PredSymb.resource
-    * Logging.ocaml_pos
+  Leak of bool * (visibility * Localise.error_desc) * bool * PredSymb.resource * Logging.ocaml_pos
 
-exception Missing_fld of Typ.Fieldname.t * Logging.ocaml_pos
+exception Missing_fld of Fieldname.t * Logging.ocaml_pos
 
 exception Premature_nil_termination of Localise.error_desc * Logging.ocaml_pos
 

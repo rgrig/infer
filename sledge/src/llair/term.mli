@@ -26,6 +26,7 @@ type op1 =
           to type [dst], possibly with loss of information. The [src] and
           [dst] types must be [Typ.convertible] and must not both be
           [Integer] types. *)
+  | Splat  (** Iterated concatenation of a single byte *)
   | Select of int  (** Select an index from a record *)
 [@@deriving compare, equal, hash, sexp]
 
@@ -44,7 +45,6 @@ type op2 =
   | Shl  (** Shift left, bitwise *)
   | Lshr  (** Logical shift right, bitwise *)
   | Ashr  (** Arithmetic shift right, bitwise *)
-  | Splat  (** Iterated concatenation of a single byte *)
   | Memory  (** Size-tagged byte-array *)
   | Update of int  (** Constant record with updated index *)
 [@@deriving compare, equal, hash, sexp]
@@ -82,11 +82,6 @@ and t = private
   | Integer of {data: Z.t}  (** Integer constant *)
 [@@deriving compare, equal, hash, sexp]
 
-val comparator : (t, comparator_witness) Comparator.t
-val pp_full : ?is_x:(t -> bool) -> t pp
-val pp : t pp
-val invariant : t -> unit
-
 (** Term.Var is re-exported as Var *)
 module Var : sig
   type term := t
@@ -94,19 +89,31 @@ module Var : sig
 
   include Comparator.S with type t := t
 
+  type strength = t -> [`Universal | `Existential | `Anonymous] option
+
   module Set : sig
     type var := t
 
     type t = (var, comparator_witness) Set.t
     [@@deriving compare, equal, sexp]
 
-    val pp_full : ?is_x:(term -> bool) -> t pp
+    val ppx : strength -> t pp
     val pp : t pp
+    val pp_xs : t pp
     val empty : t
     val of_ : var -> t
     val of_option : var option -> t
     val of_list : var list -> t
     val of_vector : var vector -> t
+  end
+
+  module Map : sig
+    type var := t
+
+    type 'a t = (var, 'a, comparator_witness) Map.t
+    [@@deriving compare, equal, sexp]
+
+    val empty : 'a t
   end
 
   val pp : t pp
@@ -135,6 +142,20 @@ module Var : sig
     val fold : t -> init:'a -> f:(var -> var -> 'a -> 'a) -> 'a
   end
 end
+
+module Map : sig
+  type term := t
+
+  type 'a t = (term, 'a, comparator_witness) Map.t
+  [@@deriving compare, equal, sexp]
+
+  val empty : 'a t
+end
+
+val comparator : (t, comparator_witness) Comparator.t
+val ppx : Var.strength -> t pp
+val pp : t pp
+val invariant : t -> unit
 
 (** Construct *)
 
@@ -191,9 +212,8 @@ val ashr : t -> t -> t
 val conditional : cnd:t -> thn:t -> els:t -> t
 
 (* memory contents *)
-val splat : byt:t -> siz:t -> t
-val memory : siz:t -> arr:t -> t
-val concat : t array -> t
+val splat : t -> t
+val eq_concat : t * t -> (t * t) array -> t
 
 (* records (struct / array values) *)
 val record : t vector -> t
@@ -224,5 +244,9 @@ val fold_terms : t -> init:'a -> f:('a -> t -> 'a) -> 'a
 val fv : t -> Var.Set.t
 val is_true : t -> bool
 val is_false : t -> bool
-val classify : t -> [> `Atomic | `Interpreted | `Simplified | `Uninterpreted]
-val solve : t -> t -> (t, t, comparator_witness) Map.t option
+
+(** Solve *)
+
+val solve_zero_eq : t -> (t * t) option
+(** [solve_zero_eq d] is [Some (e, f)] if [d = 0] can be equivalently
+    expressed as [e = f] for some monomial subterm [e] of [d]. *)

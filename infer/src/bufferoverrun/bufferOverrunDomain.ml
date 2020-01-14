@@ -13,7 +13,6 @@ open! AbstractDomain.Types
 module F = Format
 module L = Logging
 module OndemandEnv = BufferOverrunOndemandEnv
-module Relation = BufferOverrunDomainRelation
 module SPath = Symb.SymbolPath
 module Trace = BufferOverrunTrace
 module TraceSet = Trace.Set
@@ -80,7 +79,7 @@ module ModeledRange = struct
   end)
 
   let of_modeled_function pname location bound =
-    let pname = Typ.Procname.to_simplified_string pname in
+    let pname = Procname.to_simplified_string pname in
     NonBottom (Bounds.NonNegativeBound.of_modeled_function pname location bound)
 
 
@@ -93,11 +92,8 @@ module Val = struct
     ; itv_thresholds: ItvThresholds.t
     ; itv_updated_by: ItvUpdatedBy.t
     ; modeled_range: ModeledRange.t
-    ; sym: Relation.Sym.t
     ; powloc: PowLoc.t
     ; arrayblk: ArrayBlk.t
-    ; offset_sym: Relation.Sym.t
-    ; size_sym: Relation.Sym.t
     ; traces: TraceSet.t }
 
   let bot : t =
@@ -105,11 +101,8 @@ module Val = struct
     ; itv_thresholds= ItvThresholds.empty
     ; itv_updated_by= ItvUpdatedBy.bottom
     ; modeled_range= ModeledRange.bottom
-    ; sym= Relation.Sym.bot
     ; powloc= PowLoc.bot
     ; arrayblk= ArrayBlk.bot
-    ; offset_sym= Relation.Sym.bot
-    ; size_sym= Relation.Sym.bot
     ; traces= TraceSet.bottom }
 
 
@@ -121,9 +114,6 @@ module Val = struct
     let itv_updated_by_pp fmt itv_updated_by =
       if Config.bo_debug >= 3 then F.fprintf fmt "(updated by %a)" ItvUpdatedBy.pp itv_updated_by
     in
-    let relation_sym_pp fmt sym =
-      if Option.is_some Config.bo_relational_domain then F.fprintf fmt ", %a" Relation.Sym.pp sym
-    in
     let modeled_range_pp fmt range =
       if not (ModeledRange.is_bottom range) then
         F.fprintf fmt " (modeled_range:%a)" ModeledRange.pp range
@@ -131,10 +121,9 @@ module Val = struct
     let trace_pp fmt traces =
       if Config.bo_debug >= 1 then F.fprintf fmt ", %a" TraceSet.pp traces
     in
-    F.fprintf fmt "(%a%a%a%a%a, %a, %a%a%a%a)" Itv.pp x.itv itv_thresholds_pp x.itv_thresholds
-      relation_sym_pp x.sym itv_updated_by_pp x.itv_updated_by modeled_range_pp x.modeled_range
-      PowLoc.pp x.powloc ArrayBlk.pp x.arrayblk relation_sym_pp x.offset_sym relation_sym_pp
-      x.size_sym trace_pp x.traces
+    F.fprintf fmt "(%a%a%a%a, %a, %a%a)" Itv.pp x.itv itv_thresholds_pp x.itv_thresholds
+      itv_updated_by_pp x.itv_updated_by modeled_range_pp x.modeled_range PowLoc.pp x.powloc
+      ArrayBlk.pp x.arrayblk trace_pp x.traces
 
 
   let unknown_from : callee_pname:_ -> location:_ -> t =
@@ -144,11 +133,8 @@ module Val = struct
     ; itv_thresholds= ItvThresholds.empty
     ; itv_updated_by= ItvUpdatedBy.Top
     ; modeled_range= ModeledRange.bottom
-    ; sym= Relation.Sym.top
     ; powloc= PowLoc.unknown
     ; arrayblk= ArrayBlk.unknown
-    ; offset_sym= Relation.Sym.top
-    ; size_sym= Relation.Sym.top
     ; traces }
 
 
@@ -159,11 +145,8 @@ module Val = struct
       && ItvThresholds.leq ~lhs:lhs.itv_thresholds ~rhs:rhs.itv_thresholds
       && ItvUpdatedBy.leq ~lhs:lhs.itv_updated_by ~rhs:rhs.itv_updated_by
       && ModeledRange.leq ~lhs:lhs.modeled_range ~rhs:rhs.modeled_range
-      && Relation.Sym.leq ~lhs:lhs.sym ~rhs:rhs.sym
       && PowLoc.leq ~lhs:lhs.powloc ~rhs:rhs.powloc
       && ArrayBlk.leq ~lhs:lhs.arrayblk ~rhs:rhs.arrayblk
-      && Relation.Sym.leq ~lhs:lhs.offset_sym ~rhs:rhs.offset_sym
-      && Relation.Sym.leq ~lhs:lhs.size_sym ~rhs:rhs.size_sym
 
 
   let widen ~prev ~next ~num_iters =
@@ -179,11 +162,8 @@ module Val = struct
           ItvUpdatedBy.widen ~prev:prev.itv_updated_by ~next:next.itv_updated_by ~num_iters
       ; modeled_range=
           ModeledRange.widen ~prev:prev.modeled_range ~next:next.modeled_range ~num_iters
-      ; sym= Relation.Sym.widen ~prev:prev.sym ~next:next.sym ~num_iters
       ; powloc= PowLoc.widen ~prev:prev.powloc ~next:next.powloc ~num_iters
       ; arrayblk= ArrayBlk.widen ~prev:prev.arrayblk ~next:next.arrayblk ~num_iters
-      ; offset_sym= Relation.Sym.widen ~prev:prev.offset_sym ~next:next.offset_sym ~num_iters
-      ; size_sym= Relation.Sym.widen ~prev:prev.size_sym ~next:next.size_sym ~num_iters
       ; traces= TraceSet.join prev.traces next.traces }
 
 
@@ -195,11 +175,8 @@ module Val = struct
       ; itv_thresholds= ItvThresholds.join x.itv_thresholds y.itv_thresholds
       ; itv_updated_by= ItvUpdatedBy.join x.itv_updated_by y.itv_updated_by
       ; modeled_range= ModeledRange.join x.modeled_range y.modeled_range
-      ; sym= Relation.Sym.join x.sym y.sym
       ; powloc= PowLoc.join x.powloc y.powloc
       ; arrayblk= ArrayBlk.join x.arrayblk y.arrayblk
-      ; offset_sym= Relation.Sym.join x.offset_sym y.offset_sym
-      ; size_sym= Relation.Sym.join x.size_sym y.size_sym
       ; traces= TraceSet.join x.traces y.traces }
 
 
@@ -209,10 +186,6 @@ module Val = struct
 
   let get_modeled_range : t -> ModeledRange.t = fun x -> x.modeled_range
 
-  let get_sym : t -> Relation.Sym.t = fun x -> x.sym
-
-  let get_sym_var : t -> Relation.Var.t option = fun x -> Relation.Sym.get_var x.sym
-
   let get_pow_loc : t -> PowLoc.t = fun x -> x.powloc
 
   let get_array_blk : t -> ArrayBlk.t = fun x -> x.arrayblk
@@ -220,10 +193,6 @@ module Val = struct
   let get_array_locs : t -> PowLoc.t = fun x -> ArrayBlk.get_pow_loc x.arrayblk
 
   let get_all_locs : t -> PowLoc.t = fun x -> PowLoc.join x.powloc (get_array_locs x)
-
-  let get_offset_sym : t -> Relation.Sym.t = fun x -> x.offset_sym
-
-  let get_size_sym : t -> Relation.Sym.t = fun x -> x.size_sym
 
   let get_traces : t -> TraceSet.t = fun x -> x.traces
 
@@ -243,19 +212,11 @@ module Val = struct
       Allocsite.t -> stride:int option -> offset:Itv.t -> size:Itv.t -> traces:TraceSet.t -> t =
    fun allocsite ~stride ~offset ~size ~traces ->
     let stride = Option.value_map stride ~default:Itv.nat ~f:Itv.of_int in
-    { bot with
-      arrayblk= ArrayBlk.make_c allocsite ~offset ~size ~stride
-    ; offset_sym= Relation.Sym.of_allocsite_offset allocsite
-    ; size_sym= Relation.Sym.of_allocsite_size allocsite
-    ; traces }
+    {bot with arrayblk= ArrayBlk.make_c allocsite ~offset ~size ~stride; traces}
 
 
   let of_java_array_alloc : Allocsite.t -> length:Itv.t -> traces:TraceSet.t -> t =
-   fun allocsite ~length ~traces ->
-    { bot with
-      arrayblk= ArrayBlk.make_java allocsite ~length
-    ; size_sym= Relation.Sym.of_allocsite_size allocsite
-    ; traces }
+   fun allocsite ~length ~traces -> {bot with arrayblk= ArrayBlk.make_java allocsite ~length; traces}
 
 
   let of_literal_string : Typ.IntegerWidths.t -> string -> t =
@@ -284,11 +245,11 @@ module Val = struct
 
   let set_modeled_range range x = {x with modeled_range= range}
 
-  let unknown_bit : t -> t = fun x -> {x with itv= Itv.top; sym= Relation.Sym.top}
+  let unknown_bit : t -> t = fun x -> {x with itv= Itv.top}
 
-  let neg : t -> t = fun x -> {x with itv= Itv.neg x.itv; sym= Relation.Sym.top}
+  let neg : t -> t = fun x -> {x with itv= Itv.neg x.itv}
 
-  let lnot : t -> t = fun x -> {x with itv= Itv.lnot x.itv |> Itv.of_bool; sym= Relation.Sym.top}
+  let lnot : t -> t = fun x -> {x with itv= Itv.lnot x.itv |> Itv.of_bool}
 
   let lift_itv : (Itv.t -> Itv.t -> Itv.t) -> ?f_trace:_ -> t -> t -> t =
    fun f ?f_trace x y ->
@@ -340,9 +301,9 @@ module Val = struct
 
   let minus_a = lift_itv Itv.minus
 
-  let get_iterator_itv : t -> t =
+  let get_range_of_iterator : t -> t =
    fun i ->
-    let itv = Itv.get_iterator_itv i.itv in
+    let itv = Itv.get_range_of_iterator i.itv in
     of_itv itv ~traces:i.traces
 
 
@@ -432,8 +393,8 @@ module Val = struct
 
   let prune_length_ge_one : t -> t = lift_prune_length1 Itv.prune_ge_one
 
-  let prune_comp : Binop.t -> t -> t -> t =
-   fun c -> lift_prune2 (Itv.prune_comp c) (ArrayBlk.prune_comp c)
+  let prune_binop : Binop.t -> t -> t -> t =
+   fun c -> lift_prune2 (Itv.prune_binop c) (ArrayBlk.prune_binop c)
 
 
   let is_null : t -> bool =
@@ -447,6 +408,8 @@ module Val = struct
 
 
   let prune_ne : t -> t -> t = lift_prune2 Itv.prune_ne ArrayBlk.prune_ne
+
+  let prune_lt : t -> t -> t = prune_binop Binop.Lt
 
   let is_pointer_to_non_array x = (not (PowLoc.is_bot x.powloc)) && ArrayBlk.is_bot x.arrayblk
 
@@ -536,6 +499,10 @@ module Val = struct
   let unknown_locs = of_pow_loc PowLoc.unknown ~traces:TraceSet.bottom
 
   let is_mone x = Itv.is_mone (get_itv x)
+
+  let is_incr_of l {itv} =
+    Option.value_map (Loc.get_path l) ~default:false ~f:(fun path -> Itv.is_incr_of path itv)
+
 
   let cast typ v = {v with powloc= PowLoc.cast typ v.powloc}
 
@@ -723,6 +690,8 @@ module MVal = struct
   let get_rep_multi (represents_multiple_values, _) = represents_multiple_values
 
   let get_val (_, v) = v
+
+  let is_incr_of l (m, v) = (not m) && Val.is_incr_of l v
 end
 
 module MemPure = struct
@@ -810,6 +779,11 @@ module MemPure = struct
 
   let is_rep_multi_loc l m = Option.value_map ~default:false (find_opt l m) ~f:MVal.get_rep_multi
 
+  (** Collect the location that was increased by one, i.e., [x -> x+1] *)
+  let get_incr_locs m =
+    fold (fun l v acc -> if MVal.is_incr_of l v then PowLoc.add l acc else acc) m PowLoc.empty
+
+
   let find_opt l m = Option.map (find_opt l m) ~f:MVal.get_val
 
   let add ?(represents_multiple_values = false) l v m =
@@ -843,37 +817,12 @@ module AliasTarget = struct
         F.pp_print_string fmt ">="
 
 
-  (* Relations between values of logical variables(registers) and program variables
-
-     "Simple relation": Since Sil distinguishes logical and program variables, we need a relation for
-     pruning values of program variables.  For example, a C statement [if(x){...}] is translated to
-     [%r=load(x); if(%r){...}] in Sil.  At the load statement, we record the alias between the
-     values of [%r] and [x], then we can prune not only the value of [%r], but also that of [x]
-     inside the if branch.  The [java_tmp] field is an additional slot for keeping one more alias of
-     temporary variable in Java.  The [i] field is to express [%r=load(x)+i].
-
-     "Empty relation": For pruning [vector.length] with [vector::empty()] results, we adopt a specific
-     relation between [%r] and [v->elements], where [%r=v.empty()].  So, if [%r!=0], [v]'s array
-     length ([v->elements->length]) is pruned by [=0].  On the other hand, if [%r==0], [v]'s array
-     length is pruned by [>=1].
-
-     "Size relation": This is for pruning vector's length.  When there is a function call,
-     [%r=x.size()], the alias target for [%r] becomes [AliasTarget.size {l=x.elements}].  The
-     [java_tmp] field is an additional slot for keeping one more alias of temporary variable in
-     Java.  The [i] field is to express [%r=x.size()+i], which is required to follow the semantics
-     of [Array.add] inside loops precisely.
-
-     "Iterator offset relation": This is for tracking a relation between an iterator offset and a
-     length of array.  If [%r] has an alias to [IteratorOffset {l; i}], which means that [%r's
-     iterator offset] is same to [length(l)+i].
-
-     "HasNext relation": This is for tracking return values of the [hasNext] function.  If [%r] has an
-     alias to [HasNext {l}], which means that [%r] is a [hasNext] results of the iterator [l]. *)
   type t =
     | Simple of {i: IntLit.t; java_tmp: Loc.t option}
     | Empty
     | Size of {alias_typ: alias_typ; i: IntLit.t; java_tmp: Loc.t option}
     | Fgets
+    | IteratorSimple of {i: IntLit.t; java_tmp: Loc.t option}
     | IteratorOffset of {alias_typ: alias_typ; i: IntLit.t; java_tmp: Loc.t option}
     | IteratorHasNext of {java_tmp: Loc.t option}
     | Top
@@ -902,6 +851,8 @@ module AliasTarget = struct
             pp_intlit i
       | Fgets ->
           F.fprintf fmt "%t=fgets(%t)" pp_lhs pp_rhs
+      | IteratorSimple {i; java_tmp} ->
+          F.fprintf fmt "iterator offset(%t%a)=%t%a" pp_lhs pp_java_tmp java_tmp pp_rhs pp_intlit i
       | IteratorOffset {alias_typ; i; java_tmp} ->
           F.fprintf fmt "iterator offset(%t%a)%alength(%t)%a" pp_lhs pp_java_tmp java_tmp
             alias_typ_pp alias_typ pp_rhs pp_intlit i
@@ -919,6 +870,7 @@ module AliasTarget = struct
   let get_locs = function
     | Simple {java_tmp= Some tmp}
     | Size {java_tmp= Some tmp}
+    | IteratorSimple {java_tmp= Some tmp}
     | IteratorOffset {java_tmp= Some tmp}
     | IteratorHasNext {java_tmp= Some tmp} ->
         PowLoc.singleton tmp
@@ -926,6 +878,7 @@ module AliasTarget = struct
     | Size {java_tmp= None}
     | Empty
     | Fgets
+    | IteratorSimple {java_tmp= None}
     | IteratorOffset {java_tmp= None}
     | IteratorHasNext {java_tmp= None}
     | Top ->
@@ -944,6 +897,8 @@ module AliasTarget = struct
         Size {alias_typ; i; java_tmp= Option.bind java_tmp ~f}
     | Fgets ->
         Fgets
+    | IteratorSimple {i; java_tmp} ->
+        IteratorSimple {i; java_tmp= Option.bind java_tmp ~f}
     | IteratorOffset {alias_typ; i; java_tmp} ->
         IteratorOffset {alias_typ; i; java_tmp= Option.bind java_tmp ~f}
     | IteratorHasNext {java_tmp} ->
@@ -1033,6 +988,8 @@ module AliasTarget = struct
   let set_java_tmp loc = function
     | Size a ->
         Size {a with java_tmp= Some loc}
+    | IteratorSimple a ->
+        IteratorSimple {a with java_tmp= Some loc}
     | IteratorOffset a ->
         IteratorOffset {a with java_tmp= Some loc}
     | IteratorHasNext _ ->
@@ -1092,7 +1049,7 @@ module AliasTargets = struct
 
   let exists2 f x y = exists (fun k v -> exists (f k v) y) x
 
-  let find_first_simple_zero_alias x =
+  let find_simple_alias x =
     let exception Found of KeyRhs.t in
     let is_simple_zero rhs = function
       | AliasTarget.Simple {i} when IntLit.iszero i ->
@@ -1201,6 +1158,34 @@ module AliasMap = struct
 
   let forget_size_alias arr_locs x = M.map (AliasTargets.forget_size_alias arr_locs) x
 
+  let incr_iterator_simple_alias ~prev loc n x =
+    let accum_tgt ~lhs ~rhs tgt acc =
+      if Loc.equal rhs loc then
+        match tgt with
+        | AliasTarget.IteratorSimple {i; java_tmp} ->
+            add_alias ~lhs ~rhs (AliasTarget.IteratorSimple {i= IntLit.sub i n; java_tmp}) acc
+        | _ ->
+            acc
+      else acc
+    in
+    let accum_tgts lhs tgts acc =
+      AliasTargets.fold (fun rhs tgts acc -> accum_tgt ~lhs ~rhs tgts acc) tgts acc
+    in
+    M.fold accum_tgts prev x
+
+
+  let incr_iterator_simple_alias_on_call {eval_locpath} ~callee_locs x =
+    let accum_increased_alias callee_loc acc =
+      Option.value_map (Loc.get_path callee_loc) ~default:acc ~f:(fun callee_path ->
+          match PowLoc.is_singleton_or_more (eval_locpath callee_path) with
+          | IContainer.Singleton loc ->
+              incr_iterator_simple_alias ~prev:x loc IntLit.one acc
+          | IContainer.Empty | IContainer.More ->
+              acc )
+    in
+    PowLoc.fold accum_increased_alias callee_locs x
+
+
   let store_n ~prev loc id n x =
     let accum_size_alias rhs tgt acc =
       match tgt with
@@ -1211,7 +1196,19 @@ module AliasMap = struct
       | _ ->
           acc
     in
-    AliasTargets.fold accum_size_alias (find_id id prev) x
+    let tgts = find_id id prev in
+    let x = AliasTargets.fold accum_size_alias tgts x in
+    match AliasTargets.find_simple_alias tgts with
+    | Some loc' when Loc.equal loc loc' ->
+        incr_iterator_simple_alias ~prev loc n x
+    | _ ->
+        x
+
+
+  let add_iterator_simple_alias id int x =
+    add_alias ~lhs:(KeyLhs.of_id id) ~rhs:int
+      (AliasTarget.IteratorSimple {i= IntLit.zero; java_tmp= None})
+      x
 
 
   let add_iterator_offset_alias id arr x =
@@ -1220,31 +1217,45 @@ module AliasMap = struct
       x
 
 
-  let incr_iterator_offset_alias id x =
-    let accum_incr_iterator_offset_alias rhs tgt acc =
-      match tgt with
-      | AliasTarget.IteratorOffset ({i; java_tmp} as tgt) ->
-          let i = IntLit.(add i one) in
-          let acc =
-            add_alias ~lhs:(KeyLhs.of_id id) ~rhs (AliasTarget.IteratorOffset {tgt with i}) acc
-          in
-          Option.value_map java_tmp ~default:x ~f:(fun java_tmp ->
-              add_alias ~lhs:(KeyLhs.of_loc java_tmp) ~rhs
-                (AliasTarget.IteratorOffset {tgt with i; java_tmp= None})
-                acc )
+  let incr_iterator_offset_alias =
+    let apply_i ~f = function
+      | AliasTarget.IteratorSimple ({i} as tgt) ->
+          AliasTarget.IteratorSimple {tgt with i= f i}
+      | AliasTarget.IteratorOffset ({i} as tgt) ->
+          AliasTarget.IteratorOffset {tgt with i= f i}
       | _ ->
-          acc
+          assert false
     in
-    match M.find_opt (KeyLhs.of_id id) x with
-    | Some tgts ->
-        AliasTargets.fold accum_incr_iterator_offset_alias tgts x
-    | _ ->
-        x
+    let java_tmp_none = function
+      | AliasTarget.IteratorSimple tgt ->
+          AliasTarget.IteratorSimple {tgt with java_tmp= None}
+      | AliasTarget.IteratorOffset tgt ->
+          AliasTarget.IteratorOffset {tgt with java_tmp= None}
+      | _ ->
+          assert false
+    in
+    fun id x ->
+      let accum_incr_iterator_offset_alias rhs tgt acc =
+        match tgt with
+        | AliasTarget.IteratorSimple {java_tmp} | AliasTarget.IteratorOffset {java_tmp} ->
+            let tgt = apply_i tgt ~f:IntLit.(add one) in
+            let acc = add_alias ~lhs:(KeyLhs.of_id id) ~rhs tgt acc in
+            Option.value_map java_tmp ~default:x ~f:(fun java_tmp ->
+                add_alias ~lhs:(KeyLhs.of_loc java_tmp) ~rhs (java_tmp_none tgt) acc )
+        | _ ->
+            acc
+      in
+      match M.find_opt (KeyLhs.of_id id) x with
+      | Some tgts ->
+          AliasTargets.fold accum_incr_iterator_offset_alias tgts x
+      | _ ->
+          x
 
 
   let add_iterator_has_next_alias ~ret_id ~iterator x =
     let accum_has_next_alias _rhs tgt acc =
       match tgt with
+      | AliasTarget.IteratorSimple {java_tmp= Some java_tmp}
       | AliasTarget.IteratorOffset {java_tmp= Some java_tmp} ->
           add_alias ~lhs:(KeyLhs.of_id ret_id) ~rhs:java_tmp
             (AliasTarget.IteratorHasNext {java_tmp= None})
@@ -1354,6 +1365,14 @@ module Alias = struct
     List.fold arr_locs ~init:(lift_map (AliasMap.forget loc) prev) ~f:accum_size_alias
 
 
+  let add_iterator_simple_alias : Ident.t -> PowLoc.t -> t -> t =
+   fun id int_locs a ->
+    let accum_iterator_simple_alias int_loc acc =
+      lift_map (AliasMap.add_iterator_simple_alias id int_loc) acc
+    in
+    PowLoc.fold accum_iterator_simple_alias int_locs a
+
+
   let add_iterator_offset_alias : Ident.t -> PowLoc.t -> t -> t =
    fun id arr_locs a ->
     let accum_iterator_offset_alias arr_loc acc =
@@ -1373,6 +1392,9 @@ module Alias = struct
   let remove_temp : Ident.t -> t -> t = fun temp -> lift_map (AliasMap.remove (KeyLhs.of_id temp))
 
   let forget_size_alias arr_locs = lift_map (AliasMap.forget_size_alias arr_locs)
+
+  let incr_iterator_simple_alias_on_call eval_sym_trace ~callee_locs =
+    lift_map (AliasMap.incr_iterator_simple_alias_on_call eval_sym_trace ~callee_locs)
 end
 
 module CoreVal = struct
@@ -1766,7 +1788,6 @@ module MemReach = struct
     ; mem_pure: MemPure.t
     ; alias: Alias.t
     ; latest_prune: LatestPrune.t
-    ; relation: Relation.t
     ; oenv: ('has_oenv, OndemandEnv.t) GOption.t }
 
   type no_oenv_t = GOption.none t0
@@ -1779,7 +1800,6 @@ module MemReach = struct
     ; mem_pure= MemPure.bot
     ; alias= Alias.init
     ; latest_prune= LatestPrune.top
-    ; relation= Relation.empty
     ; oenv= GOption.GSome oenv }
 
 
@@ -1790,7 +1810,6 @@ module MemReach = struct
       && MemPure.leq ~lhs:lhs.mem_pure ~rhs:rhs.mem_pure
       && Alias.leq ~lhs:lhs.alias ~rhs:rhs.alias
       && LatestPrune.leq ~lhs:lhs.latest_prune ~rhs:rhs.latest_prune
-      && Relation.leq ~lhs:lhs.relation ~rhs:rhs.relation
 
 
   let widen ~prev ~next ~num_iters =
@@ -1802,7 +1821,6 @@ module MemReach = struct
       ; mem_pure= MemPure.widen oenv ~prev:prev.mem_pure ~next:next.mem_pure ~num_iters
       ; alias= Alias.widen ~prev:prev.alias ~next:next.alias ~num_iters
       ; latest_prune= LatestPrune.widen ~prev:prev.latest_prune ~next:next.latest_prune ~num_iters
-      ; relation= Relation.widen ~prev:prev.relation ~next:next.relation ~num_iters
       ; oenv= prev.oenv } )
 
 
@@ -1814,16 +1832,13 @@ module MemReach = struct
     ; mem_pure= MemPure.join oenv x.mem_pure y.mem_pure
     ; alias= Alias.join x.alias y.alias
     ; latest_prune= LatestPrune.join x.latest_prune y.latest_prune
-    ; relation= Relation.join x.relation y.relation
     ; oenv= x.oenv }
 
 
   let pp : F.formatter -> _ t0 -> unit =
    fun fmt x ->
     F.fprintf fmt "StackLocs:@;%a@;MemPure:@;%a@;Alias:@;%a@;%a" StackLocs.pp x.stack_locs
-      MemPure.pp x.mem_pure Alias.pp x.alias LatestPrune.pp x.latest_prune ;
-    if Option.is_some Config.bo_relational_domain then
-      F.fprintf fmt "@;Relation:@;%a" Relation.pp x.relation
+      MemPure.pp x.mem_pure Alias.pp x.alias LatestPrune.pp x.latest_prune
 
 
   let unset_oenv : t -> no_oenv_t = function x -> {x with oenv= GOption.GNone}
@@ -1911,18 +1926,37 @@ module MemReach = struct
 
   let incr_or_not_size_alias locs m = {m with alias= Alias.incr_or_not_size_alias locs m.alias}
 
-  let add_iterator_offset_alias id m =
-    let arr_locs =
-      let add_arr l v acc = if Itv.is_zero (Val.array_sizeof v) then PowLoc.add l acc else acc in
-      MemPure.fold add_arr m.mem_pure PowLoc.empty
+  let add_iterator_alias_common ~cond ~alias_add id m =
+    let locs =
+      let accum_loc l v acc = if cond v then PowLoc.add l acc else acc in
+      MemPure.fold accum_loc m.mem_pure PowLoc.empty
     in
-    {m with alias= Alias.add_iterator_offset_alias id arr_locs m.alias}
+    {m with alias= alias_add id locs m.alias}
 
+
+  let add_iterator_simple_alias =
+    add_iterator_alias_common
+      ~cond:(fun v -> Itv.is_zero (Val.get_itv v))
+      ~alias_add:Alias.add_iterator_simple_alias
+
+
+  let add_iterator_offset_alias =
+    add_iterator_alias_common
+      ~cond:(fun v -> Itv.is_zero (Val.array_sizeof v))
+      ~alias_add:Alias.add_iterator_offset_alias
+
+
+  let add_iterator_alias id m = add_iterator_offset_alias id m |> add_iterator_simple_alias id
 
   let incr_iterator_offset_alias id m = {m with alias= Alias.incr_iterator_offset_alias id m.alias}
 
   let add_iterator_has_next_alias ~ret_id ~iterator m =
     {m with alias= Alias.add_iterator_has_next_alias ~ret_id ~iterator m.alias}
+
+
+  let incr_iterator_simple_alias_on_call eval_sym_trace ~callee_exit_mem m =
+    let callee_locs = MemPure.get_incr_locs callee_exit_mem.mem_pure in
+    {m with alias= Alias.incr_iterator_simple_alias_on_call eval_sym_trace ~callee_locs m.alias}
 
 
   let add_stack_loc : Loc.t -> t -> t = fun k m -> {m with stack_locs= StackLocs.add k m.stack_locs}
@@ -1940,14 +1974,6 @@ module MemReach = struct
 
   let add_heap : ?represents_multiple_values:bool -> Loc.t -> Val.t -> t -> t =
    fun ?represents_multiple_values x v m ->
-    let v =
-      let sym = if Itv.is_bottom (Val.get_itv v) then Relation.Sym.bot else Relation.Sym.of_loc x in
-      let offset_sym, size_sym =
-        if ArrayBlk.is_bot (Val.get_array_blk v) then (Relation.Sym.bot, Relation.Sym.bot)
-        else (Relation.Sym.of_loc_offset x, Relation.Sym.of_loc_size x)
-      in
-      {v with Val.sym; Val.offset_sym; Val.size_sym}
-    in
     {m with mem_pure= MemPure.add ?represents_multiple_values x v m.mem_pure}
 
 
@@ -1956,8 +1982,8 @@ module MemReach = struct
     PowLoc.fold (fun l acc -> add_heap ?represents_multiple_values l v acc) locs m
 
 
-  let add_unknown_from :
-      Ident.t -> callee_pname:Typ.Procname.t option -> location:Location.t -> t -> t =
+  let add_unknown_from : Ident.t -> callee_pname:Procname.t option -> location:Location.t -> t -> t
+      =
    fun id ~callee_pname ~location m ->
     let val_unknown = Val.unknown_from ~callee_pname ~location in
     add_stack (Loc.of_id id) val_unknown m |> add_heap Loc.unknown val_unknown
@@ -2100,34 +2126,10 @@ module MemReach = struct
 
   let range :
          filter_loc:(Loc.t -> LoopHeadLoc.t option)
-      -> node_id:ProcCfg.Normal.Node.id
+      -> node_id:Procdesc.Node.id
       -> t
       -> Polynomials.NonNegativePolynomial.t =
    fun ~filter_loc ~node_id {mem_pure} -> MemPure.range ~filter_loc ~node_id mem_pure
-
-
-  let get_relation : t -> Relation.t = fun m -> m.relation
-
-  let is_relation_unsat : t -> bool = fun m -> Relation.is_unsat m.relation
-
-  let lift_relation : (Relation.t -> Relation.t) -> t -> t =
-   fun f m -> {m with relation= f m.relation}
-
-
-  let meet_constraints : Relation.Constraints.t -> t -> t =
-   fun constrs -> lift_relation (Relation.meet_constraints constrs)
-
-
-  let store_relation :
-         PowLoc.t
-      -> Relation.SymExp.t option * Relation.SymExp.t option * Relation.SymExp.t option
-      -> t
-      -> t =
-   fun locs symexp_opts -> lift_relation (Relation.store_relation locs symexp_opts)
-
-
-  let relation_forget_locs : PowLoc.t -> t -> t =
-   fun locs -> lift_relation (Relation.forget_locs locs)
 
 
   let forget_unreachable_locs : formals:(Pvar.t * Typ.t) list -> t -> t =
@@ -2148,25 +2150,6 @@ module MemReach = struct
 
 
   let forget_size_alias arr_locs m = {m with alias= Alias.forget_size_alias arr_locs m.alias}
-
-  let init_param_relation : Loc.t -> t -> t = fun loc -> lift_relation (Relation.init_param loc)
-
-  let init_array_relation :
-         Allocsite.t
-      -> offset_opt:Itv.t option
-      -> size:Itv.t
-      -> size_exp_opt:Relation.SymExp.t option
-      -> t
-      -> t =
-   fun allocsite ~offset_opt ~size ~size_exp_opt ->
-    lift_relation (Relation.init_array allocsite ~offset_opt ~size ~size_exp_opt)
-
-
-  let instantiate_relation : Relation.SubstMap.t -> caller:t -> callee:no_oenv_t -> t =
-   fun subst_map ~caller ~callee ->
-    { caller with
-      relation= Relation.instantiate subst_map ~caller:caller.relation ~callee:callee.relation }
-
 
   (* unsound *)
   let set_first_idx_of_null : Loc.t -> Val.t -> t -> t =
@@ -2245,6 +2228,8 @@ module Mem = struct
         let m' = f m in
         if phys_equal m' m then x else NonBottom m'
 
+
+  type get_summary = Procname.t -> no_oenv_t option
 
   let init : OndemandEnv.t -> t = fun oenv -> NonBottom (MemReach.init oenv)
 
@@ -2329,9 +2314,7 @@ module Mem = struct
 
   let incr_or_not_size_alias locs = map ~f:(MemReach.incr_or_not_size_alias locs)
 
-  let add_iterator_offset_alias : Ident.t -> t -> t =
-   fun id -> map ~f:(MemReach.add_iterator_offset_alias id)
-
+  let add_iterator_alias : Ident.t -> t -> t = fun id -> map ~f:(MemReach.add_iterator_alias id)
 
   let incr_iterator_offset_alias : Exp.t -> t -> t =
    fun iterator m ->
@@ -2344,6 +2327,14 @@ module Mem = struct
     | Exp.Var iterator ->
         map ~f:(MemReach.add_iterator_has_next_alias ~ret_id ~iterator) m
     | _ ->
+        m
+
+
+  let incr_iterator_simple_alias_on_call eval_sym_trace ~callee_exit_mem m =
+    match (callee_exit_mem, m) with
+    | NonBottom callee_exit_mem, NonBottom m ->
+        NonBottom (MemReach.incr_iterator_simple_alias_on_call eval_sym_trace ~callee_exit_mem m)
+    | _, _ ->
         m
 
 
@@ -2363,7 +2354,7 @@ module Mem = struct
     map ~f:(MemReach.add_heap_set ?represents_multiple_values ploc v)
 
 
-  let add_unknown_from : Ident.t -> callee_pname:Typ.Procname.t -> location:Location.t -> t -> t =
+  let add_unknown_from : Ident.t -> callee_pname:Procname.t -> location:Location.t -> t -> t =
    fun id ~callee_pname ~location ->
     map ~f:(MemReach.add_unknown_from id ~callee_pname:(Some callee_pname) ~location)
 
@@ -2412,57 +2403,11 @@ module Mem = struct
    fun latest_prune m -> map ~f:(MemReach.set_latest_prune latest_prune) m
 
 
-  let get_relation : t -> Relation.t =
-   fun m -> f_lift_default ~default:Relation.bot MemReach.get_relation m
-
-
-  let meet_constraints : Relation.Constraints.t -> t -> t =
-   fun constrs -> map ~f:(MemReach.meet_constraints constrs)
-
-
-  let is_relation_unsat m = f_lift_default ~default:true MemReach.is_relation_unsat m
-
-  let store_relation :
-         PowLoc.t
-      -> Relation.SymExp.t option * Relation.SymExp.t option * Relation.SymExp.t option
-      -> t
-      -> t =
-   fun locs symexp_opts -> map ~f:(MemReach.store_relation locs symexp_opts)
-
-
-  let relation_forget_locs : PowLoc.t -> t -> t =
-   fun locs -> map ~f:(MemReach.relation_forget_locs locs)
-
-
   let forget_unreachable_locs : formals:(Pvar.t * Typ.t) list -> t -> t =
    fun ~formals -> map ~f:(MemReach.forget_unreachable_locs ~formals)
 
 
   let forget_size_alias arr_locs = map ~f:(MemReach.forget_size_alias arr_locs)
-
-  let[@warning "-32"] init_param_relation : Loc.t -> t -> t =
-   fun loc -> map ~f:(MemReach.init_param_relation loc)
-
-
-  let init_array_relation :
-         Allocsite.t
-      -> offset_opt:Itv.t option
-      -> size:Itv.t
-      -> size_exp_opt:Relation.SymExp.t option
-      -> t
-      -> t =
-   fun allocsite ~offset_opt ~size ~size_exp_opt ->
-    map ~f:(MemReach.init_array_relation allocsite ~offset_opt ~size ~size_exp_opt)
-
-
-  let instantiate_relation : Relation.SubstMap.t -> caller:t -> callee:no_oenv_t -> t =
-   fun subst_map ~caller ~callee ->
-    match callee with
-    | Bottom | ExcRaised ->
-        caller
-    | NonBottom callee ->
-        map ~f:(fun caller -> MemReach.instantiate_relation subst_map ~caller ~callee) caller
-
 
   let unset_oenv = function
     | (Bottom | ExcRaised) as x ->
