@@ -17,7 +17,7 @@ import tempfile
 import traceback
 import time
 
-from inferlib import config, issues, utils, bucklib
+from inferlib import config, issues, utils
 from . import util
 
 import re
@@ -28,7 +28,7 @@ buck [options] [target]
 
 Analysis examples:
 infer --buck-clang -- buck build HelloWorld'''
-LANG = ['clang', 'java']
+LANG = ['clang']
 
 KEEP_GOING_OPTION = "--keep-going"
 
@@ -51,19 +51,11 @@ def create_argparser(group_name=MODULE_NAME):
         '{grp} module'.format(grp=MODULE_NAME),
         description=MODULE_DESCRIPTION,
     )
-    group.add_argument('--use-flavors', action='store_true',
-                       help='Run Infer analysis through the use of flavors. '
-                            'Currently this is supported only for the cxx_* '
-                            'targets of Buck - e.g. cxx_library, cxx_binary - '
-                            'and not for Java. Note: this flag should be used '
-                            'in combination with passing the #infer flavor '
-                            'to the Buck target.')
     group.add_argument('--xcode-developer-dir',
-                       help='Specify the path to Xcode developer directory '
-                            '(requires --use-flavors to work)')
+                       help='Specify the path to Xcode developer directory ')
     group.add_argument('--blacklist-regex',
                        help='Specify the regex for files to skip during '
-                            'the analysis (requires --use-flavors to work)')
+                            'the analysis')
     group.add_argument('--Xbuck', action='append', default=[],
                        type=string_in_quotes,
                        help='Pass values as command-line arguments to '
@@ -86,10 +78,7 @@ class BuckAnalyzer:
 
     def capture(self):
         try:
-            if self.args.use_flavors:
-                return self.capture_with_flavors()
-            else:
-                return self.capture_without_flavors()
+            return self.capture_with_flavors()
         except subprocess.CalledProcessError as exc:
             if self.args.debug:
                 traceback.print_exc()
@@ -166,14 +155,6 @@ class BuckAnalyzer:
                                for p in root_paths]
         dep_files = filter(os.path.exists, potential_dep_files)
         utils.merge_and_dedup_files_into_path(dep_files, merged_out_path)
-
-    @staticmethod
-    def _merge_infer_report_files(root_paths, merged_out_path):
-        potential_report_files = [os.path.join(p, config.JSON_REPORT_FILENAME)
-                                  for p in root_paths]
-        report_files = filter(os.path.exists, potential_report_files)
-        all_results = issues.merge_reports_from_paths(report_files)
-        utils.dump_json_to_path(all_results, merged_out_path)
 
     @staticmethod
     def _find_deps_and_merge(merged_out_path):
@@ -261,26 +242,12 @@ class BuckAnalyzer:
         if result_paths is None:
             # huho, the Buck command to extract results paths failed
             return os.EX_SOFTWARE
-        merged_reports_path = os.path.join(
-            self.args.infer_out, config.JSON_REPORT_FILENAME)
         merged_deps_path = os.path.join(
             self.args.infer_out, config.INFER_BUCK_DEPS_FILENAME)
-        self._merge_infer_report_files(result_paths, merged_reports_path)
         if (not ret == os.EX_OK and self.keep_going):
             self._find_deps_and_merge(merged_deps_path)
         elif self.args.buck_merge_all_deps:
             self._find_depsfiles_and_merge(merged_deps_path)
         else:
             self._merge_infer_dep_files(result_paths, merged_deps_path)
-        infer_out = self.args.infer_out
-        json_report = os.path.join(infer_out, config.JSON_REPORT_FILENAME)
-        bugs_out = os.path.join(infer_out, config.BUGS_FILENAME)
-        issues.print_and_save_errors(infer_out, self.args.project_root,
-                                     json_report, bugs_out, self.args.pmd_xml,
-                                     console_out=not self.args.quiet)
         return os.EX_OK
-
-    def capture_without_flavors(self):
-        # Java is a special case, and we run the analysis from here
-        buck_wrapper = bucklib.Wrapper(self.args, self.cmd)
-        return buck_wrapper.run()

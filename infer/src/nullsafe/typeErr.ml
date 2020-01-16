@@ -64,7 +64,7 @@ type err_instance =
       ; violation_type: InheritanceRule.violation_type
       ; base_proc_name: Procname.t
       ; overridden_proc_name: Procname.t }
-  | Field_not_initialized of Fieldname.t
+  | Field_not_initialized of {is_strict_mode: bool; field_name: Fieldname.t}
   | Over_annotation of
       { over_annotated_violation: OverAnnotatedRule.violation
       ; violation_type: OverAnnotatedRule.violation_type }
@@ -177,10 +177,24 @@ module Severity = struct
 
   let err_instance_get_severity tenv err_instance : Exceptions.severity option =
     match err_instance with
-    | Nullable_dereference {nullable_object_origin} ->
+    | Nullable_dereference {dereference_violation; nullable_object_origin} ->
+        (* A special hacky case: raise severity for violations of @GeneratedGraphQL method.
+           We might want to reevaluate if we still need this / make this behavior dependent on config.
+        *)
         origin_get_severity tenv nullable_object_origin
-    | _ ->
+        |> IOption.if_none_evalopt ~f:(fun _ ->
+               Some (DereferenceRule.violation_severity dereference_violation) )
+    | Condition_redundant _ ->
         None
+    | Over_annotation _ ->
+        None
+    | Field_not_initialized {is_strict_mode} ->
+        (* TODO: show strict mode violations as errors *)
+        Some (if is_strict_mode then Exceptions.Error else Exceptions.Warning)
+    | Bad_assignment {assignment_violation} ->
+        Some (AssignmentRule.violation_severity assignment_violation)
+    | Inconsistent_subclass {inheritance_violation} ->
+        Some (InheritanceRule.violation_severity inheritance_violation)
 end
 
 (* Severity *)
@@ -201,7 +215,7 @@ type st_report_error =
 let get_field_name_for_error_suppressing = function
   | Over_annotation {violation_type= OverAnnotatedRule.FieldOverAnnoted field_name} ->
       Some field_name
-  | Field_not_initialized field_name ->
+  | Field_not_initialized {field_name} ->
       Some field_name
   | Condition_redundant _
   | Over_annotation {violation_type= OverAnnotatedRule.ReturnOverAnnotated _}
@@ -227,7 +241,7 @@ let get_error_info err_instance =
         | OverAnnotatedRule.ReturnOverAnnotated _ ->
             IssueType.eradicate_return_over_annotated )
       , None )
-  | Field_not_initialized field_name ->
+  | Field_not_initialized {field_name} ->
       ( Format.asprintf
           "Field %a is declared non-nullable, so it should be initialized in the constructor or in \
            an `@Initializer` method"

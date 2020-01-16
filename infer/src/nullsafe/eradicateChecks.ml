@@ -235,7 +235,8 @@ let get_nullability_upper_bound field_name typestate_list =
 
 (** Check field initialization for a given constructor *)
 let check_constructor_initialization tenv find_canonical_duplicate curr_constructor_pname
-    curr_constructor_pdesc start_node ~typestates_for_curr_constructor_and_all_initializer_methods
+    curr_constructor_pdesc start_node ~is_strict_mode
+    ~typestates_for_curr_constructor_and_all_initializer_methods
     ~typestates_for_all_constructors_incl_current loc : unit =
   State.set_node start_node ;
   if Procname.is_constructor curr_constructor_pname then
@@ -296,8 +297,18 @@ let check_constructor_initialization tenv find_canonical_duplicate curr_construc
                 is_field_declared_as_nonnull annotated_field
                 && not is_initialized_in_either_constructor_or_initializer
               then
-                report_error tenv find_canonical_duplicate
-                  (TypeErr.Field_not_initialized field_name) None loc curr_constructor_pdesc ;
+                if
+                  Config.nullsafe_disable_field_not_initialized_in_nonstrict_classes
+                  && not is_strict_mode
+                then
+                  (* Behavior needed for backward compatibility, where we are not ready to surface this type of errors by default.
+                     Hovewer, this error should be always turned on for @NullsafeStrict classes.
+                  *)
+                  ()
+                else
+                  report_error tenv find_canonical_duplicate
+                    (TypeErr.Field_not_initialized {is_strict_mode; field_name})
+                    None loc curr_constructor_pdesc ;
               (* Check if field is over-annotated. *)
               match annotated_field with
               | None ->
@@ -481,10 +492,11 @@ let check_call_parameters ~is_strict_mode ~callee_annotated_signature tenv find_
     List.iter ~f:check resolved_params
 
 
-let check_inheritance_rule_for_return find_canonical_duplicate tenv loc ~base_proc_name
-    ~overridden_proc_name ~overridden_proc_desc ~base_nullability ~overridden_nullability =
+let check_inheritance_rule_for_return find_canonical_duplicate tenv loc ~is_strict_mode
+    ~base_proc_name ~overridden_proc_name ~overridden_proc_desc ~base_nullability
+    ~overridden_nullability =
   Result.iter_error
-    (InheritanceRule.check InheritanceRule.Ret ~base:base_nullability
+    (InheritanceRule.check ~is_strict_mode InheritanceRule.Ret ~base:base_nullability
        ~overridden:overridden_nullability) ~f:(fun inheritance_violation ->
       report_error tenv find_canonical_duplicate
         (TypeErr.Inconsistent_subclass
@@ -495,11 +507,11 @@ let check_inheritance_rule_for_return find_canonical_duplicate tenv loc ~base_pr
         None loc overridden_proc_desc )
 
 
-let check_inheritance_rule_for_param find_canonical_duplicate tenv loc ~overridden_param_name
-    ~base_proc_name ~overridden_proc_name ~overridden_proc_desc ~param_position ~base_nullability
-    ~overridden_nullability =
+let check_inheritance_rule_for_param find_canonical_duplicate tenv loc ~is_strict_mode
+    ~overridden_param_name ~base_proc_name ~overridden_proc_name ~overridden_proc_desc
+    ~param_position ~base_nullability ~overridden_nullability =
   Result.iter_error
-    (InheritanceRule.check InheritanceRule.Param ~base:base_nullability
+    (InheritanceRule.check ~is_strict_mode InheritanceRule.Param ~base:base_nullability
        ~overridden:overridden_nullability) ~f:(fun inheritance_violation ->
       report_error tenv find_canonical_duplicate
         (TypeErr.Inconsistent_subclass
@@ -512,8 +524,9 @@ let check_inheritance_rule_for_param find_canonical_duplicate tenv loc ~overridd
         None loc overridden_proc_desc )
 
 
-let check_inheritance_rule_for_params find_canonical_duplicate tenv loc ~base_proc_name
-    ~overridden_proc_name ~overridden_proc_desc ~base_signature ~overridden_signature =
+let check_inheritance_rule_for_params find_canonical_duplicate tenv loc ~is_strict_mode
+    ~base_proc_name ~overridden_proc_name ~overridden_proc_desc ~base_signature
+    ~overridden_signature =
   let base_params = base_signature.AnnotatedSignature.params in
   let overridden_params = overridden_signature.AnnotatedSignature.params in
   let zipped_params = List.zip base_params overridden_params in
@@ -528,8 +541,8 @@ let check_inheritance_rule_for_params find_canonical_duplicate tenv loc ~base_pr
                { mangled= overridden_param_name
                ; param_annotated_type= {nullability= annotated_nullability_overridden} } )
            ->
-          check_inheritance_rule_for_param find_canonical_duplicate tenv loc ~overridden_param_name
-            ~base_proc_name ~overridden_proc_name ~overridden_proc_desc
+          check_inheritance_rule_for_param find_canonical_duplicate tenv loc ~is_strict_mode
+            ~overridden_param_name ~base_proc_name ~overridden_proc_name ~overridden_proc_desc
             ~param_position:(if should_index_from_zero then index else index + 1)
             ~base_nullability:(AnnotatedNullability.get_nullability annotated_nullability_base)
             ~overridden_nullability:
@@ -541,11 +554,13 @@ let check_inheritance_rule_for_params find_canonical_duplicate tenv loc ~base_pr
 
 
 (* Check both params and return values for complying for co- and contravariance *)
-let check_inheritance_rule_for_signature find_canonical_duplicate tenv loc ~base_proc_name
-    ~overridden_proc_name ~overridden_proc_desc ~base_signature ~overridden_signature =
+let check_inheritance_rule_for_signature find_canonical_duplicate tenv loc ~is_strict_mode
+    ~base_proc_name ~overridden_proc_name ~overridden_proc_desc ~base_signature
+    ~overridden_signature =
   (* Check params *)
-  check_inheritance_rule_for_params find_canonical_duplicate tenv loc ~base_proc_name
-    ~overridden_proc_name ~overridden_proc_desc ~base_signature ~overridden_signature ;
+  check_inheritance_rule_for_params find_canonical_duplicate tenv loc ~is_strict_mode
+    ~base_proc_name ~overridden_proc_name ~overridden_proc_desc ~base_signature
+    ~overridden_signature ;
   (* Check return value *)
   match base_proc_name with
   (* TODO model this as unknown nullability and get rid of that check *)
@@ -559,8 +574,9 @@ let check_inheritance_rule_for_signature find_canonical_duplicate tenv loc ~base
         AnnotatedNullability.get_nullability
           overridden_signature.AnnotatedSignature.ret.ret_annotated_type.nullability
       in
-      check_inheritance_rule_for_return find_canonical_duplicate tenv loc ~base_proc_name
-        ~overridden_proc_name ~overridden_proc_desc ~base_nullability ~overridden_nullability
+      check_inheritance_rule_for_return find_canonical_duplicate tenv loc ~is_strict_mode
+        ~base_proc_name ~overridden_proc_name ~overridden_proc_desc ~base_nullability
+        ~overridden_nullability
   | _ ->
       (* the analysis should not report return type inconsistencies with external code *)
       ()
@@ -576,9 +592,10 @@ let check_overridden_annotations find_canonical_duplicate tenv proc_name proc_de
     match PatternMatch.lookup_attributes tenv base_proc_name with
     | Some base_attributes ->
         let base_signature = Models.get_modelled_annotated_signature tenv base_attributes in
-        check_inheritance_rule_for_signature find_canonical_duplicate tenv loc ~base_proc_name
-          ~overridden_proc_name:proc_name ~overridden_proc_desc:proc_desc ~base_signature
-          ~overridden_signature:annotated_signature
+        check_inheritance_rule_for_signature
+          ~is_strict_mode:annotated_signature.AnnotatedSignature.is_strict_mode
+          find_canonical_duplicate tenv loc ~base_proc_name ~overridden_proc_name:proc_name
+          ~overridden_proc_desc:proc_desc ~base_signature ~overridden_signature:annotated_signature
     | None ->
         (* Could not find the attributes - optimistically skipping the check *)
         (* TODO(T54687014) ensure this is not an issue in practice *)

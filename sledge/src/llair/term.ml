@@ -227,6 +227,7 @@ and pp_record strength fs elts =
 
 let pp = ppx (fun _ -> None)
 let pp_t = pp
+let pp_diff fs (x, y) = Format.fprintf fs "-- %a ++ %a" pp x pp y
 
 (** Invariant *)
 
@@ -361,12 +362,7 @@ module Var = struct
       in
       assert (Set.disjoint domain range)
 
-    let pp fs s =
-      Format.fprintf fs "@[<1>[%a]@]"
-        (List.pp ",@ " (fun fs (k, v) ->
-             Format.fprintf fs "@[%a ↦ %a@]" pp_t k pp_t v ))
-        (Map.to_alist s)
-
+    let pp = Map.pp pp_t pp_t
     let empty = Map.empty
     let is_empty = Map.is_empty
 
@@ -1023,11 +1019,22 @@ let is_false = function Integer {data} -> Z.is_false data | _ -> false
 
 (** Solve *)
 
-let solve_zero_eq = function
+let solve_zero_eq ?for_ e =
+  ( match e with
   | Add args ->
-      let c, q = Qset.min_elt_exn args in
+      let+ c, q =
+        match for_ with
+        | Some f ->
+            let q = Qset.count args f in
+            if Q.equal Q.zero q then None else Some (f, q)
+        | None -> Some (Qset.min_elt_exn args)
+      in
       let n = Sum.to_term (Qset.remove args c) in
       let d = rational (Q.neg q) in
       let r = div n d in
-      Some (c, r)
-  | _ -> None
+      (c, r)
+  | _ -> None )
+  |> check (fun soln ->
+         match (for_, soln) with
+         | Some f, Some (c, _) -> assert (equal f c)
+         | _ -> () )

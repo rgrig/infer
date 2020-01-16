@@ -25,8 +25,32 @@ and disjunction = starjunction list
 
 type t = starjunction [@@deriving compare, equal, sexp]
 
-let map_seg {loc; bas; len; siz; arr} ~f =
-  {loc= f loc; bas= f bas; len= f len; siz= f siz; arr= f arr}
+(** Traversals *)
+
+let map_seg ~f h =
+  let loc = f h.loc in
+  let bas = f h.bas in
+  let len = f h.len in
+  let siz = f h.siz in
+  let arr = f h.arr in
+  if
+    loc == h.loc && bas == h.bas && len == h.len && siz == h.siz
+    && arr == h.arr
+  then h
+  else {loc; bas; len; siz; arr}
+
+let map ~f_sjn ~f_cong ~f_trm ({us= _; xs= _; cong; pure; heap; djns} as q)
+    =
+  let cong = f_cong cong in
+  let pure = List.map_preserving_phys_equal pure ~f:f_trm in
+  let heap = List.map_preserving_phys_equal heap ~f:(map_seg ~f:f_trm) in
+  let djns =
+    List.map_preserving_phys_equal djns
+      ~f:(List.map_preserving_phys_equal ~f:f_sjn)
+  in
+  if cong == q.cong && pure == q.pure && heap == q.heap && djns == q.djns
+  then q
+  else {q with cong; pure; heap; djns}
 
 let fold_terms_seg {loc; bas; len; siz; arr} ~init ~f =
   let f b s = f s b in
@@ -35,20 +59,19 @@ let fold_terms_seg {loc; bas; len; siz; arr} ~init ~f =
 let fold_vars_seg seg ~init ~f =
   fold_terms_seg seg ~init ~f:(fun init -> Term.fold_vars ~f ~init)
 
-let fold_vars fold_vars {us= _; xs= _; cong; pure; heap; djns} ~init ~f =
-  Equality.fold_terms ~init cong ~f:(fun init -> Term.fold_vars ~f ~init)
-  |> fun init ->
+let fold_vars fold_vars {us= _; xs= _; cong= _; pure; heap; djns} ~init ~f =
   List.fold ~init pure ~f:(fun init -> Term.fold_vars ~f ~init)
   |> fun init ->
   List.fold ~init heap ~f:(fun init -> fold_vars_seg ~f ~init)
   |> fun init ->
   List.fold ~init djns ~f:(fun init -> List.fold ~init ~f:fold_vars)
 
+(** Pretty-printing *)
+
 let var_strength q =
   let rec var_strength_ xs m q =
     let xs = Set.union xs q.xs in
-    fold_vars (var_strength_ xs) {q with cong= Equality.true_} ~init:m
-      ~f:(fun m var ->
+    fold_vars (var_strength_ xs) q ~init:m ~f:(fun m var ->
         if not (Set.mem xs var) then Map.set m ~key:var ~data:`Universal
         else
           match Map.find m var with
@@ -150,7 +173,7 @@ let rec pp_ ?var_strength vs parent_cong fs {us; xs; cong; pure; heap; djns}
     Format.fprintf fs "@<2>∃ @[%a@] .@ " (Var.Set.ppx x) xs_d_vs ;
   let first = Equality.entails parent_cong cong in
   if not first then Format.fprintf fs "  " ;
-  Equality.pp_classes_diff x fs (parent_cong, cong) ;
+  Equality.ppx_classes_diff x fs (parent_cong, cong) ;
   let pure =
     List.filter_map pure ~f:(fun e ->
         let e' = Equality.normalize cong e in
@@ -223,6 +246,11 @@ let rec invariant q =
     assert (
       Set.is_subset (fv q) ~of_:us
       || fail "unbound but free: %a" Var.Set.pp (Set.diff (fv q) us) () ) ;
+    assert (
+      Set.is_subset
+        (Equality.fold_terms ~init:Var.Set.empty cong ~f:(fun init ->
+             Term.fold_vars ~f:Set.add ~init ))
+        ~of_:(Set.union us xs) ) ;
     Equality.invariant cong ;
     ( match djns with
     | [[]] ->
@@ -256,33 +284,12 @@ let rec simplify {us; xs; cong; pure; heap; djns} =
 
 (** Quantification and Vocabulary *)
 
-let rename_seg sub ({loc; bas; len; siz; arr} as h) =
-  let loc = Term.rename sub loc in
-  let bas = Term.rename sub bas in
-  let len = Term.rename sub len in
-  let siz = Term.rename sub siz in
-  let arr = Term.rename sub arr in
-  ( if
-    loc == h.loc && bas == h.bas && len == h.len && siz == h.siz
-    && arr == h.arr
-  then h
-  else {loc; bas; len; siz; arr} )
-  |> check (fun h' ->
-         assert (Set.disjoint (fv_seg h') (Var.Subst.domain sub)) )
-
 (** primitive application of a substitution, ignores us and xs, may violate
     invariant *)
-let rec apply_subst sub ({us= _; xs= _; cong; pure; heap; djns} as q) =
-  let cong = Equality.rename cong sub in
-  let pure = List.map_preserving_phys_equal pure ~f:(Term.rename sub) in
-  let heap = List.map_preserving_phys_equal heap ~f:(rename_seg sub) in
-  let djns =
-    List.map_preserving_phys_equal djns ~f:(fun d ->
-        List.map_preserving_phys_equal d ~f:(fun q -> rename sub q) )
-  in
-  ( if cong == q.cong && pure == q.pure && heap == q.heap && djns == q.djns
-  then q
-  else {q with cong; pure; heap; djns} )
+let rec apply_subst sub q =
+  map q ~f_sjn:(rename sub)
+    ~f_cong:(fun r -> Equality.rename r sub)
+    ~f_trm:(Term.rename sub)
   |> check (fun q' -> assert (Set.disjoint (fv q') (Var.Subst.domain sub)))
 
 and rename sub q =
