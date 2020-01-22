@@ -9,7 +9,7 @@ module F = Format
 module L = Logging
 module MF = MarkupFormatter
 
-let pname_pp = MF.wrap_monospaced Procname.pp
+let describe_pname = MF.wrap_monospaced Procname.pp
 
 module ThreadDomain = struct
   type t = UnknownThread | UIThread | BGThread | AnyThread [@@deriving compare, equal]
@@ -104,6 +104,20 @@ module Lock = struct
 
   type t = {root: root; path: path} [@@deriving compare, equal]
 
+  let equal_across_threads t1 t2 =
+    match (t1.root, t2.root) with
+    | Global _, Global _ | Class _, Class _ ->
+        (* globals and class objects must be identical across threads *)
+        equal t1 t2
+    | Parameter _, Parameter _ ->
+        (* parameter position/names can be ignored across threads, if types and accesses are equal *)
+        equal_path t1.path t2.path
+    | _, _ ->
+        false
+
+
+  let is_class_object = function {root= Class _} -> true | _ -> false
+
   (* using an indentifier for a class object, create an access path representing that lock;
      this is for synchronizing on Java class objects only *)
   let path_of_java_class =
@@ -161,39 +175,55 @@ module Lock = struct
         L.die InternalError "Non-Java methods cannot be synchronized.@\n"
 
 
-  let get_access_path {path} = path
+  let pp fmt {root; path} =
+    let pp_path fmt ((var, typ), accesses) =
+      F.fprintf fmt "(%a:%a)" Var.pp var (Typ.pp_full Pp.text) typ ;
+      if not (List.is_empty accesses) then F.fprintf fmt ".%a" AccessPath.pp_access_list accesses
+    in
+    match root with
+    | Global mangled ->
+        F.fprintf fmt "G<%a>{%a}" Mangled.pp mangled pp_path path
+    | Class typename ->
+        F.fprintf fmt "C<%a>{%a}" Typ.Name.pp typename pp_path path
+    | Parameter idx ->
+        F.fprintf fmt "P<%i>{%a}" idx pp_path path
 
-  let pp fmt {path} = AccessPath.pp fmt path
 
   let owner_class {path= (_, {Typ.desc}), _} =
     match desc with Typ.Tstruct name | Typ.Tptr ({desc= Tstruct name}, _) -> Some name | _ -> None
 
 
   let describe fmt lock =
-    let pp_owner fmt lock =
-      owner_class lock |> Option.iter ~f:(F.fprintf fmt " in %a" (MF.wrap_monospaced Typ.Name.pp))
+    let describe_lock fmt lock = (MF.wrap_monospaced AccessPath.pp) fmt lock.path in
+    let describe_typename = MF.wrap_monospaced Typ.Name.pp in
+    let describe_owner fmt lock =
+      owner_class lock |> Option.iter ~f:(F.fprintf fmt " in %a" describe_typename)
     in
-    F.fprintf fmt "%a%a" (MF.wrap_monospaced pp) lock pp_owner lock
+    F.fprintf fmt "%a%a" describe_lock lock describe_owner lock
 
 
   let pp_locks fmt lock = F.fprintf fmt " locks %a" describe lock
+
+  let compare_wrt_reporting {path= (_, typ1), _} {path= (_, typ2), _} =
+    (* use string comparison on types as a stable order to decide whether to report a deadlock *)
+    String.compare (Typ.to_string typ1) (Typ.to_string typ2)
 end
 
 module Event = struct
   type t =
     | LockAcquire of Lock.t
-    | MayBlock of (string * StarvationModels.severity)
-    | StrictModeCall of string
+    | MayBlock of (Procname.t * StarvationModels.severity)
+    | StrictModeCall of Procname.t
     | MonitorWait of Lock.t
   [@@deriving compare]
 
   let pp fmt = function
     | LockAcquire lock ->
         F.fprintf fmt "LockAcquire(%a)" Lock.pp lock
-    | MayBlock (msg, sev) ->
-        F.fprintf fmt "MayBlock(%s, %a)" msg StarvationModels.pp_severity sev
-    | StrictModeCall msg ->
-        F.fprintf fmt "StrictModeCall(%s)" msg
+    | MayBlock (pname, sev) ->
+        F.fprintf fmt "MayBlock(%a, %a)" Procname.pp pname StarvationModels.pp_severity sev
+    | StrictModeCall pname ->
+        F.fprintf fmt "StrictModeCall(%a)" Procname.pp pname
     | MonitorWait lock ->
         F.fprintf fmt "MonitorWait(%a)" Lock.pp lock
 
@@ -202,27 +232,17 @@ module Event = struct
     match elem with
     | LockAcquire lock ->
         Lock.pp_locks fmt lock
-    | MayBlock (msg, _) ->
-        F.pp_print_string fmt msg
-    | StrictModeCall msg ->
-        F.pp_print_string fmt msg
+    | MayBlock (pname, _) | StrictModeCall pname ->
+        F.fprintf fmt "calls %a" describe_pname pname
     | MonitorWait lock ->
         F.fprintf fmt "calls `wait` on %a" Lock.describe lock
 
 
   let make_acquire lock = LockAcquire lock
 
-  let make_call_descr callee = F.asprintf "calls %a" pname_pp callee
+  let make_blocking_call callee sev = MayBlock (callee, sev)
 
-  let make_blocking_call callee sev =
-    let descr = make_call_descr callee in
-    MayBlock (descr, sev)
-
-
-  let make_strict_mode_call callee =
-    let descr = make_call_descr callee in
-    StrictModeCall descr
-
+  let make_strict_mode_call callee = StrictModeCall callee
 
   let make_object_wait lock = MonitorWait lock
 end
@@ -233,14 +253,16 @@ module Acquisition = struct
   type t = {lock: Lock.t; loc: Location.t [@compare.ignore]; procname: Procname.t [@compare.ignore]}
   [@@deriving compare]
 
-  let pp fmt {lock} = Lock.pp_locks fmt lock
+  let pp fmt {lock} = Lock.pp fmt lock
+
+  let describe fmt {lock} = Lock.pp_locks fmt lock
 
   let make ~procname ~loc lock = {lock; loc; procname}
 
   let compare_loc {loc= loc1} {loc= loc2} = Location.compare loc1 loc2
 
   let make_trace_step acquisition =
-    let description = F.asprintf "%a" pp acquisition in
+    let description = F.asprintf "%a" describe acquisition in
     Errlog.make_trace_element 0 acquisition.loc description []
 
 
@@ -253,6 +275,13 @@ module Acquisitions = struct
 
   (* use the fact that location/procname are ignored in comparisons *)
   let lock_is_held lock acquisitions = mem (Acquisition.make_dummy lock) acquisitions
+
+  let lock_is_held_in_other_thread lock acquisitions =
+    exists (fun acq -> Lock.equal_across_threads lock acq.lock) acquisitions
+
+
+  let no_locks_common_across_threads acqs1 acqs2 =
+    for_all (fun acq1 -> not (lock_is_held_in_other_thread acq1.lock acqs2)) acqs1
 end
 
 module LockState : sig
@@ -384,10 +413,10 @@ module CriticalPair = struct
     ThreadDomain.can_run_in_parallel pair1.thread pair2.thread
     && Option.both (get_final_acquire t1) (get_final_acquire t2)
        |> Option.exists ~f:(fun (lock1, lock2) ->
-              (not (Lock.equal lock1 lock2))
-              && Acquisitions.lock_is_held lock2 pair1.acquisitions
-              && Acquisitions.lock_is_held lock1 pair2.acquisitions
-              && Acquisitions.inter pair1.acquisitions pair2.acquisitions |> Acquisitions.is_empty
+              (not (Lock.equal_across_threads lock1 lock2))
+              && Acquisitions.lock_is_held_in_other_thread lock2 pair1.acquisitions
+              && Acquisitions.lock_is_held_in_other_thread lock1 pair2.acquisitions
+              && Acquisitions.no_locks_common_across_threads pair1.acquisitions pair2.acquisitions
           )
 
 
@@ -425,7 +454,7 @@ module CriticalPair = struct
       else Procname.Map.empty
     in
     let header_step =
-      let description = F.asprintf "%s%a" header pname_pp top_pname in
+      let description = F.asprintf "%s%a" header describe_pname top_pname in
       let loc = get_loc pair in
       Errlog.make_trace_element 0 loc description []
     in
@@ -770,10 +799,12 @@ let empty_summary : summary =
 
 let pp_summary fmt (summary : summary) =
   F.fprintf fmt
-    "{thread= %a; critical_pairs= %a; scheduled_work= %a; attributes= %a; return_attributes= %a}"
-    ThreadDomain.pp summary.thread CriticalPairs.pp summary.critical_pairs ScheduledWorkDomain.pp
-    summary.scheduled_work AttributeDomain.pp summary.attributes Attribute.pp
-    summary.return_attribute
+    "{@[<v>thread= %a; return_attributes= %a;@;\
+     critical_pairs=%a;@;\
+     scheduled_work= %a;@;\
+     attributes= %a@]}" ThreadDomain.pp summary.thread Attribute.pp summary.return_attribute
+    CriticalPairs.pp summary.critical_pairs ScheduledWorkDomain.pp summary.scheduled_work
+    AttributeDomain.pp summary.attributes
 
 
 let integrate_summary ?tenv ?lhs callsite (astate : t) (summary : summary) =

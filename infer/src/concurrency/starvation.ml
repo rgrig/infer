@@ -32,6 +32,18 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       actuals
 
 
+  let rec get_access_expr (hilexp : HilExp.t) =
+    match hilexp with
+    | AccessExpression access_exp ->
+        Some access_exp
+    | Cast (_, hilexp) | Exception hilexp | UnaryOperator (_, hilexp, _) ->
+        get_access_expr hilexp
+    | BinaryOperator _ | Closure _ | Constant _ | Sizeof _ ->
+        None
+
+
+  let get_access_expr_list actuals = List.map actuals ~f:get_access_expr
+
   let do_assume assume_exp (astate : Domain.t) =
     let open Domain in
     let add_thread_choice (acc : Domain.t) bool_value =
@@ -79,20 +91,17 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       |> Option.fold ~init:astate ~f:(Domain.schedule_work loc thread)
     in
     let work_opt =
-      match actuals with
-      | HilExp.AccessExpression executor :: HilExp.AccessExpression runnable :: _
-        when StarvationModels.schedules_work tenv callee ->
+      match get_access_expr_list actuals with
+      | Some executor :: Some runnable :: _ when StarvationModels.schedules_work tenv callee ->
           let thread =
             get_exp_attributes tenv executor astate
             |> Option.bind ~f:(function Attribute.WorkScheduler c -> Some c | _ -> None)
             |> Option.value ~default:StarvationModels.ForUnknownThread
           in
           Some (runnable, thread)
-      | HilExp.AccessExpression runnable :: _
-        when StarvationModels.schedules_work_on_ui_thread tenv callee ->
+      | Some runnable :: _ when StarvationModels.schedules_work_on_ui_thread tenv callee ->
           Some (runnable, StarvationModels.ForUIThread)
-      | HilExp.AccessExpression runnable :: _
-        when StarvationModels.schedules_work_on_bg_thread tenv callee ->
+      | Some runnable :: _ when StarvationModels.schedules_work_on_bg_thread tenv callee ->
           Some (runnable, StarvationModels.ForNonUIThread)
       | _ ->
           None
@@ -101,9 +110,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
 
   let do_assignment tenv lhs_access_exp rhs_exp (astate : Domain.t) =
-    HilExp.get_access_exprs rhs_exp
-    |> List.filter_map ~f:(fun exp -> get_exp_attributes tenv exp astate)
-    |> List.reduce ~f:Domain.Attribute.join
+    get_access_expr rhs_exp
+    |> Option.bind ~f:(fun exp -> get_exp_attributes tenv exp astate)
     |> Option.value_map ~default:astate ~f:(fun attribute ->
            let attributes = Domain.AttributeDomain.add lhs_access_exp attribute astate.attributes in
            {astate with attributes} )
@@ -113,6 +121,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     let open Domain in
     let make_ret_attr return_attribute = {empty_summary with return_attribute} in
     let make_thread thread = {empty_summary with thread} in
+    let actuals_acc_exps = get_access_expr_list actuals in
     let get_returned_executor_summary () =
       StarvationModels.get_returned_executor ~attrs_of_pname tenv callee actuals
       |> Option.map ~f:(fun thread_constraint -> make_ret_attr (WorkScheduler thread_constraint))
@@ -129,12 +138,10 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           None
     in
     let get_future_is_done_summary () =
-      match actuals with
-      | HilExp.AccessExpression future :: _
-        when StarvationModels.is_future_is_done tenv callee actuals ->
-          Some (make_ret_attr (FutureDoneGuard future))
-      | _ ->
-          None
+      if StarvationModels.is_future_is_done tenv callee actuals then
+        List.hd actuals_acc_exps |> Option.join
+        |> Option.map ~f:(fun future -> make_ret_attr (FutureDoneGuard future))
+      else None
     in
     let get_mainLooper_summary () =
       if StarvationModels.is_getMainLooper tenv callee actuals then
@@ -144,10 +151,10 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     let get_callee_summary () = Payload.read ~caller_summary:summary ~callee_pname:callee in
     let treat_handler_constructor () =
       if StarvationModels.is_handler_constructor tenv callee actuals then
-        match actuals with
-        | HilExp.AccessExpression receiver :: HilExp.AccessExpression exp :: _ ->
+        match actuals_acc_exps with
+        | Some receiver :: Some looper :: _ ->
             let constr =
-              AttributeDomain.find_opt exp astate.attributes
+              AttributeDomain.find_opt looper astate.attributes
               |> Option.bind ~f:(function Attribute.Looper c -> Some c | _ -> None)
               |> Option.value ~default:StarvationModels.ForUnknownThread
             in
@@ -161,13 +168,13 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     in
     let treat_thread_constructor () =
       if StarvationModels.is_thread_constructor tenv callee actuals then
-        match actuals with
-        | HilExp.AccessExpression receiver :: rest ->
+        match actuals_acc_exps with
+        | Some receiver :: rest ->
             ( match rest with
-            | HilExp.AccessExpression exp1 :: HilExp.AccessExpression exp2 :: _ ->
+            | Some exp1 :: Some exp2 :: _ ->
                 (* two additional arguments, either could be a runnable, see docs *)
                 [exp1; exp2]
-            | HilExp.AccessExpression runnable :: _ ->
+            | Some runnable :: _ ->
                 (* either just one argument, or more but 2nd is not an access expression *)
                 [runnable]
             | _ ->
@@ -549,24 +556,15 @@ let should_report_deadlock_on_current_proc current_elem endpoint_elem =
       L.die InternalError "Deadlock cannot occur without two lock events: %a" CriticalPair.pp
         current_elem
   | LockAcquire endpoint_lock, LockAcquire current_lock -> (
-    match (Lock.get_access_path endpoint_lock, Lock.get_access_path current_lock) with
-    | ((Var.LogicalVar _, _), []), _ ->
-        (* first elem is a class object (see [lock_of_class]), so always report because the
-           reverse ordering on the events will not occur since we don't search the class for static locks *)
-        true
-    | ((Var.LogicalVar _, _), _ :: _), _ | _, ((Var.LogicalVar _, _), _) ->
-        (* first elem has an ident root, but has a non-empty access path, which means we are
-           not filtering out local variables (see [exec_instr]), or,
-           second elem has an ident root, which should not happen if we are filtering locals *)
-        L.die InternalError "Deadlock cannot occur on these logical variables: %a @."
-          CriticalPair.pp current_elem
-    | ((_, typ1), _), ((_, typ2), _) ->
-        (* use string comparison on types as a stable order to decide whether to report a deadlock *)
-        let c = String.compare (Typ.to_string typ1) (Typ.to_string typ2) in
-        c < 0
-        || Int.equal 0 c
-           && (* same class, so choose depending on location *)
-           Location.compare current_elem.CriticalPair.loc endpoint_elem.CriticalPair.loc < 0 )
+      (* first elem is a class object (see [lock_of_class]), so always report because the
+         reverse ordering on the events will not occur since we don't search the class for static locks *)
+      Lock.is_class_object endpoint_lock
+      ||
+      match Lock.compare_wrt_reporting endpoint_lock current_lock with
+      | 0 ->
+          Location.compare current_elem.CriticalPair.loc endpoint_elem.CriticalPair.loc < 0
+      | c ->
+          c < 0 )
 
 
 let should_report pdesc =
@@ -623,18 +621,19 @@ let report_on_parallel_composition ~should_report_starvation tenv pdesc pair loc
   if CriticalPair.can_run_in_parallel pair other_pair then
     let acquisitions = other_pair.CriticalPair.elem.acquisitions in
     match other_pair.CriticalPair.elem.event with
-    | MayBlock (block_descr, sev)
-      when should_report_starvation && Acquisitions.lock_is_held lock acquisitions ->
+    | MayBlock (_, sev) as event
+      when should_report_starvation && Acquisitions.lock_is_held_in_other_thread lock acquisitions
+      ->
         let error_message =
           Format.asprintf
-            "Method %a runs on UI thread and%a, which may be held by another thread which %s."
-            pname_pp pname Lock.pp_locks lock block_descr
+            "Method %a runs on UI thread and%a, which may be held by another thread which %a."
+            pname_pp pname Lock.pp_locks lock Event.describe event
         in
         let ltr, loc = make_trace_and_loc () in
         ReportMap.add_starvation sev tenv pdesc loc ltr error_message report_map
     | MonitorWait monitor_lock
       when should_report_starvation
-           && Acquisitions.lock_is_held lock acquisitions
+           && Acquisitions.lock_is_held_in_other_thread lock acquisitions
            && not (Lock.equal lock monitor_lock) ->
         let error_message =
           Format.asprintf

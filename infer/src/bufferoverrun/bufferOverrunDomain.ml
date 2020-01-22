@@ -126,15 +126,16 @@ module Val = struct
       ArrayBlk.pp x.arrayblk trace_pp x.traces
 
 
-  let unknown_from : callee_pname:_ -> location:_ -> t =
-   fun ~callee_pname ~location ->
+  let unknown_from : Typ.t -> callee_pname:_ -> location:_ -> t =
+   fun typ ~callee_pname ~location ->
+    let is_int = Typ.is_int typ in
     let traces = Trace.(Set.singleton_final location (UnknownFrom callee_pname)) in
     { itv= Itv.top
     ; itv_thresholds= ItvThresholds.empty
     ; itv_updated_by= ItvUpdatedBy.Top
     ; modeled_range= ModeledRange.bottom
-    ; powloc= PowLoc.unknown
-    ; arrayblk= ArrayBlk.unknown
+    ; powloc= (if is_int then PowLoc.bottom else PowLoc.unknown)
+    ; arrayblk= (if is_int then ArrayBlk.bottom else ArrayBlk.unknown)
     ; traces }
 
 
@@ -251,26 +252,27 @@ module Val = struct
 
   let lnot : t -> t = fun x -> {x with itv= Itv.lnot x.itv |> Itv.of_bool}
 
-  let lift_itv : (Itv.t -> Itv.t -> Itv.t) -> ?f_trace:_ -> t -> t -> t =
-   fun f ?f_trace x y ->
-    let itv = f x.itv y.itv in
-    let itv_thresholds = ItvThresholds.join x.itv_thresholds y.itv_thresholds in
-    let itv_updated_by = ItvUpdatedBy.join x.itv_updated_by y.itv_updated_by in
-    let modeled_range = ModeledRange.join x.modeled_range y.modeled_range in
-    let traces =
-      match f_trace with
-      | Some f_trace ->
-          f_trace x.traces y.traces
-      | None -> (
-        match (Itv.eq itv x.itv, Itv.eq itv y.itv) with
-        | true, false ->
-            x.traces
-        | false, true ->
-            y.traces
-        | true, true | false, false ->
-            TraceSet.join x.traces y.traces )
-    in
-    {bot with itv; itv_thresholds; itv_updated_by; modeled_range; traces}
+  let lift_itv : ?may_ptr:bool -> (Itv.t -> Itv.t -> Itv.t) -> ?f_trace:_ -> t -> t -> t =
+    let no_ptr {powloc; arrayblk} = PowLoc.is_bot powloc && ArrayBlk.is_bot arrayblk in
+    fun ?(may_ptr = false) f ?f_trace x y ->
+      let itv = if (not may_ptr) || (no_ptr x && no_ptr y) then f x.itv y.itv else Itv.top in
+      let itv_thresholds = ItvThresholds.join x.itv_thresholds y.itv_thresholds in
+      let itv_updated_by = ItvUpdatedBy.join x.itv_updated_by y.itv_updated_by in
+      let modeled_range = ModeledRange.join x.modeled_range y.modeled_range in
+      let traces =
+        match f_trace with
+        | Some f_trace ->
+            f_trace x.traces y.traces
+        | None -> (
+          match (Itv.eq itv x.itv, Itv.eq itv y.itv) with
+          | true, false ->
+              x.traces
+          | false, true ->
+              y.traces
+          | true, true | false, false ->
+              TraceSet.join x.traces y.traces )
+      in
+      {bot with itv; itv_thresholds; itv_updated_by; modeled_range; traces}
 
 
   let lift_cmp_itv : (Itv.t -> Itv.t -> Boolean.t) -> Boolean.EqualOrder.t -> t -> t -> t =
@@ -317,7 +319,7 @@ module Val = struct
 
   let shiftrt = lift_itv Itv.shiftrt
 
-  let band_sem = lift_itv Itv.band_sem
+  let band_sem = lift_itv ~may_ptr:true Itv.band_sem
 
   let lt_sem : t -> t -> t = lift_cmp_itv Itv.lt_sem Boolean.EqualOrder.strict_cmp
 
@@ -468,7 +470,9 @@ module Val = struct
     {x with traces}
 
 
-  let array_sizeof {arrayblk} = ArrayBlk.get_size arrayblk
+  let array_sizeof {arrayblk} =
+    if ArrayBlk.is_bot arrayblk then Itv.top else ArrayBlk.get_size arrayblk
+
 
   let set_array_length : Location.t -> length:t -> t -> t =
    fun location ~length v ->
@@ -1788,20 +1792,12 @@ module MemReach = struct
     ; mem_pure: MemPure.t
     ; alias: Alias.t
     ; latest_prune: LatestPrune.t
-    ; oenv: ('has_oenv, OndemandEnv.t) GOption.t }
+    ; oenv: ('has_oenv, OndemandEnv.t) GOption.t
+    ; find_global_array: ('has_oenv, Loc.t -> Val.t option) GOption.t }
 
   type no_oenv_t = GOption.none t0
 
   type t = GOption.some t0
-
-  let init : OndemandEnv.t -> t =
-   fun oenv ->
-    { stack_locs= StackLocs.bot
-    ; mem_pure= MemPure.bot
-    ; alias= Alias.init
-    ; latest_prune= LatestPrune.top
-    ; oenv= GOption.GSome oenv }
-
 
   let leq ~lhs ~rhs =
     if phys_equal lhs rhs then true
@@ -1821,7 +1817,8 @@ module MemReach = struct
       ; mem_pure= MemPure.widen oenv ~prev:prev.mem_pure ~next:next.mem_pure ~num_iters
       ; alias= Alias.widen ~prev:prev.alias ~next:next.alias ~num_iters
       ; latest_prune= LatestPrune.widen ~prev:prev.latest_prune ~next:next.latest_prune ~num_iters
-      ; oenv= prev.oenv } )
+      ; oenv= prev.oenv
+      ; find_global_array= prev.find_global_array } )
 
 
   let join : t -> t -> t =
@@ -1832,7 +1829,8 @@ module MemReach = struct
     ; mem_pure= MemPure.join oenv x.mem_pure y.mem_pure
     ; alias= Alias.join x.alias y.alias
     ; latest_prune= LatestPrune.join x.latest_prune y.latest_prune
-    ; oenv= x.oenv }
+    ; oenv= x.oenv
+    ; find_global_array= x.find_global_array }
 
 
   let pp : F.formatter -> _ t0 -> unit =
@@ -1841,7 +1839,9 @@ module MemReach = struct
       MemPure.pp x.mem_pure Alias.pp x.alias LatestPrune.pp x.latest_prune
 
 
-  let unset_oenv : t -> no_oenv_t = function x -> {x with oenv= GOption.GNone}
+  let unset_oenv : t -> no_oenv_t =
+   fun x -> {x with oenv= GOption.GNone; find_global_array= GOption.GNone}
+
 
   let is_stack_loc : Loc.t -> _ t0 -> bool = fun l m -> StackLocs.mem l m.stack_locs
 
@@ -1851,10 +1851,17 @@ module MemReach = struct
 
   let find_stack : Loc.t -> _ t0 -> Val.t = fun l m -> Option.value (find_opt l m) ~default:Val.bot
 
+  (** Find heap values from: (1) given abstract memory [m] (2) initializers of global array values
+      (3) otherwise, it generates symbolic or unknown values ondemand *)
   let find_heap_default : default:Val.t -> ?typ:Typ.t -> Loc.t -> _ t0 -> Val.t =
    fun ~default ?typ l m ->
+    let ondemand_fallback () =
+      GOption.value_map m.oenv ~default ~f:(fun oenv -> Val.on_demand ~default ?typ oenv l)
+    in
     IOption.value_default_f (find_opt l m) ~f:(fun () ->
-        GOption.value_map m.oenv ~default ~f:(fun oenv -> Val.on_demand ~default ?typ oenv l) )
+        GOption.value_map_f m.find_global_array ~default:ondemand_fallback
+          ~f:(fun find_global_array ->
+            IOption.value_default_f (find_global_array l) ~f:ondemand_fallback ) )
 
 
   let find_heap : ?typ:Typ.t -> Loc.t -> _ t0 -> Val.t =
@@ -1895,6 +1902,22 @@ module MemReach = struct
 
 
   let find_ret_alias : _ t0 -> AliasTargets.t = fun m -> Alias.find_ret m.alias
+
+  type get_summary = Procname.t -> no_oenv_t option
+
+  let init : get_summary -> OndemandEnv.t -> t =
+   fun get_summary oenv ->
+    let find_global_array loc =
+      Option.bind (Loc.get_global_array_initializer loc) ~f:(fun pname ->
+          Option.bind (get_summary pname) ~f:(find_opt loc) )
+    in
+    { stack_locs= StackLocs.bot
+    ; mem_pure= MemPure.bot
+    ; alias= Alias.init
+    ; latest_prune= LatestPrune.top
+    ; oenv= GOption.GSome oenv
+    ; find_global_array= GOption.GSome find_global_array }
+
 
   let load_alias : Ident.t -> Loc.t -> AliasTarget.t -> t -> t =
    fun id loc tgt m -> {m with alias= Alias.load id loc tgt m.alias}
@@ -1982,10 +2005,10 @@ module MemReach = struct
     PowLoc.fold (fun l acc -> add_heap ?represents_multiple_values l v acc) locs m
 
 
-  let add_unknown_from : Ident.t -> callee_pname:Procname.t option -> location:Location.t -> t -> t
-      =
-   fun id ~callee_pname ~location m ->
-    let val_unknown = Val.unknown_from ~callee_pname ~location in
+  let add_unknown_from :
+      Ident.t * Typ.t -> callee_pname:Procname.t option -> location:Location.t -> t -> t =
+   fun (id, typ) ~callee_pname ~location m ->
+    let val_unknown = Val.unknown_from typ ~callee_pname ~location in
     add_stack (Loc.of_id id) val_unknown m |> add_heap Loc.unknown val_unknown
 
 
@@ -2231,7 +2254,13 @@ module Mem = struct
 
   type get_summary = Procname.t -> no_oenv_t option
 
-  let init : OndemandEnv.t -> t = fun oenv -> NonBottom (MemReach.init oenv)
+  let init : get_summary -> OndemandEnv.t -> t =
+   fun get_summary oenv ->
+    let get_summary pname =
+      match get_summary pname with Some (NonBottom m) -> Some m | _ -> None
+    in
+    NonBottom (MemReach.init get_summary oenv)
+
 
   let f_lift_default : default:'a -> ('h MemReach.t0 -> 'a) -> 'h t0 -> 'a =
    fun ~default f m -> match m with Bottom | ExcRaised -> default | NonBottom m' -> f m'
@@ -2354,13 +2383,14 @@ module Mem = struct
     map ~f:(MemReach.add_heap_set ?represents_multiple_values ploc v)
 
 
-  let add_unknown_from : Ident.t -> callee_pname:Procname.t -> location:Location.t -> t -> t =
-   fun id ~callee_pname ~location ->
-    map ~f:(MemReach.add_unknown_from id ~callee_pname:(Some callee_pname) ~location)
+  let add_unknown_from : Ident.t * Typ.t -> callee_pname:Procname.t -> location:Location.t -> t -> t
+      =
+   fun ret ~callee_pname ~location ->
+    map ~f:(MemReach.add_unknown_from ret ~callee_pname:(Some callee_pname) ~location)
 
 
-  let add_unknown : Ident.t -> location:Location.t -> t -> t =
-   fun id ~location -> map ~f:(MemReach.add_unknown_from id ~callee_pname:None ~location)
+  let add_unknown : Ident.t * Typ.t -> location:Location.t -> t -> t =
+   fun ret ~location -> map ~f:(MemReach.add_unknown_from ret ~callee_pname:None ~location)
 
 
   let strong_update : PowLoc.t -> Val.t -> t -> t = fun p v -> map ~f:(MemReach.strong_update p v)

@@ -25,17 +25,15 @@ module Payload = SummaryPayload.Make (struct
   let field = Payloads.Fields.buffer_overrun_analysis
 end)
 
-type get_formals = Procname.t -> (Pvar.t * Typ.t) list option
-
 type extras =
   { get_summary: BufferOverrunAnalysisSummary.get_summary
-  ; get_formals: get_formals
+  ; get_formals: BoUtils.get_formals
   ; oenv: OndemandEnv.t }
 
 module CFG = ProcCfg.NormalOneInstrPerNode
 
 module Init = struct
-  let initial_state {ProcData.summary; tenv; extras= {oenv}} start_node =
+  let initial_state {ProcData.summary; tenv; extras= {get_summary; oenv}} start_node =
     let try_decl_local =
       let pname = Summary.get_proc_name summary in
       let model_env =
@@ -48,7 +46,7 @@ module Init = struct
         let loc = Loc.of_pvar (Pvar.mk name pname) in
         BoUtils.Exec.decl_local model_env (mem, inst_num) (loc, typ)
     in
-    let mem = Dom.Mem.init oenv in
+    let mem = Dom.Mem.init get_summary oenv in
     let mem, _ =
       List.fold ~f:try_decl_local ~init:(mem, 1)
         (Procdesc.get_locals (Summary.get_proc_desc summary))
@@ -276,7 +274,7 @@ module TransferFunctions = struct
         None
 
 
-  let load_global_constant get_summary id pvar location mem ~find_from_initializer =
+  let load_global_constant get_summary ((id, _) as ret) pvar location mem ~find_from_initializer =
     match Pvar.get_initializer_pname pvar with
     | Some callee_pname -> (
       match get_summary callee_pname with
@@ -286,11 +284,11 @@ module TransferFunctions = struct
       | None ->
           L.d_printfln_escaped "/!\\ Unknown initializer of global constant %a" (Pvar.pp Pp.text)
             pvar ;
-          Dom.Mem.add_unknown_from id ~callee_pname ~location mem )
+          Dom.Mem.add_unknown_from ret ~callee_pname ~location mem )
     | None ->
         L.d_printfln_escaped "/!\\ Failed to get initializer name of global constant %a"
           (Pvar.pp Pp.text) pvar ;
-        Dom.Mem.add_unknown id ~location mem
+        Dom.Mem.add_unknown ret ~location mem
 
 
   let exec_instr : Dom.Mem.t -> extras ProcData.t -> CFG.Node.t -> Sil.instr -> Dom.Mem.t =
@@ -299,13 +297,13 @@ module TransferFunctions = struct
     match instr with
     | Load {id} when Ident.is_none id ->
         mem
-    | Load {id; e= Exp.Lvar pvar; loc= location}
+    | Load {id; e= Exp.Lvar pvar; typ; loc= location}
       when Pvar.is_compile_constant pvar || Pvar.is_ice pvar ->
-        load_global_constant get_summary id pvar location mem
+        load_global_constant get_summary (id, typ) pvar location mem
           ~find_from_initializer:(fun callee_mem -> Dom.Mem.find (Loc.of_pvar pvar) callee_mem)
-    | Load {id; e= Exp.Lindex (Exp.Lvar pvar, _); loc= location}
+    | Load {id; e= Exp.Lindex (Exp.Lvar pvar, _); typ; loc= location}
       when Pvar.is_compile_constant pvar || Pvar.is_ice pvar ->
-        load_global_constant get_summary id pvar location mem
+        load_global_constant get_summary (id, typ) pvar location mem
           ~find_from_initializer:(fun callee_mem ->
             let locs = Dom.Mem.find (Loc.of_pvar pvar) callee_mem |> Dom.Val.get_all_locs in
             Dom.Mem.find_set locs callee_mem )
@@ -410,11 +408,11 @@ module TransferFunctions = struct
                   L.(debug BufferOverrun Verbose)
                     "/!\\ Non-static call to unknown %a \n\n" Procname.pp callee_pname ;
                   assign_symbolic_pname_value callee_pname params ret location mem )
-                else Dom.Mem.add_unknown_from id ~callee_pname ~location mem ) )
-    | Call ((id, _), fun_exp, _, location, _) ->
+                else Dom.Mem.add_unknown_from ret ~callee_pname ~location mem ) )
+    | Call (((id, _) as ret), fun_exp, _, location, _) ->
         let mem = Dom.Mem.add_stack_loc (Loc.of_id id) mem in
         L.d_printfln_escaped "/!\\ Call to non-const function %a" Exp.pp fun_exp ;
-        Dom.Mem.add_unknown id ~location mem
+        Dom.Mem.add_unknown ret ~location mem
     | Metadata (VariableLifetimeBegins (pvar, typ, location)) when Pvar.is_global pvar ->
         let model_env =
           let pname = Summary.get_proc_name summary in
@@ -449,7 +447,7 @@ let compute_invariant_map :
     -> Tenv.t
     -> Typ.IntegerWidths.t
     -> BufferOverrunAnalysisSummary.get_summary
-    -> get_formals
+    -> BoUtils.get_formals
     -> invariant_map =
  fun summary tenv integer_type_widths get_summary get_formals ->
   let pdesc = Summary.get_proc_desc summary in

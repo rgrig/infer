@@ -176,14 +176,14 @@ let check_xcpretty () =
 
 
 let capture_with_compilation_database db_files =
-  let root = Unix.getcwd () in
+  let root = Config.project_root in
   Config.clang_compilation_dbs :=
     List.map db_files ~f:(function
       | `Escaped fname ->
           `Escaped (Utils.filename_to_absolute ~root fname)
       | `Raw fname ->
           `Raw (Utils.filename_to_absolute ~root fname) ) ;
-  let compilation_database = CompilationDatabase.from_json_files db_files in
+  let compilation_database = CompilationDatabase.from_json_files !Config.clang_compilation_dbs in
   CaptureCompilationDatabase.capture_files_in_database compilation_database
 
 
