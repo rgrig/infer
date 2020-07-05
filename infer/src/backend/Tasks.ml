@@ -7,24 +7,26 @@
 
 open! IStd
 
-type 'a doer = 'a -> unit
+type ('a, 'b) doer = 'a -> 'b option
 
-let fork_protect ~f x = BackendStats.reset () ; ForkUtils.protect ~f x
+let with_new_db_connection ~f () =
+  ResultsDatabase.new_database_connection () ;
+  f ()
+
 
 module Runner = struct
-  type ('work, 'final) t = ('work, 'final) ProcessPool.t
+  type ('work, 'final, 'result) t = ('work, 'final, 'result) ProcessPool.t
 
-  let create ~jobs ~f ~child_epilogue ~tasks =
+  let create ~jobs ~child_prologue ~f ~child_epilogue ~tasks =
     PerfEvent.(
       log (fun logger -> log_begin_event logger ~categories:["sys"] ~name:"fork prepare" ())) ;
     ResultsDatabase.db_close () ;
     let pool =
-      ProcessPool.create ~jobs ~f ~child_epilogue ~tasks
-        ~child_prelude:
-          ((* hack: run post-fork bookkeeping stuff by passing a dummy function to [fork_protect] *)
-           fork_protect ~f:(fun () -> ()))
+      ProcessPool.create ~jobs ~f ~child_epilogue ~tasks:(with_new_db_connection ~f:tasks)
+        ~child_prologue:
+          ((* hack: we'll continue executing after the function passed to [protect], despite what he name might suggest *)
+           ForkUtils.protect ~f:child_prologue)
     in
-    ResultsDatabase.new_database_connection () ;
     PerfEvent.(log (fun logger -> log_end_event logger ())) ;
     pool
 
@@ -37,7 +39,7 @@ module Runner = struct
     ProcessPool.run runner
 end
 
-let run_sequentially ~(f : 'a doer) (tasks : 'a list) : unit =
+let run_sequentially ~(f : ('a, 'b) doer) (tasks : 'a list) : unit =
   let task_generator = ProcessPool.TaskGenerator.of_list tasks in
   let task_bar = TaskBar.create ~jobs:1 in
   (ProcessPoolState.update_status :=
@@ -48,9 +50,12 @@ let run_sequentially ~(f : 'a doer) (tasks : 'a list) : unit =
   TaskBar.tasks_done_reset task_bar ;
   let rec run_tasks () =
     if not (task_generator.is_empty ()) then (
-      Option.iter (task_generator.next ()) ~f:(fun t -> f t ; task_generator.finished t) ;
+      Option.iter (task_generator.next ()) ~f:(fun t ->
+          let result = f t in
+          task_generator.finished ~result t ) ;
       TaskBar.set_remaining_tasks task_bar (task_generator.remaining_tasks ()) ;
       TaskBar.refresh task_bar ;
       run_tasks () )
   in
-  run_tasks () ; TaskBar.finish task_bar
+  run_tasks () ;
+  TaskBar.finish task_bar

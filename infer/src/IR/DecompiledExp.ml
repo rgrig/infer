@@ -31,7 +31,7 @@ type t =
     path, with Dpvar being the simplest one *)
 type vpath = t option
 
-let eradicate_java () = Config.eradicate && Language.curr_language_is Java
+let eradicate_java () = Config.is_checker_enabled Eradicate && Language.curr_language_is Java
 
 let split_var_clang var_name =
   match String.rsplit2 ~on:'.' var_name with Some (_, name) -> name | _ -> var_name
@@ -68,7 +68,7 @@ let rec pp fmt = function
       F.fprintf fmt "*%a" pp de
   | Dfcall (fun_dexp, args, _, {cf_virtual= isvirtual}) ->
       let pp_args fmt des =
-        if eradicate_java () then (if des <> [] then F.pp_print_string fmt "...")
+        if eradicate_java () then (if not (List.is_empty des) then F.pp_print_string fmt "...")
         else Pp.comma_seq pp fmt des
       in
       let pp_fun fmt = function

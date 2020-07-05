@@ -91,6 +91,27 @@ val implements_google : string -> Tenv.t -> string -> bool
 val implements_android : string -> Tenv.t -> string -> bool
 (** Check whether class implements a class of Android *)
 
+val implements_infer_annotation : string -> Tenv.t -> string -> bool
+(** Check whether class implements a class of Infer annotation *)
+
+val implements_app_activity : Tenv.t -> string -> bool
+(** Check whether class implements a class of [android.app.Activity] *)
+
+val implements_app_fragment : Tenv.t -> string -> bool
+(** Check whether class implements a class of [androidx.fragment.app.Fragment] *)
+
+val implements_graphql_story : Tenv.t -> string -> bool
+(** Check whether class implements a class of [com.facebook.graphql.model.GraphQLStory] *)
+
+val implements_psi_element : Tenv.t -> string -> bool
+(** Check whether class implements a class of [com.intellij.psi.PsiElement] *)
+
+val implements_view_group : Tenv.t -> string -> bool
+(** Check whether class implements a class of [android.view.ViewGroup] *)
+
+val implements_view_parent : Tenv.t -> string -> bool
+(** Check whether class implements a class of [android.view.ViewParent] *)
+
 val implements_xmob_utils : string -> Tenv.t -> string -> bool
 (** Check whether class implements a class of xmod.utils *)
 
@@ -100,9 +121,6 @@ val supertype_exists : Tenv.t -> (Typ.Name.t -> Struct.t -> bool) -> Typ.Name.t 
 val supertype_find_map_opt : Tenv.t -> (Typ.Name.t -> 'a option) -> Typ.Name.t -> 'a option
 (** Return the first non-None result found when applying the given function to supertypes of the
     named type, including the type itself *)
-
-val java_get_vararg_values : Procdesc.Node.t -> Pvar.t -> Idenv.t -> Exp.t list
-(** Get the values of a vararg parameter given the pvar used to assign the elements. *)
 
 val proc_calls :
      (Procname.t -> ProcAttributes.t option)
@@ -121,6 +139,8 @@ val override_iter : (Procname.t -> unit) -> Tenv.t -> Procname.t -> unit
     works for Java *)
 
 val lookup_attributes : Tenv.t -> Procname.t -> ProcAttributes.t option
+
+val type_name_get_annotation : Tenv.t -> Typ.name -> Annot.Item.t option
 
 val type_get_annotation : Tenv.t -> Typ.t -> Annot.Item.t option
 
@@ -151,6 +171,22 @@ val find_superclasses_with_attributes :
   (Annot.Item.t -> bool) -> Tenv.t -> Typ.Name.t -> Typ.Name.t list
 (** find superclasss with attributes (e.g., [@ThreadSafe]), including current class*)
 
-val is_override_of : Procname.t -> (Procname.t -> bool) Staged.t
-(** For a given [procname] checks if it's an override of some other [procname]. NOTE: the
-    implementation is not complete with respect to Java's generics and type erasure. *)
+val has_same_signature : Procname.t -> (Procname.t -> bool) Staged.t
+(** For a given [procname] checks if the method has the same method name, number, order and types of
+    parameters.) *)
+
+val is_override_of_java_lang_object_equals : Procname.t -> bool
+(** Whether the method is an override of `java.lang.Object.equals(Object)` or
+    `java.lang.Object.equals(Object)` itself *)
+
+module ObjectiveC : sig
+  val is_core_graphics_create_or_copy : Tenv.t -> string -> bool
+
+  val is_core_foundation_create_or_copy : Tenv.t -> string -> bool
+
+  val is_core_graphics_release : Tenv.t -> string -> bool
+
+  val is_modelled_as_alloc : Tenv.t -> string -> bool
+
+  val is_modelled_as_release : Tenv.t -> string -> bool
+end

@@ -20,12 +20,12 @@ make devsetup
 
 ### Building Infer for Development
 
-- Build the code faster: `make -j BUILD_MODE=default`. By default `make` builds infer with flambda
+- Build the code faster: `make -j BUILD_MODE=dev`. By default `make` builds infer with flambda
   enabled, which makes it very slow (but makes infer significantly faster).
 
 - Faster edit/build cycle when working on OCaml code inside infer/src/: build inside infer/src/
   (skips building the models after infer has been built), and build bytecode instead of native:
-  `make -j -C infer/src byte`. You need to have run `make -j` (with or without `BUILD_MODE=default`)
+  `make -j -C infer/src byte`. You need to have run `make -j` (with or without `BUILD_MODE=dev`)
   at some point before.
 
 - In general, `make` commands from the root of the repository make sure that dependencies are in a
@@ -33,11 +33,11 @@ make devsetup
   use infer), while running `make` commands from within subdirectories generally assumes that
   dependencies are already up-to-date.
 
-  For instance, running `make direct_java_infer_test` will rebuild infer and the models if necessary
-  before running the test, but running `make -C infer/tests/codetoanalyze/java/infer test` will just
-  execute the test.
+  For instance, running `make direct_java_biabduction_test` will rebuild infer and the models if
+  necessary before running the test, but running `make -C infer/tests/codetoanalyze/java/biabduction/ test`
+  will just execute the test.
 
-- To switch the default build mode to flambda disabled, you can `export BUILD_MODE=default` in your
+- To switch the default build mode to flambda disabled, you can `export BUILD_MODE=dev` in your
   shell.
 
 ### Debugging OCaml Code
@@ -55,7 +55,7 @@ make devsetup
   if you're unsure of a module name.
 
 ```console
-$ ledit ocamldebug infer/bin/infer.bc
+$ ledit ocamldebug infer/bin/infer.bc.exe
 (ocd) break @ InferModules__InferAnalyze 100
 Breakpoint 1 at 9409684: file backend/InferAnalyze.ml, line 99, characters 18-78
 ```
@@ -95,7 +95,7 @@ Thanks!
 
 - Indent with spaces, not tabs.
 
-- Line width limit is 100 characters (except for Python for which the limit is 80).
+- Line width limit is 100 characters.
 
 - In general, follow the style of surrounding code.
 

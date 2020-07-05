@@ -18,8 +18,6 @@ module F = Format
     variables (C) or default values (Java). *)
 type struct_init_mode = No_init | Fld_init
 
-let unSome = function Some x -> x | _ -> assert false
-
 (** kind for normal props, i.e. normalized *)
 type normal
 
@@ -188,15 +186,15 @@ let pp_sigma_simple pe env fmt sigma =
   let sigma_stack, sigma_nonstack = sigma_get_stack_nonstack false sigma in
   let pp_stack fmt sg_ =
     let sg = List.sort ~compare:Predicates.compare_hpred sg_ in
-    if sg <> [] then (Pp.semicolon_seq ~print_env:pe (pp_hpred_stackvar pe)) fmt sg
+    if not (List.is_empty sg) then (Pp.semicolon_seq ~print_env:pe (pp_hpred_stackvar pe)) fmt sg
   in
   let pp_nl fmt doit = if doit then Format.fprintf fmt " ;@\n" in
   let pp_nonstack fmt =
     Pp.semicolon_seq ~print_env:pe (Predicates.pp_hpred_env pe (Some env)) fmt
   in
-  if sigma_stack <> [] || sigma_nonstack <> [] then
+  if (not (List.is_empty sigma_stack)) || not (List.is_empty sigma_nonstack) then
     Format.fprintf fmt "%a%a%a" pp_stack sigma_stack pp_nl
-      (sigma_stack <> [] && sigma_nonstack <> [])
+      ((not (List.is_empty sigma_stack)) && not (List.is_empty sigma_nonstack))
       pp_nonstack sigma_nonstack
 
 
@@ -205,8 +203,12 @@ let d_sigma (sigma : sigma) = L.d_pp_with_pe pp_sigma sigma
 
 (** Dump a pi and a sigma *)
 let d_pi_sigma pi sigma =
-  let d_separator () = if pi <> [] && sigma <> [] then L.d_strln " *" in
-  d_pi pi ; d_separator () ; d_sigma sigma
+  let d_separator () =
+    if (not (List.is_empty pi)) && not (List.is_empty sigma) then L.d_strln " *"
+  in
+  d_pi pi ;
+  d_separator () ;
+  d_sigma sigma
 
 
 let pi_of_subst sub =
@@ -244,7 +246,9 @@ let get_pure_extended p =
 
 
 (** Print existential quantification *)
-let pp_evars f evars = if evars <> [] then F.fprintf f "exists [%a]. " (Pp.comma_seq Ident.pp) evars
+let pp_evars f evars =
+  if not (List.is_empty evars) then F.fprintf f "exists [%a]. " (Pp.comma_seq Ident.pp) evars
+
 
 (** Print an hpara in simple mode *)
 let pp_hpara_simple pe_ env n f pred =
@@ -287,8 +291,8 @@ let prop_update_obj_sub pe prop = Pp.set_obj_sub pe (create_pvar_env prop.sigma)
 (** Pretty print a footprint in simple mode. *)
 let pp_footprint_simple pe_ env f fp =
   let pe = {pe_ with Pp.cmap_norm= pe_.Pp.cmap_foot} in
-  let pp_pure f pi = if pi <> [] then F.fprintf f "%a *@\n" (pp_pi pe) pi in
-  if fp.pi_fp <> [] || fp.sigma_fp <> [] then
+  let pp_pure f pi = if not (List.is_empty pi) then F.fprintf f "%a *@\n" (pp_pi pe) pi in
+  if (not (List.is_empty fp.pi_fp)) || not (List.is_empty fp.sigma_fp) then
     F.fprintf f "@\n[footprint@\n   @[%a%a@]  ]" pp_pure fp.pi_fp (pp_sigma_simple pe env)
       fp.sigma_fp
 
@@ -309,8 +313,8 @@ let pp_prop pe0 f prop =
     (* since prop diff is based on physical equality, we need to extract the sub verbatim *)
     let pi = prop.pi in
     let pp_pure f () =
-      if subl <> [] then F.fprintf f "%a ;@\n" (pp_subl pe) subl ;
-      if pi <> [] then F.fprintf f "%a ;@\n" (pp_pi pe) pi
+      if not (List.is_empty subl) then F.fprintf f "%a ;@\n" (pp_subl pe) subl ;
+      if not (List.is_empty pi) then F.fprintf f "%a ;@\n" (pp_pi pe) pi
     in
     let env = prop_pred_env prop in
     let iter_f n hpara = F.fprintf f "@,@[<h>%a@]" (pp_hpara_simple pe env n) hpara in
@@ -537,7 +541,8 @@ let sigma_get_unsigned_exps sigma =
     | _ ->
         ()
   in
-  List.iter ~f:do_hpred sigma ; !uexps
+  List.iter ~f:do_hpred sigma ;
+  !uexps
 
 
 (** Collapse consecutive indices that should be added. For instance, this function reduces
@@ -720,7 +725,7 @@ module Normalize = struct
         | Const (Cint n), Const (Cint m) ->
             Exp.bool (IntLit.leq n m)
         | Const (Cfloat v), Const (Cfloat w) ->
-            Exp.bool (v <= w)
+            Exp.bool Float.(v <= w)
         | BinOp (PlusA _, e3, Const (Cint n)), Const (Cint m) ->
             BinOp (Le, e3, Exp.int (m -- n))
         | e1', e2' ->
@@ -730,7 +735,7 @@ module Normalize = struct
         | Const (Cint n), Const (Cint m) ->
             Exp.bool (IntLit.lt n m)
         | Const (Cfloat v), Const (Cfloat w) ->
-            Exp.bool (v < w)
+            Exp.bool Float.(v < w)
         | Const (Cint n), BinOp ((MinusA _ as ominus), f1, f2) ->
             BinOp (Le, BinOp (ominus, f2, f1), Exp.int (IntLit.minus_one -- n))
         | BinOp ((MinusA _ as ominus), f1, f2), Const (Cint n) ->
@@ -760,7 +765,7 @@ module Normalize = struct
         | Const (Cint n), Const (Cint m) ->
             Exp.bool (IntLit.neq n m)
         | Const (Cfloat v), Const (Cfloat w) ->
-            Exp.bool (v <> w)
+            Exp.bool Float.(v <> w)
         | Const (Cint _), Exp.Lvar _ | Exp.Lvar _, Const (Cint _) ->
             (* Comparing pointer with nonzero integer is undefined behavior in ISO C++ *)
             (* Assume they are not equal *)
@@ -1950,7 +1955,8 @@ let sigma_dfs_sort tenv sigma =
   in
   init () ;
   let sigma' = handle_sigma [] sigma in
-  final () ; sigma'
+  final () ;
+  sigma'
 
 
 let dfs_sort tenv p : sorted t =
@@ -2095,9 +2101,10 @@ let rec idlist_assoc id = function
       if Ident.equal i id then x else idlist_assoc id l
 
 
-let ident_captured_ren ren id = try idlist_assoc id ren with Caml.Not_found -> id
+let ident_captured_ren ren id =
+  (* If not defined in ren, id should be mapped to itself *)
+  try idlist_assoc id ren with Caml.Not_found -> id
 
-(* If not defined in ren, id should be mapped to itself *)
 
 let rec exp_captured_ren ren (e : Exp.t) : Exp.t =
   match e with
@@ -2542,7 +2549,7 @@ let rec strexp_gc_fields (se : Predicates.strexp) =
       let fselo = List.map ~f:(fun (f, se) -> (f, strexp_gc_fields se)) fsel in
       let fsel' =
         let fselo' = List.filter ~f:(function _, Some _ -> true | _ -> false) fselo in
-        List.map ~f:(function f, seo -> (f, unSome seo)) fselo'
+        List.map ~f:(function f, seo -> (f, Option.value_exn seo)) fselo'
       in
       if [%compare.equal: (Fieldname.t * Predicates.strexp) list] fsel fsel' then Some se
       else Some (Predicates.Estruct (fsel', inst))

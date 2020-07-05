@@ -125,7 +125,7 @@ module ItvPure = struct
 
   let of_int_lit n = of_big_int (IntLit.to_big_int n)
 
-  let of_pulse_value v = of_bound (Bound.of_pulse_value v)
+  let of_foreign_id id = of_bound (Bound.of_foreign_id id)
 
   let mone = of_bound Bound.mone
 
@@ -330,7 +330,7 @@ module ItvPure = struct
       match get_const y with
       | Some n when Z.(leq n zero) ->
           x
-      | Some n when Z.(n >= of_int 64) ->
+      | Some n when Z.(geq n (of_int 64)) ->
           zero
       | Some n -> (
         match Z.to_int n with n -> div_const x Z.(one lsl n) | exception Z.Overflow -> top )
@@ -459,18 +459,22 @@ module ItvPure = struct
 
   let arith_unop (unop : Unop.t) x = match unop with Neg -> Some (neg x) | BNot | LNot -> None
 
-  let prune_le : t -> t -> t = fun (l1, u1) (_, u2) -> (l1, Bound.overapprox_min u1 u2)
+  let prune_le : t -> t -> t bottom_lifted =
+   fun (l1, u1) (_, u2) -> normalize (l1, Bound.overapprox_min u1 u2)
 
-  let prune_ge : t -> t -> t = fun (l1, u1) (l2, _) -> (Bound.underapprox_max l1 l2, u1)
 
-  let prune_lt : t -> t -> t = fun x y -> prune_le x (minus y one)
+  let prune_ge : t -> t -> t bottom_lifted =
+   fun (l1, u1) (l2, _) -> normalize (Bound.underapprox_max l1 l2, u1)
 
-  let prune_gt : t -> t -> t = fun x y -> prune_ge x (plus y one)
+
+  let prune_lt : t -> t -> t bottom_lifted = fun x y -> prune_le x (minus y one)
+
+  let prune_gt : t -> t -> t bottom_lifted = fun x y -> prune_ge x (plus y one)
 
   let prune_diff : t -> Bound.t -> t bottom_lifted =
    fun ((l, u) as itv) b ->
-    if Bound.le b l then normalize (prune_gt itv (of_bound b))
-    else if Bound.le u b then normalize (prune_lt itv (of_bound b))
+    if Bound.le b l then prune_gt itv (of_bound b)
+    else if Bound.le u b then prune_lt itv (of_bound b)
     else NonBottom itv
 
 
@@ -480,20 +484,17 @@ module ItvPure = struct
    fun c x y ->
     if is_invalid y then NonBottom x
     else
-      let x =
-        match c with
-        | Le ->
-            prune_le x y
-        | Ge ->
-            prune_ge x y
-        | Lt ->
-            prune_lt x y
-        | Gt ->
-            prune_gt x y
-        | _ ->
-            assert false
-      in
-      normalize x
+      match c with
+      | Le ->
+          prune_le x y
+      | Ge ->
+          prune_ge x y
+      | Lt ->
+          prune_lt x y
+      | Gt ->
+          prune_gt x y
+      | _ ->
+          assert false
 
 
   let prune_eq : t -> t -> t bottom_lifted =
@@ -502,9 +503,7 @@ module ItvPure = struct
 
 
   let prune_eq_zero : t -> t bottom_lifted =
-   fun x ->
-    let x' = prune_le x zero in
-    prune_ge x' zero |> normalize
+   fun x -> match prune_le x zero with Bottom -> Bottom | NonBottom x' -> prune_ge x' zero
 
 
   let prune_ne : t -> t -> t bottom_lifted =
@@ -575,7 +574,7 @@ module ItvPure = struct
 
   let of_length_path ~is_void = of_path (Bound.of_length_path ~is_void)
 
-  let of_modeled_path = of_path Bound.of_modeled_path
+  let of_modeled_path ~is_expensive = of_path (Bound.of_modeled_path ~is_expensive)
 
   let is_offset_path_of path x =
     Bound.is_offset_path_of path (lb x) && Bound.is_offset_path_of path (ub x)
@@ -787,9 +786,9 @@ let prune_ge_one : t -> t = bind1 ItvPure.prune_ge_one
 
 let prune_binop : Binop.t -> t -> t -> t = fun comp -> bind2 (ItvPure.prune_binop comp)
 
-let prune_lt : t -> t -> t = lift2 ItvPure.prune_lt
+let prune_lt : t -> t -> t = bind2 ItvPure.prune_lt
 
-let prune_le : t -> t -> t = lift2 ItvPure.prune_le
+let prune_le : t -> t -> t = bind2 ItvPure.prune_le
 
 let prune_eq : t -> t -> t = bind2 ItvPure.prune_eq
 
@@ -822,7 +821,7 @@ let of_offset_path ~is_void path = NonBottom (ItvPure.of_offset_path ~is_void pa
 
 let of_length_path ~is_void path = NonBottom (ItvPure.of_length_path ~is_void path)
 
-let of_modeled_path path = NonBottom (ItvPure.of_modeled_path path)
+let of_modeled_path ~is_expensive path = NonBottom (ItvPure.of_modeled_path ~is_expensive path)
 
 let is_offset_path_of path = bind1_gen ~bot:false (ItvPure.is_offset_path_of path)
 

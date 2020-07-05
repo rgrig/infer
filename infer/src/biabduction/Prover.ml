@@ -228,11 +228,6 @@ let type_size_compare t1 t2 =
       None
 
 
-(** Check <= on the size of comparable types *)
-let check_type_size_leq t1 t2 =
-  match type_size_compare t1 t2 with None -> false | Some n -> n <= 0
-
-
 (** Check < on the size of comparable types *)
 let check_type_size_lt t1 t2 = match type_size_compare t1 t2 with None -> false | Some n -> n < 0
 
@@ -737,7 +732,7 @@ let check_disequal tenv prop e1 e2 =
               let sigma_rest' = List.rev_append sigma_irrelevant sigma_rest in
               f [] e2 sigma_rest' )
       | Predicates.Hdllseg (Lseg_NE, _, iF, _, _, iB, _) :: sigma_rest ->
-          if is_root tenv prop iF e <> None || is_root tenv prop iB e <> None then
+          if Option.is_some (is_root tenv prop iF e) || Option.is_some (is_root tenv prop iB e) then
             let sigma_irrelevant' = List.rev_append sigma_irrelevant sigma_rest in
             Some (true, sigma_irrelevant')
           else
@@ -835,7 +830,7 @@ let check_atom tenv prop a0 =
   if Config.smt_output then (
     let key = get_smt_key a prop_no_fp in
     let key_filename =
-      let source = (State.get_loc_exn ()).file in
+      let source = (AnalysisState.get_loc_exn ()).file in
       DB.Results_dir.path_to_filename (DB.Results_dir.Abs_source_dir source) [key ^ ".cns"]
     in
     let outc = Out_channel.create (DB.filename_to_string key_filename) in
@@ -870,16 +865,16 @@ let check_allocatedness tenv prop e =
   let spatial_part = prop.Prop.sigma in
   let f = function
     | Predicates.Hpointsto (base, _, _) ->
-        is_root tenv prop base n_e <> None
+        Option.is_some (is_root tenv prop base n_e)
     | Predicates.Hlseg (k, _, e1, e2, _) ->
         if Predicates.equal_lseg_kind k Lseg_NE || check_disequal tenv prop e1 e2 then
-          is_root tenv prop e1 n_e <> None
+          Option.is_some (is_root tenv prop e1 n_e)
         else false
     | Predicates.Hdllseg (k, _, iF, oB, oF, iB, _) ->
         if
           Predicates.equal_lseg_kind k Lseg_NE
           || check_disequal tenv prop iF oF || check_disequal tenv prop iB oB
-        then is_root tenv prop iF n_e <> None || is_root tenv prop iB n_e <> None
+        then Option.is_some (is_root tenv prop iF n_e) || Option.is_some (is_root tenv prop iB n_e)
         else false
   in
   List.exists ~f spatial_part
@@ -1044,7 +1039,12 @@ exception MISSING_EXC of string
 type check = Bounds_check | Class_cast_check of Exp.t * Exp.t * Exp.t
 
 let d_typings typings =
-  let d_elem (exp, texp) = Exp.d_exp exp ; L.d_str ": " ; Exp.d_texp_full texp ; L.d_str " " in
+  let d_elem (exp, texp) =
+    Exp.d_exp exp ;
+    L.d_str ": " ;
+    Exp.d_texp_full texp ;
+    L.d_str " "
+  in
   List.iter ~f:d_elem typings
 
 
@@ -1186,17 +1186,24 @@ end = struct
     L.d_increase_indent () ;
     Prop.d_sub sub ;
     L.d_decrease_indent () ;
-    if !missing_pi <> [] && !missing_sigma <> [] then (
-      L.d_ln () ; Prop.d_pi !missing_pi ; L.d_strln "*" ; Prop.d_sigma !missing_sigma )
-    else if !missing_pi <> [] then (L.d_ln () ; Prop.d_pi !missing_pi)
-    else if !missing_sigma <> [] then (L.d_ln () ; Prop.d_sigma !missing_sigma) ;
-    if !missing_fld <> [] then (
+    if (not (List.is_empty !missing_pi)) && not (List.is_empty !missing_sigma) then (
+      L.d_ln () ;
+      Prop.d_pi !missing_pi ;
+      L.d_strln "*" ;
+      Prop.d_sigma !missing_sigma )
+    else if not (List.is_empty !missing_pi) then (
+      L.d_ln () ;
+      Prop.d_pi !missing_pi )
+    else if not (List.is_empty !missing_sigma) then (
+      L.d_ln () ;
+      Prop.d_sigma !missing_sigma ) ;
+    if not (List.is_empty !missing_fld) then (
       L.d_ln () ;
       L.d_strln "MISSING FLD:" ;
       L.d_increase_indent () ;
       Prop.d_sigma !missing_fld ;
       L.d_decrease_indent () ) ;
-    if !missing_typ <> [] then (
+    if not (List.is_empty !missing_typ) then (
       L.d_ln () ;
       L.d_strln "MISSING TYPING:" ;
       L.d_increase_indent () ;
@@ -1207,14 +1214,21 @@ end = struct
   let d_missing sub =
     (* optional print of missing: if print something, prepend with newline *)
     if
-      !missing_pi <> [] || !missing_sigma <> [] || !missing_fld <> [] || !missing_typ <> []
+      (not (List.is_empty !missing_pi))
+      || (not (List.is_empty !missing_sigma))
+      || (not (List.is_empty !missing_fld))
+      || (not (List.is_empty !missing_typ))
       || not (Predicates.is_sub_empty sub)
-    then ( L.d_ln () ; L.d_str "[" ; d_missing_ sub ; L.d_str "]" )
+    then (
+      L.d_ln () ;
+      L.d_str "[" ;
+      d_missing_ sub ;
+      L.d_str "]" )
 
 
   let d_frame_fld () =
     (* optional print of frame fld: if print something, prepend with newline *)
-    if !frame_fld <> [] then (
+    if not (List.is_empty !frame_fld) then (
       L.d_ln () ;
       L.d_strln "[FRAME FLD:" ;
       L.d_increase_indent () ;
@@ -1225,7 +1239,7 @@ end = struct
 
   let d_frame_typ () =
     (* optional print of frame typ: if print something, prepend with newline *)
-    if !frame_typ <> [] then (
+    if not (List.is_empty !frame_typ) then (
       L.d_ln () ;
       L.d_strln "[FRAME TYPING:" ;
       L.d_increase_indent () ;
@@ -1258,15 +1272,24 @@ end = struct
       | EXC_FALSE ->
           ()
       | EXC_FALSE_HPRED hpred ->
-          L.d_str " on " ; Predicates.d_hpred hpred
+          L.d_str " on " ;
+          Predicates.d_hpred hpred
       | EXC_FALSE_EXPS (e1, e2) ->
-          L.d_str " on " ; Exp.d_exp e1 ; L.d_str "," ; Exp.d_exp e2
+          L.d_str " on " ;
+          Exp.d_exp e1 ;
+          L.d_str "," ;
+          Exp.d_exp e2
       | EXC_FALSE_SEXPS (se1, se2) ->
-          L.d_str " on " ; Predicates.d_sexp se1 ; L.d_str "," ; Predicates.d_sexp se2
+          L.d_str " on " ;
+          Predicates.d_sexp se1 ;
+          L.d_str "," ;
+          Predicates.d_sexp se2
       | EXC_FALSE_ATOM a ->
-          L.d_str " on " ; Predicates.d_atom a
+          L.d_str " on " ;
+          Predicates.d_atom a
       | EXC_FALSE_SIGMA sigma ->
-          L.d_str " on " ; Prop.d_sigma sigma
+          L.d_str " on " ;
+          Prop.d_sigma sigma
     in
     L.d_ln () ;
     L.d_strln "$$$$$$$ Implication" ;
@@ -1469,10 +1492,11 @@ let rec sexp_imply tenv source calc_index_frame calc_missing subs se1 se2 typ2 :
         struct_imply tenv source calc_missing subs fsel1 fsel2 typ2
       in
       let fld_frame_opt =
-        if fld_frame <> [] then Some (Predicates.Estruct (fld_frame, inst1)) else None
+        if not (List.is_empty fld_frame) then Some (Predicates.Estruct (fld_frame, inst1)) else None
       in
       let fld_missing_opt =
-        if fld_missing <> [] then Some (Predicates.Estruct (fld_missing, inst1)) else None
+        if not (List.is_empty fld_missing) then Some (Predicates.Estruct (fld_missing, inst1))
+        else None
       in
       (subs', fld_frame_opt, fld_missing_opt)
   | Predicates.Estruct _, Predicates.Eexp (e2, _) -> (
@@ -1492,10 +1516,11 @@ let rec sexp_imply tenv source calc_index_frame calc_missing subs se1 se2 typ2 :
         array_imply tenv source calc_index_frame calc_missing subs' esel1 esel2 typ2
       in
       let index_frame_opt =
-        if index_frame <> [] then Some (Predicates.Earray (len1, index_frame, inst1)) else None
+        if not (List.is_empty index_frame) then Some (Predicates.Earray (len1, index_frame, inst1))
+        else None
       in
       let index_missing_opt =
-        if index_missing <> [] && !BiabductionConfig.footprint then
+        if (not (List.is_empty index_missing)) && !BiabductionConfig.footprint then
           Some (Predicates.Earray (len1, index_missing, inst1))
         else None
       in
@@ -1540,7 +1565,7 @@ and struct_imply tenv source calc_missing subs fsel1 fsel2 typ2 :
   | (f1, se1) :: fsel1', (f2, se2) :: fsel2' -> (
     match Fieldname.compare f1 f2 with
     | 0 ->
-        let typ' = Struct.fld_typ ~lookup ~default:(Typ.mk Tvoid) f2 typ2 in
+        let typ' = Struct.fld_typ ~lookup ~default:Typ.void f2 typ2 in
         let subs', se_frame, se_missing =
           sexp_imply tenv (Exp.Lfield (source, f2, typ2)) false calc_missing subs se1 se2 typ'
         in
@@ -1560,7 +1585,7 @@ and struct_imply tenv source calc_missing subs fsel1 fsel2 typ2 :
         in
         (subs', (f1, se1) :: fld_frame, fld_missing)
     | _ ->
-        let typ' = Struct.fld_typ ~lookup ~default:(Typ.mk Tvoid) f2 typ2 in
+        let typ' = Struct.fld_typ ~lookup ~default:Typ.void f2 typ2 in
         let subs' =
           sexp_imply_nolhs tenv (Exp.Lfield (source, f2, typ2)) calc_missing subs se2 typ'
         in
@@ -1570,7 +1595,7 @@ and struct_imply tenv source calc_missing subs fsel1 fsel2 typ2 :
         let fld_missing' = (f2, se2) :: fld_missing in
         (subs', fld_frame, fld_missing') )
   | [], (f2, se2) :: fsel2' ->
-      let typ' = Struct.fld_typ ~lookup ~default:(Typ.mk Tvoid) f2 typ2 in
+      let typ' = Struct.fld_typ ~lookup ~default:Typ.void f2 typ2 in
       let subs' =
         sexp_imply_nolhs tenv (Exp.Lfield (source, f2, typ2)) calc_missing subs se2 typ'
       in
@@ -1582,7 +1607,7 @@ and struct_imply tenv source calc_missing subs fsel1 fsel2 typ2 :
 
 and array_imply tenv source calc_index_frame calc_missing subs esel1 esel2 typ2 :
     subst2 * (Exp.t * Predicates.strexp) list * (Exp.t * Predicates.strexp) list =
-  let typ_elem = Typ.array_elem (Some (Typ.mk Tvoid)) typ2 in
+  let typ_elem = Typ.array_elem (Some Typ.void) typ2 in
   match (esel1, esel2) with
   | _, [] ->
       (subs, esel1, [])
@@ -1787,114 +1812,12 @@ let expand_hpred_pointer =
     expand false calc_index_frame hpred
 
 
-module Subtyping_check = struct
-  (** check that t1 and t2 are the same primitive type *)
-  let check_subtype_basic_type t1 t2 =
-    match t2.Typ.desc with
-    | Typ.Tint Typ.IInt
-    | Typ.Tint Typ.IBool
-    | Typ.Tint Typ.IChar
-    | Typ.Tfloat Typ.FDouble
-    | Typ.Tfloat Typ.FFloat
-    | Typ.Tint Typ.ILong
-    | Typ.Tint Typ.IShort ->
-        Typ.equal t1 t2
-    | _ ->
-        false
-
-
-  (** check if t1 is a subtype of t2, in Java *)
-  let rec check_subtype_java tenv (t1 : Typ.t) (t2 : Typ.t) =
-    match (t1.Typ.desc, t2.Typ.desc) with
-    | Tstruct (JavaClass _ as cn1), Tstruct (JavaClass _ as cn2) ->
-        Subtype.is_known_subtype tenv cn1 cn2
-    | Tarray {elt= dom_type1}, Tarray {elt= dom_type2} ->
-        check_subtype_java tenv dom_type1 dom_type2
-    | Tptr (dom_type1, _), Tptr (dom_type2, _) ->
-        check_subtype_java tenv dom_type1 dom_type2
-    | Tarray _, Tstruct (JavaClass _ as cn2) ->
-        Typ.Name.equal cn2 Typ.Name.Java.java_io_serializable
-        || Typ.Name.equal cn2 Typ.Name.Java.java_lang_cloneable
-        || Typ.Name.equal cn2 Typ.Name.Java.java_lang_object
-    | _ ->
-        check_subtype_basic_type t1 t2
-
-
-  (** check if t1 is a subtype of t2 *)
-  let check_subtype tenv t1 t2 =
-    if is_java_class tenv t1 then check_subtype_java tenv t1 t2
-    else
-      match (Typ.name t1, Typ.name t2) with
-      | Some cn1, Some cn2 ->
-          Subtype.is_known_subtype tenv cn1 cn2
-      | _ ->
-          false
-
-
-  let rec case_analysis_type tenv ((t1 : Typ.t), st1) ((t2 : Typ.t), st2) =
-    match (t1.desc, t2.desc) with
-    | Tstruct (JavaClass _ as cn1), Tstruct (JavaClass _ as cn2) ->
-        Subtype.case_analysis tenv (cn1, st1) (cn2, st2)
-    | Tstruct (JavaClass _ as cn1), Tarray _
-      when ( Typ.Name.equal cn1 Typ.Name.Java.java_io_serializable
-           || Typ.Name.equal cn1 Typ.Name.Java.java_lang_cloneable
-           || Typ.Name.equal cn1 Typ.Name.Java.java_lang_object )
-           && st1 <> Subtype.exact ->
-        (Some st1, None)
-    | Tstruct cn1, Tstruct cn2
-    (* cn1 <: cn2 or cn2 <: cn1 is implied in Java when we get two types compared *)
-    (* that get through the type system, but not in C++ because of multiple inheritance, *)
-    (* and not in ObjC because of being weakly typed, *)
-    (* and the algorithm will only work correctly if this is the case *)
-      when Subtype.is_known_subtype tenv cn1 cn2 || Subtype.is_known_subtype tenv cn2 cn1 ->
-        Subtype.case_analysis tenv (cn1, st1) (cn2, st2)
-    | Tarray {elt= dom_type1}, Tarray {elt= dom_type2} ->
-        case_analysis_type tenv (dom_type1, st1) (dom_type2, st2)
-    | Tptr (dom_type1, _), Tptr (dom_type2, _) ->
-        case_analysis_type tenv (dom_type1, st1) (dom_type2, st2)
-    | _ when check_subtype_basic_type t1 t2 ->
-        (Some st1, None)
-    | _ ->
-        (* The case analysis did not succeed *)
-        (None, Some st1)
-
-
-  (** perform case analysis on [texp1 <: texp2], and return the updated types in the true and false
-      case, if they are possible *)
-  let subtype_case_analysis tenv texp1 texp2 =
-    match (texp1, texp2) with
-    | Exp.Sizeof sizeof1, Exp.Sizeof sizeof2 ->
-        let pos_opt, neg_opt =
-          case_analysis_type tenv (sizeof1.typ, sizeof1.subtype) (sizeof2.typ, sizeof2.subtype)
-        in
-        let pos_type_opt =
-          match pos_opt with
-          | None ->
-              None
-          | Some subtype ->
-              if check_subtype tenv sizeof1.typ sizeof2.typ then
-                Some (Exp.Sizeof {sizeof1 with subtype})
-              else Some (Exp.Sizeof {sizeof2 with subtype})
-        in
-        let neg_type_opt =
-          match neg_opt with
-          | None ->
-              None
-          | Some subtype ->
-              Some (Exp.Sizeof {sizeof1 with subtype})
-        in
-        (pos_type_opt, neg_type_opt)
-    | _ ->
-        (* don't know, consider both possibilities *)
-        (Some texp1, Some texp1)
-end
-
 let cast_exception tenv texp1 texp2 e1 subs =
   ( match (texp1, texp2) with
   | Exp.Sizeof {typ= t1}, Exp.Sizeof {typ= t2; subtype= st2} ->
       if
         Config.developer_mode
-        || (Subtype.is_cast st2 && not (Subtyping_check.check_subtype tenv t1 t2))
+        || (Subtype.is_cast st2 && not (SubtypingCheck.check_subtype tenv t1 t2))
       then ProverState.checks := Class_cast_check (texp1, texp2, e1) :: !ProverState.checks
   | _ ->
       () ) ;
@@ -1930,7 +1853,7 @@ let texp_imply tenv subs texp1 texp2 e1 calc_missing =
         false
   in
   if types_subject_to_dynamic_cast then
-    let pos_type_opt, neg_type_opt = Subtyping_check.subtype_case_analysis tenv texp1 texp2 in
+    let pos_type_opt, neg_type_opt = SubtypingCheck.subtype_case_analysis tenv texp1 texp2 in
     let has_changed =
       match pos_type_opt with
       | Some texp1' ->
@@ -2003,9 +1926,9 @@ let handle_parameter_subtype tenv prop1 sigma2 subs (e1, se1, texp1) (se2, texp2
       when not (is_allocated_lhs e1') -> (
       match type_rhs e2' with
       | Some sizeof_data2 -> (
-          if (not (Typ.equal t1 t2)) && Subtyping_check.check_subtype tenv t1 t2 then
+          if (not (Typ.equal t1 t2)) && SubtypingCheck.check_subtype tenv t1 t2 then
             let pos_type_opt, _ =
-              Subtyping_check.subtype_case_analysis tenv
+              SubtypingCheck.subtype_case_analysis tenv
                 (Exp.Sizeof {typ= t1; nbytes= None; dynamic_length= None; subtype= Subtype.subtypes})
                 (Exp.Sizeof sizeof_data2)
             in
@@ -2048,7 +1971,7 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
           match Prop.prop_iter_current tenv iter1' with
           | Predicates.Hpointsto (e1, se1, texp1), _ -> (
             try
-              let typ2 = Exp.texp_to_typ (Some (Typ.mk Tvoid)) texp2 in
+              let typ2 = Exp.texp_to_typ (Some Typ.void) texp2 in
               let typing_frame, typing_missing = texp_imply tenv subs texp1 texp2 e1 calc_missing in
               let se1' = sexp_imply_preprocess se1 texp1 se2 in
               let subs', fld_frame, fld_missing =
@@ -2092,7 +2015,8 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
                       (Prop.prop_iter_to_prop tenv iter1'')
                       sigma2 hpred2 )
               in
-              L.d_decrease_indent () ; res
+              L.d_decrease_indent () ;
+              res
           | Predicates.Hdllseg (Lseg_NE, para1, iF1, oB1, oF1, iB1, elist1), _
             when Exp.equal (Predicates.exp_sub (fst subs) iF1) e2 ->
               (* Unroll dllseg forward *)
@@ -2109,7 +2033,8 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
                       (Prop.prop_iter_to_prop tenv iter1'')
                       sigma2 hpred2 )
               in
-              L.d_decrease_indent () ; res
+              L.d_decrease_indent () ;
+              res
           | Predicates.Hdllseg (Lseg_NE, para1, iF1, oB1, oF1, iB1, elist1), _
             when Exp.equal (Predicates.exp_sub (fst subs) iB1) e2 ->
               (* Unroll dllseg backward *)
@@ -2126,7 +2051,8 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
                       (Prop.prop_iter_to_prop tenv iter1'')
                       sigma2 hpred2 )
               in
-              L.d_decrease_indent () ; res
+              L.d_decrease_indent () ;
+              res
           | _ ->
               assert false ) ) )
   | Predicates.Hlseg (k, para2, e2_, f2_, elist2_) -> (
@@ -2160,7 +2086,8 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
                     sigma_imply tenv calc_index_frame false subs prop1 para_inst2 )
               in
               (* calc_missing is false as we're checking an instantiation of the original list *)
-              L.d_decrease_indent () ; res
+              L.d_decrease_indent () ;
+              res
           | Some iter1' -> (
               let elist2 = List.map ~f:(fun e -> Predicates.exp_sub (snd subs) e) elist2_ in
               (* force instantiation of existentials *)
@@ -2190,7 +2117,8 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
                           let _, para_inst3 = Predicates.hpara_instantiate para2 e2_ f2_ elist2 in
                           sigma_imply tenv calc_index_frame calc_missing subs prop1 para_inst3 )
                   in
-                  L.d_decrease_indent () ; res
+                  L.d_decrease_indent () ;
+                  res
               | Predicates.Hdllseg _ ->
                   assert false ) ) )
   | Predicates.Hdllseg (Lseg_PE, _, _, _, _, _, _) ->
@@ -2239,7 +2167,8 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
                   sigma_imply tenv calc_index_frame false subs prop1 para_inst2 )
             in
             (* calc_missing is false as we're checking an instantiation of the original list *)
-            L.d_decrease_indent () ; res
+            L.d_decrease_indent () ;
+            res
         | Some iter1' ->
             (* Only consider implications between identical listsegs for now *)
             let elist2 = List.map ~f:(fun e -> Predicates.exp_sub (snd subs) e) elist2 in
@@ -2351,7 +2280,8 @@ and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : subst2 * 
                 decrease_indent_when_exception (fun () ->
                     hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2' )
               in
-              L.d_decrease_indent () ; res
+              L.d_decrease_indent () ;
+              res
             with IMPL_EXC _ when calc_missing -> (
               match is_constant_string_class subs hpred2' with
               | Some (s, is_string) ->
@@ -2371,7 +2301,7 @@ and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : subst2 * 
                   let subs' =
                     match hpred2' with
                     | Predicates.Hpointsto (e2, se2, te2) ->
-                        let typ2 = Exp.texp_to_typ (Some (Typ.mk Tvoid)) te2 in
+                        let typ2 = Exp.texp_to_typ (Some Typ.void) te2 in
                         sexp_imply_nolhs tenv e2 calc_missing subs se2 typ2
                     | _ ->
                         subs
@@ -2384,7 +2314,8 @@ and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : subst2 * 
             decrease_indent_when_exception (fun () ->
                 sigma_imply tenv calc_index_frame calc_missing subs' prop1' sigma2' )
           in
-          L.d_decrease_indent () ; res
+          L.d_decrease_indent () ;
+          res
         in
         match hpred2 with
         | Predicates.Hpointsto (e2_, se2, t) ->
@@ -2502,7 +2433,8 @@ let check_array_bounds tenv (sub1, sub2) prop =
 
 (** [check_implication_base] returns true if [prop1|-prop2], ignoring the footprint part of the
     props *)
-let check_implication_base pname tenv check_frame_empty calc_missing prop1 prop2 =
+let check_implication_base {InterproceduralAnalysis.proc_desc; err_log; tenv} check_frame_empty
+    calc_missing prop1 prop2 =
   try
     ProverState.reset prop1 prop2 ;
     let filter (id, e) =
@@ -2528,7 +2460,10 @@ let check_implication_base pname tenv check_frame_empty calc_missing prop1 prop2
     Prop.d_pi pi2 ;
     L.d_decrease_indent () ;
     L.d_ln () ;
-    if pi2_bcheck <> [] then (L.d_str "pi2 bounds checks: " ; Prop.d_pi pi2_bcheck ; L.d_ln ()) ;
+    if not (List.is_empty pi2_bcheck) then (
+      L.d_str "pi2 bounds checks: " ;
+      Prop.d_pi pi2_bcheck ;
+      L.d_ln () ) ;
     L.d_strln "returns" ;
     L.d_strln "sub1:" ;
     L.d_increase_indent () ;
@@ -2556,7 +2491,8 @@ let check_implication_base pname tenv check_frame_empty calc_missing prop1 prop2
     L.d_ln () ;
     L.d_strln "returning TRUE" ;
     let frame = frame_prop.Prop.sigma in
-    if check_frame_empty && frame <> [] then raise (IMPL_EXC ("frame not empty", subs, EXC_FALSE)) ;
+    if check_frame_empty && not (List.is_empty frame) then
+      raise (IMPL_EXC ("frame not empty", subs, EXC_FALSE)) ;
     Some ((sub1, sub2), frame)
   with
   | IMPL_EXC (s, subs, body) ->
@@ -2566,7 +2502,7 @@ let check_implication_base pname tenv check_frame_empty calc_missing prop1 prop2
       L.d_printfln "WARNING: footprint failed to find MISSING because: %s" s ;
       None
   | Exceptions.Abduction_case_not_implemented _ as exn ->
-      Reporting.log_issue_deprecated_using_state Exceptions.Error pname exn ;
+      BiabductionReporting.log_issue_deprecated_using_state proc_desc err_log exn ;
       None
 
 
@@ -2587,10 +2523,10 @@ type implication_result =
 (** [check_implication_for_footprint p1 p2] returns [Some(sub, frame, missing)] if
     [sub(p1 * missing) |- sub(p2 * frame)] where [sub] is a substitution which instantiates the
     primed vars of [p1] and [p2], which are assumed to be disjoint. *)
-let check_implication_for_footprint pname tenv p1 (p2 : Prop.exposed Prop.t) =
+let check_implication_for_footprint analysis_data p1 (p2 : Prop.exposed Prop.t) =
   let check_frame_empty = false in
   let calc_missing = true in
-  match check_implication_base pname tenv check_frame_empty calc_missing p1 p2 with
+  match check_implication_base analysis_data check_frame_empty calc_missing p1 p2 with
   | Some ((sub1, sub2), frame) ->
       ImplOK
         ( !ProverState.checks
@@ -2608,11 +2544,11 @@ let check_implication_for_footprint pname tenv p1 (p2 : Prop.exposed Prop.t) =
 
 
 (** [check_implication p1 p2] returns true if [p1|-p2] *)
-let check_implication pname tenv p1 p2 =
+let check_implication ({InterproceduralAnalysis.tenv; _} as analysis_data) p1 p2 =
   let check p1 p2 =
     let check_frame_empty = true in
     let calc_missing = false in
-    match check_implication_base pname tenv check_frame_empty calc_missing p1 p2 with
+    match check_implication_base analysis_data check_frame_empty calc_missing p1 p2 with
     | Some _ ->
         true
     | None ->

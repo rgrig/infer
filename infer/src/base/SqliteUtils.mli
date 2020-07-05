@@ -7,16 +7,16 @@
 
 open! IStd
 
-exception Error of string
 (** The functions in this module tend to raise more often than their counterparts in [Sqlite3]. In
     particular, they may raise if the [Sqlite3.Rc.t] result of certain operations is unexpected. *)
+exception Error of string
 
 val check_result_code : Sqlite3.db -> log:string -> Sqlite3.Rc.t -> unit
 (** Assert that the result is either [Sqlite3.Rc.OK] or [Sqlite3.Rc.ROW]. If the result is not
-    valid, then if [fatal] is set raise {!Error}, otherwise log the error and proceed. *)
+    valid, raise {!Error}. *)
 
 val exec : Sqlite3.db -> log:string -> stmt:string -> unit
-(** Execute the given Sqlite [stmt] and check the result with {!check_result_code ~fatal:true}. *)
+(** Execute the given Sqlite [stmt] and check the result with {!check_result_code}. *)
 
 val finalize : Sqlite3.db -> log:string -> Sqlite3.stmt -> unit
 (** Finalize the given [stmt]. Raises {!Error} on failure. *)

@@ -26,7 +26,8 @@ type trans_state =
   ; priority: priority_node
   ; var_exp_typ: (Exp.t * Typ.t) option
   ; opaque_exp: (Exp.t * Typ.t) option
-  ; is_fst_arg_objc_instance_method_call: bool }
+  ; is_fst_arg_objc_instance_method_call: bool
+  ; passed_as_noescape_block_to: Procname.t option }
 
 val default_trans_state : CContext.t -> trans_state
 
@@ -89,7 +90,12 @@ val dereference_value_from_result :
     assigned to it *)
 
 val cast_operation :
-  Clang_ast_t.cast_kind -> Exp.t * Typ.t -> Typ.t -> Location.t -> Sil.instr list * (Exp.t * Typ.t)
+     ?objc_bridge_cast_kind:Clang_ast_t.obj_c_bridge_cast_kind
+  -> Clang_ast_t.cast_kind
+  -> Exp.t * Typ.t
+  -> Typ.t
+  -> Location.t
+  -> Sil.instr list * (Exp.t * Typ.t)
 
 val trans_assertion : trans_state -> Location.t -> trans_result
 

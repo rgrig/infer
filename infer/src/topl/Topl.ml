@@ -43,24 +43,42 @@ let get_transitions_count () = ToplAutomaton.tcount (Lazy.force automaton)
 
 (** Checks whether the method name and the number of arguments matches the conditions in a
     transition label. Possible optimization: also evaluate if arguments equal certain constants. *)
-let evaluate_static_guard label (e_fun, arg_ts) =
-  let match_name () =
-    match e_fun with
-    | Exp.Const (Const.Cfun n) ->
-        (* TODO: perhaps handle inheritance *)
-        let name = Procname.hashable_name n in
-        let re = Str.regexp label.ToplAst.procedure_name in
-        let result = Str.string_match re name 0 in
-        tt "match name='%s' re='%s' result=%b@\n" name label.ToplAst.procedure_name result ;
-        result
-    | _ ->
-        false
+let evaluate_static_guard label_o (e_fun, arg_ts) =
+  let evaluate_nonany label =
+    let match_name () =
+      match e_fun with
+      | Exp.Const (Const.Cfun n) ->
+          (* TODO: perhaps handle inheritance *)
+          let name = Procname.hashable_name n in
+          let re = Str.regexp label.ToplAst.procedure_name in
+          let result = Str.string_match re name 0 in
+          tt "  check name='%s'@\n" name ;
+          result
+      | _ ->
+          tt "  check name-unknown@\n" ;
+          false
+    in
+    let pattern_len = Option.map ~f:List.length label.ToplAst.arguments in
+    let match_args () =
+      let arg_len = 1 + List.length arg_ts in
+      (* patterns include the return value *)
+      tt "  check arg-len=%d@\n" arg_len ;
+      Option.value_map ~default:true ~f:(Int.equal arg_len) pattern_len
+    in
+    tt "match name-pattern='%s' arg-len-pattern=%a@\n" label.ToplAst.procedure_name
+      (Pp.option Int.pp) pattern_len ;
+    let log f =
+      f ()
+      ||
+      ( tt "  match result FALSE@\n" ;
+        false )
+    in
+    log match_args && log match_name
+    &&
+    ( tt "  match result TRUE@\n" ;
+      true )
   in
-  let match_args () =
-    let same_length xs ys = Int.equal (Caml.List.compare_lengths xs ys) 0 in
-    Option.value_map label.ToplAst.arguments ~f:(same_length arg_ts) ~default:true
-  in
-  match_name () && match_args ()
+  Option.value_map ~default:true ~f:evaluate_nonany label_o
 
 
 (** For each transition in the automaton, evaluate its static guard. *)
@@ -86,7 +104,7 @@ let set_transitions loc active_transitions =
 let call_save_args loc ret_id ret_typ arg_ts =
   let dummy_ret_id = Ident.create_fresh Ident.knormal in
   [| ToplUtils.topl_call dummy_ret_id Tvoid loc ToplName.save_args
-       ((Exp.Var ret_id, ret_typ) :: arg_ts) |]
+       (arg_ts @ [(Exp.Var ret_id, ret_typ)]) |]
 
 
 let call_execute loc =
@@ -102,7 +120,7 @@ let instrument_instruction = function
         let is_interesting t active = active && not (ToplAutomaton.is_skip a t) in
         Array.existsi ~f:is_interesting active_transitions
       in
-      if not instrument then (* optimization*) [|i|]
+      if not instrument then (* optimization *) [|i|]
       else
         let i1s = set_transitions loc active_transitions in
         let i2s = call_save_args loc ret_id ret_typ arg_ts in
@@ -117,15 +135,24 @@ let add_types tenv =
   let get_registers () =
     let a = Lazy.force automaton in
     let h = String.Table.create () in
-    let record =
-      let open ToplAst in
-      function
-      | SaveInRegister reg | EqualToRegister reg -> Hashtbl.set h ~key:reg ~data:() | _ -> ()
+    let record reg = Hashtbl.set h ~key:reg ~data:() in
+    let record_value = function ToplAst.Register reg -> record reg | _ -> () in
+    let record_predicate =
+      ToplAst.(
+        function
+        | Binop (_, v1, v2) ->
+            record_value v1 ;
+            record_value v2
+        | Value v ->
+            record_value v)
+    in
+    let record_assignment (reg, _) = record reg in
+    let record_label label =
+      List.iter ~f:record_predicate label.ToplAst.condition ;
+      List.iter ~f:record_assignment label.ToplAst.action
     in
     for i = 0 to ToplAutomaton.tcount a - 1 do
-      let label = (ToplAutomaton.transition a i).label in
-      record label.return ;
-      Option.iter ~f:(List.iter ~f:record) label.arguments
+      Option.iter ~f:record_label (ToplAutomaton.transition a i).label
     done ;
     Hashtbl.keys h
   in
@@ -136,11 +163,10 @@ let add_types tenv =
   let register_field name = (ToplUtils.make_field (ToplName.reg name), ToplUtils.any_type, []) in
   let statics =
     let state = (ToplUtils.make_field ToplName.state, Typ.mk (Tint IInt), []) in
-    let retval = (ToplUtils.make_field ToplName.retval, ToplUtils.any_type, []) in
     let transitions = List.init (get_transitions_count ()) ~f:transition_field in
     let saved_args = List.init (ToplAutomaton.max_args (Lazy.force automaton)) ~f:saved_arg_field in
     let registers = List.map ~f:register_field (get_registers ()) in
-    List.concat [[retval; state]; transitions; saved_args; registers]
+    List.concat [[state]; transitions; saved_args; registers]
   in
   let _topl_class = Tenv.mk_struct tenv ToplUtils.topl_class_name ~statics in
   ()
@@ -151,7 +177,9 @@ let instrument tenv procdesc =
     let f _node = instrument_instruction in
     tt "instrument@\n" ;
     let _updated = Procdesc.replace_instrs_by procdesc ~f in
-    tt "add types@\n" ; add_types tenv ; tt "done@\n" )
+    tt "add types@\n" ;
+    add_types tenv ;
+    tt "done@\n" )
 
 
 (** [lookup_static_var var prop] expects [var] to have the form [Exp.Lfield (obj, fieldname)], and
@@ -215,13 +243,10 @@ let conjoin_props env post pre =
     To compute (pre & post) the function [conjoin_props] from above is used, which returns a weaker
     formula: in particular, the spatial part of pre is dropped. To get around some limitations of
     the prover we also use [lookup_static_var]; if a call to this function fails, we don't warn. *)
-let add_errors exe_env summary =
-  let proc_desc = summary.Summary.proc_desc in
+let add_errors env proc_desc err_log biabduction_summary =
   let proc_name = Procdesc.get_proc_name proc_desc in
   if not (ToplUtils.is_synthesized proc_name) then
-    let env = Exe_env.get_tenv exe_env proc_name in
     let preposts : Prop.normal BiabductionSummary.spec list =
-      let biabduction_summary = summary.Summary.payloads.Payloads.biabduction in
       let check_phase x =
         if not BiabductionSummary.(equal_phase x.phase RE_EXECUTION) then
           L.die InternalError "Topl.add_errors should only be called after RE_EXECUTION"
@@ -256,9 +281,8 @@ let add_errors exe_env summary =
             if (not (is_inconsistent env phi)) && is_inconsistent env psi then (
               let property, _vname = ToplAutomaton.vname (Lazy.force automaton) error in
               let message = Printf.sprintf "property %s reaches error" property in
-              tt "INCONSISTENT (WARN)@\n" ;
-              Reporting.log_error summary IssueType.topl_error ~loc message )
-            else tt "CONSISTENT (do NOT warn)@\n"
+              tt "WARN@\n" ;
+              Reporting.log_issue proc_desc err_log TOPL IssueType.topl_error ~loc message )
           in
           (* Don't warn if [lookup_static_var] fails. *)
           Option.iter ~f:handle_state_post_value (lookup_static_var env state_var post)
@@ -283,3 +307,11 @@ let sourcefile () =
 let cfg () =
   if not (is_active ()) then L.die InternalError "Called Topl.cfg when Topl is inactive" ;
   ToplMonitor.cfg ()
+
+
+let instrument_callback biabduction
+    ({InterproceduralAnalysis.proc_desc; tenv; err_log} as analysis_data) =
+  if is_active () then instrument tenv proc_desc ;
+  let biabduction_summary = biabduction analysis_data in
+  if is_active () then add_errors tenv proc_desc err_log biabduction_summary ;
+  biabduction_summary

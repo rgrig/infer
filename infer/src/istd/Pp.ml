@@ -106,7 +106,7 @@ let html_with_color color pp f x =
 
 let color_wrapper pe ppf x ~f =
   match pe.kind with
-  | HTML when pe.cmap_norm (Obj.repr x) <> pe.color ->
+  | HTML when not (equal_color (pe.cmap_norm (Obj.repr x)) pe.color) ->
       let color = pe.cmap_norm (Obj.repr x) in
       let pe' =
         if equal_color color Red then
@@ -149,13 +149,6 @@ let comma_seq_diff pp pe0 f =
         doit l
   in
   doit
-
-
-(** Print the current time and date in a format similar to the "date" command *)
-let current_time f () =
-  let tm = Unix.localtime (Unix.time ()) in
-  F.fprintf f "%02d/%02d/%4d %02d:%02d" tm.Unix.tm_mday tm.Unix.tm_mon (tm.Unix.tm_year + 1900)
-    tm.Unix.tm_hour tm.Unix.tm_min
 
 
 let option pp fmt = function

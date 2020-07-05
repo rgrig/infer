@@ -9,7 +9,7 @@ open! IStd
 open OUnit2
 module T = JProcname.JNI.VISIBLE_FOR_TESTING_DO_NOT_USE_DIRECTLY
 
-let mk_split (pkg, typ) = Typ.Name.Java.Split.make ?package:pkg typ
+let mk_split (pkg, typ) = JavaSplitName.make ?package:pkg typ
 
 let test_jni_pp =
   let create_test input expected _ =
@@ -130,10 +130,10 @@ let test_jni_to_java_type_with_valid_input =
   let create_test input expected _ =
     let found = T.to_java_type input in
     let pp_diff fmt (expected, actual) =
-      let exp_pkg = Option.value ~default:"<None>" (Typ.Name.Java.Split.package expected) in
-      let exp_cl = Typ.Name.Java.Split.type_name expected in
-      let actual_pkg = Option.value ~default:"<None>" (Typ.Name.Java.Split.package actual) in
-      let actual_cl = Typ.Name.Java.Split.type_name actual in
+      let exp_pkg = Option.value ~default:"<None>" (JavaSplitName.package expected) in
+      let exp_cl = JavaSplitName.type_name expected in
+      let actual_pkg = Option.value ~default:"<None>" (JavaSplitName.package actual) in
+      let actual_cl = JavaSplitName.type_name actual in
       Format.fprintf fmt "Expected: '(%s, %s)', found: '(%s, %s)'" exp_pkg exp_cl actual_pkg
         actual_cl
     in
@@ -180,69 +180,66 @@ let test_from_json_string_with_valid_input =
     [ ( "label1"
       , Procname.Set.of_list
           [ Procname.(
-              Java
-                (Java.make
-                   (Typ.Name.Java.from_string "lll.mmm.Nnn")
-                   None "<init>"
-                   [ mk_split (Some "java.lang", "String")
-                   ; mk_split (None, "int[]")
-                   ; mk_split (None, "long") ]
-                   Java.Non_Static))
+              make_java
+                ~class_name:(Typ.Name.Java.from_string "lll.mmm.Nnn")
+                ~return_type:None ~method_name:Java.constructor_method_name
+                ~parameters:
+                  [ mk_split (Some "java.lang", "String")
+                  ; mk_split (None, "int[]")
+                  ; mk_split (None, "long") ]
+                ~kind:Java.Non_Static ())
           ; Procname.(
-              Java
-                (Java.make
-                   (Typ.Name.Java.from_string "ggg.hhh.Iii")
-                   None "<clinit>"
-                   [ mk_split (Some "java.lang", "String")
-                   ; mk_split (None, "int[]")
-                   ; mk_split (None, "long") ]
-                   Java.Non_Static)) ] )
+              make_java
+                ~class_name:(Typ.Name.Java.from_string "ggg.hhh.Iii")
+                ~return_type:None ~method_name:Java.class_initializer_method_name
+                ~parameters:
+                  [ mk_split (Some "java.lang", "String")
+                  ; mk_split (None, "int[]")
+                  ; mk_split (None, "long") ]
+                ~kind:Java.Non_Static ()) ] )
     ; ( "label2"
       , Procname.Set.of_list
           [ Procname.(
-              Java
-                (Java.make
-                   (Typ.Name.Java.from_string "ddd.eee.Fff")
-                   (Some (mk_split (None, "char[][]")))
-                   "methodTwo"
-                   [ mk_split (Some "java.lang", "String")
-                   ; mk_split (None, "int[]")
-                   ; mk_split (None, "long") ]
-                   Java.Non_Static))
+              make_java
+                ~class_name:(Typ.Name.Java.from_string "ddd.eee.Fff")
+                ~return_type:(Some (mk_split (None, "char[][]")))
+                ~method_name:"methodTwo"
+                ~parameters:
+                  [ mk_split (Some "java.lang", "String")
+                  ; mk_split (None, "int[]")
+                  ; mk_split (None, "long") ]
+                ~kind:Java.Non_Static ())
           ; Procname.(
-              Java
-                (Java.make
-                   (Typ.Name.Java.from_string "aaa.bbb.Ccc")
-                   (Some (mk_split (None, "void")))
-                   "methodOne" [] Java.Non_Static)) ] ) ]
+              make_java
+                ~class_name:(Typ.Name.Java.from_string "aaa.bbb.Ccc")
+                ~return_type:(Some (mk_split (None, "void")))
+                ~method_name:"methodOne" ~parameters:[] ~kind:Java.Non_Static ()) ] ) ]
   in
   let expected3 =
     [ ( "label1"
       , Procname.Set.of_list
           [ Procname.(
-              Java
-                (Java.make
-                   (Typ.Name.Java.from_string "lll.mmm.Nnn")
-                   None "<init>" [] Java.Non_Static))
+              make_java
+                ~class_name:(Typ.Name.Java.from_string "lll.mmm.Nnn")
+                ~return_type:None ~method_name:Java.constructor_method_name ~parameters:[]
+                ~kind:Java.Non_Static ())
           ; Procname.(
-              Java
-                (Java.make
-                   (Typ.Name.Java.from_string "ggg.hhh.Iii")
-                   None "<clinit>" [] Java.Non_Static)) ] )
+              make_java
+                ~class_name:(Typ.Name.Java.from_string "ggg.hhh.Iii")
+                ~return_type:None ~method_name:Java.class_initializer_method_name ~parameters:[]
+                ~kind:Java.Non_Static ()) ] )
     ; ( "label2"
       , Procname.Set.of_list
           [ Procname.(
-              Java
-                (Java.make
-                   (Typ.Name.Java.from_string "ddd.eee.Fff")
-                   (Some (mk_split (None, "void")))
-                   "methodTwo" [] Java.Non_Static))
+              make_java
+                ~class_name:(Typ.Name.Java.from_string "ddd.eee.Fff")
+                ~return_type:(Some (mk_split (None, "void")))
+                ~method_name:"methodTwo" ~parameters:[] ~kind:Java.Non_Static ())
           ; Procname.(
-              Java
-                (Java.make
-                   (Typ.Name.Java.from_string "aaa.bbb.Ccc")
-                   (Some (mk_split (None, "void")))
-                   "methodOne" [] Java.Non_Static)) ] ) ]
+              make_java
+                ~class_name:(Typ.Name.Java.from_string "aaa.bbb.Ccc")
+                ~return_type:(Some (mk_split (None, "void")))
+                ~method_name:"methodOne" ~parameters:[] ~kind:Java.Non_Static ()) ] ) ]
   in
   [ ("test_from_json_string_1", input1, expected1, true)
   ; ("test_from_json_string_2", input2, expected2, true)

@@ -12,14 +12,24 @@ type field = Fieldname.t * Typ.t * Annot.Item.t [@@deriving compare]
 
 type fields = field list
 
+type java_class_kind = Interface | AbstractClass | NormalClass [@@deriving equal]
+
+type java_class_info =
+  { kind: java_class_kind  (** class kind in Java *)
+  ; loc: Location.t option
+        (** None should correspond to rare cases when it was impossible to fetch the location in
+            source file *) }
+
 (** Type for a structured value. *)
 type t =
   { fields: fields  (** non-static fields *)
   ; statics: fields  (** static fields *)
   ; supers: Typ.Name.t list  (** superclasses *)
+  ; subs: Typ.Name.Set.t  (** subclasses, initialized after merging type environments *)
   ; methods: Procname.t list  (** methods defined *)
   ; exported_objc_methods: Procname.t list  (** methods in ObjC interface, subset of [methods] *)
   ; annots: Annot.Item.t  (** annotations *)
+  ; java_class_info: java_class_info option  (** present if and only if the class is Java *)
   ; dummy: bool  (** dummy struct for class including static method *) }
 
 type lookup = Typ.Name.t -> t option
@@ -29,47 +39,52 @@ let pp_field pe f (field_name, typ, ann) =
 
 
 let pp pe name f {fields; supers; methods; exported_objc_methods; annots} =
-  if Config.debug_mode then
-    (* change false to true to print the details of struct *)
-    F.fprintf f
-      "%a @\n\
-       \tfields: {%a@\n\
-       \t}@\n\
-       \tsupers: {%a@\n\
-       \t}@\n\
-       \tmethods: {%a@\n\
-       \t}@\n\
-       \texported_obj_methods: {%a@\n\
-       \t}@\n\
-       \tannots: {%a@\n\
-       \t}"
-      Typ.Name.pp name
-      (Pp.seq (pp_field pe))
-      fields
-      (Pp.seq (fun f n -> F.fprintf f "@\n\t\t%a" Typ.Name.pp n))
-      supers
-      (Pp.seq (fun f m -> F.fprintf f "@\n\t\t%a" Procname.pp m))
-      methods
-      (Pp.seq (fun f m -> F.fprintf f "@\n\t\t%a" Procname.pp m))
-      exported_objc_methods Annot.Item.pp annots
-  else Typ.Name.pp f name
+  let pp_field pe f (field_name, typ, ann) =
+    F.fprintf f "@;<0 2>%a %a %a" (Typ.pp_full pe) typ Fieldname.pp field_name Annot.Item.pp ann
+  in
+  let seq pp fmt = function
+    | [] ->
+        ()
+    | lst ->
+        Pp.seq pp fmt lst ;
+        F.pp_print_break fmt 0 0
+  in
+  F.fprintf f
+    "%a@,\
+     @[<v>fields: {@[<v>%a@]}@,\
+     supers: {@[<v>%a@]}@,\
+     methods: {@[<v>%a@]}@,\
+     exported_obj_methods: {@[<v>%a@]}@,\
+     annots: {%a}@]@,"
+    Typ.Name.pp name
+    (seq (pp_field pe))
+    fields
+    (seq (fun f n -> F.fprintf f "@;<0 2>%a" Typ.Name.pp n))
+    supers
+    (seq (fun f m -> F.fprintf f "@;<0 2>%a" Procname.pp m))
+    methods
+    (seq (fun f m -> F.fprintf f "@;<0 2>%a" Procname.pp m))
+    exported_objc_methods Annot.Item.pp annots
 
 
 let internal_mk_struct ?default ?fields ?statics ?methods ?exported_objc_methods ?supers ?annots
-    ?dummy () =
+    ?java_class_info ?dummy () =
   let default_ =
     { fields= []
     ; statics= []
     ; methods= []
     ; exported_objc_methods= []
     ; supers= []
+    ; subs= Typ.Name.Set.empty
     ; annots= Annot.Item.empty
+    ; java_class_info= None
     ; dummy= false }
   in
   let mk_struct_ ?(default = default_) ?(fields = default.fields) ?(statics = default.statics)
       ?(methods = default.methods) ?(exported_objc_methods = default.exported_objc_methods)
-      ?(supers = default.supers) ?(annots = default.annots) ?(dummy = default.dummy) () =
-    {fields; statics; methods; exported_objc_methods; supers; annots; dummy}
+      ?(supers = default.supers) ?(subs = default.subs) ?(annots = default.annots)
+      ?(dummy = default.dummy) () =
+    {fields; statics; methods; exported_objc_methods; supers; subs; annots; java_class_info; dummy}
   in
   mk_struct_ ?default ?fields ?statics ?methods ?exported_objc_methods ?supers ?annots ?dummy ()
 
@@ -142,3 +157,5 @@ let get_field_type_and_annotation ~lookup field_name_to_lookup typ =
 
 
 let is_dummy {dummy} = dummy
+
+let add_sub sub x = {x with subs= Typ.Name.Set.add sub x.subs}

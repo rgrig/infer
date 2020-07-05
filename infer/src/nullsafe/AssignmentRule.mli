@@ -12,29 +12,40 @@ open! IStd
 
 type violation [@@deriving compare]
 
-val check :
-  is_strict_mode:bool -> lhs:Nullability.t -> rhs:Nullability.t -> (unit, violation) result
+val check : lhs:Nullability.t -> rhs:Nullability.t -> (unit, violation) result
+(** If `null` can leak from a "less strict" type to "more strict" type, this is an Assignment Rule
+    violation. *)
 
-type assignment_type =
-  | PassingParamToFunction of function_info
-  | AssigningToField of Fieldname.t
-  | ReturningFromFunction of Procname.t
-[@@deriving compare]
+(** Violation that needs to be reported to the user. *)
+module ReportableViolation : sig
+  type t
 
-and function_info =
-  { param_signature: AnnotatedSignature.param_signature
-  ; model_source: AnnotatedSignature.model_source option
-  ; actual_param_expression: string
-  ; param_position: int
-  ; function_procname: Procname.t }
+  val from : NullsafeMode.t -> violation -> t option
+  (** Depending on the mode, violation might or might not be important enough to be reported to the
+      user. If it should NOT be reported for that mode, this function will return None. *)
 
-val violation_description :
-     violation
-  -> assignment_location:Location.t
-  -> assignment_type
-  -> rhs_origin:TypeOrigin.t
-  -> string * IssueType.t * Location.t
-(** Given context around violation, return error message together with the info where to put this
-    message *)
+  type assignment_type =
+    | PassingParamToFunction of function_info
+    | AssigningToField of Fieldname.t
+    | ReturningFromFunction of Procname.t
+  [@@deriving compare]
 
-val violation_severity : violation -> Exceptions.severity
+  and function_info =
+    { param_signature: AnnotatedSignature.param_signature
+    ; model_source: AnnotatedSignature.model_source option
+    ; actual_param_expression: string
+    ; param_position: int
+    ; function_procname: Procname.t }
+
+  val get_severity : t -> IssueType.severity
+  (** Severity of the violation to be reported *)
+
+  val get_description :
+       assignment_location:Location.t
+    -> assignment_type
+    -> rhs_origin:TypeOrigin.t
+    -> t
+    -> string * IssueType.t * Location.t
+  (** Given context around violation, return error message together with the info where to put this
+      message *)
+end

@@ -6,10 +6,6 @@
  *)
 
 open! IStd
-(** Given a clang command, normalize it via `clang -###` if needed to get a clear view of what work
-    is being done and which source files are being compiled, if any, then replace compilation
-    commands by our own clang with our plugin attached for each source file. *)
-
 module L = Logging
 
 type action_item =
@@ -41,7 +37,10 @@ let check_for_existing_file args =
                  Create empty file empty file and pass that to clang. This is to enable compilation to continue *)
               match List.hd rest with
               | Some arg ->
-                  if Str.string_match clang_ignore_regex arg 0 && Sys.file_exists arg <> `Yes then (
+                  if
+                    Str.string_match clang_ignore_regex arg 0
+                    && PolyVariantEqual.(Sys.file_exists arg <> `Yes)
+                  then (
                     Unix.mkdir_p (Filename.dirname arg) ;
                     let file = Unix.openfile ~mode:[Unix.O_CREAT; Unix.O_RDONLY] arg in
                     Unix.close file )

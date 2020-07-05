@@ -126,7 +126,10 @@ type trans_state =
   ; priority: priority_node
   ; var_exp_typ: (Exp.t * Typ.t) option
   ; opaque_exp: (Exp.t * Typ.t) option
-  ; is_fst_arg_objc_instance_method_call: bool }
+  ; is_fst_arg_objc_instance_method_call: bool
+  ; passed_as_noescape_block_to: Procname.t option
+        (** Current to-be-translated instruction is being passed as argument to the given method in
+            a position annotated with NS_NOESCAPE *) }
 
 let default_trans_state context =
   { context
@@ -135,7 +138,8 @@ let default_trans_state context =
   ; priority= Free
   ; var_exp_typ= None
   ; opaque_exp= None
-  ; is_fst_arg_objc_instance_method_call= false }
+  ; is_fst_arg_objc_instance_method_call= false
+  ; passed_as_noescape_block_to= None }
 
 
 type control =
@@ -161,12 +165,14 @@ let undefined_expression () = Exp.Var (Ident.create_fresh Ident.knormal)
 (** Collect the results of translating a list of instructions, and link up the nodes created. *)
 let collect_controls pdesc l =
   let collect_one result_rev {root_nodes; leaf_nodes; instrs; initd_exps} =
-    if root_nodes <> [] then
+    if not (List.is_empty root_nodes) then
       List.iter
         ~f:(fun n -> Procdesc.node_set_succs pdesc n ~normal:root_nodes ~exn:[])
         result_rev.leaf_nodes ;
-    let root_nodes = if result_rev.root_nodes <> [] then result_rev.root_nodes else root_nodes in
-    let leaf_nodes = if leaf_nodes <> [] then leaf_nodes else result_rev.leaf_nodes in
+    let root_nodes =
+      if List.is_empty result_rev.root_nodes then root_nodes else result_rev.root_nodes
+    in
+    let leaf_nodes = if List.is_empty leaf_nodes then result_rev.leaf_nodes else leaf_nodes in
     { root_nodes
     ; leaf_nodes
     ; instrs= List.rev_append instrs result_rev.instrs
@@ -212,7 +218,9 @@ module PriorityNode = struct
   (* priority_node. It returns nodes, ids, instrs that should be passed to parent *)
   let compute_controls_to_parent trans_state loc ~node_name stmt_info res_states_children =
     let res_state = collect_controls trans_state.context.procdesc res_states_children in
-    let create_node = own_priority_node trans_state.priority stmt_info && res_state.instrs <> [] in
+    let create_node =
+      own_priority_node trans_state.priority stmt_info && not (List.is_empty res_state.instrs)
+    in
     if create_node then (
       (* We need to create a node *)
       let node_kind = Procdesc.Node.Stmt_node node_name in
@@ -226,7 +234,9 @@ module PriorityNode = struct
           Procdesc.node_set_succs trans_state.context.procdesc leaf ~normal:[node] ~exn:[] )
         res_state.leaf_nodes ;
       (* Invariant: if root_nodes is empty then the params have not created a node.*)
-      let root_nodes = if res_state.root_nodes <> [] then res_state.root_nodes else [node] in
+      let root_nodes =
+        if List.is_empty res_state.root_nodes then [node] else res_state.root_nodes
+      in
       {res_state with root_nodes; leaf_nodes= [node]; instrs= []} )
     else (* The node is created by the parent. We just pass back nodes/leafs params *)
       res_state
@@ -378,11 +388,11 @@ let cpp_new_trans integer_type_widths sil_loc function_type size_exp placement_a
   mk_trans_result (exp, function_type) {empty_control with instrs= stmt_call}
 
 
-let create_call_to_free_cf sil_loc exp typ =
-  let pname = BuiltinDecl.__free_cf in
+let create_call_to_objc_bridge_transfer sil_loc exp typ =
+  let pname = BuiltinDecl.__objc_bridge_transfer in
   let stmt_call =
     Sil.Call
-      ( (Ident.create_fresh Ident.knormal, Typ.mk Tvoid)
+      ( (Ident.create_fresh Ident.knormal, Typ.void)
       , Exp.Const (Const.Cfun pname)
       , [(exp, typ)]
       , sil_loc
@@ -414,7 +424,7 @@ let dereference_value_from_result ?(strip_pointer = false) source_range sil_loc 
   ; return= (cast_exp, cast_typ) }
 
 
-let cast_operation cast_kind ((exp, typ) as exp_typ) cast_typ sil_loc =
+let cast_operation ?objc_bridge_cast_kind cast_kind ((exp, typ) as exp_typ) cast_typ sil_loc =
   match cast_kind with
   | `NoOp | `DerivedToBase | `UncheckedDerivedToBase ->
       (* These casts ignore change of type *)
@@ -426,10 +436,6 @@ let cast_operation cast_kind ((exp, typ) as exp_typ) cast_typ sil_loc =
   | `BitCast | `IntegralCast | `IntegralToBoolean ->
       (* This is treated as a nop by returning the same expressions exps*)
       ([], (exp, cast_typ))
-  | `CPointerToObjCPointerCast when Objc_models.is_core_lib_type typ ->
-      (* Translation of __bridge_transfer *)
-      let instr = create_call_to_free_cf sil_loc exp typ in
-      ([instr], (exp, cast_typ))
   | `LValueToRValue ->
       (* Takes an LValue and allow it to use it as RValue. *)
       (* So we assign the LValue to a temp and we pass it to the parent.*)
@@ -447,18 +453,32 @@ let cast_operation cast_kind ((exp, typ) as exp_typ) cast_typ sil_loc =
         Sil.Call ((no_id, cast_typ), skip_builtin, args, sil_loc, CallFlags.default)
       in
       ([call_instr], (exp, cast_typ))
-  | _ ->
-      L.(debug Capture Verbose)
-        "@\nWARNING: Missing translation for Cast Kind %s. The construct has been ignored...@\n"
-        (Clang_ast_j.string_of_cast_kind cast_kind) ;
-      ([], (exp, cast_typ))
+  | _ -> (
+    match objc_bridge_cast_kind with
+    | Some `OBC_BridgeTransfer ->
+        let instr = create_call_to_objc_bridge_transfer sil_loc exp typ in
+        ([instr], (exp, cast_typ))
+    | Some cast_kind ->
+        L.debug Capture Verbose
+          "@\n\
+           WARNING: Missing translation for ObjC Bridge Cast Kind %a. The construct has been \
+           ignored...@\n"
+          (Pp.of_string ~f:Clang_ast_j.string_of_obj_c_bridge_cast_kind)
+          cast_kind ;
+        ([], (exp, cast_typ))
+    | _ ->
+        L.debug Capture Verbose
+          "@\nWARNING: Missing translation for Cast Kind %a. The construct has been ignored...@\n"
+          (Pp.of_string ~f:Clang_ast_j.string_of_cast_kind)
+          cast_kind ;
+        ([], (exp, cast_typ)) )
 
 
 let trans_assertion_failure sil_loc (context : CContext.t) =
   let assert_fail_builtin = Exp.Const (Const.Cfun BuiltinDecl.__infer_fail) in
-  let args = [(Exp.Const (Const.Cstr Config.default_failure_name), Typ.mk Tvoid)] in
+  let args = [(Exp.Const (Const.Cstr Config.default_failure_name), Typ.void)] in
   let ret_id = Ident.create_fresh Ident.knormal in
-  let ret_typ = Typ.mk Tvoid in
+  let ret_typ = Typ.void in
   let call_instr =
     Sil.Call ((ret_id, ret_typ), assert_fail_builtin, args, sil_loc, CallFlags.default)
   in
@@ -606,12 +626,12 @@ let is_logical_negation_of_int tenv ei uoi =
       false
 
 
-let mk_fresh_void_exp_typ () = (Exp.Var (Ident.create_fresh Ident.knormal), Typ.mk Tvoid)
+let mk_fresh_void_exp_typ () = (Exp.Var (Ident.create_fresh Ident.knormal), Typ.void)
 
-let mk_fresh_void_id_typ () = (Ident.create_fresh Ident.knormal, Typ.mk Tvoid)
+let mk_fresh_void_id_typ () = (Ident.create_fresh Ident.knormal, Typ.void)
 
 let mk_fresh_void_return () =
-  let id = Ident.create_fresh Ident.knormal and void = Typ.mk Tvoid in
+  let id = Ident.create_fresh Ident.knormal and void = Typ.void in
   ((id, void), (Exp.Var id, void))
 
 

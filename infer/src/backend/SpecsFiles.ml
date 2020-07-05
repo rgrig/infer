@@ -6,6 +6,7 @@
  *)
 
 open! IStd
+module F = Format
 module L = Logging
 module CLOpt = CommandLineOption
 
@@ -13,7 +14,8 @@ module CLOpt = CommandLineOption
 let load_specfiles () =
   let specs_files_in_dir dir =
     let is_specs_file fname =
-      Sys.is_directory fname <> `Yes && Filename.check_suffix fname Config.specs_files_suffix
+      PolyVariantEqual.(Sys.is_directory fname <> `Yes)
+      && Filename.check_suffix fname Config.specs_files_suffix
     in
     match Sys.readdir dir with
     | exception Sys_error _ ->
@@ -38,10 +40,12 @@ let spec_files_from_cmdline () =
        files may be generated between init and report time. *)
     List.iter
       ~f:(fun arg ->
-        if (not (Filename.check_suffix arg Config.specs_files_suffix)) && arg <> "." then
-          print_usage_exit ("file " ^ arg ^ ": arguments must be .specs files") )
+        if (not (Filename.check_suffix arg Config.specs_files_suffix)) && not (String.equal arg ".")
+        then print_usage_exit ("file " ^ arg ^ ": arguments must be .specs files") )
       Config.anon_args ;
-    if Config.test_filtering then (Inferconfig.test () ; L.exit 0) ;
+    if Config.test_filtering then (
+      Inferconfig.test () ;
+      L.exit 0 ) ;
     if List.is_empty Config.anon_args then load_specfiles () else List.rev Config.anon_args )
   else load_specfiles ()
 
@@ -70,3 +74,9 @@ let delete pname =
   (try Unix.unlink filename with Unix.Unix_error _ -> ()) ;
   Ondemand.LocalCache.remove pname ;
   Summary.OnDisk.remove_from_cache pname
+
+
+let pp_from_config fmt =
+  iter_from_config ~f:(fun summary ->
+      F.fprintf fmt "Procedure: %a@\n%a@." Procname.pp (Summary.get_proc_name summary)
+        Summary.pp_text summary )

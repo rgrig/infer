@@ -17,15 +17,16 @@ type failure_kind =
   | FKrecursion_timeout of int  (** max recursion level exceeded *)
   | FKcrash of string  (** uncaught exception or failed assertion *)
 
-exception Analysis_failure_exe of failure_kind
 (** failure that prevented analysis from finishing *)
+exception Analysis_failure_exe of failure_kind
 
 let exn_not_failure = function Analysis_failure_exe _ -> false | _ -> true
 
 let try_finally ~f ~finally =
   match f () with
   | r ->
-      finally () ; r
+      finally () ;
+      r
   | exception (Analysis_failure_exe _ as f_exn) ->
       IExn.reraise_after f_exn ~f:(fun () ->
           try finally () with _ -> (* swallow in favor of the original exception *) () )
@@ -50,8 +51,6 @@ let pp_failure_kind fmt = function
   | FKcrash msg ->
       F.fprintf fmt "CRASH (%s)" msg
 
-
-let failure_kind_to_string failure_kind = Format.asprintf "%a" pp_failure_kind failure_kind
 
 (** Count the number of symbolic operations *)
 
@@ -113,8 +112,9 @@ let unset_wallclock_alarm () = !gs.last_wallclock <- None
 (** if the wallclock alarm has expired, raise a timeout exception *)
 let check_wallclock_alarm () =
   match (!gs.last_wallclock, !wallclock_timeout_handler) with
-  | Some alarm_time, Some handler when Unix.gettimeofday () >= alarm_time ->
-      unset_wallclock_alarm () ; handler ()
+  | Some alarm_time, Some handler when Float.(Unix.gettimeofday () >= alarm_time) ->
+      unset_wallclock_alarm () ;
+      handler ()
   | _ ->
       ()
 
@@ -123,7 +123,7 @@ let check_wallclock_alarm () =
 let get_remaining_wallclock_time () =
   match !gs.last_wallclock with
   | Some alarm_time ->
-      max 0.0 (alarm_time -. Unix.gettimeofday ())
+      Float.(max 0.0 (alarm_time -. Unix.gettimeofday ()))
   | None ->
       0.0
 

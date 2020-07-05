@@ -96,8 +96,10 @@ module BuildMethodSignature = struct
             |> qual_type_to_sil_type tenv
           in
           let is_pointer_to_const = CType.is_pointer_to_const qt in
+          let is_no_escape_block_arg = CAst_utils.is_no_escape_block_arg par in
           let annot = CAst_utils.sil_annot_of_type qt in
           CMethodSignature.mk_param_type name typ ~is_pointer_to_const ~annot
+            ~is_no_escape_block_arg
       | _ ->
           raise CFrontend_errors.Invalid_declaration
     in
@@ -153,7 +155,8 @@ module BuildMethodSignature = struct
     else (return_typ, None, return_typ_annot, false)
 
 
-  let method_signature_of_decl qual_type_to_sil_type tenv method_decl ?block_return_type procname =
+  let method_signature_of_decl qual_type_to_sil_type tenv method_decl ?block_return_type
+      ?(passed_as_noescape_block_to = None) procname =
     let decl_info = Clang_ast_proj.get_decl_tuple method_decl in
     let loc = decl_info.Clang_ast_t.di_source_range in
     let ret_type, return_param_typ, ret_typ_annot, has_added_return_param =
@@ -165,7 +168,6 @@ module BuildMethodSignature = struct
     let params = get_parameters qual_type_to_sil_type tenv ~block_return_type method_decl in
     let attributes = decl_info.Clang_ast_t.di_attributes in
     let is_cpp_virtual = CMethodProperties.is_cpp_virtual method_decl in
-    let is_cpp_nothrow = CMethodProperties.is_cpp_nothrow method_decl in
     let is_no_return = CMethodProperties.is_no_return method_decl in
     let is_variadic = CMethodProperties.is_variadic method_decl in
     let access = decl_info.Clang_ast_t.di_access in
@@ -180,7 +182,7 @@ module BuildMethodSignature = struct
     ; loc
     ; method_kind
     ; is_cpp_virtual
-    ; is_cpp_nothrow
+    ; passed_as_noescape_block_to
     ; is_no_return
     ; is_variadic
     ; pointer_to_parent
@@ -189,11 +191,12 @@ module BuildMethodSignature = struct
 
 
   let method_signature_body_of_decl qual_type_to_sil_type tenv method_decl ?block_return_type
-      procname =
+      ?passed_as_noescape_block_to procname =
     let body = CMethodProperties.get_method_body method_decl in
     let init_list_instrs = CMethodProperties.get_init_list_instrs method_decl in
     let ms =
-      method_signature_of_decl qual_type_to_sil_type tenv method_decl ?block_return_type procname
+      method_signature_of_decl qual_type_to_sil_type tenv method_decl ?block_return_type
+        ?passed_as_noescape_block_to procname
     in
     (ms, body, init_list_instrs)
 end
@@ -356,7 +359,7 @@ let get_translate_as_friend_decl decl_list =
       Some t_ptr
   | _ ->
       None
-  | exception Caml.Not_found ->
+  | exception (Not_found_s _ | Caml.Not_found) ->
       None
 
 

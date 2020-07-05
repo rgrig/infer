@@ -6,19 +6,19 @@
  *)
 
 open! IStd
+module F = Format
 
 type t =
-  | Null  (** The only possible value for that type is null *)
-  | Nullable  (** No guarantees on the nullability *)
-  | DeclaredNonnull
-      (** The type comes from a signature that is annotated (explicitly or implicitly according to
-          conventions) as non-nullable. Hovewer, it might still contain null since the truthfullness
-          of the declaration was not checked. *)
-  | Nonnull
-      (** We believe that this value can not be null. If it is not the case, this is an unsoundness
-          issue for Nullsafe, and we aim to minimize number of such issues occuring in real-world
-          programs. *)
+  | Null
+  | Nullable
+  | ThirdPartyNonnull
+  | UncheckedNonnull
+  | LocallyTrustedNonnull
+  | LocallyCheckedNonnull
+  | StrictNonnull
 [@@deriving compare, equal]
+
+type pair = t * t [@@deriving compare, equal]
 
 let top = Nullable
 
@@ -30,20 +30,59 @@ let join x y =
       Nullable
   | Nullable, _ | _, Nullable ->
       Nullable
-  | DeclaredNonnull, _ | _, DeclaredNonnull ->
-      DeclaredNonnull
-  | Nonnull, Nonnull ->
-      Nonnull
+  | ThirdPartyNonnull, _ | _, ThirdPartyNonnull ->
+      ThirdPartyNonnull
+  | UncheckedNonnull, _ | _, UncheckedNonnull ->
+      UncheckedNonnull
+  | LocallyTrustedNonnull, _ | _, LocallyTrustedNonnull ->
+      LocallyTrustedNonnull
+  | LocallyCheckedNonnull, _ | _, LocallyCheckedNonnull ->
+      LocallyCheckedNonnull
+  | StrictNonnull, StrictNonnull ->
+      StrictNonnull
 
 
 let is_subtype ~subtype ~supertype = equal (join subtype supertype) supertype
+
+let is_considered_nonnull ~nullsafe_mode nullability =
+  let least_required =
+    match nullsafe_mode with
+    | NullsafeMode.Strict ->
+        StrictNonnull
+    | NullsafeMode.Local (NullsafeMode.Trust.Only trust_list)
+      when NullsafeMode.Trust.is_trust_none trust_list ->
+        (* Though "trust none" is technically a subcase of trust some,
+           we need this pattern to be different from the one below so we can detect possible
+           promotions from "trust some" to "trust none" *)
+        LocallyCheckedNonnull
+    | NullsafeMode.Local (NullsafeMode.Trust.Only _) ->
+        LocallyTrustedNonnull
+    | NullsafeMode.Local NullsafeMode.Trust.All ->
+        UncheckedNonnull
+    | NullsafeMode.Default ->
+        (* In default mode, we trust everything, even not annotated third party. *)
+        ThirdPartyNonnull
+  in
+  is_subtype ~subtype:nullability ~supertype:least_required
+
+
+let is_nonnullish t = is_considered_nonnull ~nullsafe_mode:NullsafeMode.Default t
 
 let to_string = function
   | Null ->
       "Null"
   | Nullable ->
       "Nullable"
-  | DeclaredNonnull ->
-      "DeclaredNonnull"
-  | Nonnull ->
-      "Nonnull"
+  | ThirdPartyNonnull ->
+      "ThirdPartyNonnull"
+  | UncheckedNonnull ->
+      "UncheckedNonnull"
+  | LocallyTrustedNonnull ->
+      "LocallyTrustedNonnull"
+  | LocallyCheckedNonnull ->
+      "LocallyCheckedNonnull"
+  | StrictNonnull ->
+      "StrictNonnull"
+
+
+let pp fmt t = F.fprintf fmt "%s" (to_string t)

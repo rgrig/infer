@@ -47,8 +47,10 @@ type t =
   ; is_biabduction_model: bool  (** the procedure is a model for the biabduction analysis *)
   ; is_bridge_method: bool  (** the procedure is a bridge method *)
   ; is_defined: bool  (** true if the procedure is defined, and not just declared *)
-  ; is_cpp_noexcept_method: bool  (** the procedure is an C++ method annotated with "noexcept" *)
   ; is_java_synchronized_method: bool  (** the procedure is a Java synchronized method *)
+  ; passed_as_noescape_block_to: Procname.t option
+        (** Present if the procedure is an Objective-C block that has been passed to the given
+            method in a position annotated with the NS_NOESCAPE attribute. *)
   ; is_no_return: bool  (** the procedure is known not to return *)
   ; is_specialized: bool  (** the procedure is a clone specialized for dynamic dispatch handling *)
   ; is_synthetic_method: bool  (** the procedure is a synthetic method *)
@@ -64,6 +66,26 @@ type t =
   ; ret_type: Typ.t  (** return type *)
   ; has_added_return_param: bool  (** whether or not a return param was added *) }
 
+let get_annotated_formals {method_annotation= {params}; formals} =
+  let rec zip_params ial parl =
+    match (ial, parl) with
+    | ia :: ial', param :: parl' ->
+        (param, ia) :: zip_params ial' parl'
+    | [], param :: parl' ->
+        (* List of annotations exhausted before the list of params -
+           treat lack of annotation info as an empty annotation *)
+        (param, Annot.Item.empty) :: zip_params [] parl'
+    | [], [] ->
+        []
+    | _ :: _, [] ->
+        (* List of params exhausted before the list of annotations -
+           this should never happen *)
+        assert false
+  in
+  (* zip formal params with annotation *)
+  List.rev (zip_params (List.rev params) (List.rev formals))
+
+
 let default translation_unit proc_name =
   { access= PredSymb.Default
   ; captured= []
@@ -73,9 +95,9 @@ let default translation_unit proc_name =
   ; is_abstract= false
   ; is_biabduction_model= false
   ; is_bridge_method= false
-  ; is_cpp_noexcept_method= false
   ; is_defined= false
   ; is_java_synchronized_method= false
+  ; passed_as_noescape_block_to= None
   ; is_no_return= false
   ; is_specialized= false
   ; is_synthetic_method= false
@@ -89,7 +111,7 @@ let default translation_unit proc_name =
   ; method_annotation= Annot.Method.empty
   ; objc_accessor= None
   ; proc_name
-  ; ret_type= Typ.mk Typ.Tvoid }
+  ; ret_type= Typ.void }
 
 
 let pp_parameters =
@@ -106,8 +128,8 @@ let pp f
      ; is_biabduction_model
      ; is_bridge_method
      ; is_defined
-     ; is_cpp_noexcept_method
      ; is_java_synchronized_method
+     ; passed_as_noescape_block_to
      ; is_no_return
      ; is_specialized
      ; is_synthetic_method
@@ -145,11 +167,16 @@ let pp f
   pp_bool_default ~default:default.is_abstract "is_abstract" is_abstract f () ;
   pp_bool_default ~default:default.is_biabduction_model "is_model" is_biabduction_model f () ;
   pp_bool_default ~default:default.is_bridge_method "is_bridge_method" is_bridge_method f () ;
-  pp_bool_default ~default:default.is_cpp_noexcept_method "is_cpp_noexcept_method"
-    is_cpp_noexcept_method f () ;
   pp_bool_default ~default:default.is_defined "is_defined" is_defined f () ;
   pp_bool_default ~default:default.is_java_synchronized_method "is_java_synchronized_method"
     is_java_synchronized_method f () ;
+  if
+    not
+      ([%compare.equal: Procname.t option] default.passed_as_noescape_block_to
+         passed_as_noescape_block_to)
+  then
+    F.fprintf f "; passed_as_noescape_block_to %a" (Pp.option Procname.pp)
+      passed_as_noescape_block_to ;
   pp_bool_default ~default:default.is_no_return "is_no_return" is_no_return f () ;
   pp_bool_default ~default:default.is_specialized "is_specialized" is_specialized f () ;
   pp_bool_default ~default:default.is_synthetic_method "is_synthetic_method" is_synthetic_method f

@@ -49,7 +49,7 @@ module StrexpMatch : sig
   type t
 
   val find_path : sigma -> path -> t
-  (** Find a strexp at the given path. Can raise [Not_found] *)
+  (** Find a strexp at the given path. Can raise [Not_found_s/Caml.Not_found] *)
 
   val find : Tenv.t -> sigma -> (strexp_data -> bool) -> t list
   (** Find a strexp with the given property. *)
@@ -165,14 +165,14 @@ end = struct
   (** Store hpred using physical equality, and offset list for an array *)
   type t = sigma * Predicates.hpred * syn_offset list
 
-  (** Find an array at the given path. Can raise [Not_found] *)
+  (** Find an array at the given path. Can raise [Not_found_s/Caml.Not_found] *)
   let find_path sigma (root, syn_offs) : t =
     let filter = function Predicates.Hpointsto (e, _, _) -> Exp.equal root e | _ -> false in
     let hpred = List.find_exn ~f:filter sigma in
     (sigma, hpred, syn_offs)
 
 
-  (** Find a sub strexp with the given property. Can raise [Not_found] *)
+  (** Find a sub strexp with the given property. Can raise [Not_found_s/Caml.Not_found] *)
   let find tenv (sigma : sigma) (pred : strexp_data -> bool) : t list =
     let found = ref [] in
     let rec find_offset_sexp sigma_other hpred root offs se (typ : Typ.t) =
@@ -222,7 +222,8 @@ end = struct
               () ) ;
           iterate (hpred :: sigma_seen) sigma_rest
     in
-    iterate [] sigma ; !found
+    iterate [] sigma ;
+    !found
 
 
   (** Get the matched strexp *)
@@ -431,7 +432,7 @@ let blur_array_index tenv (p : Prop.normal Prop.t) (path : StrexpMatch.path) (in
           let sigma_fp' = StrexpMatch.replace_index tenv true matched_fp index fresh_index in
           Prop.set p ~sigma_fp:sigma_fp'
         else Prop.expose p
-      with Caml.Not_found -> Prop.expose p
+      with Not_found_s _ | Caml.Not_found -> Prop.expose p
     in
     let p3 =
       let matched = StrexpMatch.find_path p.Prop.sigma path in
@@ -445,7 +446,7 @@ let blur_array_index tenv (p : Prop.normal Prop.t) (path : StrexpMatch.path) (in
       prop_replace_path_index tenv p3 path map
     in
     Prop.normalize tenv p4
-  with Caml.Not_found -> p
+  with Not_found_s _ | Caml.Not_found -> p
 
 
 (** Given [p] containing an array at [root], blur [indices] in it *)
@@ -474,7 +475,7 @@ let keep_only_indices tenv (p : Prop.normal Prop.t) (path : StrexpMatch.path) (i
             (sigma', true)
       | _ ->
           (sigma, false)
-    with Caml.Not_found -> (sigma, false)
+    with Not_found_s _ | Caml.Not_found -> (sigma, false)
   in
   prop_update_sigma_and_fp_sigma tenv p prune_sigma
 
@@ -508,16 +509,26 @@ let strexp_do_abstract tenv footprint_part p ((path, se_in, _) : StrexpMatch.str
   if Config.trace_absarray && not footprint_part then L.d_strln "strexp_do_abstract (nonfootprint)" ;
   let prune_and_blur d_keys keep blur path keep_keys blur_keys =
     let p2, changed2 =
-      if Config.trace_absarray then (L.d_str "keep " ; d_keys keep_keys ; L.d_ln ()) ;
+      if Config.trace_absarray then (
+        L.d_str "keep " ;
+        d_keys keep_keys ;
+        L.d_ln () ) ;
       keep p path keep_keys
     in
     let p3, changed3 =
       if List.is_empty blur_keys then (p2, false)
       else (
-        if Config.trace_absarray then (L.d_str "blur " ; d_keys blur_keys ; L.d_ln ()) ;
+        if Config.trace_absarray then (
+          L.d_str "blur " ;
+          d_keys blur_keys ;
+          L.d_ln () ) ;
         blur p2 path blur_keys )
     in
-    if Config.trace_absarray then (L.d_strln "Returns" ; Prop.d_prop p3 ; L.d_ln () ; L.d_ln ()) ;
+    if Config.trace_absarray then (
+      L.d_strln "Returns" ;
+      Prop.d_prop p3 ;
+      L.d_ln () ;
+      L.d_ln () ) ;
     (p3, changed2 || changed3)
   in
   let prune_and_blur_indices =
@@ -548,7 +559,10 @@ let strexp_do_abstract tenv footprint_part p ((path, se_in, _) : StrexpMatch.str
     let keep_ksel = List.filter ~f:should_keep ksel in
     let keep_keys = List.map ~f:fst keep_ksel in
     let keep_keys' = if List.is_empty keep_keys then default_keys else keep_keys in
-    if Config.trace_absarray then (L.d_str "keep " ; d_keys keep_keys' ; L.d_ln ()) ;
+    if Config.trace_absarray then (
+      L.d_str "keep " ;
+      d_keys keep_keys' ;
+      L.d_ln () ) ;
     abstract keep_keys' []
   in
   let do_array_reexecution esel =
@@ -602,7 +616,7 @@ let check_after_array_abstraction tenv prop =
         ()
     | Predicates.Earray (_, esel, _) ->
         (* check that no more than 2 elements are in the array *)
-        let typ_elem = Typ.array_elem (Some (Typ.mk Tvoid)) typ in
+        let typ_elem = Typ.array_elem (Some Typ.void) typ in
         if List.length esel > 2 && array_typ_can_abstract typ then
           if List.for_all ~f:(check_index root offs) esel then () else report_error prop
         else
@@ -612,20 +626,21 @@ let check_after_array_abstraction tenv prop =
     | Predicates.Estruct (fsel, _) ->
         List.iter
           ~f:(fun (f, se) ->
-            let typ_f = Struct.fld_typ ~lookup ~default:(Typ.mk Tvoid) f typ in
+            let typ_f = Struct.fld_typ ~lookup ~default:Typ.void f typ in
             check_se root (offs @ [Predicates.Off_fld (f, typ)]) typ_f se )
           fsel
   in
   let check_hpred = function
     | Predicates.Hpointsto (root, se, texp) ->
-        let typ = Exp.texp_to_typ (Some (Typ.mk Tvoid)) texp in
+        let typ = Exp.texp_to_typ (Some Typ.void) texp in
         check_se root [] typ se
     | Predicates.Hlseg _ | Predicates.Hdllseg _ ->
         ()
   in
   let check_sigma sigma = List.iter ~f:check_hpred sigma in
   (* check_footprint_pure prop; *)
-  check_sigma prop.Prop.sigma ; check_sigma prop.Prop.sigma_fp
+  check_sigma prop.Prop.sigma ;
+  check_sigma prop.Prop.sigma_fp
 
 
 (** Apply array abstraction and check the result *)

@@ -5,8 +5,6 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
-[@@@ocamlformat "parse-docstrings = false"]
-
 open! IStd
 open! AbstractDomain.Types
 module F = Format
@@ -38,10 +36,8 @@ end
 module SymLinear = struct
   module M = Symb.SymbolMap
 
-  (**
-     Map from symbols to integer coefficients.
-     { x -> 2, y -> 5 } represents the value 2 * x + 5 * y
-  *)
+  (** Map from symbols to integer coefficients. [{ x -> 2, y -> 5 }] represents the value
+      [2 * x + 5 * y] *)
   type t = NonZeroInt.t M.t [@@deriving compare]
 
   let empty : t = M.empty
@@ -67,7 +63,7 @@ module SymLinear = struct
     let le_one_pair s v1_opt v2_opt =
       let v1 = NonZeroInt.opt_to_big_int v1_opt in
       let v2 = NonZeroInt.opt_to_big_int v2_opt in
-      Z.(equal v1 v2) || (Symb.Symbol.is_unsigned s && v1 <= v2)
+      Z.(equal v1 v2) || (Symb.Symbol.is_unsigned s && Z.leq v1 v2)
     in
     M.for_all2 ~f:le_one_pair x y
 
@@ -78,8 +74,12 @@ module SymLinear = struct
     let c = (c :> Z.t) in
     let c =
       if is_beginning then c
-      else if Z.gt c Z.zero then (F.pp_print_string f " + " ; c)
-      else (F.pp_print_string f " - " ; Z.neg c)
+      else if Z.gt c Z.zero then (
+        F.pp_print_string f " + " ;
+        c )
+      else (
+        F.pp_print_string f " - " ;
+        Z.neg c )
     in
     if Z.(equal c one) then (Symb.Symbol.pp_mark ~markup) f s
     else if Z.(equal c minus_one) then F.fprintf f "-%a" (Symb.Symbol.pp_mark ~markup) s
@@ -90,7 +90,11 @@ module SymLinear = struct
    fun ~markup ~is_beginning f x ->
     if M.is_empty x then if is_beginning then F.pp_print_string f "0" else ()
     else
-      ( M.fold (fun s c is_beginning -> pp1 ~markup ~is_beginning f s c ; false) x is_beginning
+      ( M.fold
+          (fun s c is_beginning ->
+            pp1 ~markup ~is_beginning f s c ;
+            false )
+          x is_beginning
         : bool )
       |> ignore
 
@@ -179,14 +183,15 @@ module SymLinear = struct
 
   let big_int_ub x = if is_le_zero x then Some Z.zero else None
 
-  (** When two following symbols are from the same path, simplify what would lead to a zero sum. E.g. 2 * x.lb - x.ub = x.lb *)
+  (** When two following symbols are from the same path, simplify what would lead to a zero sum.
+      E.g. 2 * x.lb - x.ub = x.lb *)
   let simplify_bound_ends_from_paths : t -> t =
    fun x ->
     let f (prev_opt, to_add) symb coeff =
       match prev_opt with
       | Some (prev_coeff, prev_symb)
         when Symb.Symbol.paths_equal prev_symb symb
-             && NonZeroInt.is_positive coeff <> NonZeroInt.is_positive prev_coeff ->
+             && Bool.(NonZeroInt.is_positive coeff <> NonZeroInt.is_positive prev_coeff) ->
           let add_coeff =
             (if NonZeroInt.is_positive coeff then NonZeroInt.max else NonZeroInt.min)
               prev_coeff (NonZeroInt.( ~- ) coeff)
@@ -232,11 +237,11 @@ module Bound = struct
     | Linear of Z.t * SymLinear.t
         (** [Linear (c, se)] represents [c+se] where [se] is Σ(c⋅x). *)
     | MinMax of Z.t * Sign.t * MinMax.t * Z.t * Symb.Symbol.t
-        (** [MinMax] represents a bound of "int [+|-] [min|max](int, symbol)" format.  For example,
+        (** [MinMax] represents a bound of "int [+|-] [min|max](int, symbol)" format. For example,
             [MinMax (1, Minus, Max, 2, s)] represents [1-max(2,s)]. *)
     | MinMaxB of MinMax.t * t * t  (** [MinMaxB] represents a min/max of two bounds. *)
     | MultB of Z.t * t * t
-        (** [MultB] represents a multiplication of two bounds.  For example, [MultB (1, x, y)]
+        (** [MultB] represents a multiplication of two bounds. For example, [MultB (1, x, y)]
             represents [1 + x × y]. *)
     | PInf  (** +oo *)
   [@@deriving compare]
@@ -320,7 +325,7 @@ module Bound = struct
 
   let of_sym : SymLinear.t -> t = fun s -> Linear (Z.zero, s)
 
-  let of_pulse_value v = of_sym (SymLinear.singleton_one (Symb.Symbol.of_pulse_value v))
+  let of_foreign_id id = of_sym (SymLinear.singleton_one (Symb.Symbol.of_foreign_id id))
 
   let of_path path_of_partial make_symbol ~unsigned ?non_int partial =
     let s = make_symbol ~unsigned ?non_int (path_of_partial partial) in
@@ -337,7 +342,9 @@ module Bound = struct
     of_path (Symb.SymbolPath.length ~is_void) ~unsigned:true ~non_int:false
 
 
-  let of_modeled_path = of_path Symb.SymbolPath.modeled ~unsigned:true ~non_int:false
+  let of_modeled_path ~is_expensive =
+    of_path (Symb.SymbolPath.modeled ~is_expensive) ~unsigned:true ~non_int:false
+
 
   let is_path_of ~f = function
     | Linear (n, se) when Z.(equal n zero) ->
@@ -384,7 +391,7 @@ module Bound = struct
 
 
   let mk_MinMax (c, sign, m, d, s) =
-    if Symb.Symbol.is_unsigned s && Z.(d <= zero) then
+    if Symb.Symbol.is_unsigned s && Z.(leq d zero) then
       match m with
       | Min ->
           of_big_int (Sign.eval_big_int sign c d)
@@ -486,7 +493,7 @@ module Bound = struct
   let le_minmax_by_int x y =
     match (big_int_ub_of_minmax x, big_int_lb_of_minmax y) with
     | Some n, Some m ->
-        n <= m
+        Z.leq n m
     | _, _ ->
         false
 
@@ -508,7 +515,7 @@ module Bound = struct
     | MultB _, _ | _, MultB _ ->
         false
     | Linear (c0, x0), Linear (c1, x1) ->
-        c0 <= c1 && SymLinear.le x0 x1
+        Z.leq c0 c1 && SymLinear.le x0 x1
     | MinMax _, MinMax _ when le_minmax_by_int x y ->
         true
     | MinMax (c1, (Plus as sign), Min, d1, s1), MinMax (c2, Plus, Min, d2, s2)
@@ -1055,7 +1062,8 @@ module Bound = struct
 
   let are_similar b1 b2 = Symb.SymbolSet.equal (get_symbols b1) (get_symbols b2)
 
-  (** Substitutes ALL symbols in [x] with respect to [eval_sym]. Under/over-Approximate as good as possible according to [subst_pos]. *)
+  (** Substitutes ALL symbols in [x] with respect to [eval_sym]. Under/over-Approximate as good as
+      possible according to [subst_pos]. *)
   let rec subst : subst_pos:Symb.BoundEnd.t -> t -> eval_sym -> t bottom_lifted =
     let lift1 : (t -> t) -> t bottom_lifted -> t bottom_lifted =
      fun f x -> match x with Bottom -> Bottom | NonBottom x -> NonBottom (f x)
@@ -1289,7 +1297,8 @@ module BoundTrace = struct
   let of_loop location = Loop location
 end
 
-(** A NonNegativeBound is a Bound that is either non-negative or symbolic but will be evaluated to a non-negative value once instantiated *)
+(** A NonNegativeBound is a Bound that is either non-negative or symbolic but will be evaluated to a
+    non-negative value once instantiated *)
 module NonNegativeBound = struct
   type t = Bound.t * BoundTrace.t [@@deriving compare]
 

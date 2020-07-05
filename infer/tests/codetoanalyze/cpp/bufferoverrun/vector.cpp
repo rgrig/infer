@@ -45,6 +45,18 @@ void push_back_Bad() {
   v[1] = 2;
 }
 
+void emplace_back_Good() {
+  std::vector<int> v;
+  v.emplace_back(1);
+  v[0] = 2;
+}
+
+void emplace_back_Bad() {
+  std::vector<int> v;
+  v.emplace_back(1);
+  v[1] = 2;
+}
+
 void reserve_Good() {
   std::vector<int> v;
   v.reserve(42);
@@ -202,4 +214,16 @@ void precise_subst_Bad() {
   char a[10];
   CharVector v(a);
   access_minus_one(0, v);
+}
+
+void resize_Good() {
+  std::vector<int> v;
+  v.resize(1);
+  v[0] = 0;
+}
+
+void resize_Bad() {
+  std::vector<int> v;
+  v.resize(1);
+  v[1] = 0;
 }

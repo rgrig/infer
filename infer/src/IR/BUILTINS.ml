@@ -23,6 +23,8 @@ module type S = sig
 
   val __builtin_va_start : t
 
+  val __builtin_offsetof : t
+
   val __cast : t
   (** [__cast(val,typ)] implements java's [typ(val)] *)
 
@@ -36,7 +38,7 @@ module type S = sig
 
   val __exit : t
 
-  val __free_cf : t
+  val __objc_bridge_transfer : t
 
   val __get_array_length : t
 
@@ -133,4 +135,6 @@ module type S = sig
   val vwscanf : t
 
   val wscanf : t
+
+  val zero_initialization : t
 end

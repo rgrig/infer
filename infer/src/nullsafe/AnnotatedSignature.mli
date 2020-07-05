@@ -10,7 +10,7 @@
 open! IStd
 
 type t =
-  { is_strict_mode: bool
+  { nullsafe_mode: NullsafeMode.t
   ; model_source: model_source option  (** None, if signature is not modelled *)
   ; ret: ret_signature
   ; params: param_signature list }
@@ -28,15 +28,15 @@ and param_signature =
 and model_source = InternalModel | ThirdPartyRepo of {filename: string; line_number: int}
 [@@deriving compare]
 
-val param_has_annot : (Annot.Item.t -> bool) -> Pvar.t -> t -> bool
-(** Check if the given parameter has an annotation in the given signature *)
-
 val set_modelled_nullability : Procname.t -> t -> model_source -> bool * bool list -> t
 (** Override nullability for a function signature given its modelled nullability (for ret value and
     params) *)
 
-val get : is_strict_mode:bool -> ProcAttributes.t -> t
+val get : is_callee_in_trust_list:bool -> nullsafe_mode:NullsafeMode.t -> ProcAttributes.t -> t
 (** Get a method signature with annotations from a proc_attributes. *)
+
+val get_for_class_under_analysis : Tenv.t -> ProcAttributes.t -> t
+(** Signature of the method belonging to the currently analyzed class. *)
 
 val pp : Procname.t -> Format.formatter -> t -> unit
 (** Pretty print a method signature with annotations. *)

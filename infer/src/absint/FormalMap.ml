@@ -36,6 +36,8 @@ let get_formal_base index t =
   |> Option.map ~f:fst
 
 
-let get_formals_indexes = AccessPath.BaseMap.bindings
-
 let pp = AccessPath.BaseMap.pp ~pp_value:Int.pp
+
+let cardinal = AccessPath.BaseMap.cardinal
+
+let iter = AccessPath.BaseMap.iter

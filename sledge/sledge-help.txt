@@ -61,7 +61,9 @@ Analyze code in a buck target. This is a convenience wrapper for the sequence `s
                           points specified in the config file
   [-no-models]            do not add models for C/C++ runtime and standard
                           libraries
+  [-no-simplify-states]   do not simplify states during symbolic execution
   [-preanalyze-globals]   pre-analyze global variables used by each function
+  [-stats]                output performance statistics to stderr
   [-trace <spec>]         enable debug tracing
   [-help]                 print this help text and exit
                           (alias: -?)
@@ -146,7 +148,9 @@ Analyze code in one or more LLVM bitcode files. This is a convenience wrapper fo
                           points specified in the config file
   [-no-models]            do not add models for C/C++ runtime and standard
                           libraries
+  [-no-simplify-states]   do not simplify states during symbolic execution
   [-preanalyze-globals]   pre-analyze global variables used by each function
+  [-stats]                output performance statistics to stderr
   [-trace <spec>]         enable debug tracing
   [-help]                 print this help text and exit
                           (alias: -?)
@@ -193,7 +197,9 @@ The <input> file must be binary LLAIR, such as produced by `sledge translate`.
   [-exceptions]          explore executions that throw and handle exceptions
   [-function-summaries]  use function summaries (in development)
   [-margin <cols>]       wrap debug tracing at <cols> columns
+  [-no-simplify-states]  do not simplify states during symbolic execution
   [-preanalyze-globals]  pre-analyze global variables used by each function
+  [-stats]               output performance statistics to stderr
   [-trace <spec>]        enable debug tracing
   [-help]                print this help text and exit
                          (alias: -?)

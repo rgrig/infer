@@ -9,41 +9,31 @@ open! IStd
 
 (** Describe the origin of values propagated by the checker. *)
 
-type t =
-  | NullConst of Location.t  (** A null literal in the source *)
-  | NonnullConst of Location.t  (** A constant (not equal to null) in the source. *)
-  | Field of field_origin  (** A field access (result of expression `some_object.some_field`) *)
-  | MethodParameter of AnnotatedSignature.param_signature  (** A method's parameter *)
-  | This (* `this` object. Can not be null, according to Java rules. *)
-  | MethodCall of method_call_origin  (** A result of a method call *)
-  | New  (** A new object creation *)
-  | ArrayLengthResult  (** integer value - result of accessing array.length *)
-  | ArrayAccess  (** Result of accessing an array by index *)
-  | InferredNonnull of {previous_origin: t}
-      (** The value is inferred as non-null during flow-sensitive type inference (most commonly from
-          relevant condition branch or assertion explicitly comparing the value with `null`) *)
-  (* Below are two special values. *)
-  | OptimisticFallback
-      (** Something went wrong during typechecking. We fall back to optimistic (not-nullable) type
-          to reduce potential non-actionable false positives. Ideally we should not see these
-          instances. They should be either processed gracefully (and a dedicated type constructor
-          should be added), or fixed. T54687014 tracks unsoundness issues caused by this type. *)
-  | Undef  (** Undefined value before initialization *)
+type method_parameter_origin = Normal of AnnotatedSignature.param_signature | ObjectEqualsOverride
 [@@deriving compare]
 
-and field_origin =
-  { object_origin: t  (** field's object origin (object is before field access operator `.`) *)
-  ; field_name: Fieldname.t
-  ; field_type: AnnotatedType.t
-  ; access_loc: Location.t }
-
-and method_call_origin =
-  { pname: Procname.t
-  ; call_loc: Location.t
-  ; annotated_signature: AnnotatedSignature.t
-  ; is_library: bool }
-
-let equal = [%compare.equal: t]
+type t =
+  | NullConst of Location.t
+  | NonnullConst of Location.t
+  | Field of
+      { object_origin: t  (** field's object origin (object is before field access operator `.`) *)
+      ; field_name: Fieldname.t
+      ; field_type: AnnotatedType.t
+      ; access_loc: Location.t }
+  | CurrMethodParameter of method_parameter_origin
+  | This
+  | MethodCall of
+      { pname: Procname.t
+      ; call_loc: Location.t
+      ; annotated_signature: AnnotatedSignature.t
+      ; is_defined: bool }
+  | CallToGetKnownToContainsKey
+  | New
+  | ArrayLengthResult
+  | ArrayAccess
+  | InferredNonnull of {previous_origin: t}
+  | OptimisticFallback
+[@@deriving compare]
 
 let get_nullability = function
   | NullConst _ ->
@@ -52,6 +42,7 @@ let get_nullability = function
   | This (* `this` can not be null according to Java rules *)
   | New (* In Java `new` always create a non-null object  *)
   | ArrayLengthResult (* integer hence non-nullable *)
+  | CallToGetKnownToContainsKey (* non-nullable by definition *)
   | InferredNonnull _
   (* WARNING: we trade soundness for usability.
      In Java, arrays are initialized with null, so accessing array is nullable until it was initialized.
@@ -61,13 +52,31 @@ let get_nullability = function
      Hence we make potentially dangerous choice in favor of pragmatism.
   *)
   | ArrayAccess
-  | OptimisticFallback (* non-null is the most optimistic type *)
-  | Undef (* This is a very special case, assigning non-null is a technical trick *) ->
-      Nullability.Nonnull
+  | OptimisticFallback (* non-null is the most optimistic type *) ->
+      Nullability.StrictNonnull
   | Field {field_type= {nullability}} ->
       AnnotatedNullability.get_nullability nullability
-  | MethodParameter {param_annotated_type= {nullability}} ->
-      AnnotatedNullability.get_nullability nullability
+  | CurrMethodParameter (Normal {param_annotated_type= {nullability}}) -> (
+    match nullability with
+    | AnnotatedNullability.Nullable _ ->
+        (* Annotated as Nullable explicitly or implicitly *)
+        Nullability.Nullable
+    | AnnotatedNullability.UncheckedNonnull _
+    | AnnotatedNullability.ThirdPartyNonnull
+    | AnnotatedNullability.LocallyTrustedNonnull
+    | AnnotatedNullability.LocallyCheckedNonnull
+    | AnnotatedNullability.StrictNonnull _ ->
+        (* Nonnull param should be treated as trusted inside this function context:
+           Things like dereferences or conversions should be allowed without any extra check
+           independendly of mode.
+           NOTE. However, in practice a function should be allowed to check any param for null
+           and be defensive, because no function can gurantee it won't ever be called with `null`, so
+           in theory we might want to distinct that in the future.
+        *)
+        Nullability.StrictNonnull )
+  | CurrMethodParameter ObjectEqualsOverride ->
+      (* `Object.equals(obj)` should expect to be called with null `obj` *)
+      Nullability.Nullable
   | MethodCall {annotated_signature= {ret= {ret_annotated_type= {nullability}}}} ->
       AnnotatedNullability.get_nullability nullability
 
@@ -79,25 +88,27 @@ let rec to_string = function
       "Const (nonnull)"
   | Field {object_origin; field_name} ->
       "Field " ^ Fieldname.to_string field_name ^ " (object: " ^ to_string object_origin ^ ")"
-  | MethodParameter {mangled; param_annotated_type= {nullability}} ->
+  | CurrMethodParameter (Normal {mangled; param_annotated_type= {nullability}}) ->
       Format.asprintf "Param %s <%a>" (Mangled.to_string mangled) AnnotatedNullability.pp
         nullability
+  | CurrMethodParameter ObjectEqualsOverride ->
+      "Param(ObjectEqualsOverride)"
   | This ->
       "this"
   | MethodCall {pname} ->
       Printf.sprintf "Fun %s" (Procname.to_simplified_string pname)
+  | CallToGetKnownToContainsKey ->
+      "CallToGetKnownToContainsKey"
   | New ->
       "New"
   | ArrayLengthResult ->
       "ArrayLength"
   | ArrayAccess ->
       "ArrayAccess"
-  | InferredNonnull _ ->
-      "InferredNonnull"
+  | InferredNonnull {previous_origin} ->
+      Format.sprintf "InferredNonnull(prev:%s)" (to_string previous_origin)
   | OptimisticFallback ->
       "OptimisticFallback"
-  | Undef ->
-      "Undef"
 
 
 let atline loc = " at line " ^ string_of_int loc.Location.line
@@ -116,7 +127,11 @@ let get_method_ret_description pname call_loc
     match nullability with
     | AnnotatedNullability.Nullable _ ->
         "nullable"
-    | AnnotatedNullability.DeclaredNonnull _ | AnnotatedNullability.Nonnull _ ->
+    | AnnotatedNullability.ThirdPartyNonnull
+    | AnnotatedNullability.UncheckedNonnull _
+    | AnnotatedNullability.LocallyTrustedNonnull
+    | AnnotatedNullability.LocallyCheckedNonnull
+    | AnnotatedNullability.StrictNonnull _ ->
         "non-nullable"
   in
   let model_info =
@@ -143,8 +158,10 @@ let get_description origin =
       Some ("null constant" ^ atline loc)
   | Field {field_name; access_loc} ->
       Some ("field " ^ Fieldname.get_field_name field_name ^ atline access_loc)
-  | MethodParameter {mangled} ->
+  | CurrMethodParameter (Normal {mangled}) ->
       Some ("method parameter " ^ Mangled.to_string mangled)
+  | CurrMethodParameter ObjectEqualsOverride ->
+      Some "Object.equals() should be able to accept `null`, according to the Java specification"
   | MethodCall {pname; call_loc; annotated_signature} ->
       Some (get_method_ret_description pname call_loc annotated_signature)
   (* These are origins of non-nullable expressions that are result of evaluating of some rvalue.
@@ -153,20 +170,24 @@ let get_description origin =
      But for these issues we currently don't print origins in the error string.
      It is a good idea to change this and start printing origins for these origins as well.
   *)
-  | This | New | NonnullConst _ | ArrayLengthResult | ArrayAccess | InferredNonnull _ ->
+  | This
+  | New
+  | NonnullConst _
+  | ArrayLengthResult
+  | ArrayAccess
+  | InferredNonnull _
+  | CallToGetKnownToContainsKey ->
       None
-  (* Two special cases - should not really occur in normal code *)
-  | OptimisticFallback | Undef ->
+  (* A technical origin *)
+  | OptimisticFallback ->
       None
 
 
 let join o1 o2 =
   match (o1, o2) with
-  (* left priority *)
-  | Undef, _ | _, Undef ->
-      Undef
-  | Field _, (NullConst _ | NonnullConst _ | MethodParameter _ | This | MethodCall _ | New) ->
+  | Field _, (NullConst _ | NonnullConst _ | CurrMethodParameter _ | This | MethodCall _ | New) ->
       (* low priority to Field, to support field initialization patterns *)
       o2
   | _ ->
+      (* left priority *)
       o1

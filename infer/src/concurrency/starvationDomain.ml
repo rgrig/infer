@@ -83,130 +83,30 @@ module ThreadDomain = struct
 end
 
 module Lock = struct
-  (** var type used only for printing, not comparisons *)
-  module IgnoreVar = struct
-    type t = Var.t
+  include AbstractAddress
 
-    let compare _x _y = 0
-
-    let equal _x _y = true
-  end
-
-  (** access path that does not ignore the type (like the original AccessPath.t) but which instead
-      ignores the root variable for comparisons; this is taken care of by the root type *)
-  type path = (IgnoreVar.t * Typ.t) * AccessPath.access list [@@deriving compare, equal]
-
-  type root =
-    | Global of Mangled.t
-    | Class of Typ.name
-    | Parameter of int  (** method parameter represented by its 0-indexed position *)
-  [@@deriving compare, equal]
-
-  type t = {root: root; path: path} [@@deriving compare, equal]
-
-  let equal_across_threads t1 t2 =
-    match (t1.root, t2.root) with
-    | Global _, Global _ | Class _, Class _ ->
-        (* globals and class objects must be identical across threads *)
-        equal t1 t2
-    | Parameter _, Parameter _ ->
-        (* parameter position/names can be ignored across threads, if types and accesses are equal *)
-        equal_path t1.path t2.path
-    | _, _ ->
-        false
-
-
-  let is_class_object = function {root= Class _} -> true | _ -> false
-
-  (* using an indentifier for a class object, create an access path representing that lock;
-     this is for synchronizing on Java class objects only *)
-  let path_of_java_class =
-    let typ = Typ.(mk (Tstruct Name.Java.java_lang_class)) in
-    let typ' = Typ.(mk (Tptr (typ, Pk_pointer))) in
-    fun class_id ->
-      let ident = Ident.create_normal class_id 0 in
-      AccessPath.of_id ident typ'
-
-
-  let make_global path mangled = {root= Global mangled; path}
-
-  let make_parameter path index = {root= Parameter index; path}
-
-  let make_class path typename = {root= Class typename; path}
-
-  (** convert an expression to a canonical form for a lock identifier *)
-  let rec make formal_map (hilexp : HilExp.t) =
-    match hilexp with
-    | AccessExpression access_exp -> (
-        let path = HilExp.AccessExpression.to_access_path access_exp in
-        match fst (fst path) with
-        | Var.LogicalVar _ ->
-            (* ignore logical variables *)
-            None
-        | Var.ProgramVar pvar when Pvar.is_global pvar ->
-            Some (make_global path (Pvar.get_name pvar))
-        | Var.ProgramVar _ ->
-            let norm_path = AccessPath.inner_class_normalize path in
-            FormalMap.get_formal_index (fst norm_path) formal_map
-            (* ignores non-formals *)
-            |> Option.map ~f:(make_parameter norm_path) )
-    | Constant (Cclass class_id) ->
-        (* this is a synchronized/lock(CLASSNAME.class) construct *)
-        let path = path_of_java_class class_id in
-        let typename = Ident.name_to_string class_id |> Typ.Name.Java.from_string in
-        Some (make_class path typename)
-    | Cast (_, hilexp) | Exception hilexp | UnaryOperator (_, hilexp, _) ->
-        make formal_map hilexp
-    | BinaryOperator _ | Closure _ | Constant _ | Sizeof _ ->
-        None
-
+  let pp_locks fmt lock = F.fprintf fmt " locks %a" describe lock
 
   let make_java_synchronized formals procname =
     match procname with
     | Procname.Java java_pname when Procname.Java.is_static java_pname ->
         (* this is crafted so as to match synchronized(CLASSNAME.class) constructs *)
-        let typename = Procname.Java.get_class_type_name java_pname in
-        let path = Typ.Name.name typename |> Ident.string_to_name |> path_of_java_class in
-        Some (make_class path typename)
+        let typename_str = Procname.Java.get_class_type_name java_pname |> Typ.Name.name in
+        let hilexp = HilExp.(Constant (Cclass (Ident.string_to_name typename_str))) in
+        make formals hilexp
     | Procname.Java _ ->
         FormalMap.get_formal_base 0 formals
-        |> Option.map ~f:(fun base -> make_parameter (base, []) 0)
+        |> Option.bind ~f:(fun base ->
+               let hilexp = HilExp.(AccessExpression (AccessExpression.base base)) in
+               make formals hilexp )
     | _ ->
         L.die InternalError "Non-Java methods cannot be synchronized.@\n"
 
 
-  let pp fmt {root; path} =
-    let pp_path fmt ((var, typ), accesses) =
-      F.fprintf fmt "(%a:%a)" Var.pp var (Typ.pp_full Pp.text) typ ;
-      if not (List.is_empty accesses) then F.fprintf fmt ".%a" AccessPath.pp_access_list accesses
-    in
-    match root with
-    | Global mangled ->
-        F.fprintf fmt "G<%a>{%a}" Mangled.pp mangled pp_path path
-    | Class typename ->
-        F.fprintf fmt "C<%a>{%a}" Typ.Name.pp typename pp_path path
-    | Parameter idx ->
-        F.fprintf fmt "P<%i>{%a}" idx pp_path path
-
-
-  let owner_class {path= (_, {Typ.desc}), _} =
-    match desc with Typ.Tstruct name | Typ.Tptr ({desc= Tstruct name}, _) -> Some name | _ -> None
-
-
-  let describe fmt lock =
-    let describe_lock fmt lock = (MF.wrap_monospaced AccessPath.pp) fmt lock.path in
-    let describe_typename = MF.wrap_monospaced Typ.Name.pp in
-    let describe_owner fmt lock =
-      owner_class lock |> Option.iter ~f:(F.fprintf fmt " in %a" describe_typename)
-    in
-    F.fprintf fmt "%a%a" describe_lock lock describe_owner lock
-
-
-  let pp_locks fmt lock = F.fprintf fmt " locks %a" describe lock
-
-  let compare_wrt_reporting {path= (_, typ1), _} {path= (_, typ2), _} =
+  let compare_wrt_reporting t1 t2 =
+    let mk_str t = root_class t |> Option.value_map ~default:"" ~f:Typ.Name.to_string in
     (* use string comparison on types as a stable order to decide whether to report a deadlock *)
-    String.compare (Typ.to_string typ1) (Typ.to_string typ2)
+    String.compare (mk_str t1) (mk_str t2)
 end
 
 module Event = struct
@@ -245,6 +145,26 @@ module Event = struct
   let make_strict_mode_call callee = StrictModeCall callee
 
   let make_object_wait lock = MonitorWait lock
+
+  let apply_subst subst event =
+    let make_monitor_wait lock = MonitorWait lock in
+    let make_lock_acquire lock = LockAcquire lock in
+    let apply_subst_aux make lock =
+      match Lock.apply_subst subst lock with
+      | None ->
+          None
+      | Some lock' when phys_equal lock lock' ->
+          Some event
+      | Some lock' ->
+          Some (make lock')
+    in
+    match event with
+    | MonitorWait lock ->
+        apply_subst_aux make_monitor_wait lock
+    | LockAcquire lock ->
+        apply_subst_aux make_lock_acquire lock
+    | MayBlock _ | StrictModeCall _ ->
+        Some event
 end
 
 (** A lock acquisition with source location and procname in which it occurs. The location & procname
@@ -267,6 +187,15 @@ module Acquisition = struct
 
 
   let make_dummy lock = {lock; loc= Location.dummy; procname= Procname.Linters_dummy_method}
+
+  let apply_subst subst acquisition =
+    match Lock.apply_subst subst acquisition.lock with
+    | None ->
+        None
+    | Some lock when phys_equal acquisition.lock lock ->
+        Some acquisition
+    | Some lock ->
+        Some {acquisition with lock}
 end
 
 (** Set of acquisitions; due to order over acquisitions, each lock appears at most once. *)
@@ -276,12 +205,19 @@ module Acquisitions = struct
   (* use the fact that location/procname are ignored in comparisons *)
   let lock_is_held lock acquisitions = mem (Acquisition.make_dummy lock) acquisitions
 
-  let lock_is_held_in_other_thread lock acquisitions =
-    exists (fun acq -> Lock.equal_across_threads lock acq.lock) acquisitions
+  let lock_is_held_in_other_thread tenv lock acquisitions =
+    exists (fun acq -> Lock.equal_across_threads tenv lock acq.lock) acquisitions
 
 
-  let no_locks_common_across_threads acqs1 acqs2 =
-    for_all (fun acq1 -> not (lock_is_held_in_other_thread acq1.lock acqs2)) acqs1
+  let no_locks_common_across_threads tenv acqs1 acqs2 =
+    for_all (fun acq1 -> not (lock_is_held_in_other_thread tenv acq1.lock acqs2)) acqs1
+
+
+  let apply_subst subst acqs =
+    fold
+      (fun acq acc ->
+        match Acquisition.apply_subst subst acq with None -> acc | Some acq' -> add acq' acc )
+      acqs empty
 end
 
 module LockState : sig
@@ -396,7 +332,31 @@ module CriticalPairElement = struct
 
 
   let describe = pp
+
+  let apply_subst subst elem =
+    match Event.apply_subst subst elem.event with
+    | None ->
+        None
+    | Some event' ->
+        let acquisitions' = Acquisitions.apply_subst subst elem.acquisitions in
+        Some {elem with acquisitions= acquisitions'; event= event'}
 end
+
+let is_recursive_lock event tenv =
+  let is_class_and_recursive_lock = function
+    | {Typ.desc= Tptr ({desc= Tstruct name}, _)} | {desc= Tstruct name} ->
+        ConcurrencyModels.is_recursive_lock_type name
+    | typ ->
+        L.debug Analysis Verbose "Asked if non-struct type %a is a recursive lock type.@."
+          (Typ.pp_full Pp.text) typ ;
+        true
+  in
+  match event with
+  | Event.LockAcquire lock_path ->
+      Lock.get_typ tenv lock_path |> Option.exists ~f:is_class_and_recursive_lock
+  | _ ->
+      false
+
 
 module CriticalPair = struct
   include ExplicitTrace.MakeTraceElem (CriticalPairElement) (ExplicitTrace.DefaultCallPrinter)
@@ -409,26 +369,53 @@ module CriticalPair = struct
     match event with LockAcquire lock -> Some lock | _ -> None
 
 
-  let may_deadlock ({elem= pair1} as t1 : t) ({elem= pair2} as t2 : t) =
+  let may_deadlock tenv ({elem= pair1} as t1 : t) ({elem= pair2} as t2 : t) =
     ThreadDomain.can_run_in_parallel pair1.thread pair2.thread
     && Option.both (get_final_acquire t1) (get_final_acquire t2)
        |> Option.exists ~f:(fun (lock1, lock2) ->
-              (not (Lock.equal_across_threads lock1 lock2))
-              && Acquisitions.lock_is_held_in_other_thread lock2 pair1.acquisitions
-              && Acquisitions.lock_is_held_in_other_thread lock1 pair2.acquisitions
-              && Acquisitions.no_locks_common_across_threads pair1.acquisitions pair2.acquisitions
-          )
+              (not (Lock.equal_across_threads tenv lock1 lock2))
+              && Acquisitions.lock_is_held_in_other_thread tenv lock2 pair1.acquisitions
+              && Acquisitions.lock_is_held_in_other_thread tenv lock1 pair2.acquisitions
+              && Acquisitions.no_locks_common_across_threads tenv pair1.acquisitions
+                   pair2.acquisitions )
 
 
-  let integrate_summary_opt existing_acquisitions call_site (caller_thread : ThreadDomain.t)
-      (callee_pair : t) =
-    ThreadDomain.apply_to_pair caller_thread callee_pair.elem.thread
-    |> Option.map ~f:(fun thread ->
-           let f (elem : CriticalPairElement.t) =
-             let acquisitions = Acquisitions.union existing_acquisitions elem.acquisitions in
-             ({elem with acquisitions; thread} : elem_t)
-           in
-           with_callsite (map ~f callee_pair) call_site )
+  let apply_subst subst pair =
+    match CriticalPairElement.apply_subst subst pair.elem with
+    | None ->
+        None
+    | Some elem' ->
+        Some (map ~f:(fun _elem -> elem') pair)
+
+
+  let integrate_summary_opt ?subst ?tenv existing_acquisitions call_site
+      (caller_thread : ThreadDomain.t) (callee_pair : t) =
+    let substitute_pair subst callee_pair =
+      match subst with None -> Some callee_pair | Some subst -> apply_subst subst callee_pair
+    in
+    let filter_out_reentrant_relock callee_pair =
+      match tenv with
+      | None ->
+          Some callee_pair
+      | Some tenv
+        when get_final_acquire callee_pair
+             |> Option.for_all ~f:(fun lock ->
+                    (not (Acquisitions.lock_is_held lock existing_acquisitions))
+                    || not (is_recursive_lock callee_pair.elem.event tenv) ) ->
+          Some callee_pair
+      | _ ->
+          None
+    in
+    substitute_pair subst callee_pair
+    |> Option.bind ~f:filter_out_reentrant_relock
+    |> Option.bind ~f:(fun callee_pair ->
+           ThreadDomain.apply_to_pair caller_thread callee_pair.elem.thread
+           |> Option.map ~f:(fun thread ->
+                  let f (elem : CriticalPairElement.t) =
+                    let acquisitions = Acquisitions.union existing_acquisitions elem.acquisitions in
+                    ({elem with acquisitions; thread} : elem_t)
+                  in
+                  with_callsite (map ~f callee_pair) call_site ) )
 
 
   let get_earliest_lock_or_call_loc ~procname ({elem= {acquisitions}} as t) =
@@ -493,22 +480,6 @@ module CriticalPair = struct
   let can_run_in_parallel t1 t2 = ThreadDomain.can_run_in_parallel t1.elem.thread t2.elem.thread
 end
 
-let is_recursive_lock event tenv =
-  let is_class_and_recursive_lock = function
-    | {Typ.desc= Tptr ({desc= Tstruct name}, _)} | {desc= Tstruct name} ->
-        ConcurrencyModels.is_recursive_lock_type name
-    | typ ->
-        L.debug Analysis Verbose "Asked if non-struct type %a is a recursive lock type.@."
-          (Typ.pp_full Pp.text) typ ;
-        true
-  in
-  match event with
-  | Event.LockAcquire lock_path ->
-      AccessPath.get_typ lock_path.path tenv |> Option.exists ~f:is_class_and_recursive_lock
-  | _ ->
-      false
-
-
 (** skip adding an order pair [(_, event)] if
 
     - we have no tenv, or,
@@ -523,14 +494,15 @@ let should_skip ?tenv event lock_state =
 module CriticalPairs = struct
   include CriticalPair.FiniteSet
 
-  let with_callsite astate ?tenv lock_state call_site thread =
+  let with_callsite astate ?tenv ?subst lock_state call_site thread =
     let existing_acquisitions = LockState.get_acquisitions lock_state in
     fold
-      (fun ({elem= {event}} as critical_pair : CriticalPair.t) acc ->
-        if should_skip ?tenv event lock_state then acc
-        else
-          CriticalPair.integrate_summary_opt existing_acquisitions call_site thread critical_pair
-          |> Option.fold ~init:acc ~f:(fun acc new_pair -> add new_pair acc) )
+      (fun critical_pair acc ->
+        CriticalPair.integrate_summary_opt ?subst ?tenv existing_acquisitions call_site thread
+          critical_pair
+        |> Option.fold ~init:acc ~f:(fun acc (new_pair : CriticalPair.t) ->
+               if should_skip ?tenv new_pair.elem.event lock_state then acc else add new_pair acc )
+        )
       astate empty
 end
 
@@ -690,8 +662,8 @@ let acquire ?tenv ({lock_state; critical_pairs} as astate) ~procname ~loc locks 
           let event = Event.make_acquire lock in
           add_critical_pair ?tenv lock_state event astate.thread ~loc acc )
   ; lock_state=
-      List.fold locks ~init:lock_state ~f:(fun acc lock -> LockState.acquire ~procname ~loc lock acc)
-  }
+      List.fold locks ~init:lock_state ~f:(fun acc lock ->
+          LockState.acquire ~procname ~loc lock acc ) }
 
 
 let make_call_with_event new_event ~loc astate =
@@ -807,9 +779,9 @@ let pp_summary fmt (summary : summary) =
     AttributeDomain.pp summary.attributes
 
 
-let integrate_summary ?tenv ?lhs callsite (astate : t) (summary : summary) =
+let integrate_summary ?tenv ?lhs ?subst callsite (astate : t) (summary : summary) =
   let critical_pairs' =
-    CriticalPairs.with_callsite summary.critical_pairs ?tenv astate.lock_state callsite
+    CriticalPairs.with_callsite summary.critical_pairs ?tenv ?subst astate.lock_state callsite
       astate.thread
   in
   { astate with

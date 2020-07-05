@@ -308,7 +308,7 @@ end = struct
       already. This can in turn extend the todo list for the nested predicates, which are then
       visited as well. Can be applied only once, as it destroys the todo list *)
   let iter (env : t) f f_dll =
-    while env.todo <> [] || env.todo_dll <> [] do
+    while (not (List.is_empty env.todo)) || not (List.is_empty env.todo_dll) do
       match env.todo with
       | hpara :: todo' ->
           env.todo <- todo' ;
@@ -866,7 +866,7 @@ let sub_symmetric_difference sub1_in sub2_in =
 
 
 (** [sub_find filter sub] returns the expression associated to the first identifier that satisfies
-    [filter]. Raise [Not_found] if there isn't one. *)
+    [filter]. Raise [Not_found_s/Caml.Not_found] if there isn't one. *)
 let sub_find filter (sub : subst) = snd (List.find_exn ~f:(fun (i, _) -> filter i) sub)
 
 (** [sub_filter filter sub] restricts the domain of [sub] to the identifiers satisfying [filter]. *)
@@ -1115,7 +1115,10 @@ let create_sharing_env () = {exph= Exp.Hash.create 3; hpredh= HpredInstHash.crea
 
 (** Return a canonical representation of the exp *)
 let exp_compact sh e =
-  try Exp.Hash.find sh.exph e with Caml.Not_found -> Exp.Hash.add sh.exph e e ; e
+  try Exp.Hash.find sh.exph e
+  with Caml.Not_found ->
+    Exp.Hash.add sh.exph e e ;
+    e
 
 
 let rec sexp_compact sh se =

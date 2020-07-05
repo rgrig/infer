@@ -136,7 +136,7 @@ module SourceKind = struct
               get_external_source class_name method_name
         in
         PatternMatch.supertype_find_map_opt tenv taint_matching_supertype
-          (Typ.Name.Java.from_string (Procname.Java.get_class_name pname))
+          (Procname.Java.get_class_type_name pname)
         |> Option.value ~default:[]
     | Procname.C _ when Procname.equal pname BuiltinDecl.__global_access -> (
       (* accessed global will be passed to us as the only parameter *)
@@ -249,7 +249,7 @@ module SourceKind = struct
         in
         match
           PatternMatch.supertype_find_map_opt tenv taint_matching_supertype
-            (Typ.Name.Java.from_string (Procname.Java.get_class_name java_pname))
+            (Procname.Java.get_class_type_name java_pname)
         with
         | Some tainted_formals ->
             tainted_formals
@@ -480,7 +480,7 @@ module SinkKind = struct
               get_external_sink class_name method_name
         in
         PatternMatch.supertype_find_map_opt tenv taint_matching_supertype
-          (Typ.Name.Java.from_string (Procname.Java.get_class_name java_pname))
+          (Procname.Java.get_class_type_name java_pname)
         |> Option.value ~default:[]
     | pname when BuiltinDecl.is_declared pname ->
         []
@@ -557,7 +557,7 @@ module JavaSanitizer = struct
               get_external_sanitizer class_name method_name
         in
         PatternMatch.supertype_find_map_opt tenv sanitizer_matching_supertype
-          (Typ.Name.Java.from_string (Procname.Java.get_class_name java_pname))
+          (Procname.Java.get_class_type_name java_pname)
     | _ ->
         None
 
@@ -567,7 +567,7 @@ module JavaSanitizer = struct
       (match kind with All -> "All" | StringConcatenation -> "StringConcatenation")
 end
 
-include Trace.Make (struct
+include TaintTrace.Make (struct
   module Source = JavaSource
   module Sink = JavaSink
   module Sanitizer = JavaSanitizer
@@ -581,34 +581,25 @@ include Trace.Make (struct
       ->
         None
     | (Endpoint _ | Intent | UserControlledString | UserControlledURI), CreateIntent ->
-        (* creating Intent from user-congrolled data *)
         Some IssueType.untrusted_intent_creation
     | (Intent | IntentFromURI | UserControlledString | UserControlledURI), CreateFile ->
-        (* user-controlled file creation; may be vulnerable to path traversal + more *)
         Some IssueType.untrusted_file
     | Endpoint _, CreateFile ->
-        (* user-controlled file creation; may be vulnerable to path traversal + more *)
         Some IssueType.untrusted_file_risk
     | (Intent | IntentFromURI | UserControlledString | UserControlledURI), Deserialization ->
-        (* shouldn't let anyone external control what we deserialize *)
         Some IssueType.untrusted_deserialization
     | Endpoint _, Deserialization ->
-        (* shouldn't let anyone external control what we deserialize *)
         Some IssueType.untrusted_deserialization_risk
     | (Endpoint _ | Intent | IntentFromURI | UserControlledString | UserControlledURI), HTML ->
-        (* untrusted data flows into HTML; XSS risk *)
         Some IssueType.cross_site_scripting
     | (Endpoint _ | Intent | IntentFromURI | UserControlledString | UserControlledURI), JavaScript
       ->
-        (* untrusted data flows into JS *)
         Some IssueType.javascript_injection
     | (Endpoint _ | Intent | IntentFromURI | UserControlledString | UserControlledURI), SQLInjection
       ->
-        (* untrusted and unescaped data flows to SQL *)
         Some IssueType.sql_injection_risk
     | ( (Endpoint _ | Intent | IntentFromURI | UserControlledString | UserControlledURI)
       , (SQLRead | SQLWrite) ) ->
-        (* untrusted data flows to SQL *)
         Some IssueType.user_controlled_sql_risk
     | DrawableResource _, OpenDrawableResource ->
         (* not a security issue, but useful for debugging flows from resource IDs to inflation *)
@@ -618,8 +609,6 @@ include Trace.Make (struct
     | IntentForInsecureIntentHandling {exposed= false}, StartComponentForInsecureIntentHandling ->
         Some IssueType.insecure_intent_handling
     | IntentFromURI, StartComponent ->
-        (* create an intent/start a component using a (possibly user-controlled) URI. may or may not
-           be an issue; depends on where the URI comes from *)
         Some IssueType.create_intent_from_uri
     | PrivateData, Logging ->
         Some IssueType.logging_private_data

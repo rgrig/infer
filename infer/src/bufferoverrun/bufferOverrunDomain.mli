@@ -8,14 +8,8 @@
 open! IStd
 open AbstractDomain.Types
 
-(** type for on-demand symbol evaluation in Inferbo *)
-type eval_sym_trace =
-  { eval_sym: Bounds.Bound.eval_sym  (** evaluating symbol *)
-  ; trace_of_sym: Symb.Symbol.t -> BufferOverrunTrace.Set.t  (** getting traces of symbol *)
-  ; eval_locpath: AbsLoc.PowLoc.eval_locpath  (** evaluating path *) }
-
-module ItvThresholds : AbstractDomain.FiniteSetS with type elt = Z.t
 (** Set of integers for threshold widening *)
+module ItvThresholds : AbstractDomain.FiniteSetS with type elt = Z.t
 
 (** Domain for recording which operations are used for evaluating interval values *)
 module ItvUpdatedBy : sig
@@ -38,6 +32,12 @@ module ModeledRange : sig
 
   val of_modeled_function : Procname.t -> Location.t -> Bounds.Bound.t -> t
 end
+
+(** type for on-demand symbol evaluation in Inferbo *)
+type eval_sym_trace =
+  { eval_sym: Bounds.Bound.eval_sym  (** evaluating symbol *)
+  ; trace_of_sym: Symb.Symbol.t -> BufferOverrunTrace.Set.t  (** getting traces of symbol *)
+  ; eval_locpath: AbsLoc.PowLoc.eval_locpath  (** evaluating path *) }
 
 module Val : sig
   type t =
@@ -85,6 +85,9 @@ module Val : sig
 
   val unknown_from : Typ.t -> callee_pname:Procname.t option -> location:Location.t -> t
   (** Unknown return value of [callee_pname] *)
+
+  val is_bot : t -> bool
+  (** Check if the value is bottom *)
 
   val is_mone : t -> bool
   (** Check if the value is [\[-1,-1\]] *)
@@ -271,6 +274,9 @@ module Val : sig
     val zero : t
     (** [\[0,0\]] *)
 
+    val one : t
+    (** [\[1,1\]] *)
+
     val zero_255 : t
     (** [\[0,255\]] *)
 
@@ -436,10 +442,10 @@ end
 
 module Mem : sig
   type 'has_oenv t0 =
-    | Bottom  (** Memory of unreachable node *)
+    | Unreachable  (** Memory of unreachable node *)
     | ExcRaised
         (** Memory of node that can be reachable only with exception raises that we want to ignore *)
-    | NonBottom of 'has_oenv MemReach.t0
+    | Reachable of 'has_oenv MemReach.t0
 
   (** Memory type without an environment for on-demand symbol evaluation *)
   type no_oenv_t = GOption.none t0
@@ -453,7 +459,7 @@ module Mem : sig
 
   val pp : Format.formatter -> _ t0 -> unit
 
-  val bot : t
+  val unreachable : t
 
   type get_summary = Procname.t -> no_oenv_t option
 
@@ -488,7 +494,7 @@ module Mem : sig
 
   val get_latest_prune : _ t0 -> LatestPrune.t
 
-  val get_reachable_locs_from : (Pvar.t * Typ.t) list -> AbsLoc.PowLoc.t -> _ t0 -> AbsLoc.PowLoc.t
+  val get_reachable_locs_from : (Pvar.t * Typ.t) list -> AbsLoc.LocSet.t -> _ t0 -> AbsLoc.LocSet.t
   (** Get reachable locations from [formals] and [locs] when called
       [get_reachable_locs_from formals locs mem] *)
 

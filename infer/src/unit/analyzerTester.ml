@@ -57,7 +57,10 @@ module StructuredSil = struct
 
   let label_counter = ref 0
 
-  let fresh_label () = incr label_counter ; !label_counter
+  let fresh_label () =
+    incr label_counter ;
+    !label_counter
+
 
   let invariant inv_str = Invariant (inv_str, fresh_label ())
 
@@ -83,7 +86,7 @@ module StructuredSil = struct
       | Some ret_id_typ ->
           ret_id_typ
       | None ->
-          (Ident.create_fresh Ident.knormal, Typ.mk Tvoid)
+          (Ident.create_fresh Ident.knormal, Typ.void)
     in
     let call_exp = Exp.Const (Const.Cfun procname) in
     Cmd (Sil.Call (ret_id_typ, call_exp, args, dummy_loc, CallFlags.default))
@@ -251,10 +254,12 @@ struct
     (Summary.OnDisk.reset pdesc, assert_map)
 
 
-  let create_test test_program extras ~initial pp_opt test_pname _ =
+  let create_test test_program make_analysis_data ~initial pp_opt test_pname _ =
     let pp_state = Option.value ~default:I.TransferFunctions.Domain.pp pp_opt in
     let summary, assert_map = structured_program_to_cfg test_program test_pname in
-    let inv_map = I.exec_pdesc (ProcData.make summary (Tenv.create ()) extras) ~initial in
+    let inv_map =
+      I.exec_pdesc (make_analysis_data summary) ~initial (Summary.get_proc_desc summary)
+    in
     let collect_invariant_mismatches node_id (inv_str, inv_label) error_msgs_acc =
       let post_str =
         try
@@ -262,7 +267,7 @@ struct
           F.asprintf "%a" pp_state post
         with Caml.Not_found -> "_|_"
       in
-      if inv_str <> post_str then
+      if not (String.equal inv_str post_str) then
         let error_msg =
           F.fprintf F.str_formatter "> Expected state %s at invariant %d, but found state %s"
             inv_str inv_label post_str
@@ -293,11 +298,16 @@ module Make (T : TransferFunctions.SIL with type CFG.Node.t = Procdesc.Node.t) =
 
   let ai_list = [("ai_rpo", AI_RPO.create_test); ("ai_wto", AI_WTO.create_test)]
 
-  let create_tests ?(test_pname = Procname.empty_block) ~initial ?pp_opt extras tests =
+  let create_tests ?(test_pname = Procname.empty_block) ~initial ?pp_opt make_analysis_data tests =
+    AnalysisCallbacks.set_callbacks
+      { get_proc_desc_f= Ondemand.get_proc_desc
+      ; html_debug_new_node_session_f= NodePrinter.with_session
+      ; proc_resolve_attributes_f= Summary.OnDisk.proc_resolve_attributes } ;
     let open OUnit2 in
     List.concat_map
       ~f:(fun (name, test_program) ->
         List.map ai_list ~f:(fun (ai_name, create_test) ->
-            name ^ "_" ^ ai_name >:: create_test test_program extras ~initial pp_opt test_pname ) )
+            name ^ "_" ^ ai_name
+            >:: create_test test_program make_analysis_data ~initial pp_opt test_pname ) )
       tests
 end

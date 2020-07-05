@@ -8,13 +8,11 @@
 open! IStd
 module F = Format
 
-type attributes_kind = ProcUndefined | ProcObjCAccessor | ProcDefined [@@deriving compare]
+type attributes_kind = ProcUndefined | ProcDefined [@@deriving compare]
 
 let equal_attributes_kind = [%compare.equal: attributes_kind]
 
-let attributes_kind_to_int64 =
-  [(ProcUndefined, Int64.zero); (ProcObjCAccessor, Int64.one); (ProcDefined, Int64.of_int 2)]
-
+let attributes_kind_to_int64 = [(ProcUndefined, Int64.zero); (ProcDefined, Int64.of_int 2)]
 
 let int64_of_attributes_kind a =
   List.Assoc.find_exn ~equal:equal_attributes_kind attributes_kind_to_int64 a
@@ -27,9 +25,7 @@ let deserialize_attributes_kind =
 
 
 let proc_kind_of_attr (proc_attributes : ProcAttributes.t) =
-  if proc_attributes.is_defined then ProcDefined
-  else if Option.is_some proc_attributes.objc_accessor then ProcObjCAccessor
-  else ProcUndefined
+  if proc_attributes.is_defined then ProcDefined else ProcUndefined
 
 
 let replace pname pname_blob akind source_file attributes proc_desc callees =
@@ -66,23 +62,15 @@ let select_statement =
   ResultsDatabase.register_statement "SELECT proc_attributes FROM procedures WHERE proc_name = :k"
 
 
-let select_defined_statement =
-  ResultsDatabase.register_statement
-    "SELECT proc_attributes FROM procedures WHERE proc_name = :k AND attr_kind = %Ld"
-    (int64_of_attributes_kind ProcDefined)
+let find pname_blob =
+  ResultsDatabase.with_registered_statement select_statement ~f:(fun db select_stmt ->
+      Sqlite3.bind select_stmt 1 pname_blob
+      |> SqliteUtils.check_result_code db ~log:"find bind proc name" ;
+      SqliteUtils.result_single_column_option ~finalize:false ~log:"Attributes.find" db select_stmt
+      |> Option.map ~f:ProcAttributes.SQLite.deserialize )
 
 
-let find ~defined pname_blob =
-  (if defined then select_defined_statement else select_statement)
-  |> ResultsDatabase.with_registered_statement ~f:(fun db select_stmt ->
-         Sqlite3.bind select_stmt 1 pname_blob
-         |> SqliteUtils.check_result_code db ~log:"find bind proc name" ;
-         SqliteUtils.result_single_column_option ~finalize:false ~log:"Attributes.find" db
-           select_stmt
-         |> Option.map ~f:ProcAttributes.SQLite.deserialize )
-
-
-let load pname = Procname.SQLite.serialize pname |> find ~defined:false
+let load pname = find (Procname.SQLite.serialize pname)
 
 let store ~proc_desc (attr : ProcAttributes.t) =
   let pkind = proc_kind_of_attr attr in
@@ -94,8 +82,6 @@ let store ~proc_desc (attr : ProcAttributes.t) =
       proc_desc
       (Option.map proc_desc ~f:Procdesc.get_static_callees |> Option.value ~default:[])
 
-
-let load_defined pname = Procname.SQLite.serialize pname |> find ~defined:true
 
 let find_file_capturing_procedure pname =
   Option.map (load pname) ~f:(fun proc_attributes ->
@@ -115,7 +101,5 @@ let find_file_capturing_procedure pname =
 let pp_attributes_kind f = function
   | ProcUndefined ->
       F.pp_print_string f "<undefined>"
-  | ProcObjCAccessor ->
-      F.pp_print_string f "<ObjC accessor>"
   | ProcDefined ->
       F.pp_print_string f "<defined>"

@@ -27,7 +27,7 @@ module Bound : sig
 
   val of_big_int : Z.t -> t
 
-  val of_pulse_value : PulseAbstractValue.t -> t
+  val of_foreign_id : int -> t
 
   val minf : t
 
@@ -48,7 +48,7 @@ module Bound : sig
 
   val of_length_path : is_void:bool -> Symb.Symbol.make_t -> Symb.SymbolPath.partial -> t
 
-  val of_modeled_path : Symb.Symbol.make_t -> Symb.SymbolPath.partial -> t
+  val of_modeled_path : is_expensive:bool -> Symb.Symbol.make_t -> Symb.SymbolPath.partial -> t
 
   val of_minmax_bound_min : t -> t -> t
 

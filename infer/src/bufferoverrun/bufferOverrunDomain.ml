@@ -10,6 +10,7 @@
 open! IStd
 open AbsLoc
 open! AbstractDomain.Types
+module BoField = BufferOverrunField
 module F = Format
 module L = Logging
 module OndemandEnv = BufferOverrunOndemandEnv
@@ -17,11 +18,6 @@ module SPath = Symb.SymbolPath
 module Trace = BufferOverrunTrace
 module TraceSet = Trace.Set
 module LoopHeadLoc = Location
-
-type eval_sym_trace =
-  { eval_sym: Bounds.Bound.eval_sym
-  ; trace_of_sym: Symb.Symbol.t -> Trace.Set.t
-  ; eval_locpath: PowLoc.eval_locpath }
 
 module ItvThresholds = AbstractDomain.FiniteSet (struct
   include Z
@@ -86,6 +82,11 @@ module ModeledRange = struct
   let of_big_int ~trace z = NonBottom (Bounds.NonNegativeBound.of_big_int ~trace z)
 end
 
+type eval_sym_trace =
+  { eval_sym: Bounds.Bound.eval_sym
+  ; trace_of_sym: Symb.Symbol.t -> Trace.Set.t
+  ; eval_locpath: PowLoc.eval_locpath }
+
 module Val = struct
   type t =
     { itv: Itv.t
@@ -134,7 +135,7 @@ module Val = struct
     ; itv_thresholds= ItvThresholds.empty
     ; itv_updated_by= ItvUpdatedBy.Top
     ; modeled_range= ModeledRange.bottom
-    ; powloc= (if is_int then PowLoc.bottom else PowLoc.unknown)
+    ; powloc= (if is_int then PowLoc.bot else PowLoc.unknown)
     ; arrayblk= (if is_int then ArrayBlk.bottom else ArrayBlk.unknown)
     ; traces }
 
@@ -352,7 +353,7 @@ module Val = struct
         Itv.is_bottom pruned_itv
         && (not (Itv.is_bottom x.itv))
         && Itv.is_bottom y.itv
-        && not (PowLoc.is_bottom (get_all_locs y))
+        && not (PowLoc.is_bot (get_all_locs y))
       then x.itv
       else pruned_itv
     in
@@ -478,21 +479,21 @@ module Val = struct
    fun location ~length v ->
     { v with
       arrayblk= ArrayBlk.set_length length.itv v.arrayblk
-    ; traces= Trace.(Set.add_elem location ArrayDeclaration) length.traces }
+    ; traces= Trace.(Set.add_elem location SetArraySize) length.traces }
 
 
   let transform_array_length : Location.t -> f:(Itv.t -> Itv.t) -> t -> t =
    fun location ~f v ->
     { v with
       arrayblk= ArrayBlk.transform_length ~f v.arrayblk
-    ; traces= Trace.(Set.add_elem location (through ~risky_fun:None)) v.traces }
+    ; traces= Trace.(Set.add_elem location Through) v.traces }
 
 
   let set_array_offset : Location.t -> Itv.t -> t -> t =
    fun location offset v ->
     { v with
       arrayblk= ArrayBlk.set_offset offset v.arrayblk
-    ; traces= Trace.(Set.add_elem location (through ~risky_fun:None)) v.traces }
+    ; traces= Trace.(Set.add_elem location Through) v.traces }
 
 
   let set_array_stride : Z.t -> t -> t =
@@ -501,6 +502,8 @@ module Val = struct
 
 
   let unknown_locs = of_pow_loc PowLoc.unknown ~traces:TraceSet.bottom
+
+  let is_bot x = Itv.is_bottom x.itv && PowLoc.is_bot x.powloc && ArrayBlk.is_bot x.arrayblk
 
   let is_mone x = Itv.is_mone (get_itv x)
 
@@ -532,10 +535,9 @@ module Val = struct
       (if may_last_field then ", may_last_field" else "")
       (if is_java then ", is_java" else "") ;
     match typ.Typ.desc with
-    | Tint (IBool | IChar | ISChar | IUChar) ->
-        let v = itv_val ~non_int:(Language.curr_language_is Java) in
-        if Language.curr_language_is Java then set_itv_updated_by_unknown v
-        else set_itv_updated_by_addition v
+    | Tint (IBool | IChar | ISChar | IUChar | IUShort) ->
+        let v = itv_val ~non_int:is_java in
+        if is_java then set_itv_updated_by_unknown v else set_itv_updated_by_addition v
     | Tfloat _ | Tfun | TVar _ ->
         itv_val ~non_int:true |> set_itv_updated_by_unknown
     | Tint _ | Tvoid ->
@@ -632,23 +634,28 @@ module Val = struct
       | Some s ->
           of_itv (Itv.of_int (String.length s))
       | None -> (
-        match Loc.get_path l with
-        | None ->
-            L.d_printfln_escaped "Val.on_demand for %a -> no path" Loc.pp l ;
-            default
-        | Some path -> (
-          match typ_of_param_path path with
-          | None -> (
-            match typ with
-            | Some typ when Loc.is_global l ->
-                L.d_printfln_escaped "Val.on_demand for %a -> global" Loc.pp l ;
-                do_on_demand path typ
-            | _ ->
-                L.d_printfln_escaped "Val.on_demand for %a -> no type" Loc.pp l ;
-                default )
-          | Some typ ->
-              L.d_printfln_escaped "Val.on_demand for %a" Loc.pp l ;
-              do_on_demand path typ ) ) )
+        match l with
+        | Field {fn} when Fieldname.equal fn BufferOverrunField.java_linked_list_index ->
+            L.d_printfln_escaped "Val.on_demand for %a as zero" Loc.pp l ;
+            of_itv Itv.zero
+        | _ -> (
+          match Loc.get_path l with
+          | None ->
+              L.d_printfln_escaped "Val.on_demand for %a -> no path" Loc.pp l ;
+              default
+          | Some path -> (
+            match typ_of_param_path path with
+            | None -> (
+              match typ with
+              | Some typ when Loc.is_global l ->
+                  L.d_printfln_escaped "Val.on_demand for %a -> global" Loc.pp l ;
+                  do_on_demand path typ
+              | _ ->
+                  L.d_printfln_escaped "Val.on_demand for %a -> no type" Loc.pp l ;
+                  default )
+            | Some typ ->
+                L.d_printfln_escaped "Val.on_demand for %a" Loc.pp l ;
+                do_on_demand path typ ) ) ) )
 
 
   module Itv = struct
@@ -665,6 +672,8 @@ module Val = struct
     let unknown_bool = of_itv Itv.unknown_bool
 
     let zero = of_itv Itv.zero
+
+    let one = of_itv Itv.one
   end
 end
 
@@ -703,6 +712,11 @@ module MemPure = struct
 
   let bot = empty
 
+  let get_linked_list_index loc mem =
+    let linked_list_index = Loc.append_field loc BufferOverrunField.java_linked_list_index in
+    Option.map (find_opt linked_list_index mem) ~f:(fun (_, v) -> (linked_list_index, v))
+
+
   let range :
          filter_loc:(Loc.t -> LoopHeadLoc.t option)
       -> node_id:ProcCfg.Normal.Node.id
@@ -713,6 +727,7 @@ module MemPure = struct
       (fun loc (_, v) acc ->
         match filter_loc loc with
         | Some loop_head_loc -> (
+            let loc, v = Option.value (get_linked_list_index loc mem) ~default:(loc, v) in
             let itv_updated_by = Val.get_itv_updated_by v in
             match itv_updated_by with
             | Addition | Multiplication ->
@@ -785,12 +800,22 @@ module MemPure = struct
 
   (** Collect the location that was increased by one, i.e., [x -> x+1] *)
   let get_incr_locs m =
-    fold (fun l v acc -> if MVal.is_incr_of l v then PowLoc.add l acc else acc) m PowLoc.empty
+    fold (fun l v acc -> if MVal.is_incr_of l v then PowLoc.add l acc else acc) m PowLoc.bot
 
 
   let find_opt l m = Option.map (find_opt l m) ~f:MVal.get_val
 
-  let add ?(represents_multiple_values = false) l v m =
+  let add ?(represents_multiple_values = false) l ({Val.powloc; arrayblk} as v) m =
+    let v =
+      if Loc.is_unknown l then
+        (* We do not add the other locations except the unknown itself in its value.  This spoiled
+           other values raising out of memory sometimes, rather than being helpful for analysis
+           precision. *)
+        { v with
+          Val.powloc= (if PowLoc.is_bot powloc then powloc else PowLoc.unknown)
+        ; arrayblk= (if ArrayBlk.is_bottom arrayblk then arrayblk else ArrayBlk.unknown) }
+      else v
+    in
     let f = function
       | None ->
           Some (represents_multiple_values || Loc.represents_multiple_values l, v)
@@ -886,7 +911,7 @@ module AliasTarget = struct
     | IteratorOffset {java_tmp= None}
     | IteratorHasNext {java_tmp= None}
     | Top ->
-        PowLoc.empty
+        PowLoc.bot
 
 
   let use_loc l x = PowLoc.mem l (get_locs x)
@@ -1277,7 +1302,10 @@ end
 module AliasRet = struct
   include AliasTargets
 
-  let pp : F.formatter -> t -> unit = fun fmt x -> F.pp_print_string fmt "ret=" ; pp fmt x
+  let pp : F.formatter -> t -> unit =
+   fun fmt x ->
+    F.pp_print_string fmt "ret=" ;
+    pp fmt x
 end
 
 module Alias = struct
@@ -1422,10 +1450,7 @@ module CoreVal = struct
     if Itv.is_bottom itv then ArrayBlk.is_symbolic (Val.get_array_blk v) else Itv.is_symbolic itv
 
 
-  let is_empty v =
-    Itv.is_bottom (Val.get_itv v)
-    && PowLoc.is_empty (Val.get_pow_loc v)
-    && ArrayBlk.is_empty (Val.get_array_blk v)
+  let is_bot = Val.is_bot
 end
 
 module PruningExp = struct
@@ -1544,7 +1569,7 @@ module PrunedVal = struct
 
   let is_symbolic {v; pruning_exp} = CoreVal.is_symbolic v || PruningExp.is_symbolic pruning_exp
 
-  let is_empty {v; pruning_exp} = CoreVal.is_empty v || PruningExp.is_empty pruning_exp
+  let is_bot {v; pruning_exp} = CoreVal.is_bot v || PruningExp.is_empty pruning_exp
 end
 
 (* [PrunePairs] is a map from abstract locations to abstract values that represents pruned results
@@ -1571,7 +1596,7 @@ module PrunePairs = struct
     fold subst1 x (Ok empty)
 
 
-  let is_reachable x = not (exists (fun _ v -> PrunedVal.is_empty v) x)
+  let is_reachable x = not (exists (fun _ v -> PrunedVal.is_bot v) x)
 end
 
 module LatestPrune = struct
@@ -1720,7 +1745,7 @@ module LatestPrune = struct
       match PowLoc.is_singleton_or_more (PowLoc.subst_loc (Loc.of_pvar x) eval_locpath) with
       | Empty ->
           Error `SubstBottom
-      | Singleton (Loc.Var (Var.ProgramVar x')) ->
+      | Singleton (BoField.Prim (Loc.Var (Var.ProgramVar x'))) ->
           Ok x'
       | Singleton _ | More ->
           Error `SubstFail
@@ -1781,7 +1806,7 @@ module Reachability = struct
     let exception Unreachable in
     let subst1 x acc =
       let v = PrunedVal.subst x eval_sym_trace location in
-      if PrunedVal.is_empty v then raise Unreachable else add v acc
+      if PrunedVal.is_bot v then raise Unreachable else add v acc
     in
     match M.fold subst1 x M.empty with x -> `Reachable x | exception Unreachable -> `Unreachable
 end
@@ -1952,7 +1977,7 @@ module MemReach = struct
   let add_iterator_alias_common ~cond ~alias_add id m =
     let locs =
       let accum_loc l v acc = if cond v then PowLoc.add l acc else acc in
-      MemPure.fold accum_loc m.mem_pure PowLoc.empty
+      MemPure.fold accum_loc m.mem_pure PowLoc.bot
     in
     {m with alias= alias_add id locs m.alias}
 
@@ -2081,7 +2106,7 @@ module MemReach = struct
             Some v1
           in
           let apply_simple_alias1 ((m_acc, prunes_acc) as acc) = function
-            | Loc.Var (Var.ProgramVar y), i when Pvar.equal x y && IntLit.iszero i ->
+            | BoField.Prim (Loc.Var (Var.ProgramVar y)), i when Pvar.equal x y && IntLit.iszero i ->
                 (apply_prunes prunes m_acc, PrunePairs.union pruned_val_meet prunes_acc prunes)
             | _ ->
                 acc
@@ -2105,7 +2130,7 @@ module MemReach = struct
         let tgts = Alias.find_ret m.alias in
         let replace_latest_prune l tgt acc =
           match (l, tgt) with
-          | Loc.Var (ProgramVar pvar), AliasTarget.Simple {i} when IntLit.iszero i ->
+          | BoField.Prim (Loc.Var (ProgramVar pvar)), AliasTarget.Simple {i} when IntLit.iszero i ->
               {acc with latest_prune= LatestPrune.replace ~from:pvar ~to_:return m.latest_prune}
           | _ ->
               acc
@@ -2119,29 +2144,29 @@ module MemReach = struct
 
   let set_latest_prune : LatestPrune.t -> t -> t = fun latest_prune x -> {x with latest_prune}
 
-  let get_reachable_locs_from_aux : f:(Pvar.t -> bool) -> PowLoc.t -> _ t0 -> PowLoc.t =
+  let get_reachable_locs_from_aux : f:(Pvar.t -> bool) -> LocSet.t -> _ t0 -> LocSet.t =
     let add_reachable1 ~root loc v acc =
-      if Loc.equal root loc then PowLoc.union acc (Val.get_all_locs v)
-      else if Loc.is_field_of ~loc:root ~field_loc:loc then PowLoc.add loc acc
+      if Loc.equal root loc then LocSet.union acc (Val.get_all_locs v |> PowLoc.to_set)
+      else if Loc.is_field_of ~loc:root ~field_loc:loc then LocSet.add loc acc
       else acc
     in
-    let rec add_from_locs heap locs acc = PowLoc.fold (add_from_loc heap) locs acc
+    let rec add_from_locs heap locs acc = LocSet.fold (add_from_loc heap) locs acc
     and add_from_loc heap loc acc =
-      if PowLoc.mem loc acc then acc
+      if LocSet.mem loc acc then acc
       else
-        let reachable_locs = MemPure.fold (add_reachable1 ~root:loc) heap PowLoc.empty in
-        add_from_locs heap reachable_locs (PowLoc.add loc acc)
+        let reachable_locs = MemPure.fold (add_reachable1 ~root:loc) heap LocSet.empty in
+        add_from_locs heap reachable_locs (LocSet.add loc acc)
     in
     let add_param_locs ~f mem acc =
-      let add_loc loc _ acc = if Loc.exists_pvar ~f loc then PowLoc.add loc acc else acc in
+      let add_loc loc _ acc = if Loc.exists_pvar ~f loc then LocSet.add loc acc else acc in
       MemPure.fold add_loc mem acc
     in
     fun ~f locs m ->
       let locs = add_param_locs ~f m.mem_pure locs in
-      add_from_locs m.mem_pure locs PowLoc.empty
+      add_from_locs m.mem_pure locs LocSet.empty
 
 
-  let get_reachable_locs_from : (Pvar.t * Typ.t) list -> PowLoc.t -> _ t0 -> PowLoc.t =
+  let get_reachable_locs_from : (Pvar.t * Typ.t) list -> LocSet.t -> _ t0 -> LocSet.t =
    fun formals locs m ->
     let is_formal pvar = List.exists formals ~f:(fun (formal, _) -> Pvar.equal pvar formal) in
     get_reachable_locs_from_aux ~f:is_formal locs m
@@ -2163,9 +2188,9 @@ module MemReach = struct
           Pvar.is_return pvar || Pvar.is_global pvar
           || List.exists formals ~f:(fun (formal, _) -> Pvar.equal formal pvar)
         in
-        get_reachable_locs_from_aux ~f PowLoc.empty m
+        get_reachable_locs_from_aux ~f LocSet.empty m
       in
-      fun l -> PowLoc.mem l reachable_locs
+      fun l -> LocSet.mem l reachable_locs
     in
     let stack_locs = StackLocs.filter is_reachable m.stack_locs in
     let mem_pure = MemPure.filter (fun l _ -> is_reachable l) m.mem_pure in
@@ -2191,13 +2216,13 @@ module MemReach = struct
 end
 
 module Mem = struct
-  type 'has_oenv t0 = Bottom | ExcRaised | NonBottom of 'has_oenv MemReach.t0
+  type 'has_oenv t0 = Unreachable | ExcRaised | Reachable of 'has_oenv MemReach.t0
 
   type no_oenv_t = GOption.none t0
 
   type t = GOption.some t0
 
-  let bot : t = Bottom
+  let unreachable : t = Unreachable
 
   let exc_raised : t = ExcRaised
 
@@ -2207,15 +2232,15 @@ module Mem = struct
     if phys_equal lhs rhs then true
     else
       match (lhs, rhs) with
-      | Bottom, _ ->
+      | Unreachable, _ ->
           true
-      | _, Bottom ->
+      | _, Unreachable ->
           false
       | ExcRaised, _ ->
           true
       | _, ExcRaised ->
           false
-      | NonBottom lhs, NonBottom rhs ->
+      | Reachable lhs, Reachable rhs ->
           MemReach.leq ~lhs ~rhs
 
 
@@ -2223,33 +2248,33 @@ module Mem = struct
     if phys_equal x y then x
     else
       match (x, y) with
-      | Bottom, m | m, Bottom ->
+      | Unreachable, m | m, Unreachable ->
           m
       | ExcRaised, m | m, ExcRaised ->
           m
-      | NonBottom m1, NonBottom m2 ->
-          PhysEqual.optim2 ~res:(NonBottom (MemReach.join m1 m2)) x y
+      | Reachable m1, Reachable m2 ->
+          PhysEqual.optim2 ~res:(Reachable (MemReach.join m1 m2)) x y
 
 
   let widen ~prev:prev0 ~next:next0 ~num_iters =
     if phys_equal prev0 next0 then prev0
     else
       match (prev0, next0) with
-      | Bottom, m | m, Bottom ->
+      | Unreachable, m | m, Unreachable ->
           m
       | ExcRaised, m | m, ExcRaised ->
           m
-      | NonBottom prev, NonBottom next ->
-          PhysEqual.optim2 ~res:(NonBottom (MemReach.widen ~prev ~next ~num_iters)) prev0 next0
+      | Reachable prev, Reachable next ->
+          PhysEqual.optim2 ~res:(Reachable (MemReach.widen ~prev ~next ~num_iters)) prev0 next0
 
 
   let map ~f x =
     match x with
-    | Bottom | ExcRaised ->
+    | Unreachable | ExcRaised ->
         x
-    | NonBottom m ->
+    | Reachable m ->
         let m' = f m in
-        if phys_equal m' m then x else NonBottom m'
+        if phys_equal m' m then x else Reachable m'
 
 
   type get_summary = Procname.t -> no_oenv_t option
@@ -2257,13 +2282,13 @@ module Mem = struct
   let init : get_summary -> OndemandEnv.t -> t =
    fun get_summary oenv ->
     let get_summary pname =
-      match get_summary pname with Some (NonBottom m) -> Some m | _ -> None
+      match get_summary pname with Some (Reachable m) -> Some m | _ -> None
     in
-    NonBottom (MemReach.init get_summary oenv)
+    Reachable (MemReach.init get_summary oenv)
 
 
   let f_lift_default : default:'a -> ('h MemReach.t0 -> 'a) -> 'h t0 -> 'a =
-   fun ~default f m -> match m with Bottom | ExcRaised -> default | NonBottom m' -> f m'
+   fun ~default f m -> match m with Unreachable | ExcRaised -> default | Reachable m' -> f m'
 
 
   let is_stack_loc : Loc.t -> _ t0 -> bool =
@@ -2308,9 +2333,9 @@ module Mem = struct
   let find_ret_alias : _ t0 -> AliasTargets.t bottom_lifted =
    fun m ->
     match m with
-    | Bottom | ExcRaised ->
+    | Unreachable | ExcRaised ->
         Bottom
-    | NonBottom m' ->
+    | Reachable m' ->
         NonBottom (MemReach.find_ret_alias m')
 
 
@@ -2361,8 +2386,8 @@ module Mem = struct
 
   let incr_iterator_simple_alias_on_call eval_sym_trace ~callee_exit_mem m =
     match (callee_exit_mem, m) with
-    | NonBottom callee_exit_mem, NonBottom m ->
-        NonBottom (MemReach.incr_iterator_simple_alias_on_call eval_sym_trace ~callee_exit_mem m)
+    | Reachable callee_exit_mem, Reachable m ->
+        Reachable (MemReach.incr_iterator_simple_alias_on_call eval_sym_trace ~callee_exit_mem m)
     | _, _ ->
         m
 
@@ -2395,9 +2420,9 @@ module Mem = struct
 
   let strong_update : PowLoc.t -> Val.t -> t -> t = fun p v -> map ~f:(MemReach.strong_update p v)
 
-  let get_reachable_locs_from : (Pvar.t * Typ.t) list -> PowLoc.t -> _ t0 -> PowLoc.t =
+  let get_reachable_locs_from : (Pvar.t * Typ.t) list -> LocSet.t -> _ t0 -> LocSet.t =
    fun formals locs ->
-    f_lift_default ~default:PowLoc.empty (MemReach.get_reachable_locs_from formals locs)
+    f_lift_default ~default:LocSet.empty (MemReach.get_reachable_locs_from formals locs)
 
 
   let update_mem : PowLoc.t -> Val.t -> t -> t = fun ploc v -> map ~f:(MemReach.update_mem ploc v)
@@ -2414,11 +2439,11 @@ module Mem = struct
 
   let apply_latest_prune : Exp.t -> t -> t * PrunePairs.t =
    fun e -> function
-    | (Bottom | ExcRaised) as x ->
+    | (Unreachable | ExcRaised) as x ->
         (x, PrunePairs.empty)
-    | NonBottom m ->
+    | Reachable m ->
         let m, prune_pairs = MemReach.apply_latest_prune e m in
-        (NonBottom m, prune_pairs)
+        (Reachable m, prune_pairs)
 
 
   let update_latest_prune : updated_locs:PowLoc.t -> Exp.t -> Exp.t -> t -> t =
@@ -2440,10 +2465,10 @@ module Mem = struct
   let forget_size_alias arr_locs = map ~f:(MemReach.forget_size_alias arr_locs)
 
   let unset_oenv = function
-    | (Bottom | ExcRaised) as x ->
+    | (Unreachable | ExcRaised) as x ->
         x
-    | NonBottom m ->
-        NonBottom (MemReach.unset_oenv m)
+    | Reachable m ->
+        Reachable (MemReach.unset_oenv m)
 
 
   let set_first_idx_of_null loc idx = map ~f:(MemReach.set_first_idx_of_null loc idx)
@@ -2452,17 +2477,21 @@ module Mem = struct
 
   let get_c_strlen locs m =
     let get_c_strlen' loc acc =
-      match loc with Loc.Allocsite _ -> Val.join acc (find (Loc.of_c_strlen loc) m) | _ -> acc
+      match loc with
+      | BoField.Prim (Loc.Allocsite _) ->
+          Val.join acc (find (Loc.of_c_strlen loc) m)
+      | _ ->
+          acc
     in
     PowLoc.fold get_c_strlen' locs Val.bot
 
 
   let pp f m =
     match m with
-    | Bottom ->
-        F.pp_print_string f SpecialChars.up_tack
+    | Unreachable ->
+        F.fprintf f "%s_unreachable" SpecialChars.up_tack
     | ExcRaised ->
         F.pp_print_string f (SpecialChars.up_tack ^ " by exception")
-    | NonBottom m ->
+    | Reachable m ->
         MemReach.pp f m
 end

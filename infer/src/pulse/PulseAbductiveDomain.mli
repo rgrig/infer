@@ -4,21 +4,68 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
+
 open! IStd
+module F = Format
 open PulseBasicInterface
+module BaseAddressAttributes = PulseBaseAddressAttributes
 module BaseDomain = PulseBaseDomain
 module BaseMemory = PulseBaseMemory
 module BaseStack = PulseBaseStack
 
-(* layer on top of {!BaseDomain} to propagate operations on the current state to the pre-condition
-   when necessary
+(** Layer on top of {!BaseDomain} to propagate operations on the current state to the pre-condition
+    when necessary
 
-   The abstract type [t] is a pre/post pair in the style of biabduction.
-*)
+    The abstract type [t] is a pre/post pair in the style of biabduction. *)
 
-include AbstractDomain.NoJoin
+(** signature common to the "normal" [Domain], representing the post at the current program point,
+    and the inverted [PreDomain], representing the inferred pre-condition*)
+module type BaseDomainSig = sig
+  (* private because the lattice is not the same for preconditions and postconditions so we don't
+     want to confuse them *)
+  type t = private BaseDomain.t
+
+  val empty : t
+
+  val update : ?stack:BaseStack.t -> ?heap:BaseMemory.t -> ?attrs:BaseAddressAttributes.t -> t -> t
+
+  val filter_addr : f:(AbstractValue.t -> bool) -> t -> t
+  (** filter both heap and attrs *)
+
+  val filter_addr_with_discarded_addrs :
+    f:(AbstractValue.t -> bool) -> t -> t * AbstractValue.t list
+  (** compute new state containing only reachable addresses in its heap and attributes, as well as
+      the list of discarded unreachable addresses *)
+
+  val pp : F.formatter -> t -> unit
+end
+
+(** The post abstract state at each program point, or current state. *)
+module PostDomain : BaseDomainSig
+
+(** The inferred pre-condition at each program point, biabduction style.
+
+    NOTE: [PreDomain] and [Domain] theoretically differ in that [PreDomain] should be the inverted
+    lattice of [Domain], but since we never actually join states or check implication the two
+    collapse into one. * *)
+module PreDomain : BaseDomainSig
+
+(** biabduction-style pre/post state + skipped calls *)
+type t = private
+  { post: PostDomain.t  (** state at the current program point*)
+  ; pre: PreDomain.t  (** inferred pre at the current program point *)
+  ; skipped_calls: SkippedCalls.t  (** set of skipped calls *)
+  ; path_condition: PathCondition.t  (** arithmetic facts *) }
+
+val leq : lhs:t -> rhs:t -> bool
+
+val pp : Format.formatter -> t -> unit
 
 val mk_initial : Procdesc.t -> t
+
+val get_pre : t -> BaseDomain.t
+
+val get_post : t -> BaseDomain.t
 
 (** stack operations like {!BaseStack} but that also take care of propagating facts to the
     precondition *)
@@ -37,6 +84,8 @@ module Stack : sig
   val mem : Var.t -> t -> bool
 
   val exists : (Var.t -> BaseStack.value -> bool) -> t -> bool
+
+  val keys : t -> Var.t list
 end
 
 (** memory operations like {!BaseMemory} but that also take care of propagating facts to the
@@ -44,12 +93,6 @@ end
 module Memory : sig
   module Access = BaseMemory.Access
   module Edges = BaseMemory.Edges
-
-  val abduce_attribute : AbstractValue.t -> Attribute.t -> t -> t
-  (** add the attribute to the pre, if meaningful (does not modify the post) *)
-
-  val add_attribute : AbstractValue.t -> Attribute.t -> t -> t
-  (** add the attribute only to the post *)
 
   val add_edge :
        AbstractValue.t * ValueHistory.t
@@ -59,61 +102,64 @@ module Memory : sig
     -> t
     -> t
 
-  val check_valid : Trace.t -> AbstractValue.t -> t -> (t, Invalidation.t * Trace.t) result
-
-  val find_opt : AbstractValue.t -> t -> BaseMemory.cell option
-
-  val find_edge_opt : AbstractValue.t -> Access.t -> t -> (AbstractValue.t * ValueHistory.t) option
-
-  val set_cell : AbstractValue.t * ValueHistory.t -> BaseMemory.cell -> Location.t -> t -> t
-
-  val invalidate : AbstractValue.t * ValueHistory.t -> Invalidation.t -> Location.t -> t -> t
-
-  val get_closure_proc_name : AbstractValue.t -> t -> Procname.t option
-
-  val is_std_vector_reserved : AbstractValue.t -> t -> bool
-
-  val std_vector_reserve : AbstractValue.t -> t -> t
-
   val eval_edge :
     AbstractValue.t * ValueHistory.t -> Access.t -> t -> t * (AbstractValue.t * ValueHistory.t)
   (** [eval_edge (addr,hist) access astate] follows the edge [addr --access--> .] in memory and
       returns what it points to or creates a fresh value if that edge didn't exist. *)
 
-  val get_arithmetic : AbstractValue.t -> t -> (Arithmetic.t * Trace.t) option
+  val find_opt : AbstractValue.t -> t -> BaseMemory.Edges.t option
 
-  val get_bo_itv : AbstractValue.t -> t -> Itv.ItvPure.t
+  val find_edge_opt : AbstractValue.t -> Access.t -> t -> (AbstractValue.t * ValueHistory.t) option
+end
+
+(** attribute operations like {!BaseAddressAttributes} but that also take care of propagating facts
+    to the precondition *)
+module AddressAttributes : sig
+  val abduce_and_add : AbstractValue.t -> Attributes.t -> t -> t
+  (** add the attributes to both the current state and, if meaningful, the pre *)
+
+  val add_one : AbstractValue.t -> Attribute.t -> t -> t
+  (** add the attribute only to the post *)
+
+  val check_valid : Trace.t -> AbstractValue.t -> t -> (t, Invalidation.t * Trace.t) result
+
+  val invalidate : AbstractValue.t * ValueHistory.t -> Invalidation.t -> Location.t -> t -> t
+
+  val allocate : Procname.t -> AbstractValue.t * ValueHistory.t -> Location.t -> t -> t
+
+  val add_dynamic_type : Typ.Name.t -> AbstractValue.t -> t -> t
+
+  val remove_allocation_attr : AbstractValue.t -> t -> t
+
+  val get_closure_proc_name : AbstractValue.t -> t -> Procname.t option
+
+  val is_end_iterator : AbstractValue.t -> t -> bool
+
+  val is_std_vector_reserved : AbstractValue.t -> t -> bool
+
+  val std_vector_reserve : AbstractValue.t -> t -> t
+
+  val find_opt : AbstractValue.t -> t -> Attributes.t option
 end
 
 val is_local : Var.t -> t -> bool
 
-module PrePost : sig
-  type domain_t = t
+val find_post_cell_opt : AbstractValue.t -> t -> BaseDomain.cell option
 
-  type t = private domain_t
+val discard_unreachable : t -> t * AbstractValue.Set.t * AbstractValue.t list
+(** garbage collect unreachable addresses in the state to make it smaller and return the new state,
+    the live addresses, and the discarded addresses that used to have attributes attached *)
 
-  val pp : Format.formatter -> t -> unit
+val add_skipped_call : Procname.t -> Trace.t -> t -> t
 
-  val of_post : Procdesc.t -> domain_t -> t
+val add_skipped_calls : SkippedCalls.t -> t -> t
 
-  val apply :
-       Procname.t
-    -> Location.t
-    -> t
-    -> formals:Var.t list
-    -> actuals:((AbstractValue.t * ValueHistory.t) * Typ.t) list
-    -> domain_t
-    -> ((domain_t * (AbstractValue.t * ValueHistory.t) option) option, Diagnostic.t) result
-  (** return the abstract state after the call along with an optional return value, or [None] if the
-      precondition could not be satisfied (e.g. some aliasing constraints were not satisfied) *)
-end
+val set_path_condition : PathCondition.t -> t -> t
 
-val discard_unreachable : t -> t
-(** garbage collect unreachable addresses in the state to make it smaller, just for convenience and
-    keep its size down *)
+val of_post : Procdesc.t -> t -> t
 
-val add_skipped_calls_map : Procname.t -> PulseTrace.t -> t -> t
+val set_post_edges : AbstractValue.t -> BaseMemory.Edges.t -> t -> t
+(** directly set the edges for the given address, bypassing abduction altogether *)
 
-val extract_pre : PrePost.t -> BaseDomain.t
-
-val extract_post : PrePost.t -> BaseDomain.t
+val set_post_cell : AbstractValue.t * ValueHistory.t -> BaseDomain.cell -> Location.t -> t -> t
+(** directly set the edges and attributes for the given address, bypassing abduction altogether *)

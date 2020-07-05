@@ -6,8 +6,6 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
-[@@@ocamlformat "parse-docstrings = false"]
-
 (** The Smallfoot Intermediate Language: Types *)
 
 open! IStd
@@ -220,10 +218,14 @@ module T = struct
         equal_ikind ikind1 ikind2
     | Tfloat fkind1, Tfloat fkind2 ->
         equal_fkind fkind1 fkind2
-    | Tvoid, Tvoid ->
+    | Tvoid, Tvoid | Tfun, Tfun ->
         true
     | Tptr (t1, ptr_kind1), Tptr (t2, ptr_kind2) ->
         equal_ptr_kind ptr_kind1 ptr_kind2 && equal_ignore_quals t1 t2
+    | Tstruct name1, Tstruct name2 ->
+        equal_name name1 name2
+    | TVar s1, TVar s2 ->
+        String.equal s1 s2
     | Tarray {elt= t1}, Tarray {elt= t2} ->
         equal_ignore_quals t1 t2
     | _, _ ->
@@ -261,13 +263,19 @@ let mk_array ?default ?quals ?length ?stride elt : t =
   mk ?default ?quals (Tarray {elt; length; stride})
 
 
+let mk_struct name = mk (Tstruct name)
+
+let mk_ptr ?(ptr_kind = Pk_pointer) t = mk (Tptr (t, ptr_kind))
+
 let void = mk Tvoid
 
-let void_star = mk (Tptr (mk Tvoid, Pk_pointer))
+let void_star = mk (Tptr (void, Pk_pointer))
 
-let java_byte = mk (Tint IShort)
+let java_char = mk (Tint IUShort)
 
-let java_short = java_byte
+let java_byte = mk (Tint ISChar)
+
+let java_short = mk (Tint IShort)
 
 let boolean = mk (Tint IBool)
 
@@ -443,47 +451,7 @@ module Name = struct
   end
 
   module Java = struct
-    module Split = struct
-      (** e.g. {type_name="int"; package=None} for primitive types
-      * or {type_name="PrintWriter"; package=Some "java.io"} for objects.
-      *)
-      type t = {package: string option; type_name: string} [@@deriving compare, equal]
-
-      let make ?package type_name = {type_name; package}
-
-      (** Given a package.class_name string, it looks for the latest dot and split the string
-                in two (package, class_name) *)
-      let of_string package_classname =
-        match String.rsplit2 package_classname ~on:'.' with
-        | Some (package, type_name) ->
-            {type_name; package= Some package}
-        | None ->
-            {type_name= package_classname; package= None}
-
-
-      let package {package} = package
-
-      let type_name {type_name} = type_name
-
-      let java_lang_object = make ~package:"java.lang" "Object"
-
-      let java_lang_string = make ~package:"java.lang" "String"
-
-      let void = make "void"
-
-      let pp_type_verbosity ~verbose fmt = function
-        | {package= Some package; type_name} when verbose ->
-            F.fprintf fmt "%s.%s" package type_name
-        | {type_name} ->
-            F.pp_print_string fmt type_name
-    end
-
     let from_string name_str = JavaClass (JavaClassName.from_string name_str)
-
-    let from_package_class package_name class_name =
-      if String.equal package_name "" then from_string class_name
-      else from_string (package_name ^ "." ^ class_name)
-
 
     let is_class = function JavaClass _ -> true | _ -> false
 
@@ -497,38 +465,31 @@ module Name = struct
 
     let java_lang_string = from_string "java.lang.String"
 
-    let split_typename typename = Split.of_string (name typename)
+    let get_java_class_name_opt typename =
+      match typename with JavaClass java_class_name -> Some java_class_name | _ -> None
 
-    let get_outer_class class_name =
-      let {Split.package; type_name} = split_typename class_name in
-      match String.rsplit2 ~on:'$' type_name with
-      | Some (parent_class, _) ->
-          Some (from_package_class (Option.value ~default:"" package) parent_class)
+
+    let get_java_class_name_exn typename =
+      match get_java_class_name_opt typename with
+      | Some java_class_name ->
+          java_class_name
       | None ->
-          None
+          L.die InternalError "Tried to split a non-java class name into a java split type@."
 
 
-    let is_anonymous_inner_class_name class_name =
-      let class_name_no_package = Split.type_name (split_typename class_name) in
-      match String.rsplit2 class_name_no_package ~on:'$' with
-      | Some (_, s) ->
-          let is_int =
-            try
-              ignore (int_of_string (String.strip s)) ;
-              true
-            with Failure _ -> false
-          in
-          is_int
-      | None ->
-          false
+    let is_anonymous_inner_class_name_exn class_name =
+      let java_class_name = get_java_class_name_exn class_name in
+      JavaClassName.is_anonymous_inner_class_name java_class_name
 
 
-    let is_external_classname name_string =
-      let {Split.package} = Split.of_string name_string in
-      Option.exists ~f:Config.java_package_is_external package
+    let is_anonymous_inner_class_name_opt class_name =
+      get_java_class_name_opt class_name
+      |> Option.map ~f:JavaClassName.is_anonymous_inner_class_name
 
 
-    let is_external t = is_external_classname (name t)
+    let is_external t =
+      get_java_class_name_exn t |> JavaClassName.package
+      |> Option.exists ~f:Config.java_package_is_external
   end
 
   module Cpp = struct
@@ -547,10 +508,16 @@ module Name = struct
     let is_class = function ObjcClass _ -> true | _ -> false
   end
 
-  module Set = Caml.Set.Make (struct
-    type nonrec t = t
+  module Set = PrettyPrintable.MakePPSet (struct
+    type nonrec t = t [@@deriving compare]
 
-    let compare = compare
+    let pp = pp
+  end)
+
+  module Map = PrettyPrintable.MakePPMap (struct
+    type nonrec t = t [@@deriving compare]
+
+    let pp = pp
   end)
 end
 
@@ -576,8 +543,12 @@ let unsome s = function
 (** turn a *T into a T. fails if [typ] is not a pointer type *)
 let strip_ptr typ = match typ.desc with Tptr (t, _) -> t | _ -> assert false
 
-(** If an array type, return the type of the element.
-    If not, return the default type if given, otherwise raise an exception *)
+let is_ptr_to_ignore_quals t ~ptr =
+  match ptr.desc with Tptr (t', _) -> equal_ignore_quals t t' | _ -> false
+
+
+(** If an array type, return the type of the element. If not, return the default type if given,
+    otherwise raise an exception *)
 let array_elem default_opt typ =
   match typ.desc with Tarray {elt} -> elt | _ -> unsome "array_elem" default_opt
 

@@ -195,7 +195,14 @@ let pp_print_list ~max ?(pp_sep = Format.pp_print_cut) pp_v ppf =
           pp_v ppf v ;
           aux (n + 1) rest )
   in
-  function [] -> () | [v] -> pp_v ppf v | v :: rest -> pp_v ppf v ; aux 1 rest
+  function
+  | [] ->
+      ()
+  | [v] ->
+      pp_v ppf v
+  | v :: rest ->
+      pp_v ppf v ;
+      aux 1 rest
 
 
 let fold2_result ~init ~f l1 l2 =
@@ -204,3 +211,26 @@ let fold2_result ~init ~f l1 l2 =
 
 
 let eval_until_first_some thunks = List.find_map thunks ~f:(fun f -> f ())
+
+let move_last_to_first =
+  let rec move_last_to_first_helper l rev_acc =
+    match l with
+    | [] ->
+        []
+    | [a] ->
+        a :: List.rev rev_acc
+    | hd :: tl ->
+        move_last_to_first_helper tl (hd :: rev_acc)
+  in
+  fun l -> move_last_to_first_helper l []
+
+
+let traverse_opt xs ~f =
+  List.fold_until xs ~init:[]
+    ~f:(fun acc x ->
+      match f x with
+      | Some r ->
+          Continue_or_stop.Continue (r :: acc)
+      | _ ->
+          Continue_or_stop.Stop None )
+    ~finish:(fun acc -> Some (List.rev acc))

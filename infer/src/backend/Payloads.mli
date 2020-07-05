@@ -17,7 +17,7 @@ include sig
     ; biabduction: BiabductionSummary.t option
     ; buffer_overrun_analysis: BufferOverrunAnalysisSummary.t option
     ; buffer_overrun_checker: BufferOverrunCheckerSummary.t option
-    ; class_loads: ClassLoadsDomain.summary option
+    ; config_checks_between_markers: ConfigChecksBetweenMarkers.Summary.t option
     ; cost: CostDomain.summary option
     ; lab_resource_leaks: ResourceLeakDomain.summary option
     ; litho_required_props: LithoDomain.summary option
@@ -27,7 +27,7 @@ include sig
     ; racerd: RacerDDomain.summary option
     ; siof: SiofDomain.Summary.t option
     ; starvation: StarvationDomain.summary option
-    ; typestate: TypeState.t option
+    ; nullsafe: NullsafeSummary.t option
     ; uninit: UninitDomain.Summary.t option }
   [@@deriving fields]
 end
@@ -35,5 +35,3 @@ end
 val pp : Pp.env -> Format.formatter -> t -> unit
 
 val empty : t
-
-val poly_fields : t PolyFields.t

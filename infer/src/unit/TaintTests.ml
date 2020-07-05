@@ -8,7 +8,7 @@
 open! IStd
 module F = Format
 
-module MockTrace = Trace.Make (struct
+module MockTrace = TaintTrace.Make (struct
   module MockTraceElem = struct
     include CallSite
 
@@ -108,10 +108,10 @@ let tests =
   let call_sink actual_str = call_sink_with_exp (Exp.Var (ident_of_str actual_str)) in
   let assign_id_to_field root_str fld_str rhs_id_str =
     let rhs_exp = Exp.Var (ident_of_str rhs_id_str) in
-    make_store ~rhs_typ:(Typ.mk Tvoid) (Exp.Var (ident_of_str root_str)) fld_str ~rhs_exp
+    make_store ~rhs_typ:Typ.void (Exp.Var (ident_of_str root_str)) fld_str ~rhs_exp
   in
   let read_field_to_id lhs_id_str root_str fld_str =
-    make_load_fld ~rhs_typ:(Typ.mk Tvoid) lhs_id_str fld_str (Exp.Var (ident_of_str root_str))
+    make_load_fld ~rhs_typ:Typ.void lhs_id_str fld_str (Exp.Var (ident_of_str root_str))
   in
   let assert_empty = invariant "{ }" in
   let exe_env = Exe_env.mk () in
@@ -153,7 +153,12 @@ let tests =
     ; ( "sink without source not tracked"
       , [assign_to_non_source "ret_id"; call_sink "ret_id"; assert_empty] ) ]
     |> TestInterpreter.create_tests ~pp_opt:pp_sparse
-         {formal_map= FormalMap.empty; summary= Summary.OnDisk.dummy}
+         (fun summary ->
+           { analysis_data=
+               CallbackOfChecker.mk_interprocedural_field_t Payloads.Fields.quandary (Exe_env.mk ())
+                 summary ~tenv:(Tenv.create ()) ()
+               |> fst
+           ; formal_map= FormalMap.empty } )
          ~initial:(MockTaintAnalysis.Domain.bottom, Bindings.empty)
   in
   "taint_test_suite" >::: test_list

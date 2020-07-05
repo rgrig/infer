@@ -19,15 +19,11 @@ module Java : sig
 
   type t [@@deriving compare]
 
-  type java_type = Typ.Name.Java.Split.t [@@deriving compare, equal]
+  type java_type = JavaSplitName.t [@@deriving compare, equal]
 
   val constructor_method_name : string
 
   val class_initializer_method_name : string
-
-  val make : Typ.Name.t -> java_type option -> string -> java_type list -> kind -> t
-  (** Create a Java procedure name from its class_name method_name args_type_name return_type_name
-      method_kind. *)
 
   val replace_method_name : string -> t -> t
   (** Replace the method name of an existing java procname. *)
@@ -69,8 +65,12 @@ module Java : sig
   val is_autogen_method : t -> bool
   (** Check if the procedure name is of an auto-generated method containing '$'. *)
 
-  val is_anonymous_inner_class_constructor : t -> bool
-  (** Check if the procedure name is an anonymous inner class constructor. *)
+  val is_autogen_method_name : string -> bool
+  (** Check if the string of procedure name is of an auto-generated method containing '$'. *)
+
+  val is_anonymous_inner_class_constructor_exn : t -> bool
+  (** Check if the procedure name is an anonymous inner class constructor. Throws if it is not a
+      Java type *)
 
   val is_close : t -> bool
   (** Check if the method name is "close". *)
@@ -173,6 +173,8 @@ module C : sig
   val c :
     QualifiedCppName.t -> string -> Parameter.clang_parameter list -> Typ.template_spec_info -> t
   (** Create a C procedure name from plain and mangled name. *)
+
+  val is_make_shared : t -> bool
 end
 
 module Block : sig
@@ -216,16 +218,24 @@ val is_java_access_method : t -> bool
 
 val is_java_class_initializer : t -> bool
 
+val is_java_anonymous_inner_class_method : t -> bool
+
+val is_java_autogen_method : t -> bool
+
 val is_objc_method : t -> bool
 
-module Hash : Caml.Hashtbl.S with type key = t
 (** Hash tables with proc names as keys. *)
+module Hash : Caml.Hashtbl.S with type key = t
 
-module Map : PrettyPrintable.PPMap with type key = t
+module LRUHash : LRUHashtbl.S with type key = t
+
+module HashQueue : Hash_queue.S with type key = t
+
 (** Maps from proc names. *)
+module Map : PrettyPrintable.PPMap with type key = t
 
-module Set : PrettyPrintable.PPSet with type elt = t
 (** Sets of proc names. *)
+module Set : PrettyPrintable.PPSet with type elt = t
 
 module SQLite : sig
   val serialize : t -> Sqlite3.Data.t
@@ -236,6 +246,25 @@ module SQLite : sig
 end
 
 module SQLiteList : SqliteUtils.Data with type t = t list
+
+(** One-sized cache for one procedure at a time. Returns getter and setter. *)
+module UnitCache : sig
+  val create : unit -> (t -> 'a option) * (t -> 'a -> unit)
+end
+
+val make_java :
+     class_name:Typ.Name.t
+  -> return_type:Java.java_type option
+  -> method_name:string
+  -> parameters:Java.java_type list
+  -> kind:Java.kind
+  -> unit
+  -> t
+(** Create a Java procedure name. *)
+
+val make_objc_dealloc : Typ.Name.t -> t
+(** Create a Objective-C dealloc name. This is a destructor for an Objective-C class. This procname
+    is given by the class name, since it is always an instance method with the name "dealloc" *)
 
 val empty_block : t
 (** Empty block name. *)
@@ -248,6 +277,9 @@ val get_method : t -> string
 
 val is_objc_block : t -> bool
 (** Return whether the procname is a block procname. *)
+
+val is_objc_dealloc : t -> bool
+(** Return whether the dealloc method of an Objective-C class. *)
 
 val is_c_method : t -> bool
 (** Return true this is an Objective-C/C++ method name. *)
@@ -307,8 +339,8 @@ val pp_unique_id : F.formatter -> t -> unit
 val to_unique_id : t -> string
 (** Convert a proc name into a unique identifier. *)
 
-val to_filename : ?crc_only:bool -> t -> string
-(** Convert a proc name to a filename or only to its crc. *)
+val to_filename : t -> string
+(** Convert a proc name to a filename. *)
 
 val get_qualifiers : t -> QualifiedCppName.t
 (** get qualifiers of C/objc/C++ method/function *)

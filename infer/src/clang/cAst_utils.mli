@@ -33,11 +33,11 @@ val get_property_of_ivar : Clang_ast_t.pointer -> Clang_ast_t.decl option
 
 val update_sil_types_map : Clang_ast_t.type_ptr -> Typ.desc -> unit
 
-val update_enum_map : Clang_ast_t.pointer -> Exp.t -> unit
+val update_enum_map_exn : Clang_ast_t.pointer -> Exp.t -> unit
 
 val add_enum_constant : Clang_ast_t.pointer -> Clang_ast_t.pointer option -> unit
 
-val get_enum_constant_exp : Clang_ast_t.pointer -> Clang_ast_t.pointer option * Exp.t option
+val get_enum_constant_exp_exn : Clang_ast_t.pointer -> Clang_ast_t.pointer option * Exp.t option
 
 val get_qualified_name : ?linters_mode:bool -> Clang_ast_t.named_decl_info -> QualifiedCppName.t
 (** returns sanitized, fully qualified name given name info *)
@@ -124,8 +124,6 @@ val is_objc_factory_method :
   class_decl:Clang_ast_t.decl option -> method_decl:Clang_ast_t.decl option -> bool
 (** A class method that returns an instance of the class is a factory method. *)
 
-val name_of_decl_ref_opt : Clang_ast_t.decl_ref option -> string option
-
 val sil_annot_of_type : Clang_ast_t.qual_type -> Annot.Item.t
 
 val type_of_decl : Clang_ast_t.decl -> Clang_ast_t.type_ptr option
@@ -137,6 +135,8 @@ val get_cxx_base_classes : Clang_ast_t.decl -> Clang_ast_t.type_ptr list
 val get_cxx_virtual_base_classes : Clang_ast_t.decl -> Clang_ast_t.type_ptr list
 
 val is_std_vector : Clang_ast_t.qual_type -> bool
+
+val is_no_escape_block_arg : Clang_ast_t.decl -> bool
 
 val has_block_attribute : Clang_ast_t.decl -> bool
 

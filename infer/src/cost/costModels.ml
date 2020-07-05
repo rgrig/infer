@@ -23,11 +23,12 @@ let linear = cost_of_exp ~degree_kind:Polynomials.DegreeKind.Linear
 
 let log = cost_of_exp ~degree_kind:Polynomials.DegreeKind.Log
 
-let modeled ~of_function {pname; location} ~ret:(_, ret_typ) _ : BasicCost.t =
+let provider_get {pname; location} ~ret:(_, ret_typ) _ : BasicCost.t =
   let callsite = CallSite.make pname location in
   let path = Symb.SymbolPath.of_callsite ~ret_typ callsite in
-  let itv = Itv.of_modeled_path path in
-  CostUtils.of_itv ~itv ~degree_kind:Polynomials.DegreeKind.Linear ~of_function location
+  let itv = Itv.of_modeled_path ~is_expensive:true path in
+  CostUtils.of_itv ~itv ~degree_kind:Polynomials.DegreeKind.Linear ~of_function:"Provider.get"
+    location
 
 
 module BoundsOf (Container : CostUtils.S) = struct
@@ -46,26 +47,50 @@ module BoundsOf (Container : CostUtils.S) = struct
     BasicCost.mult n log_n
 end
 
+module IntHashMap = struct
+  let keys {ProcnameDispatcher.Call.FuncArg.exp; typ} {location} ~ret:_ inferbo_mem =
+    let locs = BufferOverrunSemantics.eval_locs exp inferbo_mem in
+    match AbsLoc.PowLoc.is_singleton_or_more locs with
+    | Singleton this_loc -> (
+      match (AbsLoc.Loc.get_path this_loc, Typ.strip_ptr typ |> Typ.name) with
+      | Some path, Some typ_name ->
+          let path = Symb.SymbolPath.append_field path (Fieldname.make typ_name "size") in
+          let itv = Itv.of_normal_path ~unsigned:true path in
+          CostUtils.of_itv ~itv ~degree_kind:Linear ~of_function:"IntHashMap.keys" location
+      | _, _ ->
+          BasicCost.top )
+    | Empty | More ->
+        BasicCost.top
+end
+
 module JavaString = struct
   let substring_aux ~begin_idx ~end_v {integer_type_widths; location} inferbo_mem =
     let begin_v = BufferOverrunSemantics.eval integer_type_widths begin_idx inferbo_mem in
     let begin_itv = BufferOverrunDomain.Val.get_itv begin_v in
     let end_itv = BufferOverrunDomain.Val.get_itv end_v in
     let itv =
-      if Boolean.is_true (Itv.le_sem begin_itv end_itv) then Itv.minus end_itv begin_itv
-      else end_itv
+      if
+        Boolean.is_true (Itv.le_sem Itv.zero begin_itv)
+        && Boolean.is_true (Itv.le_sem begin_itv end_itv)
+      then Itv.minus end_itv begin_itv
+      else
+        (* in practice, either we have two symbolic bounds that are semantically
+           incomparable at this point or there is an out of bounds exception. In
+           both cases, we don't want to give negative cost so we
+           behave as if there is no model and give unit cost. *)
+        Itv.of_int 1
     in
     CostUtils.of_itv ~itv ~degree_kind:Polynomials.DegreeKind.Linear ~of_function:"String.substring"
       location
 
 
-  let substring exp begin_idx model_env ~ret:_ inferbo_mem =
+  let substring_no_end exp begin_idx model_env ~ret:_ inferbo_mem =
     substring_aux ~begin_idx
       ~end_v:(BufferOverrunModels.JavaString.get_length model_env exp inferbo_mem)
       model_env inferbo_mem
 
 
-  let substring_no_end begin_idx end_idx ({integer_type_widths} as model_env) ~ret:_ inferbo_mem =
+  let substring begin_idx end_idx ({integer_type_widths} as model_env) ~ret:_ inferbo_mem =
     substring_aux ~begin_idx
       ~end_v:(BufferOverrunSemantics.eval integer_type_widths end_idx inferbo_mem)
       model_env inferbo_mem
@@ -113,6 +138,7 @@ end
 
 module BoundsOfCollection = BoundsOf (CostUtils.Collection)
 module BoundsOfArray = BoundsOf (CostUtils.Array)
+module BoundsOfCString = BoundsOf (CostUtils.CString)
 
 module ImmutableSet = struct
   let construct = linear ~of_function:"ImmutableSet.construct"
@@ -126,7 +152,9 @@ module Call = struct
     let int_typ = Typ.mk (Typ.Tint Typ.IInt) in
     let dispatcher =
       make_dispatcher
-        [ +PatternMatch.implements_collections
+        [ -"google" &:: "StrLen" <>$ capt_exp
+          $--> BoundsOfCString.linear_length ~of_function:"google::StrLen"
+        ; +PatternMatch.implements_collections
           &:: "sort" $ capt_exp
           $+...$--> BoundsOfCollection.n_log_n_length ~of_function:"Collections.sort"
         ; +PatternMatch.implements_list &:: "sort" $ capt_exp
@@ -163,7 +191,7 @@ module Call = struct
           &:: "shuffle" <>$ capt_exp
           $+...$--> BoundsOfCollection.linear_length ~of_function:"Collections.shuffle"
         ; +PatternMatch.implements_lang "String"
-          &:: "substring" <>$ capt_exp $+ capt_exp $--> JavaString.substring
+          &:: "substring" <>$ capt_exp $+ capt_exp $--> JavaString.substring_no_end
         ; +PatternMatch.implements_lang "String"
           &:: "indexOf" <>$ capt_exp
           $+ capt_exp_of_typ (+PatternMatch.implements_lang "String")
@@ -176,12 +204,12 @@ module Call = struct
         ; +PatternMatch.implements_lang "String"
           &:: "substring"
           $ any_arg_of_typ (+PatternMatch.implements_lang "String")
-          $+ capt_exp $+ capt_exp $--> JavaString.substring_no_end
-        ; +PatternMatch.implements_inject "Provider"
-          &:: "get"
-          <>--> modeled ~of_function:"Provider.get"
+          $+ capt_exp $+ capt_exp $--> JavaString.substring
+        ; +PatternMatch.implements_inject "Provider" &:: "get" <>--> provider_get
         ; +PatternMatch.implements_xmob_utils "IntHashMap" &:: "<init>" <>--> unit_cost_model
         ; +PatternMatch.implements_xmob_utils "IntHashMap" &:: "getElement" <>--> unit_cost_model
+        ; +PatternMatch.implements_xmob_utils "IntHashMap"
+          &:: "keys" <>$ capt_arg $--> IntHashMap.keys
         ; +PatternMatch.implements_xmob_utils "IntHashMap" &:: "put" <>--> unit_cost_model
         ; +PatternMatch.implements_xmob_utils "IntHashMap" &:: "remove" <>--> unit_cost_model
         ; +PatternMatch.implements_google "common.collect.ImmutableSet"

@@ -112,14 +112,13 @@ let get_class_name_method_call_from_receiver_kind context obj_c_message_expr_inf
 
 let get_objc_method_data obj_c_message_expr_info =
   let selector = obj_c_message_expr_info.Clang_ast_t.omei_selector in
-  let pointer = obj_c_message_expr_info.Clang_ast_t.omei_decl_pointer in
   match obj_c_message_expr_info.Clang_ast_t.omei_receiver_kind with
   | `Instance ->
-      (selector, pointer, MCVirtual)
+      (selector, MCVirtual)
   | `SuperInstance ->
-      (selector, pointer, MCNoVirtual)
+      (selector, MCNoVirtual)
   | `Class _ | `SuperClass ->
-      (selector, pointer, MCStatic)
+      (selector, MCStatic)
 
 
 let should_create_procdesc cfg procname ~defined ~set_objc_accessor_attr =
@@ -127,7 +126,8 @@ let should_create_procdesc cfg procname ~defined ~set_objc_accessor_attr =
   | previous_procdesc ->
       let is_defined_previous = Procdesc.is_defined previous_procdesc in
       if (defined || set_objc_accessor_attr) && not is_defined_previous then (
-        Procname.Hash.remove cfg procname ; true )
+        Procname.Hash.remove cfg procname ;
+        true )
       else false
   | exception Caml.Not_found ->
       true
@@ -194,7 +194,6 @@ let create_local_procdesc ?(set_objc_accessor_attr = false) trans_unit_ctx cfg t
   let defined = not (List.is_empty fbody) in
   let proc_name = ms.CMethodSignature.name in
   let clang_method_kind = ms.CMethodSignature.method_kind in
-  let is_cpp_nothrow = ms.CMethodSignature.is_cpp_nothrow in
   let access =
     match ms.CMethodSignature.access with
     | `None ->
@@ -246,8 +245,8 @@ let create_local_procdesc ?(set_objc_accessor_attr = false) trans_unit_ctx cfg t
         ; has_added_return_param
         ; access
         ; is_defined= defined
-        ; is_cpp_noexcept_method= is_cpp_nothrow
         ; is_biabduction_model= Config.biabduction_models_mode
+        ; passed_as_noescape_block_to= ms.CMethodSignature.passed_as_noescape_block_to
         ; is_no_return= ms.CMethodSignature.is_no_return
         ; is_variadic= ms.CMethodSignature.is_variadic
         ; sentinel_attr= find_sentinel_attribute ms.CMethodSignature.attributes
@@ -266,7 +265,8 @@ let create_local_procdesc ?(set_objc_accessor_attr = false) trans_unit_ctx cfg t
       Procdesc.set_exit_node procdesc exit_node )
   in
   if should_create_procdesc cfg proc_name ~defined ~set_objc_accessor_attr then (
-    create_new_procdesc () ; true )
+    create_new_procdesc () ;
+    true )
   else false
 
 
@@ -278,7 +278,7 @@ let create_external_procdesc trans_unit_ctx cfg proc_name clang_method_kind type
       | Some (ret_type, arg_types) ->
           (ret_type, List.map ~f:(fun typ -> (Mangled.from_string "x", typ)) arg_types)
       | None ->
-          (Typ.mk Typ.Tvoid, [])
+          (Typ.void, [])
     in
     let proc_attributes =
       { (ProcAttributes.default trans_unit_ctx.CFrontend_config.source_file proc_name) with

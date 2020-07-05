@@ -11,8 +11,6 @@ open! IStd
 
 type objc_accessor_type = Objc_getter of Struct.field | Objc_setter of Struct.field
 
-val kind_of_objc_accessor_type : objc_accessor_type -> string
-
 type var_data =
   { name: Mangled.t
   ; typ: Typ.t
@@ -31,8 +29,10 @@ type t =
   ; is_biabduction_model: bool  (** the procedure is a model for the biabduction analysis *)
   ; is_bridge_method: bool  (** the procedure is a bridge method *)
   ; is_defined: bool  (** true if the procedure is defined, and not just declared *)
-  ; is_cpp_noexcept_method: bool  (** the procedure is an C++ method annotated with "noexcept" *)
   ; is_java_synchronized_method: bool  (** the procedure is a Java synchronized method *)
+  ; passed_as_noescape_block_to: Procname.t option
+        (** Present if the procedure is an Objective-C block that has been passed to the given
+            method in a position annotated with the NS_NOESCAPE attribute. *)
   ; is_no_return: bool  (** the procedure is known not to return *)
   ; is_specialized: bool  (** the procedure is a clone specialized for dynamic dispatch handling *)
   ; is_synthetic_method: bool  (** the procedure is a synthetic method *)
@@ -52,5 +52,7 @@ val default : SourceFile.t -> Procname.t -> t
 (** Create a proc_attributes with default values. *)
 
 val pp : Format.formatter -> t -> unit
+
+val get_annotated_formals : t -> ((Mangled.t * Typ.t) * Annot.Item.t) list
 
 module SQLite : SqliteUtils.Data with type t = t

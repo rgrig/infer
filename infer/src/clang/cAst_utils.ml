@@ -143,7 +143,7 @@ let update_sil_types_map type_ptr sil_type =
     Clang_ast_extend.TypePointerMap.add type_ptr sil_type !CFrontend_config.sil_types_map
 
 
-let update_enum_map enum_constant_pointer sil_exp =
+let update_enum_map_exn enum_constant_pointer sil_exp =
   let predecessor_pointer_opt, _ =
     ClangPointers.Map.find_exn !CFrontend_config.enum_map enum_constant_pointer
   in
@@ -158,7 +158,7 @@ let add_enum_constant enum_constant_pointer predecessor_pointer_opt =
     ClangPointers.Map.set !CFrontend_config.enum_map ~key:enum_constant_pointer ~data:enum_map_value
 
 
-let get_enum_constant_exp enum_constant_pointer =
+let get_enum_constant_exp_exn enum_constant_pointer =
   ClangPointers.Map.find_exn !CFrontend_config.enum_map enum_constant_pointer
 
 
@@ -336,7 +336,8 @@ let generate_key_stmt stmt =
     let _, stmts = Clang_ast_proj.get_stmt_tuple stmt in
     List.iter ~f:add_stmt stmts
   in
-  add_stmt stmt ; Buffer.contents buffer
+  add_stmt stmt ;
+  Buffer.contents buffer
 
 
 (* Generates a key for a declaration based on its name and the declaration tag. *)
@@ -448,14 +449,6 @@ let is_objc_factory_method ~class_decl:interface_decl ~method_decl:meth_decl_opt
       false
 
 
-let name_of_decl_ref_opt (decl_ref_opt : Clang_ast_t.decl_ref option) =
-  match decl_ref_opt with
-  | Some decl_ref -> (
-    match decl_ref.dr_name with Some named_decl_info -> Some named_decl_info.ni_name | _ -> None )
-  | _ ->
-      None
-
-
 let type_of_decl decl =
   let open Clang_ast_t in
   match decl with
@@ -553,6 +546,13 @@ let has_block_attribute decl =
       List.exists ~f:(fun attr -> match attr with `BlocksAttr _ -> true | _ -> false) attributes
   | _ ->
       false
+
+
+(* true if a decl has a NS_NOESCAPE attribute *)
+let is_no_escape_block_arg decl =
+  let has_noescape_attr attr = match attr with `NoEscapeAttr _ -> true | _ -> false in
+  let attrs = (Clang_ast_proj.get_decl_tuple decl).di_attributes in
+  List.exists attrs ~f:has_noescape_attr
 
 
 let is_implicit_decl decl =

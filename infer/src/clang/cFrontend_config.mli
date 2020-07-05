@@ -11,8 +11,6 @@ open! IStd
 
 type clang_lang = C | CPP | ObjC | ObjCPP [@@deriving compare]
 
-val string_of_clang_lang : clang_lang -> string
-
 val equal_clang_lang : clang_lang -> clang_lang -> bool
 
 type translation_unit_context =
@@ -23,6 +21,8 @@ type decl_trans_context = [`DeclTraversal | `Translation]
 (** Constants *)
 
 val alloc : string
+
+val dealloc : string
 
 val assert_fail : string
 

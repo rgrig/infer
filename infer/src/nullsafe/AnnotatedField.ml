@@ -12,14 +12,6 @@ open! IStd
   *)
 type t = {annotation_deprecated: Annot.Item.t; annotated_type: AnnotatedType.t}
 
-let is_class_in_strict_mode tenv typ =
-  match PatternMatch.type_get_annotation tenv typ with
-  | Some ia ->
-      Annotations.ia_is_nullsafe_strict ia
-  | None ->
-      false
-
-
 let rec get_type_name {Typ.desc} =
   match desc with Typ.Tstruct name -> Some name | Typ.Tptr (t, _) -> get_type_name t | _ -> None
 
@@ -44,26 +36,48 @@ let is_enum_value tenv ~class_typ (field_info : Struct.field_info) =
         false
 
 
+let is_synthetic field_name = String.contains field_name '$'
+
 let get tenv field_name class_typ =
+  let open IOption.Let_syntax in
   let lookup = Tenv.lookup tenv in
   (* We currently don't support field-level strict mode annotation, so fetch it from class *)
-  let is_strict_mode = is_class_in_strict_mode tenv class_typ in
-  Struct.get_field_info ~lookup field_name class_typ
-  |> Option.map ~f:(fun (Struct.{typ= field_typ; annotations} as field_info) ->
-         let is_enum_value = is_enum_value tenv ~class_typ field_info in
-         let nullability =
-           AnnotatedNullability.of_type_and_annotation field_typ annotations ~is_strict_mode
-         in
-         let corrected_nullability =
-           match nullability with
-           | AnnotatedNullability.DeclaredNonnull _ when is_enum_value ->
-               (* Enum values are the special case - they can not be null. So we can strengten nullability.
-                  Note that if it is nullable, we do NOT change nullability: in this case this is probably
-                  not an enum value, but just a static field annotated as nullable.
-               *)
-               AnnotatedNullability.Nonnull EnumValue
-           | _ ->
-               nullability
-         in
-         let annotated_type = AnnotatedType.{nullability= corrected_nullability; typ= field_typ} in
-         {annotation_deprecated= annotations; annotated_type} )
+  let nullsafe_mode =
+    Typ.name class_typ
+    |> Option.value_map
+         ~f:(fun class_name ->
+           Typ.Name.Java.get_java_class_name_exn class_name |> NullsafeMode.of_class tenv )
+         ~default:NullsafeMode.Default
+  in
+  let is_third_party =
+    ThirdPartyAnnotationInfo.is_third_party_typ
+      (ThirdPartyAnnotationGlobalRepo.get_repo ())
+      class_typ
+  in
+  let+ (Struct.{typ= field_typ; annotations} as field_info) =
+    Struct.get_field_info ~lookup field_name class_typ
+  in
+  let is_enum_value = is_enum_value tenv ~class_typ field_info in
+  let nullability =
+    (* TODO(T62825735): support trusted callees for fields *)
+    AnnotatedNullability.of_type_and_annotation ~is_callee_in_trust_list:false ~nullsafe_mode
+      ~is_third_party field_typ annotations
+  in
+  let corrected_nullability =
+    if Nullability.is_nonnullish (AnnotatedNullability.get_nullability nullability) then
+      if
+        is_enum_value
+        (* Enum values are the special case - they can not be null. So we can strengten nullability.
+           Note that if it is nullable, we do NOT change nullability: in this case this is probably
+           not an enum value, but just a static field annotated as nullable.
+        *)
+      then AnnotatedNullability.StrictNonnull EnumValue
+      else if is_synthetic (Fieldname.get_field_name field_name) then
+        (* This field is artifact of codegen and is not visible to the user.
+           Surfacing it as non-strict is non-actionable for the user *)
+        AnnotatedNullability.StrictNonnull SyntheticField
+      else nullability
+    else nullability
+  in
+  let annotated_type = AnnotatedType.{nullability= corrected_nullability; typ= field_typ} in
+  {annotation_deprecated= annotations; annotated_type}

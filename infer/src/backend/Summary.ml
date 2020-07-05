@@ -22,17 +22,11 @@ module Stats = struct
 
   let add_visited stats node_id = stats.nodes_visited <- IntSet.add node_id stats.nodes_visited
 
-  let nb_visited {nodes_visited} = IntSet.cardinal nodes_visited
-
   let update ?(add_symops = 0) ?failure_kind stats =
     let symops = stats.symops + add_symops in
     let failure_kind = match failure_kind with None -> stats.failure_kind | some -> some in
     {stats with symops; failure_kind}
 
-
-  let failure_kind {failure_kind} = failure_kind
-
-  let symops {symops} = symops
 
   let pp_failure_kind_opt fmt failure_kind_opt =
     match failure_kind_opt with
@@ -41,8 +35,6 @@ module Stats = struct
     | None ->
         F.pp_print_string fmt "NONE"
 
-
-  let failure_kind_to_string {failure_kind} = F.asprintf "%a" pp_failure_kind_opt failure_kind
 
   let pp fmt {failure_kind; symops} =
     F.fprintf fmt "FAILURE:%a SYMOPS:%d@\n" pp_failure_kind_opt failure_kind symops
@@ -75,10 +67,6 @@ include struct
   [@@deriving fields]
 end
 
-let poly_fields =
-  PolyFields.(make Fields.map_poly ~subfields:[S (Fields.payloads, Payloads.poly_fields)])
-
-
 let get_status summary = summary.status
 
 let get_proc_desc summary = summary.proc_desc
@@ -106,8 +94,6 @@ let pp_signature fmt summary =
     (get_proc_name summary) (Pp.seq ~sep:", " pp_formal) (get_formals summary)
 
 
-let get_signature summary = F.asprintf "%a" pp_signature summary
-
 let pp_no_stats_specs fmt summary =
   F.fprintf fmt "%a@\n" pp_signature summary ;
   F.fprintf fmt "%a@\n" Status.pp summary.status
@@ -131,8 +117,6 @@ let pp_html source fmt summary =
 
 
 module OnDisk = struct
-  open PolyVariantEqual
-
   type cache = t Procname.Hash.t
 
   let cache : cache = Procname.Hash.create 128
@@ -153,18 +137,12 @@ module OnDisk = struct
 
   (** Return the path to the .specs file for the given procedure in the current results directory *)
   let specs_filename_of_procname pname =
-    DB.Results_dir.path_to_filename DB.Results_dir.Abs_root
-      [Config.specs_dir_name; specs_filename pname]
+    DB.filename_from_string (ResultsDir.get_path Specs ^/ specs_filename pname)
 
 
   (** paths to the .specs file for the given procedure in the models folder *)
   let specs_models_filename pname =
     DB.filename_from_string (Filename.concat Config.biabduction_models_dir (specs_filename pname))
-
-
-  let has_model pname =
-    BackendStats.incr_summary_has_model_queries () ;
-    Sys.file_exists (DB.filename_to_string (specs_models_filename pname)) = `Yes
 
 
   let summary_serializer : t Serialization.serializer =
@@ -180,22 +158,16 @@ module OnDisk = struct
 
 
   (** Load procedure summary for the given procedure name and update spec table *)
-  let load_summary_to_spec_table =
-    let load_summary_ziplibs zip_specs_filename =
-      let zip_specs_path = Filename.concat Config.specs_dir_name zip_specs_filename in
-      ZipLib.load summary_serializer zip_specs_path
+  let load_summary_to_spec_table proc_name =
+    let summ_opt =
+      match load_from_file (specs_filename_of_procname proc_name) with
+      | None when BiabductionModels.mem proc_name ->
+          load_from_file (specs_models_filename proc_name)
+      | summ_opt ->
+          summ_opt
     in
-    let or_from f_load f_filenames proc_name summ_opt =
-      match summ_opt with Some _ -> summ_opt | None -> f_load (f_filenames proc_name)
-    in
-    fun proc_name ->
-      let summ_opt =
-        load_from_file (specs_filename_of_procname proc_name)
-        |> or_from load_from_file specs_models_filename proc_name
-        |> or_from load_summary_ziplibs specs_filename proc_name
-      in
-      Option.iter ~f:(add proc_name) summ_opt ;
-      summ_opt
+    Option.iter ~f:(add proc_name) summ_opt ;
+    summ_opt
 
 
   let get proc_name =
@@ -206,13 +178,6 @@ module OnDisk = struct
     | exception Caml.Not_found ->
         BackendStats.incr_summary_cache_misses () ;
         load_summary_to_spec_table proc_name
-
-
-  (** Check if the procedure is from a library: It's not defined, and there is no spec file for it. *)
-  let proc_is_library proc_attributes =
-    if not proc_attributes.ProcAttributes.is_defined then
-      match get proc_attributes.ProcAttributes.proc_name with None -> true | Some _ -> false
-    else false
 
 
   (** Try to find the attributes for a defined proc. First look at specs (to get attributes computed
@@ -248,14 +213,6 @@ module OnDisk = struct
     in
     Procname.Hash.replace cache (Procdesc.get_proc_name proc_desc) summary ;
     summary
-
-
-  let dummy =
-    let dummy_attributes =
-      ProcAttributes.default (SourceFile.invalid __FILE__) Procname.empty_block
-    in
-    let dummy_proc_desc = Procdesc.from_proc_attributes dummy_attributes in
-    reset dummy_proc_desc
 
 
   let reset_all ~filter () =

@@ -6,6 +6,7 @@
  *)
 
 open! IStd
+module F = Format
 
 (** Nullability is a central concept for Nullsafe type-checker. Informally, nullability is a "type"
     \- set of values together with some additional context. All nullsafe is interested about if
@@ -18,15 +19,38 @@ open! IStd
 type t =
   | Null  (** The only possible value for that type is null *)
   | Nullable  (** No guarantees on the nullability *)
-  | DeclaredNonnull
+  | ThirdPartyNonnull
+      (** Values coming from third-party methods and fields not explictly annotated neither as
+          [@Nullable], nor as [@Nonnull]. We still consider those as non-nullable but with the least
+          level of confidence. *)
+  | UncheckedNonnull
       (** The type comes from a signature that is annotated (explicitly or implicitly according to
-          conventions) as non-nullable. Hovewer, it might still contain null since the truthfullness
-          of the declaration was not checked. *)
-  | Nonnull
-      (** We believe that this value can not be null. If it is not the case, this is an unsoundness
-          issue for Nullsafe, and we aim to minimize number of such issues occuring in real-world
-          programs. *)
+          conventions) as non-nullable. Hovewer, the class is not checked under [@Nullsafe], so its
+          actual nullability is not truthworhy, as the class might contain arbitrary number of
+          nullability issues *)
+  | LocallyTrustedNonnull
+      (** The same as [UncheckedNonnull], but the value comes from a class explicitly listed as
+          trusted in the class under analysis. It is less truthworthy than [LocallyCheckedNonnull]
+          as no actual verification were performed. *)
+  | LocallyCheckedNonnull
+      (** Non-nullable value that comes from a class checked under [@NullsafeLocal] mode. Local mode
+          type-checks files against its dependencies but does not require the dependencies to be
+          transitively checked. Therefore this type of non-nullable value is differentiated from
+          StrictNonnull. *)
+  | StrictNonnull
+      (** Non-nullable value with the highest degree of certainty, because it is either:
+
+          - a non-null literal,
+          - an expression that semantically cannot be null,
+          - comes from code checked under [@NullsafeStrict] mode,
+          - comes from a third-party method with an appropriate built-in model, user-defined
+            nullability signature, or explicit [@NonNull] annotation.
+
+          The latter two are potential sources of unsoundness issues for nullsafe, but we need to
+          strike the balance between the strictness of analysis, convenience, and real-world risk. *)
 [@@deriving compare, equal]
+
+type pair = t * t [@@deriving compare, equal]
 
 val top : t
 (** The most generic type. *)
@@ -39,4 +63,10 @@ val join : t -> t -> t
 (** Unique upper bound over two types: the most precise type that is a supertype of both.
     Practically, joins occur e.g. when two branches of execution flow are getting merged. *)
 
-val to_string : t -> string
+val is_considered_nonnull : nullsafe_mode:NullsafeMode.t -> t -> bool
+(** Check whether a given nullability is considered non-nullable within a given [nullsafe_mode]. *)
+
+val is_nonnullish : t -> bool
+(** Check whether a given nullability is one of the non-nullable types with no regards to the mode. *)
+
+val pp : F.formatter -> t -> unit

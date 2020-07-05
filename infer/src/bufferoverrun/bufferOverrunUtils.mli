@@ -16,10 +16,17 @@ module ModelEnv : sig
     ; node_hash: int
     ; location: Location.t
     ; tenv: Tenv.t
-    ; integer_type_widths: Typ.IntegerWidths.t }
+    ; integer_type_widths: Typ.IntegerWidths.t
+    ; get_summary: BufferOverrunAnalysisSummary.get_summary }
 
   val mk_model_env :
-    Procname.t -> node_hash:int -> Location.t -> Tenv.t -> Typ.IntegerWidths.t -> model_env
+       Procname.t
+    -> node_hash:int
+    -> Location.t
+    -> Tenv.t
+    -> Typ.IntegerWidths.t
+    -> BufferOverrunAnalysisSummary.get_summary
+    -> model_env
 end
 
 module Exec : sig
@@ -84,6 +91,7 @@ module Check : sig
 
   val binary_operation :
        Typ.IntegerWidths.t
+    -> Procname.t
     -> Binop.t
     -> lhs:Dom.Val.t
     -> rhs:Dom.Val.t
@@ -94,3 +102,22 @@ module Check : sig
 end
 
 type get_formals = Procname.t -> (Pvar.t * Typ.t) list option
+
+module ReplaceCallee : sig
+  (** Replaced proc name with its modified parameters.
+
+      [is_params_ref] represents that the parameters are given as references to variables, e.g.,
+      when [int i = 5;], the function of [std::make_shared<C>(i);] in C++ is translated to
+      [std::make_shared<C>(&i, tgt)] in Sil where [tgt] is the variable for the target object,
+      rather than [std::make_shared<C>(i, tgt)] (note that the type of [&i] is [int&]).
+
+      The [is_params_ref] value is used to evaluate parameters correctly after replacing the callee.
+      For example, when we replace [std::make_shared<C>(&i, tgt)] to the constructor call of [C],
+      i.e. [C(tgt, i)], the parameters' order and types are slightly different, so which should be
+      handled correctly later in the instantiation phase. *)
+  type replaced = {pname: Procname.t; params: (Exp.t * Typ.t) list; is_params_ref: bool}
+
+  val replace_make_shared : Tenv.t -> get_formals -> Procname.t -> (Exp.t * Typ.t) list -> replaced
+end
+
+val clear_cache : unit -> unit

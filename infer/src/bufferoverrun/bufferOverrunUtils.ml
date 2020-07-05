@@ -8,6 +8,7 @@
 open! IStd
 open AbsLoc
 open! AbstractDomain.Types
+module BoSummary = BufferOverrunAnalysisSummary
 module L = Logging
 module Dom = BufferOverrunDomain
 module PO = BufferOverrunProofObligations
@@ -22,10 +23,11 @@ module ModelEnv = struct
     ; node_hash: int
     ; location: Location.t
     ; tenv: Tenv.t
-    ; integer_type_widths: Typ.IntegerWidths.t }
+    ; integer_type_widths: Typ.IntegerWidths.t
+    ; get_summary: BoSummary.get_summary }
 
-  let mk_model_env pname ~node_hash location tenv integer_type_widths =
-    {pname; node_hash; location; tenv; integer_type_widths}
+  let mk_model_env pname ~node_hash location tenv integer_type_widths get_summary =
+    {pname; node_hash; location; tenv; integer_type_widths; get_summary}
 end
 
 module Exec = struct
@@ -103,7 +105,9 @@ module Exec = struct
   let init_c_array_fields {pname; node_hash; tenv; integer_type_widths} path typ locs ?dyn_length
       mem =
     let rec init_field path locs dimension ?dyn_length (mem, inst_num) (field_name, field_typ, _) =
-      let field_path = Option.map path ~f:(fun path -> Symb.SymbolPath.field path field_name) in
+      let field_path =
+        Option.map path ~f:(fun path -> Symb.SymbolPath.append_field path field_name)
+      in
       let field_loc = PowLoc.append_field locs ~fn:field_name in
       let mem =
         match field_typ.Typ.desc with
@@ -282,7 +286,7 @@ module Check = struct
     let arr =
       if Language.curr_language_is Java then
         let arr_locs = Sem.eval_locs array_exp mem in
-        if PowLoc.is_empty arr_locs then Dom.Val.Itv.top else Dom.Mem.find_set arr_locs mem
+        if PowLoc.is_bot arr_locs then Dom.Val.Itv.top else Dom.Mem.find_set arr_locs mem
       else Sem.eval_arr integer_type_widths array_exp mem
     in
     let latest_prune = Dom.Mem.get_latest_prune mem in
@@ -314,7 +318,7 @@ module Check = struct
     array_access_byte ~arr ~idx ~is_plus:true ~last_included ~latest_prune location cond_set
 
 
-  let binary_operation integer_type_widths bop ~lhs ~rhs ~latest_prune location cond_set =
+  let binary_operation integer_type_widths pname bop ~lhs ~rhs ~latest_prune location cond_set =
     let lhs_itv = Dom.Val.get_itv lhs in
     let rhs_itv = Dom.Val.get_itv rhs in
     match (lhs_itv, rhs_itv) with
@@ -322,7 +326,7 @@ module Check = struct
         L.(debug BufferOverrun Verbose)
           "@[<v 2>Add condition :@,bop:%s@,  lhs: %a@,  rhs: %a@,@]@." (Binop.str Pp.text bop)
           Itv.ItvPure.pp lhs_itv Itv.ItvPure.pp rhs_itv ;
-        PO.ConditionSet.add_binary_operation integer_type_widths location bop ~lhs:lhs_itv
+        PO.ConditionSet.add_binary_operation integer_type_widths location pname bop ~lhs:lhs_itv
           ~rhs:rhs_itv ~lhs_traces:(Dom.Val.get_traces lhs) ~rhs_traces:(Dom.Val.get_traces rhs)
           ~latest_prune cond_set
     | _, _ ->
@@ -330,3 +334,87 @@ module Check = struct
 end
 
 type get_formals = Procname.t -> (Pvar.t * Typ.t) list option
+
+module ReplaceCallee = struct
+  type replaced = {pname: Procname.t; params: (Exp.t * Typ.t) list; is_params_ref: bool}
+
+  let is_cpp_constructor_with_types get_formals class_typ param_ref_typs pname =
+    let num_params = List.length param_ref_typs in
+    match pname with
+    | Procname.ObjC_Cpp {kind= CPPConstructor _; parameters}
+      when Int.equal (List.length parameters) num_params -> (
+      match get_formals pname |> Option.map ~f:(List.map ~f:snd) with
+      | Some (this_typ :: formal_typs) -> (
+          Typ.is_ptr_to_ignore_quals class_typ ~ptr:this_typ
+          &&
+          match
+            List.for_all2 param_ref_typs formal_typs ~f:(fun param_ref_typ formal_typ ->
+                Typ.equal_ignore_quals formal_typ param_ref_typ
+                || Typ.is_ptr_to_ignore_quals formal_typ ~ptr:param_ref_typ )
+          with
+          | List.Or_unequal_lengths.Ok b ->
+              b
+          | List.Or_unequal_lengths.Unequal_lengths ->
+              false )
+      | _ ->
+          false )
+    | _ ->
+        false
+
+
+  module CacheForMakeShared = struct
+    let results : Procname.t option Procname.LRUHash.t lazy_t =
+      lazy (Procname.LRUHash.create ~initial_size:128 ~max_size:200)
+
+
+    let add pname value = Procname.LRUHash.replace (Lazy.force results) pname value
+
+    let find_opt pname = Procname.LRUHash.find_opt (Lazy.force results) pname
+
+    let clear () = if Lazy.is_val results then Procname.LRUHash.clear (Lazy.force results)
+  end
+
+  let get_cpp_constructor_of_make_shared =
+    let rec strip_ttype = function
+      | [] ->
+          Some []
+      | Typ.TType x :: tl ->
+          Option.map (strip_ttype tl) ~f:(fun tl -> x :: tl)
+      | _ ->
+          None
+    in
+    fun tenv get_formals pname ->
+      IOption.value_default_f (CacheForMakeShared.find_opt pname) ~f:(fun () ->
+          let result =
+            match pname with
+            | Procname.C ({template_args= Typ.Template {args}} as name)
+              when Procname.C.is_make_shared name -> (
+              match strip_ttype args with
+              | Some (class_typ_templ :: param_typs_templ) ->
+                  let open IOption.Let_syntax in
+                  let* class_name = Typ.name class_typ_templ in
+                  let* {Struct.methods} = Tenv.lookup tenv class_name in
+                  List.find methods
+                    ~f:(is_cpp_constructor_with_types get_formals class_typ_templ param_typs_templ)
+              | _ ->
+                  None )
+            | _ ->
+                None
+          in
+          CacheForMakeShared.add pname result ;
+          result )
+
+
+  let replace_make_shared tenv get_formals pname params =
+    match get_cpp_constructor_of_make_shared tenv get_formals pname with
+    | Some constr ->
+        (* NOTE: This replaces the pointer to the target object.  In the parameters of
+           [std::make_shared], the pointer is on the last place.  On the other hand, it is on the
+           first place in the constructor's parameters. *)
+        let params = IList.move_last_to_first params in
+        {pname= constr; params; is_params_ref= true}
+    | None ->
+        {pname; params; is_params_ref= false}
+end
+
+let clear_cache () = ReplaceCallee.CacheForMakeShared.clear ()

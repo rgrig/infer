@@ -19,9 +19,7 @@ let get_field_name {field_name} = field_name
 let is_java {class_name} = Typ.Name.Java.is_class class_name
 
 module T = struct
-  type nonrec t = t
-
-  let compare = compare
+  type nonrec t = t [@@deriving compare]
 end
 
 module Set = Caml.Set.Make (T)
@@ -51,14 +49,10 @@ let to_full_string fld =
 
 let pp f fld = F.pp_print_string f fld.field_name
 
-let is_java_captured_parameter ({field_name} as field) =
-  is_java field && String.is_prefix ~prefix:"val$" field_name
-
-
 let is_java_outer_instance ({field_name} as field) =
   is_java field
   &&
   let this = "this$" in
   let last_char = field_name.[String.length field_name - 1] in
-  (last_char >= '0' && last_char <= '9')
+  Char.(last_char >= '0' && last_char <= '9')
   && String.is_suffix field_name ~suffix:(this ^ String.of_char last_char)

@@ -14,6 +14,8 @@ val create_pointer_qual_type : ?quals:Typ.type_quals -> qual_type -> qual_type
 
 val create_reference_qual_type : ?quals:Typ.type_quals -> qual_type -> qual_type
 
+val create_void_type : qual_type
+
 val create_char_star_type : ?quals:Typ.type_quals -> unit -> qual_type
 
 val make_next_object_exp :
@@ -25,8 +27,6 @@ val create_implicit_cast_expr : stmt_info -> stmt list -> qual_type -> cast_kind
 
 val make_obj_c_message_expr_info_class :
   string -> Typ.Name.t -> pointer option -> obj_c_message_expr_info
-
-val make_function_call : stmt_info -> string -> stmt list -> stmt
 
 val trans_with_conditional : stmt_info -> expr_info -> stmt list -> stmt
 (** We translate an expression with a conditional x <=> x?1:0 *)
