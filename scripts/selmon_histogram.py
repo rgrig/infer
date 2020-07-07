@@ -36,7 +36,7 @@ def main():
   plt.ylabel('normalized frequency')
   plt.tight_layout()
   p = Path('histo.png')
-  with p.open('w') as out:
+  with p.open('wb') as out:
     plt.savefig(out, dpi=256)
   plt.clf()
 
