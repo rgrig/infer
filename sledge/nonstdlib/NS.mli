@@ -38,6 +38,7 @@ val ( <$ ) : ('a -> unit) -> 'a -> 'a
 
 (** Failures *)
 
+exception Replay of exn * Printexc.raw_backtrace * Sexp.t
 exception Unimplemented of string
 
 val fail : ('a, unit -> _) fmt -> 'a
@@ -68,24 +69,40 @@ val violates : ('a -> unit) -> 'a -> _
 
 (** Extensions *)
 
-module Invariant : module type of Core.Invariant
+module Invariant : sig
+  include module type of Core.Invariant
+
+  exception
+    Violation of
+      exn * Printexc.raw_backtrace * Source_code_position.t * Sexp.t
+end
 
 (** Containers *)
 
 module Option = Option
-include module type of Option.Monad_infix
-include module type of Option.Monad_syntax
+include module type of Option.Import
 module List = List
 
 module Array : sig
   include module type of Array
 
+  type 'a t = 'a Array.t [@@deriving compare, equal, hash, sexp]
+
+  module Import : sig
+    type 'a array = 'a t [@@deriving compare, equal, hash, sexp]
+  end
+
   val pp : (unit, unit) fmt -> 'a pp -> 'a array pp
+
+  val map_endo : 'a t -> f:('a -> 'a) -> 'a t
+  (** Like map, but specialized to require [f] to be an endofunction, which
+      enables preserving [==] if [f] preserves [==] of every element. *)
 
   val fold_map_inplace :
     'a array -> init:'s -> f:('s -> 'a -> 's * 'a) -> 's
 end
 
+include module type of Array.Import
 module IArray = IArray
 include module type of IArray.Import
 module Set = Set
@@ -103,7 +120,9 @@ module String : sig
 end
 
 module Q : sig
-  include module type of struct include Q end
+  include module type of struct
+    include Q
+  end
 
   val of_z : Z.t -> t
   val compare : t -> t -> int
@@ -115,7 +134,9 @@ module Q : sig
 end
 
 module Z : sig
-  include module type of struct include Z end
+  include module type of struct
+    include Z
+  end
 
   val compare : t -> t -> int
   val hash : t -> int

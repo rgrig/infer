@@ -173,7 +173,7 @@ let check_expr_for_array_access :
     | Exp.Cast (_, e) ->
         check_sub_expr e cond_set
     | Exp.Closure {captured_vars} ->
-        List.fold captured_vars ~init:cond_set ~f:(fun cond_set (e, _, _) ->
+        List.fold captured_vars ~init:cond_set ~f:(fun cond_set (e, _, _, _) ->
             check_sub_expr e cond_set )
     | Exp.Var _ | Exp.Lvar _ | Exp.Const _ | Exp.Sizeof _ ->
         cond_set
@@ -226,7 +226,7 @@ let rec check_expr_for_integer_overflow integer_type_widths pname exp location m
       |> check_expr_for_integer_overflow integer_type_widths pname e1 location mem
       |> check_expr_for_integer_overflow integer_type_widths pname e2 location mem
   | Exp.Closure {captured_vars} ->
-      List.fold captured_vars ~init:cond_set ~f:(fun cond_set (e, _, _) ->
+      List.fold captured_vars ~init:cond_set ~f:(fun cond_set (e, _, _, _) ->
           check_expr_for_integer_overflow integer_type_widths pname e location mem cond_set )
   | Exp.Var _ | Exp.Const _ | Exp.Lvar _ | Exp.Sizeof {dynamic_length= None} ->
       cond_set
@@ -458,7 +458,7 @@ let checker ({InterproceduralAnalysis.proc_desc; tenv; exe_env; analyze_dependen
           analysis_summary
         in
         let get_formals callee_pname =
-          AnalysisCallbacks.get_proc_desc callee_pname >>| Procdesc.get_pvar_formals
+          AnalysisCallbacks.proc_resolve_attributes callee_pname >>| ProcAttributes.get_pvar_formals
         in
         compute_checks get_checks_summary get_summary get_formals proc_name tenv integer_type_widths
           cfg inv_map

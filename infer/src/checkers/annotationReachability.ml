@@ -33,7 +33,7 @@ let is_allocator tenv pname =
   | Procname.Java pname_java ->
       let is_throwable () =
         let class_name = Procname.Java.get_class_type_name pname_java in
-        PatternMatch.is_throwable tenv class_name
+        PatternMatch.Java.is_throwable tenv class_name
       in
       Procname.is_constructor pname
       && (not (BuiltinDecl.is_declared pname))
@@ -43,7 +43,7 @@ let is_allocator tenv pname =
 
 
 let check_attributes check tenv pname =
-  PatternMatch.check_class_attributes check tenv pname
+  PatternMatch.Java.check_class_attributes check tenv pname
   || Annotations.pname_has_return_annot pname check
 
 
@@ -115,8 +115,8 @@ let report_annotation_stack ({InterproceduralAnalysis.proc_desc; err_log} as ana
 
 let report_call_stack end_of_stack lookup_next_calls report call_site sink_map =
   let lookup_location pname =
-    Option.value_map ~f:Procdesc.get_loc ~default:Location.dummy
-      (AnalysisCallbacks.get_proc_desc pname)
+    Option.value_map ~f:ProcAttributes.get_loc ~default:Location.dummy
+      (AnalysisCallbacks.proc_resolve_attributes pname)
   in
   let rec loop fst_call_loc visited_pnames trace (callee_pname, call_loc) =
     if end_of_stack callee_pname then report fst_call_loc trace callee_pname call_loc
@@ -206,9 +206,9 @@ end
 
 module CxxAnnotationSpecs = struct
   let src_path_of pname =
-    match AnalysisCallbacks.get_proc_desc pname with
-    | Some proc_desc ->
-        let loc = Procdesc.get_loc proc_desc in
+    match AnalysisCallbacks.proc_resolve_attributes pname with
+    | Some proc_attrs ->
+        let loc = ProcAttributes.get_loc proc_attrs in
         SourceFile.to_string loc.file
     | None ->
         ""

@@ -19,7 +19,7 @@ module Java : sig
 
   type t [@@deriving compare]
 
-  type java_type = JavaSplitName.t [@@deriving compare, equal]
+  val to_simplified_string : ?withclass:bool -> t -> string
 
   val constructor_method_name : string
 
@@ -28,10 +28,10 @@ module Java : sig
   val replace_method_name : string -> t -> t
   (** Replace the method name of an existing java procname. *)
 
-  val replace_parameters : java_type list -> t -> t
+  val replace_parameters : Typ.t list -> t -> t
   (** Replace the parameters of a java procname. *)
 
-  val replace_return_type : java_type -> t -> t
+  val replace_return_type : Typ.t -> t -> t
   (** Replace the method of a java procname. *)
 
   val get_class_name : t -> string
@@ -49,7 +49,7 @@ module Java : sig
   val get_method : t -> string
   (** Return the method name of a java procedure name. *)
 
-  val get_parameters : t -> java_type list
+  val get_parameters : t -> Typ.t list
   (** Return the parameters of a java procedure name. *)
 
   val get_return_typ : t -> Typ.t
@@ -105,8 +105,7 @@ module Parameter : sig
   type clang_parameter = Typ.Name.t option [@@deriving compare, equal]
 
   (** Type for parameters in procnames, for java and clang. *)
-  type t = JavaParameter of Java.java_type | ClangParameter of clang_parameter
-  [@@deriving compare, equal]
+  type t = JavaParameter of Typ.t | ClangParameter of clang_parameter [@@deriving compare, equal]
 
   val of_typ : Typ.t -> clang_parameter
 end
@@ -197,10 +196,10 @@ type t =
   | Linters_dummy_method
   | Block of Block.t
   | ObjC_Cpp of ObjC_Cpp.t
-  | WithBlockParameters of t * Block.block_name list
+  | WithBlockParameters of t * Block.t list
 [@@deriving compare]
 
-val block_name_of_procname : t -> Block.block_name
+val block_of_procname : t -> Block.t
 
 val equal : t -> t -> bool
 
@@ -254,9 +253,9 @@ end
 
 val make_java :
      class_name:Typ.Name.t
-  -> return_type:Java.java_type option
+  -> return_type:Typ.t option
   -> method_name:string
-  -> parameters:Java.java_type list
+  -> parameters:Typ.t list
   -> kind:Java.kind
   -> unit
   -> t
@@ -284,18 +283,18 @@ val is_objc_dealloc : t -> bool
 val is_c_method : t -> bool
 (** Return true this is an Objective-C/C++ method name. *)
 
-val is_clang : t -> bool
-(** Return true if this is a C, C++, or Objective-C procedure name *)
-
 val is_constructor : t -> bool
 (** Check if this is a constructor. *)
 
 val is_java : t -> bool
 (** Check if this is a Java procedure name. *)
 
-val with_block_parameters : t -> Block.block_name list -> t
+val as_java_exn : explanation:string -> t -> Java.t
+(** Converts to a Java.t. Throws if [is_java] is false *)
+
+val with_block_parameters : t -> Block.t list -> t
 (** Create a procedure name instantiated with block parameters from a base procedure name and a list
-    of block procedure names (the arguments). *)
+    of block procedures. *)
 
 val objc_cpp_replace_method_name : t -> string -> t
 

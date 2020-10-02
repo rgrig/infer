@@ -68,7 +68,9 @@ let report_missing_required_prop proc_desc err_log prop parent_typename ~create_
       | VarProp {var_prop; prop} ->
           F.asprintf "Either @Prop %s or @Prop(varArg = %s)" prop var_prop
     in
-    F.asprintf "%a is required for component %s, but is not set before the call to build()"
+    F.asprintf
+      "%a is required for component %s, but is not set before the call to build(). Either set the \
+       missing @Prop or make @Prop(optional = true)."
       MarkupFormatter.pp_bold prop_string (Typ.Name.name parent_typename)
   in
   let make_single_trace loc message = Errlog.make_trace_element 0 loc message [] in
@@ -238,8 +240,11 @@ module TransferFunctions = struct
               if is_build_method callee_pname tenv then
                 Domain.call_build_method ~ret:return_access_path ~receiver astate
               else if is_builder callee_pname tenv then
-                let callee_prefix = Domain.MethodCallPrefix.make callee_pname location in
-                Domain.call_builder ~ret:return_access_path ~receiver callee_prefix astate
+                let callee_prefixes =
+                  Domain.MethodCallPrefix.make_with_prefixes callee_pname location
+                in
+                List.fold ~init:astate callee_prefixes ~f:(fun acc callee_prefix ->
+                    Domain.call_builder ~ret:return_access_path ~receiver callee_prefix acc )
               else astate
         else
           (* treat it like a normal call *)

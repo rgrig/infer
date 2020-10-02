@@ -332,7 +332,7 @@ let create_callee_attributes tenv program cn ms procname =
         ; is_abstract }
     with Caml.Not_found -> None
   in
-  Option.bind ~f (JClasspath.lookup_node cn program)
+  Option.bind ~f (JProgramDesc.lookup_node cn program)
 
 
 let create_empty_cfg source_file procdesc =
@@ -437,7 +437,8 @@ let create_cm_procdesc source_file program icfg cm proc_name =
     let locals_ = translate_locals program tenv formals bytecode jbir_code in
     let locals =
       List.map locals_ ~f:(fun (name, typ) ->
-          ({name; typ; modify_in_block= false; is_constexpr= false} : ProcAttributes.var_data) )
+          ( {name; typ; modify_in_block= false; is_constexpr= false; is_declared_unused= false}
+            : ProcAttributes.var_data ) )
     in
     let method_annotation = JAnnotation.translate_method cm.Javalib.cm_annotations in
     let proc_attributes =
@@ -624,7 +625,7 @@ let method_invocation (context : JContext.t) loc pc var_opt cn ms sil_obj_opt ex
   in
   let resolve_method (context : JContext.t) cn ms =
     let rec search_in_parents get_parents cn =
-      match JClasspath.lookup_node cn context.program with
+      match JProgramDesc.lookup_node cn context.program with
       | None ->
           None
       | Some node ->
@@ -1070,17 +1071,7 @@ let instruction (context : JContext.t) pc instr : translation =
           let call_node = create_node node_kind (instrs @ call_instrs) in
           call_node
         in
-        let trans_virtual_call original_cn invoke_kind =
-          let cn' =
-            match JTransType.extract_cn_no_obj sil_obj_type with
-            | Some cn ->
-                cn
-            | None ->
-                original_cn
-          in
-          let call_node = create_call_node cn' invoke_kind in
-          Instr call_node
-        in
+        let trans_virtual_call cn invoke_kind = Instr (create_call_node cn invoke_kind) in
         match call_kind with
         | JBir.VirtualCall obj_type ->
             let cn =

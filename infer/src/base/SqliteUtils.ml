@@ -89,12 +89,6 @@ let db_close db =
             (Sqlite3.errmsg db)))
 
 
-let with_transaction db ~f =
-  exec db ~log:"begin transaction" ~stmt:"BEGIN IMMEDIATE TRANSACTION" ;
-  f () ;
-  exec db ~log:"commit transaction" ~stmt:"COMMIT"
-
-
 module type Data = sig
   type t
 
@@ -105,20 +99,6 @@ end
 
 module type T = sig
   type t
-end
-
-module MarshalledDataForComparison (D : T) = struct
-  type t = D.t
-
-  let deserialize = function[@warning "-8"] Sqlite3.Data.BLOB b -> Marshal.from_string b 0
-
-  (*
-    If the serialized data is used for comparison (e.g. used in WHERE clause), we need to normalize it.
-    Marshalling is brittle as it depends on sharing.
-
-    For now let's suppose that marshalling with no sharing is normalizing.
-  *)
-  let serialize x = Sqlite3.Data.BLOB (Marshal.to_string x [Marshal.No_sharing])
 end
 
 module MarshalledDataNOTForComparison (D : T) = struct

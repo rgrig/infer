@@ -42,7 +42,7 @@ NSDictionary* nsdictionary_dictionary_with_objects_linear(int n_entries) {
                                           forKeys:(id*)keyArray
                                             count:n_entries];
 
-  for (id key in asciiDict) {
+  for (int i = 0; i < [asciiDict.count integerValue]; i++) {
   }
 
   return asciiDict;
@@ -50,17 +50,24 @@ NSDictionary* nsdictionary_dictionary_with_objects_linear(int n_entries) {
 
 // accessing values and keys
 
-void nsdictionary_all_keys_linear_FP(NSDictionary* dict) {
+void nsdictionary_all_keys_linear1(NSDictionary* dict) {
   for (int i = 0; i < [dict allKeys].count; i++) {
   }
 }
 
-void nsdictionary_all_values_linear_FP(NSDictionary* dict) {
+void nsdictionary_all_keys_linear2(NSDictionary* dict) {
+  NSArray* array = [dict allKeys];
+
+  for (int i = 0; i < array.count; i++) {
+  }
+}
+
+void nsdictionary_all_values_linear(NSDictionary* dict) {
   for (int i = 0; i < [dict allValues].count; i++) {
   }
 }
 
-id nsdictionary_find_key_linear_FN(NSDictionary* dict, id item) {
+id nsdictionary_find_key_constant(NSDictionary* dict, id item) {
   NSEnumerator* enumerator = [dict keyEnumerator];
   id key;
   while ((key = [enumerator nextObject]) && dict[key] == item) {
@@ -71,7 +78,7 @@ id nsdictionary_find_key_linear_FN(NSDictionary* dict, id item) {
 
 // enumerate dictionary
 
-void nsdictionary_fast_enumerate_linear_FN(NSDictionary* dict) {
+void nsdictionary_fast_enumerate_linear(NSDictionary* dict) {
   for (id key in dict) {
   }
 }
@@ -86,9 +93,22 @@ void nsdictionary_enumerate_constant() {
   }
 }
 
-void nsdictionary_enumerator_linear_FN(NSDictionary* dict) {
+void nsdictionary_enumerator_linear(NSDictionary* dict) {
   NSEnumerator* enumerator = [dict keyEnumerator];
   id key;
   while ((key = [enumerator nextObject])) {
   }
+}
+
+void nsdictionary_enumerate_call_constant() {
+  NSDictionary* dict =
+      @{@"helloString" : @"Hello, World!",
+        @"magicNumber" : @42};
+
+  nsdictionary_all_values_linear(dict);
+}
+
+void nsdictionary_dictionary_constant() {
+  NSDictionary* dict = nsdictionary_init_dictionary_constant();
+  nsdictionary_all_values_linear(dict);
 }

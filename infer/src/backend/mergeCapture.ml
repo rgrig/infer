@@ -23,8 +23,10 @@ let merge_global_tenvs infer_deps_file =
     Tenv.read global_tenv_path |> Option.iter ~f:(fun tenv -> Tenv.merge ~src:tenv ~dst:global_tenv)
   in
   Utils.iter_infer_deps ~project_root:Config.project_root ~f:merge infer_deps_file ;
+  let time1 = Mtime_clock.counter () in
   Tenv.store_global global_tenv ;
-  L.progress "Merging type environments took %a@." Mtime.Span.pp (Mtime_clock.count time0)
+  L.progress "Merging type environments took %a, of which %a were spent storing the global tenv@."
+    Mtime.Span.pp (Mtime_clock.count time0) Mtime.Span.pp (Mtime_clock.count time1)
 
 
 let merge_json_results infer_out_src json_entry =
@@ -44,7 +46,7 @@ let merge_json_results infer_out_src json_entry =
 
 let merge_all_json_results merge_results results_json_str =
   L.progress "Merging %s files...@." results_json_str ;
-  let infer_deps_file = ResultsDir.get_path BuckDependencies in
+  let infer_deps_file = ResultsDir.get_path CaptureDependencies in
   Utils.iter_infer_deps ~project_root:Config.project_root ~f:merge_results infer_deps_file ;
   L.progress "Done merging %s files@." results_json_str
 
@@ -59,7 +61,7 @@ let merge_changed_functions () =
 let merge_captured_targets () =
   let time0 = Mtime_clock.counter () in
   L.progress "Merging captured Buck targets...@\n%!" ;
-  let infer_deps_file = ResultsDir.get_path BuckDependencies in
+  let infer_deps_file = ResultsDir.get_path CaptureDependencies in
   DBWriter.merge ~infer_deps_file ;
   ScubaLogging.execute_with_time_logging "merge_captured_tenvs" (fun () ->
       merge_global_tenvs infer_deps_file ) ;

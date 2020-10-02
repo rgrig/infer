@@ -47,7 +47,7 @@ let capture_libs program tenv =
         store_icfg fake_source_file cfg ;
         JFrontend.cache_classname cn
   in
-  JBasics.ClassMap.iter (capture_class tenv) (JClasspath.get_classmap program)
+  JBasics.ClassMap.iter (capture_class tenv) (JProgramDesc.get_classmap program)
 
 
 (* load a stored global tenv if the file is found, and create a new one otherwise *)
@@ -74,7 +74,7 @@ let store_callee_attributes tenv program =
       ~f:(Attributes.store ~proc_desc:None)
       (JTrans.create_callee_attributes tenv program cn ms proc_name)
   in
-  JClasspath.iter_missing_callees program ~f
+  JProgramDesc.iter_missing_callees program ~f
 
 
 (* The program is loaded and translated *)
@@ -106,7 +106,6 @@ let do_all_files sources program =
   if Config.dependency_mode then capture_libs program tenv ;
   store_callee_attributes tenv program ;
   save_tenv tenv ;
-  JClasspath.cleanup program ;
   L.(debug Capture Quiet) "done capturing all files@."
 
 
@@ -122,21 +121,11 @@ let main load_sources_and_classes =
   | false, true ->
       JModels.load_models ~jar_filename:Config.biabduction_models_jar ) ;
   JBasics.set_permissive true ;
-  let JClasspath.{classpath; sources; classes} =
-    match load_sources_and_classes with
-    | `FromVerboseOut verbose_out_file ->
-        JClasspath.load_from_verbose_output verbose_out_file
-    | `FromArguments path ->
-        JClasspath.load_from_arguments path
-  in
-  if String.Map.is_empty sources then L.(die InternalError) "Failed to load any Java source code" ;
-  L.(debug Capture Quiet)
-    "Translating %d source files (%d classes)@." (String.Map.length sources)
-    (JBasics.ClassSet.cardinal classes) ;
-  let program = JClasspath.load_program ~classpath classes in
-  do_all_files sources program
+  JClasspath.with_classpath load_sources_and_classes ~f:(fun classpath ->
+      let program = JProgramDesc.load classpath in
+      do_all_files classpath.sources program )
 
 
-let from_arguments path = main (`FromArguments path)
+let from_arguments path = main (JClasspath.FromArguments {path})
 
-let from_verbose_out verbose_out_file = main (`FromVerboseOut verbose_out_file)
+let from_verbose_out verbose_out_file = main (JClasspath.FromVerboseOut {verbose_out_file})

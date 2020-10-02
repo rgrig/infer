@@ -10,8 +10,8 @@ open! IStd
     directory you probably want to use {!ResultsDir.Entry} instead of this module. *)
 
 type id =
-  | BuckDependencies  (** list of Buck directories with infer-out/ directories *)
   | CaptureDB  (** the capture database *)
+  | CaptureDependencies  (** list of infer-out/ directories that contain capture artefacts *)
   | ChangedFunctions  (** results of the clang test determinator *)
   | Debug  (** directory containing debug data *)
   | Differential  (** contains the results of [infer reportdiff] *)
@@ -33,7 +33,6 @@ type id =
   | ReportXML  (** a PMD-style XML version of [report.json] *)
   | RetainCycles  (** directory of retain cycles dotty files *)
   | RunState  (** internal data about the last infer run *)
-  | Specs  (** directory containing summaries as .specs files *)
   | StarvationIssues  (** directory of issues reported by the starvation analysis *)
   | Temporary  (** directory containing temp files *)
   | TestDeterminatorReport  (** the report produced by the test determinator capture mode *)

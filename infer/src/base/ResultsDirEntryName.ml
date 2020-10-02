@@ -10,8 +10,8 @@ open! IStd
 let buck_infer_deps_file_name = "infer-deps.txt"
 
 type id =
-  | BuckDependencies
   | CaptureDB
+  | CaptureDependencies
   | ChangedFunctions
   | Debug
   | Differential
@@ -32,7 +32,6 @@ type id =
   | ReportXML
   | RetainCycles
   | RunState
-  | Specs
   | StarvationIssues
   | Temporary
   | TestDeterminatorReport
@@ -53,7 +52,7 @@ type t =
             e.g., a distributed Buck cache. *) }
 
 let of_id = function
-  | BuckDependencies ->
+  | CaptureDependencies ->
       { rel_path= buck_infer_deps_file_name
       ; kind= File
       ; before_incremental_analysis= Delete
@@ -161,11 +160,6 @@ let of_id = function
   | RunState ->
       { rel_path= ".infer_runstate.json"
       ; kind= File
-      ; before_incremental_analysis= Keep
-      ; before_caching_capture= Delete }
-  | Specs ->
-      { rel_path= "specs"
-      ; kind= Directory
       ; before_incremental_analysis= Keep
       ; before_caching_capture= Delete }
   | StarvationIssues ->

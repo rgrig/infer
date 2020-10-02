@@ -14,8 +14,6 @@ module Marker = struct
   type t = MarkerId of IntLit.t | MarkerName of {marker_class: Pvar.t; marker_name: Fieldname.t}
   [@@deriving compare]
 
-  let equal = [%compare.equal: t]
-
   let pp f = function
     | MarkerId i ->
         IntLit.pp f i
@@ -28,7 +26,13 @@ module Marker = struct
   let of_name marker_class marker_name = MarkerName {marker_class; marker_name}
 end
 
-module MarkerLifted = AbstractDomain.Flat (Marker)
+module Markers = struct
+  include AbstractDomain.FiniteSet (Marker)
+
+  let of_int_lit i = Marker.of_int_lit i |> singleton
+
+  let of_name marker_class marker_name = Marker.of_name marker_class marker_name |> singleton
+end
 
 module ConfigWithLocation = struct
   type t = ConfigName.t * Location.t [@@deriving compare]
@@ -37,26 +41,78 @@ module ConfigWithLocation = struct
 end
 
 module Loc = struct
-  type t = Id of Ident.t | Pvar of Pvar.t [@@deriving compare]
+  type t = Id of Ident.t | Pvar of Pvar.t | ThisField of Fieldname.t [@@deriving compare]
 
-  let pp f = function Id id -> Ident.pp f id | Pvar pvar -> Pvar.pp Pp.text f pvar
+  let pp f = function
+    | Id id ->
+        Ident.pp f id
+    | Pvar pvar ->
+        Pvar.pp Pp.text f pvar
+    | ThisField fn ->
+        F.fprintf f "this.%a" Fieldname.pp fn
+
+
+  let is_this = function Pvar pvar -> Pvar.is_this pvar | Id _ | ThisField _ -> false
 
   let of_id id = Id id
 
   let of_pvar pvar = Pvar pvar
+
+  let of_this_field fn = ThisField fn
+
+  let of_ret pname = Pvar (Pvar.get_ret_pvar pname)
 end
+
+module Locs = AbstractDomain.FiniteSet (Loc)
 
 module Val = struct
   (* NOTE: Instead of syntactically distinguishing config and marker variables with heuristics, we
      evalute the values for both of them if possible. Later, one value of them should be actually
      used in analyzing config checking or marker start/end statments. *)
-  include AbstractDomain.Pair (ConfigLifted) (MarkerLifted)
+  type t = {config: ConfigLifted.t; markers: Markers.t; locs: Locs.t}
 
-  let is_bottom (config, marker) = ConfigLifted.is_bottom config && MarkerLifted.is_bottom marker
+  let pp f {config; markers; locs} =
+    F.fprintf f "@[@[config:@ %a@]@\n@[markers:@ %a@]@\n@[locs:@ %a@]@]" ConfigLifted.pp config
+      Markers.pp markers Locs.pp locs
 
-  let get_config_opt (config, _) = ConfigLifted.get config
 
-  let get_marker_opt (_, marker) = MarkerLifted.get marker
+  let leq ~lhs ~rhs =
+    ConfigLifted.leq ~lhs:lhs.config ~rhs:rhs.config
+    && Markers.leq ~lhs:lhs.markers ~rhs:rhs.markers
+    && Locs.leq ~lhs:lhs.locs ~rhs:rhs.locs
+
+
+  let join x y =
+    { config= ConfigLifted.join x.config y.config
+    ; markers= Markers.join x.markers y.markers
+    ; locs= Locs.join x.locs y.locs }
+
+
+  let widen ~prev ~next ~num_iters =
+    { config= ConfigLifted.widen ~prev:prev.config ~next:next.config ~num_iters
+    ; markers= Markers.widen ~prev:prev.markers ~next:next.markers ~num_iters
+    ; locs= Locs.widen ~prev:prev.locs ~next:next.locs ~num_iters }
+
+
+  let make ?(config = ConfigLifted.bottom) ?(markers = Markers.bottom) ?(locs = Locs.bottom) () =
+    {config; markers; locs}
+
+
+  let of_config config = make ~config:(ConfigLifted.v config) ()
+
+  let of_marker marker = make ~markers:(Markers.singleton marker) ()
+
+  let of_loc loc = make ~locs:(Locs.singleton loc) ()
+
+  let is_bottom {config; markers; locs} =
+    ConfigLifted.is_bottom config && Markers.is_bottom markers && Locs.is_bottom locs
+
+
+  let get_config_opt {config} = ConfigLifted.get config
+
+  let get_markers {markers} = markers
+
+  let get_locs {locs} = locs
 end
 
 module Mem = struct
@@ -66,10 +122,36 @@ module Mem = struct
 
   let get_config_opt l mem = Option.bind (find_opt l mem) ~f:Val.get_config_opt
 
-  let get_marker_opt l mem = Option.bind (find_opt l mem) ~f:Val.get_marker_opt
+  let get_markers_opt l mem = Option.map (find_opt l mem) ~f:Val.get_markers
 
-  let copy ~to_ ~from mem =
-    Option.value_map (find_opt from mem) ~default:mem ~f:(fun config -> add to_ config mem)
+  let load id pvar mem =
+    let from = Loc.of_pvar pvar in
+    let v = IOption.value_default_f (find_opt from mem) ~f:(fun () -> Val.of_loc from) in
+    add (Loc.of_id id) v mem
+
+
+  let store pvar id mem =
+    Option.value_map
+      (find_opt (Loc.of_id id) mem)
+      ~default:mem
+      ~f:(fun v -> add (Loc.of_pvar pvar) v mem)
+
+
+  let store_constant e marker mem =
+    let marker = Marker.of_int_lit marker |> Val.of_marker in
+    match (e : Exp.t) with
+    | Lfield (Var id, fn, _) ->
+        let add_marker loc acc =
+          if Loc.is_this loc then add (Loc.of_this_field fn) marker acc else acc
+        in
+        let locs =
+          find_opt (Loc.of_id id) mem |> Option.value_map ~default:Locs.bottom ~f:Val.get_locs
+        in
+        Locs.fold add_marker locs mem
+    | Lvar pvar ->
+        add (Loc.of_pvar pvar) marker mem
+    | _ ->
+        mem
 end
 
 module Trace = struct
@@ -152,7 +234,7 @@ module TraceWithReported = struct
   let widen ~prev ~next ~num_iters:_ = join prev next
 end
 
-module MarkerSet = struct
+module StartedMarkers = struct
   include AbstractDomain.Map (Marker) (TraceWithReported)
 
   let pp f x =
@@ -210,7 +292,11 @@ module MarkerSet = struct
     mapi report_on_marker markers
 end
 
-module InvMarkerSet = AbstractDomain.InvertedSet (Marker)
+module EndedMarkers = struct
+  include AbstractDomain.InvertedSet (Marker)
+
+  let add_markers markers x = Markers.fold add markers x
+end
 
 module Context = struct
   (** We use opposite orders in collecting the sets of started and ended markers. This is because we
@@ -218,59 +304,69 @@ module Context = struct
       join, we want to know "the markers that have been started, at least, one of the control flow"
       (i.e. may-started) and "the markers that have been ended in all of the control flows" (i.e.
       must-ended). *)
-  type t = {started_markers: MarkerSet.t; ended_markers: InvMarkerSet.t}
+  type t = {started_markers: StartedMarkers.t; ended_markers: EndedMarkers.t}
 
   let pp f {started_markers; ended_markers} =
-    F.fprintf f "@[@[started markers: %a@]@\n@[ended markers: %a@]@]" MarkerSet.pp started_markers
-      InvMarkerSet.pp ended_markers
+    F.fprintf f "@[@[started markers: %a@]@\n@[ended markers: %a@]@]" StartedMarkers.pp
+      started_markers EndedMarkers.pp ended_markers
 
 
   let leq ~lhs ~rhs =
-    MarkerSet.leq ~lhs:lhs.started_markers ~rhs:rhs.started_markers
-    && InvMarkerSet.leq ~lhs:lhs.ended_markers ~rhs:rhs.ended_markers
+    StartedMarkers.leq ~lhs:lhs.started_markers ~rhs:rhs.started_markers
+    && EndedMarkers.leq ~lhs:lhs.ended_markers ~rhs:rhs.ended_markers
 
 
   let join x y =
-    { started_markers= MarkerSet.join x.started_markers y.started_markers
-    ; ended_markers= InvMarkerSet.join x.ended_markers y.ended_markers }
+    { started_markers= StartedMarkers.join x.started_markers y.started_markers
+    ; ended_markers= EndedMarkers.join x.ended_markers y.ended_markers }
 
 
   let widen ~prev ~next ~num_iters =
     { started_markers=
-        MarkerSet.widen ~prev:prev.started_markers ~next:next.started_markers ~num_iters
-    ; ended_markers= InvMarkerSet.widen ~prev:prev.ended_markers ~next:next.ended_markers ~num_iters
+        StartedMarkers.widen ~prev:prev.started_markers ~next:next.started_markers ~num_iters
+    ; ended_markers= EndedMarkers.widen ~prev:prev.ended_markers ~next:next.ended_markers ~num_iters
     }
 
 
-  let init = {started_markers= MarkerSet.bottom; ended_markers= InvMarkerSet.top}
+  let init = {started_markers= StartedMarkers.bottom; ended_markers= EndedMarkers.top}
 
-  let call_marker_start marker location {started_markers; ended_markers} =
-    let trace = Trace.singleton (Trace.marker_start marker) location in
-    let trace_with_reported = {TraceWithReported.trace; reported= false} in
-    { started_markers= MarkerSet.add marker trace_with_reported started_markers
-    ; ended_markers= InvMarkerSet.remove marker ended_markers }
+  let call_marker_start markers location context =
+    let start_marker marker {started_markers; ended_markers} =
+      let trace = Trace.singleton (Trace.marker_start marker) location in
+      let trace_with_reported = {TraceWithReported.trace; reported= false} in
+      { started_markers= StartedMarkers.add marker trace_with_reported started_markers
+      ; ended_markers= EndedMarkers.remove marker ended_markers }
+    in
+    Markers.fold start_marker markers context
 
 
-  let call_marker_end marker {started_markers; ended_markers} =
-    { started_markers= MarkerSet.remove marker started_markers
-    ; ended_markers= InvMarkerSet.add marker ended_markers }
+  let call_marker_end markers {started_markers; ended_markers} =
+    let started_markers =
+      match Markers.is_singleton_or_more markers with
+      | Singleton marker ->
+          StartedMarkers.remove marker started_markers
+      | Empty | More ->
+          started_markers
+    in
+    let ended_markers = EndedMarkers.add_markers markers ended_markers in
+    {started_markers; ended_markers}
 
 
   let call_config_check new_trace location ({started_markers} as context) =
-    {context with started_markers= MarkerSet.add_trace new_trace location started_markers}
+    {context with started_markers= StartedMarkers.add_trace new_trace location started_markers}
 
 
   let instantiate_callee ~callee_pname ?config_check_trace location ~callee_context ~caller_context
       =
     let started_markers =
-      MarkerSet.join_on_call callee_pname ?config_check_trace location
+      StartedMarkers.join_on_call callee_pname ?config_check_trace location
         ~callee:callee_context.started_markers ~caller:caller_context.started_markers
-      |> InvMarkerSet.fold MarkerSet.remove callee_context.ended_markers
+      |> EndedMarkers.fold StartedMarkers.remove callee_context.ended_markers
     in
     let ended_markers =
-      InvMarkerSet.join caller_context.ended_markers callee_context.ended_markers
-      |> MarkerSet.fold
-           (fun marker _trace acc -> InvMarkerSet.remove marker acc)
+      EndedMarkers.join caller_context.ended_markers callee_context.ended_markers
+      |> StartedMarkers.fold
+           (fun marker _trace acc -> EndedMarkers.remove marker acc)
            callee_context.started_markers
     in
     {started_markers; ended_markers}
@@ -300,11 +396,11 @@ module ConfigChecks = struct
 end
 
 module Summary = struct
-  type t = {context: Context.t; config_checks: ConfigChecks.t}
+  type t = {context: Context.t; config_checks: ConfigChecks.t; mem: Mem.t}
 
-  let pp f {context; config_checks} =
-    F.fprintf f "@[@[%a@]@\n@[config checks:@ %a@]@]" Context.pp context ConfigChecks.pp
-      config_checks
+  let pp f {context; config_checks; mem} =
+    F.fprintf f "@[@[%a@]@\n@[config checks:@ %a@]@\n@[mem:@ %a@]@]" Context.pp context
+      ConfigChecks.pp config_checks Mem.pp mem
 end
 
 module Dom = struct
@@ -336,39 +432,55 @@ module Dom = struct
     && ConfigChecks.leq ~lhs:lhs.config_checks ~rhs:rhs.config_checks
 
 
-  let load_constant id config marker ({mem} as astate) =
-    {astate with mem= Mem.add id (config, marker) mem}
+  let load_constant id config markers ({mem} as astate) =
+    {astate with mem= Mem.add id (Val.make ~config ~markers ()) mem}
 
 
   let load_constant_config id config ({mem} as astate) =
-    {astate with mem= Mem.add id (config, MarkerLifted.bottom) mem}
+    {astate with mem= Mem.add id (Val.of_config config) mem}
 
 
-  let mem_copy ~to_ ~from ({mem} as astate) = {astate with mem= Mem.copy ~to_ ~from mem}
+  let load_config id pvar ({mem} as astate) = {astate with mem= Mem.load id pvar mem}
 
-  let load_config id pvar astate = mem_copy ~to_:(Loc.of_id id) ~from:(Loc.of_pvar pvar) astate
+  let store_config pvar id ({mem} as astate) = {astate with mem= Mem.store pvar id mem}
 
-  let store_config pvar id astate = mem_copy ~to_:(Loc.of_pvar pvar) ~from:(Loc.of_id id) astate
+  let store_constant e marker ({mem} as astate) = {astate with mem= Mem.store_constant e marker mem}
 
-  let call_marker_start marker location ({context} as astate) =
-    {astate with context= Context.call_marker_start marker location context}
+  let call_marker_start markers location ({context} as astate) =
+    {astate with context= Context.call_marker_start markers location context}
 
 
   let call_marker_start_id id location ({mem} as astate) =
-    Mem.get_marker_opt (Loc.of_id id) mem
-    |> Option.value_map ~default:astate ~f:(fun marker -> call_marker_start marker location astate)
+    Mem.get_markers_opt (Loc.of_id id) mem
+    |> Option.value_map ~default:astate ~f:(fun markers ->
+           call_marker_start markers location astate )
 
 
-  let call_marker_end marker ({context} as astate) =
-    {astate with context= Context.call_marker_end marker context}
+  let call_marker_end markers ({context} as astate) =
+    {astate with context= Context.call_marker_end markers context}
 
 
   let call_marker_end_id id ({mem} as astate) =
-    Mem.get_marker_opt (Loc.of_id id) mem
-    |> Option.value_map ~default:astate ~f:(fun marker -> call_marker_end marker astate)
+    Mem.get_markers_opt (Loc.of_id id) mem
+    |> Option.value_map ~default:astate ~f:(fun markers -> call_marker_end markers astate)
 
 
-  let call_config_check analysis_data e location ({mem; context; config_checks} as astate) =
+  let call_config_check analysis_data config location ({context; config_checks} as astate) =
+    let trace_elem = Trace.config_check config in
+    let context = Context.call_config_check trace_elem location context in
+    let context =
+      { context with
+        started_markers= StartedMarkers.report analysis_data config location context.started_markers
+      }
+    in
+    let context_with_trace =
+      {ContextWithTrace.context; trace= Trace.singleton trace_elem location}
+    in
+    { astate with
+      config_checks= ConfigChecks.weak_add config context_with_trace location config_checks }
+
+
+  let call_config_check_exp analysis_data e location ({mem} as astate) =
     let astate' =
       let open IOption.Let_syntax in
       let* loc =
@@ -381,24 +493,20 @@ module Dom = struct
             None
       in
       let+ config = Mem.get_config_opt loc mem in
-      let trace_elem = Trace.config_check config in
-      let context = Context.call_config_check trace_elem location context in
-      let context =
-        { context with
-          started_markers= MarkerSet.report analysis_data config location context.started_markers }
-      in
-      let context_with_trace =
-        {ContextWithTrace.context; trace= Trace.singleton trace_elem location}
-      in
-      { astate with
-        config_checks= ConfigChecks.weak_add config context_with_trace location config_checks }
+      call_config_check analysis_data config location astate
     in
     Option.value astate' ~default:astate
 
 
-  let instantiate_callee analysis_data ~callee
-      ~callee_summary:{Summary.context= callee_context; config_checks= callee_config_checks}
-      location ({context= caller_context; config_checks= caller_config_checks} as astate) =
+  let instantiate_callee analysis_data ret_id ~callee
+      ~callee_summary:
+        {Summary.context= callee_context; config_checks= callee_config_checks; mem= callee_mem}
+      location {mem= caller_mem; context= caller_context; config_checks= caller_config_checks} =
+    let mem =
+      Mem.find_opt (Loc.of_ret callee) callee_mem
+      |> Option.value_map ~default:caller_mem ~f:(fun ret_v ->
+             Mem.add (Loc.of_id ret_id) ret_v caller_mem )
+    in
     let context =
       Context.instantiate_callee ~callee_pname:callee location ~callee_context ~caller_context
     in
@@ -412,7 +520,7 @@ module Dom = struct
           let context =
             { context with
               started_markers=
-                MarkerSet.report analysis_data config location context.started_markers }
+                StartedMarkers.report analysis_data config location context.started_markers }
           in
           let trace =
             Trace.add_call callee location ~from:Trace.Empty ~callee_trace:config_check_trace
@@ -420,10 +528,10 @@ module Dom = struct
           ConfigChecks.weak_add config {context; trace} location acc )
         callee_config_checks caller_config_checks
     in
-    {astate with context; config_checks}
+    {mem; context; config_checks}
 
 
-  let to_summary {context; config_checks} = {Summary.context; config_checks}
+  let to_summary {mem; context; config_checks} = {Summary.context; config_checks; mem}
 end
 
 module TransferFunctions = struct
@@ -432,8 +540,44 @@ module TransferFunctions = struct
 
   type analysis_data = Summary.t InterproceduralAnalysis.t
 
-  let exec_instr astate ({InterproceduralAnalysis.tenv; analyze_dependency} as analysis_data) _node
-      instr =
+  let get_java_constructor tenv typ =
+    let open IOption.Let_syntax in
+    let* typ_name = Typ.name typ in
+    let* {Struct.methods} = Tenv.lookup tenv typ_name in
+    List.find methods ~f:Procname.is_constructor
+
+
+  let get_markers_from_load {InterproceduralAnalysis.tenv; analyze_dependency} e mem =
+    match e with
+    | Exp.Lfield (Lvar pvar, fn, _) when Pvar.is_global pvar ->
+        Some (Markers.of_name pvar fn)
+    | Exp.Lfield (Var id, fn, typ) -> (
+        let open IOption.Let_syntax in
+        let* locs = Mem.find_opt (Loc.of_id id) mem in
+        match Val.get_locs locs |> Locs.is_singleton_or_more with
+        | Singleton this when Loc.is_this this ->
+            let* constructor = get_java_constructor tenv typ in
+            let* _, {Summary.mem= constructor_mem} = analyze_dependency constructor in
+            let+ v = Mem.find_opt (Loc.of_this_field fn) constructor_mem in
+            Val.get_markers v
+        | _ ->
+            None )
+    | _ ->
+        None
+
+
+  let get_marker_from_java_param e mem =
+    match e with
+    | Exp.Const (Cint marker) ->
+        Some (Markers.of_int_lit marker)
+    | Exp.Var id ->
+        Mem.get_markers_opt (Loc.of_id id) mem
+    | _ ->
+        None
+
+
+  let exec_instr ({Dom.mem} as astate)
+      ({InterproceduralAnalysis.tenv; analyze_dependency} as analysis_data) _node instr =
     match (instr : Sil.instr) with
     | Load {id; e= Lvar pvar} ->
         Dom.load_config id pvar astate
@@ -442,38 +586,44 @@ module TransferFunctions = struct
           Option.value_map (FbGKInteraction.get_config e) ~default:ConfigLifted.bottom
             ~f:ConfigLifted.v
         in
-        let marker =
-          Option.value_map (FbGKInteraction.get_marker e) ~default:MarkerLifted.bottom
-            ~f:(fun (marker_class, marker_name) ->
-              Marker.of_name marker_class marker_name |> MarkerLifted.v )
+        let markers =
+          get_markers_from_load analysis_data e mem |> Option.value ~default:Markers.bottom
         in
-        Dom.load_constant (Loc.of_id id) config marker astate
+        Dom.load_constant (Loc.of_id id) config markers astate
     | Call (_, Const (Cfun callee), (Lvar pvar, _) :: (e, _) :: _, _, _)
       when FbGKInteraction.is_config_load callee ->
         Option.value_map (FbGKInteraction.get_config e) ~default:astate ~f:(fun config ->
-            Dom.load_constant_config (Loc.of_pvar pvar) (ConfigLifted.v config) astate )
+            Dom.load_constant_config (Loc.of_pvar pvar) config astate )
     | Store {e1= Lvar pvar; e2= Exp.Var id} ->
         Dom.store_config pvar id astate
-    | Call (_, Const (Cfun callee), _ :: (Const (Cint marker), _) :: _, location, _)
+    | Store {e1; e2= Const (Const.Cint marker)} ->
+        Dom.store_constant e1 marker astate
+    | Call (_, Const (Cfun callee), _ :: (e, _) :: _, location, _)
       when FbGKInteraction.is_marker_start_java tenv callee ->
-        Dom.call_marker_start (Marker.of_int_lit marker) location astate
-    | Call (_, Const (Cfun callee), _ :: (Const (Cint marker), _) :: _, _, _)
+        get_marker_from_java_param e mem
+        |> Option.value_map ~default:astate ~f:(fun markers ->
+               Dom.call_marker_start markers location astate )
+    | Call (_, Const (Cfun callee), _ :: (e, _) :: _, _, _)
       when FbGKInteraction.is_marker_end_java tenv callee ->
-        Dom.call_marker_end (Marker.of_int_lit marker) astate
+        get_marker_from_java_param e mem
+        |> Option.value_map ~default:astate ~f:(fun markers -> Dom.call_marker_end markers astate)
     | Call (_, Const (Cfun callee), (Var id, _) :: _, location, _)
       when FbGKInteraction.is_marker_start_objc callee ->
         Dom.call_marker_start_id id location astate
     | Call (_, Const (Cfun callee), (Var id, _) :: _, _, _)
       when FbGKInteraction.is_marker_end_objc callee ->
         Dom.call_marker_end_id id astate
-    | Call (_, Const (Cfun callee), args, location, _) -> (
+    | Call ((ret_id, _), Const (Cfun callee), args, location, _) -> (
       match FbGKInteraction.get_config_check tenv callee args with
-      | Some e ->
-          Dom.call_config_check analysis_data e location astate
+      | Some (`Config config) ->
+          Dom.call_config_check analysis_data config location astate
+      | Some (`Exp e) ->
+          Dom.call_config_check_exp analysis_data e location astate
       | None ->
           Option.value_map (analyze_dependency callee) ~default:astate
             ~f:(fun (_, callee_summary) ->
-              Dom.instantiate_callee analysis_data ~callee ~callee_summary location astate ) )
+              Dom.instantiate_callee analysis_data ret_id ~callee ~callee_summary location astate )
+      )
     | _ ->
         astate
 

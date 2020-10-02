@@ -36,7 +36,7 @@ let compute_upperbound_map node_cfg inferbo_invariant_map control_invariant_map 
     let node_id = NodeCFG.Node.id node in
     match Procdesc.Node.get_kind node with
     | Procdesc.Node.Exit_node ->
-        Node.IdMap.add node_id BasicCost.one bound_map
+        Node.IdMap.add node_id (BasicCost.one ()) bound_map
     | _ -> (
         let exit_state_opt =
           let instr_node_id = InstrCFG.last_of_underlying_node node |> InstrCFG.Node.id in
@@ -58,12 +58,10 @@ let compute_upperbound_map node_cfg inferbo_invariant_map control_invariant_map 
               | Unreachable ->
                   let node_loc = NodeCFG.Node.loc node in
                   L.debug Analysis Medium
-                    "@\n\
-                     [COST ANALYSIS INTERNAL WARNING:] No 'env' found. This location is \
-                     unreachable returning cost 0 \n" ;
+                    "@\n[COST ANALYSIS INTERNAL WARNING:] This location is unreachable \n" ;
                   BasicCost.of_unreachable node_loc
               | ExcRaised ->
-                  BasicCost.one
+                  BasicCost.one ()
               | Reachable mem ->
                   let cost =
                     BufferOverrunDomain.MemReach.range ~filter_loc:(filter_loc control_map) ~node_id
@@ -74,7 +72,7 @@ let compute_upperbound_map node_cfg inferbo_invariant_map control_invariant_map 
                      values) does not make sense especially when the
                      abstract memory is non-bottom. This is a source
                      of unsoundness in the analysis. *)
-                  if BasicCost.is_zero cost then BasicCost.one else cost
+                  if BasicCost.is_zero cost then BasicCost.one () else cost
             in
             L.(debug Analysis Medium)
               "@\n>>>Setting bound for node = %a  to %a@\n\n" Node.pp_id node_id BasicCost.pp bound ;

@@ -158,13 +158,12 @@ module JsonIssuePrinter = MakeJsonListPrinter (struct
       L.(die InternalError)
         "Invalid source file for %a %a@.Trace: %a@." IssueType.pp err_key.issue_type
         Localise.pp_error_desc err_key.err_desc Errlog.pp_loc_trace err_data.loc_trace ;
-    let should_report_source_file =
-      (not (SourceFile.is_biabduction_model source_file))
-      || Config.debug_mode || Config.debug_exceptions
+    let should_report_proc_name =
+      Config.debug_mode || Config.debug_exceptions || not (BiabductionModels.mem proc_name)
     in
     if
       error_filter source_file err_key.issue_type
-      && should_report_source_file
+      && should_report_proc_name
       && should_report err_key.issue_type err_key.err_desc
     then
       let severity = IssueType.string_of_severity err_key.severity in
@@ -250,14 +249,16 @@ module JsonCostsPrinter = MakeJsonListPrinter (struct
               Format.asprintf "%a" (CostDomain.BasicCost.pp_degree ~only_bigO:true) degree_with_term
           }
         in
-        let cost_info cost =
+        let cost_info ?is_autoreleasepool_trace cost =
           { Jsonbug_t.polynomial_version= CostDomain.BasicCost.version
           ; polynomial= CostDomain.BasicCost.encode cost
           ; degree=
               Option.map (CostDomain.BasicCost.degree cost) ~f:Polynomials.Degree.encode_to_int
           ; hum= hum cost
-          ; trace= loc_trace_to_jsonbug_record (CostDomain.BasicCost.polynomial_traces cost) Advice
-          }
+          ; trace=
+              loc_trace_to_jsonbug_record
+                (CostDomain.BasicCost.polynomial_traces ?is_autoreleasepool_trace cost)
+                Advice }
         in
         let cost_item =
           let file =
@@ -268,7 +269,10 @@ module JsonCostsPrinter = MakeJsonListPrinter (struct
           ; procedure_name= Procname.get_method proc_name
           ; procedure_id= procedure_id_of_procname proc_name
           ; is_on_ui_thread
-          ; exec_cost= cost_info (CostDomain.get_cost_kind CostKind.OperationCost post).cost }
+          ; exec_cost= cost_info (CostDomain.get_cost_kind CostKind.OperationCost post).cost
+          ; autoreleasepool_size=
+              cost_info ~is_autoreleasepool_trace:true
+                (CostDomain.get_cost_kind CostKind.AutoreleasepoolSize post).cost }
         in
         Some (Jsonbug_j.string_of_cost_item cost_item)
     | _ ->
@@ -282,20 +286,15 @@ let mk_error_filter filters proc_name file error_name =
   && filters.Inferconfig.proc_filter proc_name
 
 
-let collect_issues summary issues_acc =
-  let err_log = Summary.get_err_log summary in
-  let proc_name = Summary.get_proc_name summary in
-  let proc_location = Summary.get_loc summary in
+let collect_issues proc_name proc_location err_log issues_acc =
   Errlog.fold
     (fun err_key err_data acc -> {Issue.proc_name; proc_location; err_key; err_data} :: acc)
     err_log issues_acc
 
 
-let write_costs summary (outfile : Utils.outfile) =
-  let proc_name = Summary.get_proc_name summary in
+let write_costs proc_name loc cost_opt (outfile : Utils.outfile) =
   if not (Cost.is_report_suppressed proc_name) then
-    JsonCostsPrinter.pp outfile.fmt
-      {loc= Summary.get_loc summary; proc_name; cost_opt= summary.Summary.payloads.Payloads.cost}
+    JsonCostsPrinter.pp outfile.fmt {loc; proc_name; cost_opt}
 
 
 (** Process lint issues of a procedure *)
@@ -305,17 +304,17 @@ let write_lint_issues filters (issues_outf : Utils.outfile) linereader procname 
 
 
 (** Process a summary *)
-let process_summary ~costs_outf summary issues_acc =
-  write_costs summary costs_outf ;
-  collect_issues summary issues_acc
+let process_summary ~costs_outf proc_name loc cost_opt err_log issues_acc =
+  write_costs proc_name loc cost_opt costs_outf ;
+  collect_issues proc_name loc err_log issues_acc
 
 
 let process_all_summaries_and_issues ~issues_outf ~costs_outf =
   let linereader = LineReader.create () in
   let filters = Inferconfig.create_filters () in
   let all_issues = ref [] in
-  SpecsFiles.iter_from_config ~f:(fun summary ->
-      all_issues := process_summary ~costs_outf summary !all_issues ) ;
+  Summary.OnDisk.iter_report_summaries_from_config ~f:(fun proc_name loc cost_opt err_log ->
+      all_issues := process_summary ~costs_outf proc_name loc cost_opt err_log !all_issues ) ;
   all_issues := Issue.sort_filter_issues !all_issues ;
   List.iter
     ~f:(fun {Issue.proc_name; proc_location; err_key; err_data} ->

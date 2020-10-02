@@ -8,21 +8,12 @@ include $(ROOT_DIR)/Makefile.config
 
 #### Global declarations ####
 
-# Override this for faster builds (but slower infer)
-BUILD_MODE ?= opt
-
-DUNE_BUILD = dune build --profile=$(BUILD_MODE)
-
-ETC_DIR = $(INFER_DIR)/etc
-
 INFER_MAIN = infer
 INFERTOP_MAIN = infertop
 INFERUNIT_MAIN = inferunit
 INFER_CREATE_TRACEVIEW_LINKS_MODULE = InferCreateTraceViewLinks
 INFER_CREATE_TRACEVIEW_LINKS_MAIN = $(INFER_CREATE_TRACEVIEW_LINKS_MODULE)
 CHECKCOPYRIGHT_MAIN = checkCopyright
-
-FACEBOOK_DIR = facebook
 
 #### Clang declarations ####
 
@@ -86,12 +77,29 @@ endif
 .PHONY: src_build_common
 src_build_common: $(SRC_BUILD_COMMON)
 
+# NOTE: the complexity below is because @runtest and @fmt interact poorly: we want dune to format
+# test files *after* having promoted them when the test outputs change
+.PHONY: runtest
+runtest: $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
+	$(QUIET)exit_code=0; \
+	$(DUNE_BUILD) @runtest --auto-promote || exit_code=$$?; \
+	$(DUNE_BUILD) @fmt --auto-promote || exit_code=$$?; \
+	exit $$exit_code
+
 .PHONY: test
-test: BUILD_MODE = test
-test: $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
-	$(QUIET)$(DUNE_BUILD) \
+test: $(SRC_BUILD_COMMON) $(MAKEFILE_LIST) runtest
+	$(DUNE_BUILD) \
 	  $(patsubst %.exe, %.bc.exe, $(INFER_CONFIG_TARGETS)) \
 	  scripts/$(CHECKCOPYRIGHT_MAIN).bc.exe $(INFERUNIT_MAIN).bc.exe $(INFERTOP_MAIN).bc.exe
+
+.PHONY: unit
+unit: runtest test
+	$(QUIET)$(REMOVE_DIR) infer-out-unit-tests
+	$(QUIET)INFER_ARGS=--results-dir^infer-out-unit-tests $(INFERUNIT_BIN)
+
+.PHONY: build_all
+build_all: $(SRC_BUILD_COMMON)
+	$(DUNE_BUILD) @all
 
 .PHONY: doc
 doc: $(SRC_BUILD_COMMON) $(MAKEFILE_LIST)
@@ -153,7 +161,7 @@ roots:=Infer
 ifeq ($(IS_FACEBOOK_TREE),yes)
 roots += $(INFER_CREATE_TRACEVIEW_LINKS_MODULE)
 endif
-clusters:=absint al atd backend base biabduction bufferoverrun checkers clang clang_stubs concurrency cost c_stubs deadcode integration IR istd java labs llvm nullsafe opensource pulse quandary scripts test_determinator third-party topl unit
+clusters:=absint al atd backend base biabduction bufferoverrun checkers clang clang_stubs concurrency cost c_stubs deadcode integration IR istd java labs llvm nullsafe opensource pulse quandary scripts test_determinator topl unit
 
 ml_src_files:=$(shell find . -not -path "./*stubs*" -regex '\./[a-zA-Z].*\.ml\(i\)*')
 inc_flags:=$(foreach dir,$(shell find . -not -path './_build*' -type d),-I $(dir))

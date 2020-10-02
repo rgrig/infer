@@ -28,6 +28,15 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       actuals
 
 
+  let hilexp_of_sil ~add_deref (astate : Domain.t) silexp typ =
+    let f_resolve_id var = Domain.VarDomain.get var astate.var_state in
+    HilExp.of_sil ~include_array_indexes:false ~f_resolve_id ~add_deref silexp typ
+
+
+  let hilexp_of_sils ~add_deref astate silexps =
+    List.map silexps ~f:(fun (exp, typ) -> hilexp_of_sil ~add_deref astate exp typ)
+
+
   let rec get_access_expr (hilexp : HilExp.t) =
     match hilexp with
     | AccessExpression access_exp ->
@@ -56,12 +65,14 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
              {acc with attributes} )
     in
     match HilExp.get_access_exprs assume_exp with
-    | [access_expr] when AttributeDomain.is_thread_guard access_expr astate.attributes ->
-        HilExp.eval_boolean_exp access_expr assume_exp
-        |> Option.fold ~init:astate ~f:add_thread_choice
-    | [access_expr] when AttributeDomain.is_future_done_guard access_expr astate.attributes ->
-        HilExp.eval_boolean_exp access_expr assume_exp
-        |> Option.fold ~init:astate ~f:(add_future_done_choice access_expr)
+    | [access_expr] ->
+        if AttributeDomain.is_thread_guard access_expr astate.attributes then
+          HilExp.eval_boolean_exp access_expr assume_exp
+          |> Option.fold ~init:astate ~f:add_thread_choice
+        else if AttributeDomain.is_future_done_guard access_expr astate.attributes then
+          HilExp.eval_boolean_exp access_expr assume_exp
+          |> Option.fold ~init:astate ~f:(add_future_done_choice access_expr)
+        else astate
     | _ ->
         astate
 
@@ -214,8 +225,33 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     |> Option.value ~default:astate
 
 
+  let do_metadata (metadata : Sil.instr_metadata) astate =
+    match metadata with ExitScope (vars, _) -> Domain.remove_dead_vars astate vars | _ -> astate
+
+
+  let do_load tenv ~lhs rhs_exp rhs_typ (astate : Domain.t) =
+    let lhs_var = fst lhs in
+    let add_deref = match (lhs_var : Var.t) with LogicalVar _ -> true | ProgramVar _ -> false in
+    let rhs_hil_exp = hilexp_of_sil ~add_deref astate rhs_exp rhs_typ in
+    let astate =
+      get_access_expr rhs_hil_exp
+      |> Option.value_map ~default:astate ~f:(fun acc_exp ->
+             {astate with var_state= Domain.VarDomain.set lhs_var acc_exp astate.var_state} )
+    in
+    let lhs_hil_acc_exp = HilExp.AccessExpression.base lhs in
+    do_assignment tenv lhs_hil_acc_exp rhs_hil_exp astate
+
+
+  let do_cast tenv id base_typ actuals astate =
+    match actuals with
+    | [(e, typ); _sizeof] ->
+        do_load tenv ~lhs:(Var.of_id id, base_typ) e typ astate
+    | _ ->
+        astate
+
+
   let exec_instr (astate : Domain.t) ({interproc= {proc_desc; tenv}; formals} as analysis_data) _
-      (instr : HilInstr.t) =
+      instr =
     let open ConcurrencyModels in
     let open StarvationModels in
     let get_lock_path = Domain.Lock.make formals in
@@ -225,68 +261,84 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       List.filter_map ~f:get_lock_path locks |> Domain.acquire ~tenv astate ~procname ~loc
     in
     let do_unlock locks astate = List.filter_map ~f:get_lock_path locks |> Domain.release astate in
-    match instr with
-    | Assign (lhs_access_exp, rhs_exp, _) ->
-        do_assignment tenv lhs_access_exp rhs_exp astate
-    | Metadata (Sil.ExitScope (vars, _)) ->
-        {astate with attributes= Domain.AttributeDomain.exit_scope vars astate.attributes}
-    | Metadata _ ->
+    match (instr : Sil.instr) with
+    | Metadata metadata ->
+        do_metadata metadata astate
+    | Prune (exp, _loc, _then_branch, _if_kind) ->
+        let hil_exp = hilexp_of_sil ~add_deref:false astate exp Typ.boolean in
+        do_assume hil_exp astate
+    | Load {id} when Ident.is_none id ->
         astate
-    | Assume (assume_exp, _, _, _) ->
-        do_assume assume_exp astate
-    | Call (_, Indirect _, _, _, _) ->
+    | Load {id; e; typ} ->
+        do_load tenv ~lhs:(Var.of_id id, typ) e typ astate
+    | Store {e1= Lvar lhs_pvar; typ; e2} when Pvar.is_ssa_frontend_tmp lhs_pvar ->
+        do_load tenv ~lhs:(Var.of_pvar lhs_pvar, typ) e2 typ astate
+    | Store {e1; typ; e2} ->
+        let rhs_hil_exp = hilexp_of_sil ~add_deref:false astate e2 typ in
+        hilexp_of_sil ~add_deref:true astate e1 (Typ.mk_ptr typ)
+        |> get_access_expr
+        |> Option.value_map ~default:astate ~f:(fun lhs_hil_acc_exp ->
+               do_assignment tenv lhs_hil_acc_exp rhs_hil_exp astate )
+    | Call (_, Const (Cfun callee), actuals, _, _)
+      when should_skip_analysis tenv callee (hilexp_of_sils ~add_deref:false astate actuals) ->
         astate
-    | Call (_, Direct callee, actuals, _, _) when should_skip_analysis tenv callee actuals ->
-        astate
-    | Call (ret_base, Direct callee, actuals, _, loc) -> (
-      match get_lock_effect callee actuals with
-      | Lock locks ->
-          do_lock locks loc astate
-      | GuardLock guard ->
-          Domain.lock_guard tenv astate guard ~procname ~loc
-      | GuardConstruct {guard; lock; acquire_now} -> (
-        match get_lock_path lock with
-        | Some lock_path ->
-            Domain.add_guard tenv astate guard lock_path ~acquire_now ~procname ~loc
-        | None ->
-            log_parse_error "Couldn't parse lock in guard constructor" callee actuals ;
-            astate )
-      | Unlock locks ->
-          do_unlock locks astate
-      | GuardUnlock guard ->
-          Domain.unlock_guard astate guard
-      | GuardDestroy guard ->
-          Domain.remove_guard astate guard
-      | LockedIfTrue _ | GuardLockedIfTrue _ ->
-          astate
-      | NoEffect when is_synchronized_library_call tenv callee ->
-          (* model a synchronized call without visible internal behaviour *)
-          let locks = List.hd actuals |> Option.to_list in
-          do_lock locks loc astate |> do_unlock locks
-      | NoEffect when is_java && is_strict_mode_violation tenv callee actuals ->
-          Domain.strict_mode_call ~callee ~loc astate
-      | NoEffect when is_java && is_monitor_wait tenv callee actuals ->
-          Domain.wait_on_monitor ~loc formals actuals astate
-      | NoEffect when is_java && is_future_get tenv callee actuals ->
-          Domain.future_get ~callee ~loc actuals astate
-      | NoEffect when is_java -> (
-          let ret_exp = HilExp.AccessExpression.base ret_base in
-          let astate = do_work_scheduling tenv callee actuals loc astate in
-          match may_block tenv callee actuals with
-          | Some sev ->
-              Domain.blocking_call ~callee sev ~loc astate
+    | Call ((id, base_typ), Const (Cfun callee), actuals, _, _)
+      when Procname.equal callee BuiltinDecl.__cast ->
+        do_cast tenv id base_typ actuals astate
+    | Call ((id, typ), Const (Cfun callee), sil_actuals, loc, _) -> (
+        let ret_base = (Var.of_id id, typ) in
+        let actuals = hilexp_of_sils ~add_deref:false astate sil_actuals in
+        match get_lock_effect callee actuals with
+        | Lock locks ->
+            do_lock locks loc astate
+        | GuardLock guard ->
+            Domain.lock_guard tenv astate guard ~procname ~loc
+        | GuardConstruct {guard; lock; acquire_now} -> (
+          match get_lock_path lock with
+          | Some lock_path ->
+              Domain.add_guard tenv astate guard lock_path ~acquire_now ~procname ~loc
           | None ->
-              do_call analysis_data ret_exp callee actuals loc astate )
-      | NoEffect ->
-          (* in C++/Obj C we only care about deadlocks, not starvation errors *)
-          let ret_exp = HilExp.AccessExpression.base ret_base in
-          do_call analysis_data ret_exp callee actuals loc astate )
+              log_parse_error "Couldn't parse lock in guard constructor" callee actuals ;
+              astate )
+        | Unlock locks ->
+            do_unlock locks astate
+        | GuardUnlock guard ->
+            Domain.unlock_guard astate guard
+        | GuardDestroy guard ->
+            Domain.remove_guard astate guard
+        | LockedIfTrue _ | GuardLockedIfTrue _ ->
+            astate
+        | NoEffect when is_synchronized_library_call tenv callee ->
+            (* model a synchronized call without visible internal behaviour *)
+            let locks = List.hd actuals |> Option.to_list in
+            do_lock locks loc astate |> do_unlock locks
+        | NoEffect when is_java && is_strict_mode_violation tenv callee actuals ->
+            Domain.strict_mode_call ~callee ~loc astate
+        | NoEffect when is_java && is_monitor_wait tenv callee actuals ->
+            Domain.wait_on_monitor ~loc formals actuals astate
+        | NoEffect when is_java && is_future_get tenv callee actuals ->
+            Domain.future_get ~callee ~loc actuals astate
+        | NoEffect when is_java -> (
+            let ret_exp = HilExp.AccessExpression.base ret_base in
+            let astate = do_work_scheduling tenv callee actuals loc astate in
+            match may_block tenv callee actuals with
+            | Some sev ->
+                Domain.blocking_call ~callee sev ~loc astate
+            | None ->
+                do_call analysis_data ret_exp callee actuals loc astate )
+        | NoEffect ->
+            (* in C++/Obj C we only care about deadlocks, not starvation errors *)
+            let ret_exp = HilExp.AccessExpression.base ret_base in
+            do_call analysis_data ret_exp callee actuals loc astate )
+    | Call ((id, _), _, _, _, _) ->
+        (* call havocs LHS *)
+        Domain.remove_dead_vars astate [Var.of_id id]
 
 
   let pp_session_name _node fmt = F.pp_print_string fmt "starvation"
 end
 
-module Analyzer = LowerHil.MakeAbstractInterpreter (TransferFunctions (ProcCfg.Normal))
+module Analyzer = AbstractInterpreter.MakeRPO (TransferFunctions (ProcCfg.Normal))
 
 (** Compute the attributes (of static variables) set up by the class initializer. *)
 let set_class_init_attributes procname (astate : Domain.t) =
@@ -378,7 +430,7 @@ let analyze_procedure ({InterproceduralAnalysis.proc_desc; tenv} as interproc) =
       else Fn.id
     in
     let initial =
-      Domain.bottom
+      Domain.initial
       (* set the attributes of instance variables set up by all constructors or the class initializer *)
       |> set_initial_attributes interproc
       |> set_lock_state_for_synchronized_proc |> set_thread_status_by_annotation
@@ -394,7 +446,8 @@ module ReportMap : sig
 
   val empty : t
 
-  type report_add_t = Tenv.t -> Procdesc.t -> Location.t -> Errlog.loc_trace -> string -> t -> t
+  type report_add_t =
+    Tenv.t -> ProcAttributes.t -> Location.t -> Errlog.loc_trace -> string -> t -> t
 
   val add_deadlock : report_add_t
 
@@ -431,40 +484,41 @@ end = struct
 
   type t = report_t list Location.Map.t
 
-  type report_add_t = Tenv.t -> Procdesc.t -> Location.t -> Errlog.loc_trace -> string -> t -> t
+  type report_add_t =
+    Tenv.t -> ProcAttributes.t -> Location.t -> Errlog.loc_trace -> string -> t -> t
 
   let empty : t = Location.Map.empty
 
-  let add tenv pdesc loc report loc_map =
-    if Reporting.is_suppressed tenv pdesc (issue_type_of_problem report.problem) then loc_map
+  let add tenv pattrs loc report loc_map =
+    if Reporting.is_suppressed tenv pattrs (issue_type_of_problem report.problem) then loc_map
     else
       Location.Map.update loc
         (function reports_opt -> Some (report :: Option.value reports_opt ~default:[]))
         loc_map
 
 
-  let add_deadlock tenv pdesc loc ltr message (map : t) =
-    let pname = Procdesc.get_proc_name pdesc in
+  let add_deadlock tenv pattrs loc ltr message (map : t) =
+    let pname = ProcAttributes.get_proc_name pattrs in
     let report = {problem= Deadlock (-List.length ltr); pname; ltr; message} in
-    add tenv pdesc loc report map
+    add tenv pattrs loc report map
 
 
-  let add_starvation sev tenv pdesc loc ltr message map =
-    let pname = Procdesc.get_proc_name pdesc in
+  let add_starvation sev tenv pattrs loc ltr message map =
+    let pname = ProcAttributes.get_proc_name pattrs in
     let report = {pname; problem= Starvation sev; ltr; message} in
-    add tenv pdesc loc report map
+    add tenv pattrs loc report map
 
 
-  let add_strict_mode_violation tenv pdesc loc ltr message (map : t) =
-    let pname = Procdesc.get_proc_name pdesc in
+  let add_strict_mode_violation tenv pattrs loc ltr message (map : t) =
+    let pname = ProcAttributes.get_proc_name pattrs in
     let report = {problem= StrictModeViolation (-List.length ltr); pname; ltr; message} in
-    add tenv pdesc loc report map
+    add tenv pattrs loc report map
 
 
-  let add_lockless_violation tenv pdesc loc ltr message (map : t) =
-    let pname = Procdesc.get_proc_name pdesc in
+  let add_lockless_violation tenv pattrs loc ltr message (map : t) =
+    let pname = ProcAttributes.get_proc_name pattrs in
     let report = {problem= LocklessViolation (-List.length ltr); pname; ltr; message} in
-    add tenv pdesc loc report map
+    add tenv pattrs loc report map
 
 
   let issue_log_of loc_map =
@@ -563,10 +617,10 @@ let should_report_deadlock_on_current_proc current_elem endpoint_elem =
           c < 0 )
 
 
-let should_report pdesc =
-  (not (PredSymb.equal_access (Procdesc.get_access pdesc) Private))
+let should_report attrs =
+  (not (PredSymb.equal_access (ProcAttributes.get_access attrs) Private))
   &&
-  match Procdesc.get_proc_name pdesc with
+  match ProcAttributes.get_proc_name attrs with
   | Procname.Java java_pname ->
       (not (Procname.Java.is_autogen_method java_pname))
       && not (Procname.Java.is_class_initializer java_pname)
@@ -582,9 +636,9 @@ let fold_reportable_summaries analyze_ondemand tenv clazz ~init ~f =
     |> Option.value_map ~default:[] ~f:(fun tstruct -> tstruct.Struct.methods)
   in
   let f acc mthd =
-    AnalysisCallbacks.get_proc_desc mthd
-    |> Option.value_map ~default:acc ~f:(fun other_pdesc ->
-           if should_report other_pdesc then
+    AnalysisCallbacks.proc_resolve_attributes mthd
+    |> Option.value_map ~default:acc ~f:(fun other_attrs ->
+           if should_report other_attrs then
              analyze_ondemand mthd
              |> Option.map ~f:(fun (_, payload) -> (mthd, payload))
              |> Option.fold ~init:acc ~f
@@ -603,10 +657,10 @@ let fold_reportable_summaries analyze_ondemand tenv clazz ~init ~f =
 
 (** report warnings possible on the parallel composition of two threads/critical pairs
     [should_report_starvation] means [pair] is on the UI thread and not on a constructor *)
-let report_on_parallel_composition ~should_report_starvation tenv pdesc pair lock other_pname
+let report_on_parallel_composition ~should_report_starvation tenv pattrs pair lock other_pname
     other_pair report_map =
   let open Domain in
-  let pname = Procdesc.get_proc_name pdesc in
+  let pname = ProcAttributes.get_proc_name pattrs in
   let make_trace_and_loc () =
     let first_trace = CriticalPair.make_trace ~header:"[Trace 1] " pname pair in
     let second_trace = CriticalPair.make_trace ~header:"[Trace 2] " other_pname other_pair in
@@ -626,7 +680,7 @@ let report_on_parallel_composition ~should_report_starvation tenv pdesc pair loc
             pname_pp pname Lock.pp_locks lock Event.describe event
         in
         let ltr, loc = make_trace_and_loc () in
-        ReportMap.add_starvation sev tenv pdesc loc ltr error_message report_map
+        ReportMap.add_starvation sev tenv pattrs loc ltr error_message report_map
     | MonitorWait monitor_lock
       when should_report_starvation
            && Acquisitions.lock_is_held_in_other_thread tenv lock acquisitions
@@ -637,7 +691,7 @@ let report_on_parallel_composition ~should_report_starvation tenv pdesc pair loc
             pname_pp pname Lock.pp_locks lock Event.describe other_pair.CriticalPair.elem.event
         in
         let ltr, loc = make_trace_and_loc () in
-        ReportMap.add_starvation High tenv pdesc loc ltr error_message report_map
+        ReportMap.add_starvation High tenv pattrs loc ltr error_message report_map
     | LockAcquire other_lock
       when CriticalPair.may_deadlock tenv pair other_pair
            && should_report_deadlock_on_current_proc pair other_pair ->
@@ -648,15 +702,15 @@ let report_on_parallel_composition ~should_report_starvation tenv pdesc pair loc
             pname_pp pname pname_pp other_pname Lock.describe lock Lock.describe other_lock
         in
         let ltr, loc = make_trace_and_loc () in
-        ReportMap.add_deadlock tenv pdesc loc ltr error_message report_map
+        ReportMap.add_deadlock tenv pattrs loc ltr error_message report_map
     | _ ->
         report_map
   else report_map
 
 
-let report_on_pair ~analyze_ondemand tenv pdesc (pair : Domain.CriticalPair.t) report_map =
+let report_on_pair ~analyze_ondemand tenv pattrs (pair : Domain.CriticalPair.t) report_map =
   let open Domain in
-  let pname = Procdesc.get_proc_name pdesc in
+  let pname = ProcAttributes.get_proc_name pattrs in
   let event = pair.elem.event in
   let should_report_starvation =
     CriticalPair.is_uithread pair && not (Procname.is_constructor pname)
@@ -673,21 +727,21 @@ let report_on_pair ~analyze_ondemand tenv pdesc (pair : Domain.CriticalPair.t) r
           Event.describe event
       in
       let ltr, loc = make_trace_and_loc () in
-      ReportMap.add_starvation sev tenv pdesc loc ltr error_message report_map
+      ReportMap.add_starvation sev tenv pattrs loc ltr error_message report_map
   | MonitorWait _ when should_report_starvation ->
       let error_message =
         Format.asprintf "Method %a runs on UI thread and may block; %a." pname_pp pname
           Event.describe event
       in
       let ltr, loc = make_trace_and_loc () in
-      ReportMap.add_starvation High tenv pdesc loc ltr error_message report_map
+      ReportMap.add_starvation High tenv pattrs loc ltr error_message report_map
   | StrictModeCall _ when should_report_starvation ->
       let error_message =
         Format.asprintf "Method %a runs on UI thread and may violate Strict Mode; %a." pname_pp
           pname Event.describe event
       in
       let ltr, loc = make_trace_and_loc () in
-      ReportMap.add_strict_mode_violation tenv pdesc loc ltr error_message report_map
+      ReportMap.add_strict_mode_violation tenv pattrs loc ltr error_message report_map
   | LockAcquire _ when StarvationModels.is_annotated_lockless tenv pname ->
       let error_message =
         Format.asprintf "Method %a is annotated %s but%a." pname_pp pname
@@ -696,14 +750,14 @@ let report_on_pair ~analyze_ondemand tenv pdesc (pair : Domain.CriticalPair.t) r
       in
       let loc = CriticalPair.get_earliest_lock_or_call_loc ~procname:pname pair in
       let ltr = CriticalPair.make_trace pname pair in
-      ReportMap.add_lockless_violation tenv pdesc loc ltr error_message report_map
+      ReportMap.add_lockless_violation tenv pattrs loc ltr error_message report_map
   | LockAcquire lock when Acquisitions.lock_is_held lock pair.elem.acquisitions ->
       let error_message =
         Format.asprintf "Potential self deadlock. %a%a twice." pname_pp pname Lock.pp_locks lock
       in
       let loc = CriticalPair.get_earliest_lock_or_call_loc ~procname:pname pair in
       let ltr = CriticalPair.make_trace ~header:"In method " pname pair in
-      ReportMap.add_deadlock tenv pdesc loc ltr error_message report_map
+      ReportMap.add_deadlock tenv pattrs loc ltr error_message report_map
   | LockAcquire lock when not Config.starvation_whole_program ->
       Lock.root_class lock
       |> Option.value_map ~default:report_map ~f:(fun other_class ->
@@ -714,7 +768,7 @@ let report_on_pair ~analyze_ondemand tenv pdesc (pair : Domain.CriticalPair.t) r
              fold_reportable_summaries analyze_ondemand tenv other_class ~init:report_map
                ~f:(fun acc (other_pname, {critical_pairs}) ->
                  CriticalPairs.fold
-                   (report_on_parallel_composition ~should_report_starvation tenv pdesc pair lock
+                   (report_on_parallel_composition ~should_report_starvation tenv pattrs pair lock
                       other_pname)
                    critical_pairs acc ) )
   | _ ->
@@ -732,8 +786,9 @@ let reporting {InterproceduralAnalysis.procedures; file_exe_env; analyze_file_de
     let report_procedure report_map procname =
       analyze_file_dependency procname
       |> Option.value_map ~default:report_map ~f:(fun (proc_desc, summary) ->
+             let attributes = Procdesc.get_attributes proc_desc in
              let tenv = Exe_env.get_tenv file_exe_env procname in
-             if should_report proc_desc then report_on_proc tenv proc_desc report_map summary
+             if should_report attributes then report_on_proc tenv attributes report_map summary
              else report_map )
     in
     List.fold procedures ~init:ReportMap.empty ~f:report_procedure |> ReportMap.issue_log_of

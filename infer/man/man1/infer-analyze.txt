@@ -209,8 +209,8 @@ OPTIONS
            Activates: Enable loop-hoisting and disable all other checkers
            (Conversely: --no-loop-hoisting-only)
 
-       --perf-profiler-data-file file
-           DEPRECATED: Specify the file containing perf profiler data to read
+       --max-jobs int
+           Maximum number of analysis jobs running simultaneously
 
        --print-active-checkers
            Activates: Print the active checkers before starting the analysis
@@ -254,6 +254,12 @@ OPTIONS
 
        --pulse-model-release-pattern string
            Regex of methods that should be modelled as release in Pulse
+
+       --pulse-model-return-nonnull +string
+           Methods that should be modelled as returning non-null in Pulse
+
+       --pulse-model-skip-pattern string
+           Regex of methods that should be modelled as "skip" in Pulse
 
        --pulse-model-transfer-ownership +string
            Methods that should be modelled as transfering memory ownership in
@@ -349,14 +355,23 @@ OPTIONS
            Activates: Enable starvation and disable all other checkers
            (Conversely: --no-starvation-only)
 
-       --topl
-           Activates: checker topl: Detects errors based on user-provided
-           state machines describing multi-object monitors. (Conversely:
-           --no-topl)
+       --topl-biabd
+           Activates: checker topl-biabd: Detects errors based on
+           user-provided state machines describing multi-object monitors.
+           (Conversely: --no-topl-biabd)
 
-       --topl-only
-           Activates: Enable topl and disable all other checkers (Conversely:
-           --no-topl-only)
+       --topl-biabd-only
+           Activates: Enable topl-biabd and disable all other checkers
+           (Conversely: --no-topl-biabd-only)
+
+       --topl-pulse
+           Activates: checker topl-pulse: Detects errors based on
+           user-provided state machines describing multi-object monitors.
+           (Conversely: --no-topl-pulse)
+
+       --topl-pulse-only
+           Activates: Enable topl-pulse and disable all other checkers
+           (Conversely: --no-topl-pulse-only)
 
        --no-uninit
            Deactivates: checker uninit: Warns when values are used before
@@ -365,6 +380,10 @@ OPTIONS
        --uninit-only
            Activates: Enable uninit and disable all other checkers
            (Conversely: --no-uninit-only)
+
+       --xcode-isysroot-suffix string
+           Specify the suffix of Xcode isysroot directory, to avoid absolute
+           paths in tests
 BUCK OPTIONS
        --merge
            Activates: Merge the captured results directories specified in the

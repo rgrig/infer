@@ -253,6 +253,10 @@ module type Common = sig
   val ( ~+ ) : ('context -> string -> bool) -> ('context, 'f, 'f, 'arg_payload) name_matcher
   (** Starts a path with a matching name that satisfies the given function *)
 
+  val startsWith : string -> 'context -> string -> bool
+
+  val endsWith : string -> 'context -> string -> bool
+
   val ( &+ ) :
        ('context, 'f_in, 'f_interm, accept_more, 'arg_payload) templ_matcher
     -> ('f_interm, 'f_out, 'lc) template_arg
@@ -352,6 +356,10 @@ module Common = struct
   let ( ~- ) name = empty &::! name
 
   let ( ~+ ) f_name = name_cons_f empty f_name
+
+  let startsWith prefix _ s = String.is_prefix ~prefix s
+
+  let endsWith suffix _ s = String.is_suffix ~suffix s
 
   let ( &+ ) templ_matcher template_arg = templ_cons templ_matcher template_arg
 
@@ -567,15 +575,20 @@ module Call = struct
       List.find_map matchers ~f:(fun (matcher : _ matcher) -> matcher.on_java context java args)
     in
     fun context procname args ->
-      match procname with
-      | ObjC_Cpp objc_cpp ->
-          on_objc_cpp context objc_cpp args
-      | C c ->
-          on_c context c args
-      | Java java ->
-          on_java context java args
-      | _ ->
-          None
+      let rec match_procname procname =
+        match (procname : Procname.t) with
+        | ObjC_Cpp objc_cpp ->
+            on_objc_cpp context objc_cpp args
+        | C c ->
+            on_c context c args
+        | Java java ->
+            on_java context java args
+        | WithBlockParameters (procname, _) ->
+            match_procname procname
+        | _ ->
+            None
+      in
+      match_procname procname
 
 
   let merge_dispatchers :
@@ -843,6 +856,8 @@ module Call = struct
   let ( <>--> ) name_matcher f = name_matcher <! () >--> f
 
   let ( &::.*--> ) name_matcher f = name_matcher <...>! () &::.*! () $! () $+...$--> f
+
+  let ( &::.*++> ) name_matcher f = name_matcher <...>! () &::.*! () $! () $++$--> f
 
   let ( $!--> ) args_matcher f =
     args_matcher $* exact_args_or_retry wrong_args_internal_error $*--> f

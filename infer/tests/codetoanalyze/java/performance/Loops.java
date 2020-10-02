@@ -10,6 +10,7 @@ import android.app.Activity;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.util.ArrayList;
 
 public class Loops {
 
@@ -116,7 +117,7 @@ public class Loops {
     for (int i = 0; i < seq.length(); i++) {}
   }
 
-  void modeled_range_linear(FileChannel fc, ByteBuffer bb) throws IOException {
+  void modeled_range_linear_FP(FileChannel fc, ByteBuffer bb) throws IOException {
     int i;
     int offset = 0;
     do {
@@ -156,5 +157,29 @@ public class Loops {
     while (p != null) {
       p = p.getParent();
     }
+  }
+
+  boolean rand;
+
+  void two_control_variables_linear_FP(int n) {
+    int i = 0;
+    int j = n;
+    while (i <= j) {
+      if (rand) {
+        i++;
+      } else {
+        j--;
+      }
+    }
+  }
+
+  int loop_prune_constant(ArrayList<Integer> list) {
+    int k = 0;
+    for (int i = 0; i < 3; ++i) {
+      if (list.size() >= i + 1) {
+        k++;
+      }
+    }
+    return k;
   }
 }

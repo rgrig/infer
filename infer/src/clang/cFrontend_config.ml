@@ -14,13 +14,20 @@ type clang_lang = C | CPP | ObjC | ObjCPP [@@deriving compare]
 let equal_clang_lang = [%compare.equal: clang_lang]
 
 type translation_unit_context =
-  {lang: clang_lang; source_file: SourceFile.t; integer_type_widths: Typ.IntegerWidths.t}
+  { lang: clang_lang
+  ; source_file: SourceFile.t
+  ; integer_type_widths: Typ.IntegerWidths.t
+  ; is_objc_arc_on: bool }
 
-type decl_trans_context = [`DeclTraversal | `Translation]
+type decl_trans_context = [`DeclTraversal | `Translation | `CppLambdaExprTranslation]
 
 (** Constants *)
 
 let alloc = "alloc"
+
+let arrayWithObjects_count = "arrayWithObjects:count:"
+
+let dictionaryWithObjects_forKeys_count = "dictionaryWithObjects:forKeys:count:"
 
 let dealloc = "dealloc"
 
@@ -75,6 +82,8 @@ let new_str = "new"
 
 let next_object = "nextObject"
 
+let nsenumerator_cl = "NSEnumerator"
+
 let nsproxy_cl = "NSProxy"
 
 let nsobject_cl = "NSObject"
@@ -84,6 +93,8 @@ let nsstring_cl = "NSString"
 let objc_class = "objc_class"
 
 let objc_object = "objc_object"
+
+let object_enumerator = "objectEnumerator"
 
 let return_param = "__return_param"
 

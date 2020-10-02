@@ -35,27 +35,30 @@ module InstrRef : InstrRefT
 (** Instance of an error *)
 type err_instance =
   | Condition_redundant of
-      {is_always_true: bool; condition_descr: string option; nonnull_origin: TypeOrigin.t}
+      { loc: Location.t
+      ; is_always_true: bool
+      ; condition_descr: string option
+      ; nonnull_origin: TypeOrigin.t }
   | Inconsistent_subclass of
-      { inheritance_violation: InheritanceRule.violation
+      { loc: Location.t
+      ; inheritance_violation: InheritanceRule.violation
       ; violation_type: InheritanceRule.ReportableViolation.violation_type
-      ; base_proc_name: Procname.t
-      ; overridden_proc_name: Procname.t }
-  | Field_not_initialized of {field_name: Fieldname.t}
+      ; base_proc_name: Procname.Java.t
+      ; overridden_proc_name: Procname.Java.t }
+  | Field_not_initialized of {loc: Location.t; field_name: Fieldname.t}
   | Over_annotation of
-      { over_annotated_violation: OverAnnotatedRule.violation
+      { loc: Location.t
+      ; over_annotated_violation: OverAnnotatedRule.violation
       ; violation_type: OverAnnotatedRule.violation_type }
   | Nullable_dereference of
       { dereference_violation: DereferenceRule.violation
       ; dereference_location: Location.t
       ; dereference_type: DereferenceRule.ReportableViolation.dereference_type
-      ; nullable_object_descr: string option
-      ; nullable_object_origin: TypeOrigin.t }
+      ; nullable_object_descr: string option }
   | Bad_assignment of
       { assignment_violation: AssignmentRule.violation
       ; assignment_location: Location.t
-      ; assignment_type: AssignmentRule.ReportableViolation.assignment_type
-      ; rhs_origin: TypeOrigin.t }
+      ; assignment_type: AssignmentRule.ReportableViolation.assignment_type }
 [@@deriving compare]
 
 val pp_err_instance : Format.formatter -> err_instance -> unit
@@ -68,7 +71,6 @@ val register_error :
   -> err_instance
   -> nullsafe_mode:NullsafeMode.t
   -> InstrRef.t option
-  -> Location.t
   -> unit
 (** Register the fact that issue happened. Depending on the error and mode, this error might or
     might not be reported to the user. *)

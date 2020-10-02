@@ -431,27 +431,7 @@ let method_exists right_proc_name methods =
 
 
 let resolve_method tenv class_name proc_name =
-  let found_class =
-    let visited = ref Typ.Name.Set.empty in
-    let rec resolve (class_name : Typ.Name.t) =
-      visited := Typ.Name.Set.add class_name !visited ;
-      let right_proc_name = Procname.replace_class proc_name class_name in
-      match Tenv.lookup tenv class_name with
-      | Some {methods; supers} when Typ.Name.is_class class_name -> (
-          if method_exists right_proc_name methods then Some right_proc_name
-          else
-            match supers with
-            | super_classname :: _ ->
-                if not (Typ.Name.Set.mem super_classname !visited) then resolve super_classname
-                else None
-            | _ ->
-                None )
-      | _ ->
-          None
-    in
-    resolve class_name
-  in
-  match found_class with
+  match Tenv.resolve_method ~method_exists tenv class_name proc_name with
   | None ->
       Logging.d_printfln "Couldn't find method in the hierarchy of type %s"
         (Typ.Name.name class_name) ;
@@ -641,31 +621,32 @@ let resolve_and_analyze
 
 (** recognize calls to the constructor java.net.URL and splits the argument string to be only the
     protocol. *)
-let call_constructor_url_update_args pname actual_params =
+let call_constructor_url_update_args =
   let url_pname =
     Procname.make_java
       ~class_name:(Typ.Name.Java.from_string "java.net.URL")
       ~return_type:None ~method_name:Procname.Java.constructor_method_name
-      ~parameters:[JavaSplitName.java_lang_string] ~kind:Procname.Java.Non_Static ()
+      ~parameters:[Typ.pointer_to_java_lang_string] ~kind:Procname.Java.Non_Static ()
   in
-  if Procname.equal url_pname pname then
-    match actual_params with
-    | [this; (Exp.Const (Const.Cstr s), atype)] -> (
-        let parts = Str.split (Str.regexp_string "://") s in
-        match parts with
-        | frst :: _ ->
-            if
-              String.equal frst "http" || String.equal frst "ftp" || String.equal frst "https"
-              || String.equal frst "mailto" || String.equal frst "jar"
-            then [this; (Exp.Const (Const.Cstr frst), atype)]
-            else actual_params
-        | _ ->
-            actual_params )
-    | [this; (_, atype)] ->
-        [this; (Exp.Const (Const.Cstr "file"), atype)]
-    | _ ->
-        actual_params
-  else actual_params
+  fun pname actual_params ->
+    if Procname.equal url_pname pname then
+      match actual_params with
+      | [this; (Exp.Const (Const.Cstr s), atype)] -> (
+          let parts = Str.split (Str.regexp_string "://") s in
+          match parts with
+          | frst :: _ ->
+              if
+                String.equal frst "http" || String.equal frst "ftp" || String.equal frst "https"
+                || String.equal frst "mailto" || String.equal frst "jar"
+              then [this; (Exp.Const (Const.Cstr frst), atype)]
+              else actual_params
+          | _ ->
+              actual_params )
+      | [this; (_, atype)] ->
+          [this; (Exp.Const (Const.Cstr "file"), atype)]
+      | _ ->
+          actual_params
+    else actual_params
 
 
 let receiver_self receiver prop =
@@ -993,10 +974,8 @@ let execute_store ?(report_deref_errors = true) ({InterproceduralAnalysis.tenv; 
 
 
 let is_variadic_procname callee_pname =
-  Option.value_map
-    (AnalysisCallbacks.get_proc_desc callee_pname)
-    ~f:(fun proc_desc -> (Procdesc.get_attributes proc_desc).ProcAttributes.is_variadic)
-    ~default:false
+  Option.value_map ~default:false (AnalysisCallbacks.proc_resolve_attributes callee_pname)
+    ~f:(fun proc_attrs -> proc_attrs.ProcAttributes.is_variadic)
 
 
 let resolve_and_analyze_no_dynamic_dispatch {InterproceduralAnalysis.analyze_dependency; tenv}
@@ -1084,6 +1063,11 @@ let declare_locals_and_ret tenv pdesc (prop_ : Prop.normal Prop.t) =
   prop'
 
 
+let get_closure_opt actual_params =
+  List.find_map actual_params ~f:(fun (exp, _) ->
+      match exp with Exp.Closure c when Procname.is_objc_block c.name -> Some c | _ -> None )
+
+
 (** Execute [instr] with a symbolic heap [prop].*)
 let rec sym_exec
     ( {InterproceduralAnalysis.proc_desc= current_pdesc; analyze_dependency; err_log; tenv} as
@@ -1108,8 +1092,17 @@ let rec sym_exec
           | Exp.Closure c ->
               let proc_exp = Exp.Const (Const.Cfun c.name) in
               let proc_exp' = Prop.exp_normalize_prop tenv prop_ proc_exp in
-              let par' = List.map ~f:(fun (id_exp, _, typ) -> (id_exp, typ)) c.captured_vars in
+              let par' = List.map ~f:(fun (id_exp, _, typ, _) -> (id_exp, typ)) c.captured_vars in
               Sil.Call (ret, proc_exp', par' @ par, loc, call_flags)
+          | Exp.Const (Const.Cfun callee_pname) when ObjCDispatchModels.is_model callee_pname -> (
+            match get_closure_opt par with
+            | Some c ->
+                (* We assume that for these modelled functions, the block passed as parameter doesn't
+                   have arguments, so we only pass the captured variables. *)
+                let args = List.map ~f:(fun (id_exp, _, typ, _) -> (id_exp, typ)) c.captured_vars in
+                Sil.Call (ret, Exp.Const (Const.Cfun c.name), args, loc, call_flags)
+            | None ->
+                Sil.Call (ret, exp', par, loc, call_flags) )
           | _ ->
               Sil.Call (ret, exp', par, loc, call_flags)
         in
@@ -1208,80 +1201,61 @@ let rec sym_exec
                   exec_skip_call ~reason ret_annots proc_attrs.ProcAttributes.ret_type )
           in
           List.fold ~f:(fun acc pname -> exec_one_pname pname @ acc) ~init:[] resolved_pnames
-      | _ -> (
+      | _ ->
           (* Generic fun call with known name *)
           let prop_r, n_actual_params = normalize_params analysis_data prop_ actual_params in
-          (* method with block parameters *)
-          let with_block_parameters_summary_opt =
-            if call_flags.CallFlags.cf_with_block_parameters then
-              SymExecBlocks.resolve_method_with_block_args_and_analyze analysis_data callee_pname
-                actual_params
-            else None
+          let resolve_and_analyze_result =
+            resolve_and_analyze_clang analysis_data prop_r n_actual_params callee_pname call_flags
           in
-          match with_block_parameters_summary_opt with
-          | Some (resolved_summary, extended_actual_params) ->
-              let prop_r, n_extended_actual_params =
-                normalize_params analysis_data prop_r extended_actual_params
-              in
-              Logging.d_strln "Calling method specialized with blocks... " ;
-              proc_call resolved_summary
-                (call_args prop_r callee_pname n_extended_actual_params ret_id_typ loc)
-          | None ->
-              (* Generic fun call with known name *)
-              let resolve_and_analyze_result =
-                resolve_and_analyze_clang analysis_data prop_r n_actual_params callee_pname
-                  call_flags
-              in
-              let resolved_pname = resolve_and_analyze_result.resolved_pname in
-              let resolved_pdesc_opt = resolve_and_analyze_result.resolved_procdesc_opt in
-              let resolved_summary_opt = resolve_and_analyze_result.resolved_summary_opt in
-              Logging.d_printfln "Original callee %s" (Procname.to_unique_id callee_pname) ;
-              Logging.d_printfln "Resolved callee %s" (Procname.to_unique_id resolved_pname) ;
-              let sentinel_result =
-                if Language.curr_language_is Clang then
-                  check_variadic_sentinel_if_present
-                    (call_args prop_r resolved_pname actual_params ret_id_typ loc)
-                else [(prop_r, path)]
-              in
-              let do_call (prop, path) =
-                let callee_desc =
-                  match (resolved_summary_opt, resolved_pdesc_opt) with
-                  | Some summary, _ ->
-                      `Summary summary
-                  | None, Some pdesc ->
-                      `ProcDesc pdesc
-                  | None, None ->
-                      `ProcName resolved_pname
+          let resolved_pname = resolve_and_analyze_result.resolved_pname in
+          let resolved_pdesc_opt = resolve_and_analyze_result.resolved_procdesc_opt in
+          let resolved_summary_opt = resolve_and_analyze_result.resolved_summary_opt in
+          Logging.d_printfln "Original callee %s" (Procname.to_unique_id callee_pname) ;
+          Logging.d_printfln "Resolved callee %s" (Procname.to_unique_id resolved_pname) ;
+          let sentinel_result =
+            if Language.curr_language_is Clang then
+              check_variadic_sentinel_if_present
+                (call_args prop_r resolved_pname actual_params ret_id_typ loc)
+            else [(prop_r, path)]
+          in
+          let do_call (prop, path) =
+            let callee_desc =
+              match (resolved_summary_opt, resolved_pdesc_opt) with
+              | Some summary, _ ->
+                  `Summary summary
+              | None, Some pdesc ->
+                  `ProcDesc pdesc
+              | None, None ->
+                  `ProcName resolved_pname
+            in
+            match reason_to_skip ~callee_desc with
+            | Some reason -> (
+                let ret_annots =
+                  match resolved_summary_opt with
+                  | Some (proc_desc, _) ->
+                      (Procdesc.get_attributes proc_desc).ProcAttributes.method_annotation.return
+                  | None ->
+                      load_ret_annots resolved_pname
                 in
-                match reason_to_skip ~callee_desc with
-                | Some reason -> (
-                    let ret_annots =
-                      match resolved_summary_opt with
-                      | Some (proc_desc, _) ->
-                          (Procdesc.get_attributes proc_desc).ProcAttributes.method_annotation
-                            .return
-                      | None ->
-                          load_ret_annots resolved_pname
+                match resolved_pdesc_opt with
+                | Some resolved_pdesc ->
+                    let attrs = Procdesc.get_attributes resolved_pdesc in
+                    let ret_type = attrs.ProcAttributes.ret_type in
+                    let is_objc_instance_method =
+                      ClangMethodKind.equal attrs.ProcAttributes.clang_method_kind
+                        ClangMethodKind.OBJC_INSTANCE
                     in
-                    match resolved_pdesc_opt with
-                    | Some resolved_pdesc ->
-                        let attrs = Procdesc.get_attributes resolved_pdesc in
-                        let ret_type = attrs.ProcAttributes.ret_type in
-                        let is_objc_instance_method =
-                          ClangMethodKind.equal attrs.ProcAttributes.clang_method_kind
-                            ClangMethodKind.OBJC_INSTANCE
-                        in
-                        skip_call ~is_objc_instance_method ~reason prop path resolved_pname
-                          ret_annots loc ret_id_typ ret_type n_actual_params
-                    | None ->
-                        skip_call ~reason prop path resolved_pname ret_annots loc ret_id_typ
-                          (snd ret_id_typ) n_actual_params )
+                    skip_call ~is_objc_instance_method ~reason prop path resolved_pname ret_annots
+                      loc ret_id_typ ret_type n_actual_params
                 | None ->
-                    proc_call
-                      (Option.value_exn resolved_summary_opt)
-                      (call_args prop resolved_pname n_actual_params ret_id_typ loc)
-              in
-              List.concat_map ~f:do_call sentinel_result ) ) )
+                    skip_call ~reason prop path resolved_pname ret_annots loc ret_id_typ
+                      (snd ret_id_typ) n_actual_params )
+            | None ->
+                proc_call
+                  (Option.value_exn resolved_summary_opt)
+                  (call_args prop resolved_pname n_actual_params ret_id_typ loc)
+          in
+          List.concat_map ~f:do_call sentinel_result ) )
   | Sil.Call (ret_id_typ, fun_exp, actual_params, loc, call_flags) ->
       (* Call via function pointer *)
       let prop_r, n_actual_params = normalize_params analysis_data prop_ actual_params in

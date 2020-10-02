@@ -7,6 +7,8 @@
 
 (** Symbolic Execution *)
 
+open Fol
+
 [@@@warning "+9"]
 
 module Fresh : sig
@@ -85,12 +87,11 @@ let gen_spec us specm =
  * Instruction small axioms
  *)
 
-let null_eq ptr = Sh.pure (Term.eq Term.zero ptr)
+let null_eq ptr = Sh.pure (Formula.eq0 ptr)
 
 let eq_concat (siz, seq) ms =
-  Term.(
-    eq (sized ~siz ~seq)
-      (concat (Array.map ~f:(fun (siz, seq) -> sized ~siz ~seq) ms)))
+  Formula.eq (Term.sized ~siz ~seq)
+    (Term.concat (Array.map ~f:(fun (siz, seq) -> Term.sized ~siz ~seq) ms))
 
 open Fresh.Import
 
@@ -108,7 +109,7 @@ let move_spec reg_exps =
   let+ sub, ms = Fresh.assign ~ws ~rs in
   let post =
     IArray.fold reg_exps ~init:Sh.emp ~f:(fun post (reg, exp) ->
-        Sh.and_ (Term.eq (Term.var reg) (Term.rename sub exp)) post )
+        Sh.and_ (Formula.eq (Term.var reg) (Term.rename sub exp)) post )
   in
   {foot; sub; ms; post}
 
@@ -122,7 +123,7 @@ let load_spec reg ptr len =
   let+ sub, ms = Fresh.assign ~ws:(Var.Set.of_ reg) ~rs:foot.us in
   let post =
     Sh.and_
-      (Term.eq (Term.var reg) (Term.rename sub seg.seq))
+      (Formula.eq (Term.var reg) (Term.rename sub seg.seq))
       (Sh.rename sub foot)
   in
   {foot; sub; ms; post}
@@ -155,7 +156,7 @@ let memcpy_eq_spec dst src len =
   let+ seg = Fresh.seg dst ~len in
   let dst_heap = Sh.seg seg in
   let foot =
-    Sh.and_ (Term.eq dst src) (Sh.and_ (Term.eq len Term.zero) dst_heap)
+    Sh.and_ (Formula.eq dst src) (Sh.and_ (Formula.eq0 len) dst_heap)
   in
   let post = dst_heap in
   {foot; sub= Var.Subst.empty; ms= Var.Set.empty; post}
@@ -185,7 +186,7 @@ let memcpy_specs dst src len =
 let memmov_eq_spec dst src len =
   let+ dst_seg = Fresh.seg dst ~len in
   let dst_heap = Sh.seg dst_seg in
-  let foot = Sh.and_ (Term.eq dst src) dst_heap in
+  let foot = Sh.and_ (Formula.eq dst src) dst_heap in
   let post = dst_heap in
   {foot; sub= Var.Subst.empty; ms= Var.Set.empty; post}
 
@@ -219,8 +220,8 @@ let memmov_foot dst src len =
   in
   let foot =
     Sh.and_ eq_mem_dst_mid_src
-      (Sh.and_ (Term.lt dst src)
-         (Sh.and_ (Term.lt src (Term.add dst len)) seg))
+      (Sh.and_ (Formula.lt dst src)
+         (Sh.and_ (Formula.lt src (Term.add dst len)) seg))
   in
   (bas, siz, mem_dst, mem_mid, mem_src, foot)
 
@@ -334,7 +335,7 @@ let malloc_spec reg siz =
  * { r=0 ∨ ∃α'. r-[r;sΘ)->⟨sΘ,α'⟩ }
  *)
 let mallocx_spec reg siz =
-  let foot = Sh.pure (Term.dq siz Term.zero) in
+  let foot = Sh.pure (Formula.dq0 siz) in
   let* sub, ms = Fresh.assign ~ws:(Var.Set.of_ reg) ~rs:(Term.fv siz) in
   let loc = Term.var reg in
   let siz = Term.rename sub siz in
@@ -379,9 +380,9 @@ let posix_memalign_spec reg ptr siz =
   let enomem = Term.integer (Z.of_int 12) in
   let post =
     Sh.or_
-      (Sh.and_ (Term.eq (Term.var reg) enomem) (Sh.rename sub foot))
+      (Sh.and_ (Formula.eq (Term.var reg) enomem) (Sh.rename sub foot))
       (Sh.and_
-         (Term.eq (Term.var reg) eok)
+         (Formula.eq (Term.var reg) eok)
          (Sh.rename sub (Sh.star (Sh.seg pseg') (Sh.seg qseg))))
   in
   {foot; sub; ms; post}
@@ -408,12 +409,11 @@ let realloc_spec reg ptr siz =
   let+ a2 = Fresh.var "a" in
   let post =
     Sh.or_
-      (Sh.and_ Term.(eq loc zero) (Sh.rename sub foot))
+      (Sh.and_ (Formula.eq0 loc) (Sh.rename sub foot))
       (Sh.and_
-         Term.(
-           conditional ~cnd:(le len siz)
-             ~thn:(eq_concat (siz, a1) [|(len, a0); (sub siz len, a2)|])
-             ~els:(eq_concat (len, a0) [|(siz, a1); (sub len siz, a2)|]))
+         (Formula.cond ~cnd:(Formula.le len siz)
+            ~pos:(eq_concat (siz, a1) [|(len, a0); (Term.sub siz len, a2)|])
+            ~neg:(eq_concat (len, a0) [|(siz, a1); (Term.sub len siz, a2)|]))
          (Sh.seg rseg))
   in
   {foot; sub; ms; post}
@@ -428,7 +428,7 @@ let rallocx_spec reg ptr siz =
   let* len = Fresh.var "m" in
   let* pseg = Fresh.seg ptr ~bas:ptr ~len ~siz:len in
   let pheap = Sh.seg pseg in
-  let foot = Sh.and_ (Term.dq siz Term.zero) pheap in
+  let foot = Sh.and_ (Formula.dq0 siz) pheap in
   let* sub, ms = Fresh.assign ~ws:(Var.Set.of_ reg) ~rs:foot.us in
   let loc = Term.var reg in
   let siz = Term.rename sub siz in
@@ -438,12 +438,11 @@ let rallocx_spec reg ptr siz =
   let+ a2 = Fresh.var "a" in
   let post =
     Sh.or_
-      (Sh.and_ Term.(eq loc zero) (Sh.rename sub pheap))
+      (Sh.and_ (Formula.eq0 loc) (Sh.rename sub pheap))
       (Sh.and_
-         Term.(
-           conditional ~cnd:(le len siz)
-             ~thn:(eq_concat (siz, a1) [|(len, a0); (sub siz len, a2)|])
-             ~els:(eq_concat (len, a0) [|(siz, a1); (sub len siz, a2)|]))
+         (Formula.cond ~cnd:(Formula.le len siz)
+            ~pos:(eq_concat (siz, a1) [|(len, a0); (Term.sub siz len, a2)|])
+            ~neg:(eq_concat (len, a0) [|(siz, a1); (Term.sub len siz, a2)|]))
          (Sh.seg rseg))
   in
   {foot; sub; ms; post}
@@ -456,7 +455,7 @@ let rallocx_spec reg ptr siz =
 let xallocx_spec reg ptr siz ext =
   let* len = Fresh.var "m" in
   let* seg = Fresh.seg ptr ~bas:ptr ~len ~siz:len in
-  let foot = Sh.and_ (Term.dq siz Term.zero) (Sh.seg seg) in
+  let foot = Sh.and_ (Formula.dq0 siz) (Sh.seg seg) in
   let* sub, ms =
     Fresh.assign ~ws:(Var.Set.of_ reg)
       ~rs:Var.Set.(union foot.us (union (Term.fv siz) (Term.fv ext)))
@@ -471,12 +470,12 @@ let xallocx_spec reg ptr siz ext =
   let+ a2 = Fresh.var "a" in
   let post =
     Sh.and_
-      Term.(
-        and_
-          (conditional ~cnd:(le len siz)
-             ~thn:(eq_concat (siz, a1) [|(len, a0); (sub siz len, a2)|])
-             ~els:(eq_concat (len, a0) [|(siz, a1); (sub len siz, a2)|]))
-          (and_ (le siz reg) (le reg (add siz ext))))
+      (Formula.and_
+         (Formula.cond ~cnd:(Formula.le len siz)
+            ~pos:(eq_concat (siz, a1) [|(len, a0); (Term.sub siz len, a2)|])
+            ~neg:(eq_concat (len, a0) [|(siz, a1); (Term.sub len siz, a2)|]))
+         (Formula.and_ (Formula.le siz reg)
+            (Formula.le reg (Term.add siz ext))))
       (Sh.seg seg')
   in
   {foot; sub; ms; post}
@@ -490,7 +489,7 @@ let sallocx_spec reg ptr =
   let* seg = Fresh.seg ptr ~bas:ptr ~len ~siz:len in
   let foot = Sh.seg seg in
   let+ sub, ms = Fresh.assign ~ws:(Var.Set.of_ reg) ~rs:foot.us in
-  let post = Sh.and_ (Term.eq (Term.var reg) len) (Sh.rename sub foot) in
+  let post = Sh.and_ (Formula.eq (Term.var reg) len) (Sh.rename sub foot) in
   {foot; sub; ms; post}
 
 (* { p-[p;m)->⟨m,α⟩ }
@@ -502,7 +501,7 @@ let malloc_usable_size_spec reg ptr =
   let* seg = Fresh.seg ptr ~bas:ptr ~len ~siz:len in
   let foot = Sh.seg seg in
   let+ sub, ms = Fresh.assign ~ws:(Var.Set.of_ reg) ~rs:foot.us in
-  let post = Sh.and_ (Term.le len (Term.var reg)) (Sh.rename sub foot) in
+  let post = Sh.and_ (Formula.le len (Term.var reg)) (Sh.rename sub foot) in
   {foot; sub; ms; post}
 
 (* { s≠0 }
@@ -510,11 +509,11 @@ let malloc_usable_size_spec reg ptr =
  * { r=0 ∨ r=sΘ }
  *)
 let nallocx_spec reg siz =
-  let foot = Sh.pure (Term.dq siz Term.zero) in
+  let foot = Sh.pure (Formula.dq0 siz) in
   let+ sub, ms = Fresh.assign ~ws:(Var.Set.of_ reg) ~rs:foot.us in
   let loc = Term.var reg in
   let siz = Term.rename sub siz in
-  let post = Sh.or_ (null_eq loc) (Sh.pure (Term.eq loc siz)) in
+  let post = Sh.or_ (null_eq loc) (Sh.pure (Formula.eq loc siz)) in
   {foot; sub; ms; post}
 
 let size_of_int_mul = Term.mulq (Q.of_int Llair.Typ.(size_of siz))
@@ -528,9 +527,8 @@ let mallctl_read_spec r i w n =
   let* rseg = Fresh.seg r ~siz:iseg.seq in
   let+ a = Fresh.var "a" in
   let foot =
-    Sh.and_
-      Term.(eq w zero)
-      (Sh.and_ Term.(eq n zero) (Sh.star (Sh.seg iseg) (Sh.seg rseg)))
+    Sh.and_ (Formula.eq0 w)
+      (Sh.and_ (Formula.eq0 n) (Sh.star (Sh.seg iseg) (Sh.seg rseg)))
   in
   let rseg' = {rseg with seq= a} in
   let post = Sh.star (Sh.seg rseg') (Sh.seg iseg) in
@@ -550,9 +548,8 @@ let mallctlbymib_read_spec p l r i w n =
   let const = Sh.star (Sh.seg pseg) (Sh.seg iseg) in
   let+ a = Fresh.var "a" in
   let foot =
-    Sh.and_
-      Term.(eq w zero)
-      (Sh.and_ Term.(eq n zero) (Sh.star const (Sh.seg rseg)))
+    Sh.and_ (Formula.eq0 w)
+      (Sh.and_ (Formula.eq0 n) (Sh.star const (Sh.seg rseg)))
   in
   let rseg' = {rseg with seq= a} in
   let post = Sh.star (Sh.seg rseg') const in
@@ -565,9 +562,7 @@ let mallctlbymib_read_spec p l r i w n =
 let mallctl_write_spec r i w n =
   let+ seg = Fresh.seg w ~siz:n in
   let post = Sh.seg seg in
-  let foot =
-    Sh.and_ (Term.eq r Term.zero) (Sh.and_ (Term.eq i Term.zero) post)
-  in
+  let foot = Sh.and_ (Formula.eq0 r) (Sh.and_ (Formula.eq0 i) post) in
   {foot; sub= Var.Subst.empty; ms= Var.Set.empty; post}
 
 (* { p-[_;_)->⟨W×l,_⟩ * r=0 * i=0 * w-[_;_)->⟨n,_⟩ }
@@ -580,9 +575,7 @@ let mallctlbymib_write_spec p l r i w n =
   let* pseg = Fresh.seg p ~siz:wl in
   let+ wseg = Fresh.seg w ~siz:n in
   let post = Sh.star (Sh.seg pseg) (Sh.seg wseg) in
-  let foot =
-    Sh.and_ (Term.eq r Term.zero) (Sh.and_ (Term.eq i Term.zero) post)
-  in
+  let foot = Sh.and_ (Formula.eq0 r) (Sh.and_ (Formula.eq0 i) post) in
   {foot; sub= Var.Subst.empty; ms= Var.Set.empty; post}
 
 let mallctl_specs r i w n =
@@ -628,7 +621,7 @@ let strlen_spec reg ptr =
   let ret = Term.sub (Term.sub (Term.add b m) p) Term.one in
   let post =
     Sh.and_
-      (Term.eq (Term.var reg) (Term.rename sub ret))
+      (Formula.eq (Term.var reg) (Term.rename sub ret))
       (Sh.rename sub foot)
   in
   {foot; sub; ms; post}
@@ -637,7 +630,7 @@ let strlen_spec reg ptr =
  * Symbolic Execution
  *)
 
-open Option.Monad_syntax
+open Option.Import
 
 let check_preserve_us (q0 : Sh.t) (q1 : Sh.t) =
   let gain_us = Var.Set.diff q1.us q0.us in
@@ -697,7 +690,9 @@ let exec_specs pre =
   let rec exec_specs_ (xs, pre) = function
     | specm :: specs ->
         let gs, spec = gen_spec pre.Sh.us specm in
-        let pre_pure = Sh.(star (exists gs (pure_approx spec.foot)) pre) in
+        let pre_pure =
+          Sh.(star (exists gs (Sh.pure (pure_approx spec.foot))) pre)
+        in
         let* post = exec_spec_ (xs, pre_pure) (gs, spec) in
         let+ posts = exec_specs_ (xs, pre) specs in
         Sh.or_ post posts

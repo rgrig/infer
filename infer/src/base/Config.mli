@@ -43,15 +43,15 @@ val append_buck_flavors : string list
 
 val assign : string
 
-val biabduction_models_dir : string
+val biabduction_models_sql : string
 
 val biabduction_models_jar : string
-
-val biabduction_models_src_dir : string
 
 val bin_dir : string
 
 val bound_error_allowed_in_procedure_call : bool
+
+val buck_java_flavor_suppress_config : bool
 
 val clang_exe_aliases : string list
 
@@ -128,11 +128,11 @@ val smt_output : bool
 
 val source_file_extentions : string list
 
+val kotlin_source_extension : string
+
 val sourcepath : string option
 
 val sources : string list
-
-val specs_files_suffix : string
 
 val trace_absarray : bool
 
@@ -161,8 +161,6 @@ val annotation_reachability_cxx : Yojson.Basic.t
 val annotation_reachability_cxx_sources : Yojson.Basic.t
 
 val annotation_reachability_custom_pairs : Yojson.Basic.t
-
-val anon_args : string list
 
 val array_level : int
 
@@ -235,6 +233,8 @@ val cost_issues_tests : string option
 val cost_scuba_logging : bool
 
 val costs_previous : string option
+
+val cost_tests_only_autoreleasepool : bool
 
 val cxx : bool
 
@@ -427,6 +427,8 @@ val procedures : bool
 
 val procedures_attributes : bool
 
+val procedures_cfg : bool
+
 val procedures_definedness : bool
 
 val procedures_filter : string option
@@ -447,8 +449,6 @@ val progress_bar : [`MultiLine | `Plain | `Quiet]
 
 val project_root : string
 
-val pudge : bool
-
 val pulse_cut_to_one_path_procedures_pattern : Str.regexp option
 
 val pulse_recency_limit : int
@@ -462,6 +462,10 @@ val pulse_model_abort : string list
 val pulse_model_alloc_pattern : Str.regexp option
 
 val pulse_model_release_pattern : Str.regexp option
+
+val pulse_model_return_nonnull : string list
+
+val pulse_model_skip_pattern : Str.regexp option
 
 val pulse_model_transfer_ownership_namespace : (string * string) list
 
@@ -543,8 +547,6 @@ val skip_duplicated_types : bool
 
 val skip_translation_headers : string list
 
-val sledge_timers : bool
-
 val source_files : bool
 
 val source_files_cfg : bool
@@ -566,8 +568,6 @@ val sqlite_page_size : int
 val sqlite_lock_timeout : int
 
 val sqlite_vfs : string option
-
-val sqlite_write_daemon : bool
 
 val starvation_skip_analysis : Yojson.Basic.t
 
@@ -629,6 +629,8 @@ val write_website : string option
 
 val xcode_developer_dir : string option
 
+val xcode_isysroot_suffix : string option
+
 val xcpretty : bool
 
 (** {2 Configuration values derived from command-line options} *)
@@ -647,12 +649,9 @@ val is_in_custom_symbols : string -> string -> bool
 val java_package_is_external : string -> bool
 (** Check if a Java package is external to the repository *)
 
-val execution_id : Int64.t
+val scuba_execution_id : Int64.t option
+(** a random number to (hopefully) uniquely identify this run *)
 
 (** {2 Global variables with initial values specified by command-line options} *)
 
 val clang_compilation_dbs : [`Escaped of string | `Raw of string] list ref
-
-(** {2 Command Line Interface Documentation} *)
-
-val print_usage_exit : unit -> 'a

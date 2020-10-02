@@ -10,6 +10,7 @@ module F = Format
 module L = Logging
 module AbstractValue = PulseAbstractValue
 module CItv = PulseCItv
+module Formula = PulseFormula
 module ValueHistory = PulseValueHistory
 
 module BoItvs = struct
@@ -28,58 +29,67 @@ module CItvs = PrettyPrintable.MakePPMonoMap (AbstractValue) (CItv)
 (** A mash-up of several arithmetic domains. At the moment they are independent, i.e. we don't use
     facts deduced by one domain to inform another. *)
 type t =
-  { satisfiable: bool
-        (** If [true] then [pudge] could still be unsatisfiable (asking that question is expensive).
-
-            If [false] then the other components of the record can be arbitrary. *)
+  { is_unsat: bool  (** if [true] then the other components of the record can be arbitrary *)
   ; bo_itvs: BoItvs.t
   ; citvs: CItvs.t
-  ; pudge: Pudge.t }
+  ; formula: Formula.t }
 
-let pp fmt {satisfiable; bo_itvs; citvs; pudge} =
-  F.fprintf fmt "@[<hv>sat:%b,@;bo: @[%a@],@;citv: @[%a@],@;pudge: @[%a@]@]" satisfiable BoItvs.pp
-    bo_itvs CItvs.pp citvs Pudge.pp pudge
-
-
-let true_ = {satisfiable= true; bo_itvs= BoItvs.empty; citvs= CItvs.empty; pudge= Pudge.true_}
-
-let false_ = {satisfiable= false; bo_itvs= BoItvs.empty; citvs= CItvs.empty; pudge= Pudge.true_}
-
-let and_nonnegative v ({satisfiable; bo_itvs; citvs; pudge} as phi) =
-  if not satisfiable then phi
-  else
-    { satisfiable
-    ; bo_itvs= BoItvs.add v Itv.ItvPure.nat bo_itvs
-    ; citvs= CItvs.add v CItv.zero_inf citvs
-    ; pudge= Pudge.and_term Pudge.Term.(le zero (of_absval v)) pudge }
+let pp fmt {is_unsat; bo_itvs; citvs; formula} =
+  F.fprintf fmt "@[<hv>unsat:%b,@;bo: @[%a@],@;citv: @[%a@],@;formula: @[%a@]@]" is_unsat BoItvs.pp
+    bo_itvs CItvs.pp citvs Formula.pp formula
 
 
-let and_positive v ({satisfiable; bo_itvs; citvs; pudge} as phi) =
-  if not satisfiable then phi
-  else
-    { satisfiable
-    ; bo_itvs= BoItvs.add v Itv.ItvPure.pos bo_itvs
-    ; citvs= CItvs.add v (CItv.ge_to IntLit.one) citvs
-    ; pudge= Pudge.and_term Pudge.Term.(lt zero (of_absval v)) pudge }
+let true_ = {is_unsat= false; bo_itvs= BoItvs.empty; citvs= CItvs.empty; formula= Formula.ttrue}
+
+let false_ = {is_unsat= true; bo_itvs= BoItvs.empty; citvs= CItvs.empty; formula= Formula.ttrue}
+
+let map_sat phi f = if phi.is_unsat then phi else f phi
+
+let ( let+ ) phi f = map_sat phi f
+
+let map_formula_sat (x : 'a Formula.normalized) f = match x with Unsat -> false_ | Sat x' -> f x'
+
+let ( let+| ) x f = map_formula_sat x f
+
+let and_nonnegative v phi =
+  let+ {is_unsat; bo_itvs; citvs; formula} = phi in
+  let+| formula =
+    Formula.and_less_equal (LiteralOperand IntLit.zero) (AbstractValueOperand v) formula
+  in
+  { is_unsat
+  ; bo_itvs= BoItvs.add v Itv.ItvPure.nat bo_itvs
+  ; citvs= CItvs.add v CItv.zero_inf citvs
+  ; formula }
 
 
-let and_eq_int v i ({satisfiable; bo_itvs; citvs; pudge} as phi) =
-  if not satisfiable then phi
-  else
-    { satisfiable
-    ; bo_itvs= BoItvs.add v (Itv.ItvPure.of_int_lit i) bo_itvs
-    ; citvs= CItvs.add v (CItv.equal_to i) citvs
-    ; pudge= Pudge.and_eq (Pudge.Term.of_absval v) (Pudge.Term.of_intlit i) pudge }
+let and_positive v phi =
+  let+ {is_unsat; bo_itvs; citvs; formula} = phi in
+  let+| formula =
+    Formula.and_less_than (LiteralOperand IntLit.zero) (AbstractValueOperand v) formula
+  in
+  { is_unsat
+  ; bo_itvs= BoItvs.add v Itv.ItvPure.pos bo_itvs
+  ; citvs= CItvs.add v (CItv.ge_to IntLit.one) citvs
+  ; formula }
 
 
-let simplify ~keep {satisfiable; bo_itvs; citvs; pudge} =
-  if not satisfiable then false_
-  else
-    let is_in_keep v _ = AbstractValue.Set.mem v keep in
-    { satisfiable
-    ; bo_itvs= BoItvs.filter is_in_keep bo_itvs
-    ; citvs= CItvs.filter is_in_keep citvs
-    ; pudge= Pudge.simplify ~keep pudge }
+let and_eq_int v i phi =
+  let+ {is_unsat; bo_itvs; citvs; formula} = phi in
+  let+| formula = Formula.and_equal (AbstractValueOperand v) (LiteralOperand i) formula in
+  { is_unsat
+  ; bo_itvs= BoItvs.add v (Itv.ItvPure.of_int_lit i) bo_itvs
+  ; citvs= CItvs.add v (CItv.equal_to i) citvs
+  ; formula }
+
+
+let simplify ~keep phi =
+  let+ {is_unsat; bo_itvs; citvs; formula} = phi in
+  let+| formula = Formula.simplify ~keep formula in
+  let is_in_keep v _ = AbstractValue.Set.mem v keep in
+  { is_unsat
+  ; bo_itvs= BoItvs.filter is_in_keep bo_itvs
+  ; citvs= CItvs.filter is_in_keep citvs
+  ; formula }
 
 
 let subst_find_or_new subst addr_callee =
@@ -173,22 +183,15 @@ let and_citvs_callee subst citvs_caller citvs_callee =
   (subst, citvs')
 
 
-let and_pudge_callee subst pudge_caller pudge_callee =
+let and_formula_callee subst formula_caller ~callee:formula_callee =
   (* need to translate callee variables to make sense for the caller, thereby possibly extending
      the current substitution *)
-  let subst, pudge_callee_translated =
-    Pudge.fold_map_variables pudge_callee ~init:subst ~f:(fun subst v_callee_arith ->
-        let v_callee = Pudge.Var.to_absval v_callee_arith in
-        let subst', v_caller = subst_find_or_new subst v_callee in
-        (subst', Pudge.Var.of_absval v_caller) )
-  in
-  (* Don't trigger the computation of [path_condition] by asking for satisfiability here. Instead,
-     pudge (un-)satisfiability is computed lazily when we discover issues. *)
-  (subst, Pudge.and_ pudge_caller pudge_callee_translated)
+  Formula.and_fold_subst_variables formula_caller ~up_to_f:formula_callee ~f:subst_find_or_new
+    ~init:subst
 
 
 let and_callee subst phi ~callee:phi_callee =
-  if (not phi.satisfiable) || not phi_callee.satisfiable then (subst, false_)
+  if phi.is_unsat || phi_callee.is_unsat then (subst, false_)
   else
     match and_bo_itvs_callee subst phi.bo_itvs phi_callee.bo_itvs with
     | exception Contradiction ->
@@ -199,14 +202,22 @@ let and_callee subst phi ~callee:phi_callee =
       | exception Contradiction ->
           L.d_printfln "contradiction found by concrete intervals" ;
           (subst, false_)
-      | subst, citvs' ->
-          let subst, pudge' = and_pudge_callee subst phi.pudge phi_callee.pudge in
-          (subst, {satisfiable= true; bo_itvs= bo_itvs'; citvs= citvs'; pudge= pudge'}) )
+      | subst, citvs' -> (
+        match and_formula_callee subst phi.formula ~callee:phi_callee.formula with
+        | Unsat ->
+            L.d_printfln "contradiction found by formulas" ;
+            (subst, false_)
+        | Sat (subst, formula') ->
+            (* TODO: normalize here? *)
+            L.d_printfln "conjoined formula post call: %a@\n" Formula.pp formula' ;
+            (subst, {is_unsat= false; bo_itvs= bo_itvs'; citvs= citvs'; formula= formula'}) ) )
 
 
 (** {2 Operations} *)
 
-type operand = LiteralOperand of IntLit.t | AbstractValueOperand of AbstractValue.t
+type operand = Formula.operand =
+  | LiteralOperand of IntLit.t
+  | AbstractValueOperand of AbstractValue.t
 
 let eval_citv_binop binop_addr bop op_lhs op_rhs citvs =
   let citv_of_op op citvs =
@@ -240,25 +251,13 @@ let eval_bo_itv_binop binop_addr bop op_lhs op_rhs bo_itvs =
   BoItvs.add binop_addr bo_itv bo_itvs
 
 
-let eval_path_condition_binop binop_addr binop op_lhs op_rhs pudge =
-  let term_of_op = function
-    | LiteralOperand i ->
-        Pudge.Term.of_intlit i
-    | AbstractValueOperand v ->
-        Pudge.Term.of_absval v
-  in
-  Pudge.and_eq (Pudge.Term.of_absval binop_addr)
-    (Pudge.Term.of_binop binop (term_of_op op_lhs) (term_of_op op_rhs))
-    pudge
-
-
-let eval_binop binop_addr binop op_lhs op_rhs ({satisfiable; bo_itvs; citvs; pudge} as phi) =
-  if not phi.satisfiable then phi
-  else
-    { satisfiable
-    ; bo_itvs= eval_bo_itv_binop binop_addr binop op_lhs op_rhs bo_itvs
-    ; citvs= eval_citv_binop binop_addr binop op_lhs op_rhs citvs
-    ; pudge= eval_path_condition_binop binop_addr binop op_lhs op_rhs pudge }
+let eval_binop binop_addr binop op_lhs op_rhs phi =
+  let+ {is_unsat; bo_itvs; citvs; formula} = phi in
+  let+| formula = Formula.and_equal_binop binop_addr binop op_lhs op_rhs formula in
+  { is_unsat
+  ; bo_itvs= eval_bo_itv_binop binop_addr binop op_lhs op_rhs bo_itvs
+  ; citvs= eval_citv_binop binop_addr binop op_lhs op_rhs citvs
+  ; formula }
 
 
 let eval_citv_unop unop_addr unop operand_addr citvs =
@@ -278,17 +277,13 @@ let eval_bo_itv_unop unop_addr unop operand_addr bo_itvs =
       BoItvs.add unop_addr itv bo_itvs
 
 
-let eval_path_condition_unop unop_addr unop addr pudge =
-  Pudge.and_eq (Pudge.Term.of_absval unop_addr) Pudge.Term.(of_unop unop (of_absval addr)) pudge
-
-
-let eval_unop unop_addr unop addr ({satisfiable; bo_itvs; citvs; pudge} as phi) =
-  if not phi.satisfiable then phi
-  else
-    { satisfiable
-    ; bo_itvs= eval_bo_itv_unop unop_addr unop addr bo_itvs
-    ; citvs= eval_citv_unop unop_addr unop addr citvs
-    ; pudge= eval_path_condition_unop unop_addr unop addr pudge }
+let eval_unop unop_addr unop addr phi =
+  let+ {is_unsat; bo_itvs; citvs; formula} = phi in
+  let+| formula = Formula.and_equal_unop unop_addr unop (AbstractValueOperand addr) formula in
+  { is_unsat
+  ; bo_itvs= eval_bo_itv_unop unop_addr unop addr bo_itvs
+  ; citvs= eval_citv_unop unop_addr unop addr citvs
+  ; formula }
 
 
 let prune_bo_with_bop ~negated v_opt arith bop arith' phi =
@@ -300,19 +295,16 @@ let prune_bo_with_bop ~negated v_opt arith bop arith' phi =
   | None ->
       phi
   | Some (_, Bottom) ->
-      {phi with satisfiable= false}
+      {phi with is_unsat= true}
   | Some (v, NonBottom arith_pruned) ->
       {phi with bo_itvs= BoItvs.add v arith_pruned phi.bo_itvs}
 
 
 let eval_operand phi = function
   | LiteralOperand i ->
-      (None, Some (CItv.equal_to i), Itv.ItvPure.of_int_lit i, Pudge.Term.of_intlit i)
+      (None, Some (CItv.equal_to i), Itv.ItvPure.of_int_lit i)
   | AbstractValueOperand v ->
-      ( Some v
-      , CItvs.find_opt v phi.citvs
-      , BoItvs.find_or_default v phi.bo_itvs
-      , Pudge.Term.of_absval v )
+      (Some v, CItvs.find_opt v phi.citvs, BoItvs.find_or_default v phi.bo_itvs)
 
 
 let record_citv_abduced addr_opt arith_opt citvs =
@@ -323,26 +315,16 @@ let record_citv_abduced addr_opt arith_opt citvs =
       CItvs.add addr arith citvs
 
 
-let bind_satisfiable phi ~f = if phi.satisfiable then f phi else phi
-
-let prune_binop ~negated bop lhs_op rhs_op ({satisfiable; bo_itvs= _; citvs; pudge} as phi) =
-  if not satisfiable then phi
+let prune_binop ~negated bop lhs_op rhs_op ({is_unsat; bo_itvs= _; citvs; formula} as phi) =
+  if is_unsat then phi
   else
-    let value_lhs_opt, arith_lhs_opt, bo_itv_lhs, path_cond_lhs = eval_operand phi lhs_op in
-    let value_rhs_opt, arith_rhs_opt, bo_itv_rhs, path_cond_rhs = eval_operand phi rhs_op in
-    let phi =
-      let pudge =
-        let t_positive = Pudge.Term.of_binop bop path_cond_lhs path_cond_rhs in
-        let t = if negated then Pudge.Term.not_ t_positive else t_positive in
-        Pudge.and_term t pudge
-      in
-      {phi with pudge}
-    in
+    let value_lhs_opt, arith_lhs_opt, bo_itv_lhs = eval_operand phi lhs_op in
+    let value_rhs_opt, arith_rhs_opt, bo_itv_rhs = eval_operand phi rhs_op in
     match CItv.abduce_binop_is_true ~negated bop arith_lhs_opt arith_rhs_opt with
     | Unsatisfiable ->
         L.d_printfln "contradiction detected by concrete intervals" ;
         false_
-    | Satisfiable (abduced_lhs, abduced_rhs) ->
+    | Satisfiable (abduced_lhs, abduced_rhs) -> (
         let phi =
           let citvs =
             record_citv_abduced value_lhs_opt abduced_lhs citvs
@@ -350,39 +332,56 @@ let prune_binop ~negated bop lhs_op rhs_op ({satisfiable; bo_itvs= _; citvs; pud
           in
           {phi with citvs}
         in
-        let satisfiable =
+        let is_unsat =
           match Itv.ItvPure.arith_binop bop bo_itv_lhs bo_itv_rhs |> Itv.ItvPure.to_boolean with
           | False ->
-              negated
-          | True ->
               not negated
+          | True ->
+              negated
           | Top ->
-              true
-          | Bottom ->
               false
+          | Bottom ->
+              true
         in
-        if not satisfiable then L.d_printfln "contradiction detected by inferbo intervals" ;
-        let phi = {phi with satisfiable} in
-        let phi =
-          bind_satisfiable phi ~f:(fun phi ->
-              prune_bo_with_bop ~negated value_lhs_opt bo_itv_lhs bop bo_itv_rhs phi )
+        if is_unsat then L.d_printfln "contradiction detected by inferbo intervals" ;
+        let+ phi = {phi with is_unsat} in
+        let+ phi = prune_bo_with_bop ~negated value_lhs_opt bo_itv_lhs bop bo_itv_rhs phi in
+        let+ phi =
+          Option.value_map (Binop.symmetric bop) ~default:phi ~f:(fun bop' ->
+              prune_bo_with_bop ~negated value_rhs_opt bo_itv_rhs bop' bo_itv_lhs phi )
         in
-        Option.value_map (Binop.symmetric bop) ~default:phi ~f:(fun bop' ->
-            bind_satisfiable phi ~f:(fun phi ->
-                prune_bo_with_bop ~negated value_rhs_opt bo_itv_rhs bop' bo_itv_lhs phi ) )
+        match Formula.prune_binop ~negated bop lhs_op rhs_op formula with
+        | Unsat ->
+            L.d_printfln "contradiction detected by formulas" ;
+            false_
+        | Sat formula ->
+            {phi with is_unsat; formula} )
 
 
 (** {2 Queries} *)
 
 let is_known_zero phi v =
-  (* don't ask sledge because it might be too expensive *)
   CItvs.find_opt v phi.citvs |> Option.value_map ~default:false ~f:CItv.is_equal_to_zero
   || BoItvs.find_opt v phi.bo_itvs |> Option.value_map ~default:false ~f:Itv.ItvPure.is_zero
+  || Formula.is_known_zero phi.formula v
 
 
-let is_unsat_cheap phi = not phi.satisfiable
+let is_unsat_cheap phi = phi.is_unsat
 
 let is_unsat_expensive phi =
-  (* note: contradictions are detected eagerly for all sub-domains except pudge, so just
+  (* note: contradictions are detected eagerly for all sub-domains except formula, so just
      evaluate that one *)
-  is_unsat_cheap phi || Pudge.is_unsat phi.pudge
+  if is_unsat_cheap phi then (phi, true)
+  else
+    match Formula.normalize phi.formula with
+    | Unsat ->
+        (false_, true)
+    | Sat formula ->
+        ({phi with formula}, false)
+
+
+let as_int phi v =
+  (* TODO(rgrigore): Ask BoItvs too. *)
+  IList.force_until_first_some
+    [ lazy (CItvs.find_opt v phi.citvs |> Option.value_map ~default:None ~f:CItv.as_int)
+    ; lazy (Formula.as_int phi.formula v) ]

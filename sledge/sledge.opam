@@ -10,18 +10,24 @@ build: [
 ]
 depends: [
   "ocaml"
-  "apron"
+  "apron" {>= "v0.9.13"}
   "base"
+  "containers"
   "core" {>= "v0.14"}
   "crunch" {build}
   "ctypes"
   "ctypes-foreign"
-  "dune" {build & >= "2.5"}
+  "dune" {build & >= "2.7"}
   "dune-build-info" {build}
+  "fpath"
+  "iter"
   "llvm" {= "8.0.0"}
+  "mtime"
   "ppx_compare"
   "ppx_hash"
+  "ppxlib" {< "0.16.0"}
   "shexp"
+  "smtlib-utils"
   "yojson"
   "zarith"
 ]

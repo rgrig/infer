@@ -12,7 +12,7 @@ module Domain = StarvationDomain
 (* given a scheduled-work item, read the summary of the scheduled method from the disk
    and adapt its contents to the thread it was scheduled too *)
 let get_summary_of_scheduled_work (work_item : Domain.ScheduledWorkItem.t) =
-  let astate = {Domain.bottom with thread= work_item.thread} in
+  let astate = {Domain.initial with thread= work_item.thread} in
   let callsite = CallSite.make work_item.procname work_item.loc in
   let open IOption.Let_syntax in
   let* {Summary.payloads= {starvation}} = Summary.OnDisk.get work_item.procname in
@@ -63,6 +63,7 @@ let report exe_env work_set =
     Summary.OnDisk.get procname
     |> Option.fold ~init ~f:(fun acc summary ->
            let pdesc = Summary.get_proc_desc summary in
+           let pattrs = Procdesc.get_attributes pdesc in
            let tenv = Exe_env.get_tenv exe_env procname in
            let acc =
              Starvation.report_on_pair
@@ -71,7 +72,7 @@ let report exe_env work_set =
                  |> Option.bind ~f:(fun summary ->
                         Option.map summary.Summary.payloads.starvation ~f:(fun starvation ->
                             (Summary.get_proc_desc summary, starvation) ) ) )
-               tenv pdesc pair acc
+               tenv pattrs pair acc
            in
            match pair.elem.event with
            | LockAcquire lock ->
@@ -80,7 +81,7 @@ let report exe_env work_set =
                in
                WorkHashSet.fold
                  (fun (other_procname, (other_pair : CriticalPair.t)) () acc ->
-                   Starvation.report_on_parallel_composition ~should_report_starvation tenv pdesc
+                   Starvation.report_on_parallel_composition ~should_report_starvation tenv pattrs
                      pair lock other_procname other_pair acc )
                  work_set acc
            | _ ->
@@ -95,7 +96,7 @@ let whole_program_analysis () =
   let work_set = WorkHashSet.create 1 in
   let exe_env = Exe_env.mk () in
   L.progress "Processing on-disk summaries...@." ;
-  SpecsFiles.iter ~f:(iter_summary exe_env ~f:(WorkHashSet.add_pairs work_set)) ;
+  Summary.OnDisk.iter_specs ~f:(iter_summary exe_env ~f:(WorkHashSet.add_pairs work_set)) ;
   L.progress "Loaded %d pairs@." (WorkHashSet.length work_set) ;
   L.progress "Reporting on processed summaries...@." ;
   report exe_env work_set

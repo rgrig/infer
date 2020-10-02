@@ -177,14 +177,15 @@ let run_proc_analysis ~caller_pdesc callee_pdesc =
     incr nesting ;
     Preanal.do_preanalysis (Option.value_exn !exe_env_ref) callee_pdesc ;
     if Config.debug_mode then
-      DotCfg.emit_proc_desc (Procdesc.get_attributes callee_pdesc).translation_unit callee_pdesc ;
+      DotCfg.emit_proc_desc (Procdesc.get_attributes callee_pdesc).translation_unit callee_pdesc
+      |> ignore ;
     let initial_callee_summary = Summary.OnDisk.reset callee_pdesc in
     add_active callee_pname ;
     initial_callee_summary
   in
   let postprocess summary =
     decr nesting ;
-    Summary.OnDisk.store summary ;
+    Summary.OnDisk.store_analyzed summary ;
     remove_active callee_pname ;
     Printer.write_proc_html callee_pdesc ;
     log_elapsed_time () ;
@@ -201,7 +202,7 @@ let run_proc_analysis ~caller_pdesc callee_pdesc =
       {summary.payloads with biabduction}
     in
     let new_summary = {summary with stats; payloads} in
-    Summary.OnDisk.store new_summary ;
+    Summary.OnDisk.store_analyzed new_summary ;
     remove_active callee_pname ;
     log_elapsed_time () ;
     new_summary

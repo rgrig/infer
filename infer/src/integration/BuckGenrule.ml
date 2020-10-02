@@ -66,7 +66,7 @@ let read_and_parse_report build_report =
     in
     match path_opt with
     | None ->
-        L.internal_error "Could not parse target json: %s" (Yojson.Basic.to_string json) ;
+        L.internal_error "Could not parse target json: %s@." (Yojson.Basic.to_string json) ;
         None
     | Some path ->
         Some (target, path)
@@ -100,7 +100,9 @@ let expand_target acc (target, target_path) =
         line :: acc
     | `No | `Unknown -> (
         (* no capture DB was found, so look for, and inline, an [infer-deps.txt] file *)
-        let infer_deps = ResultsDirEntryName.get_path ~results_dir:target_path BuckDependencies in
+        let infer_deps =
+          ResultsDirEntryName.get_path ~results_dir:target_path CaptureDependencies
+        in
         match Sys.file_exists infer_deps with
         | `Yes ->
             Utils.with_file_in infer_deps
@@ -139,7 +141,7 @@ let infer_deps_of_build_report build_report =
         List.fold target_path_list ~init:[] ~f:expand_target
         |> List.dedup_and_sort ~compare:String.compare
       in
-      let infer_deps = ResultsDir.get_path BuckDependencies in
+      let infer_deps = ResultsDir.get_path CaptureDependencies in
       Utils.with_file_out infer_deps ~f:(fun out_channel ->
           Out_channel.output_lines out_channel infer_deps_lines )
 

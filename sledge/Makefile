@@ -6,7 +6,7 @@
 .PHONY: default
 default: exes
 
-EXES = bin/sledge_cli
+EXES = cli/sledge_cli report/sledge_report
 INSTALLS = sledge
 
 DEBUG_TARGETS = $(patsubst %,_build/debug/%.exe,$(EXES)) $(patsubst %,_build/debug/%.install,$(INSTALLS))
@@ -68,6 +68,8 @@ clean:
 .PHONY: fmt
 fmt:
 	-dune build @_build/debug/fmt --auto-promote 2>/dev/null
+	tmp=$(mktemp -t 'dune-format'); dune format-dune-file dune-project > tmp; mv -f tmp dune-project
+	tmp=$(mktemp -t 'dune-format'); dune format-dune-file dune-workspace > tmp; mv -f tmp dune-workspace
 	clang-format -i model/llair_intrinsics.h model/cxxabi.cpp
 	${MAKE} -C test fmt
 

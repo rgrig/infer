@@ -151,7 +151,7 @@ module TransferFunctions = struct
     let pvar_name = Pvar.get_name pvar in
     Pvar.is_self pvar
     && List.exists
-         ~f:(fun (captured, typ) -> Mangled.equal captured pvar_name && Typ.is_strong_pointer typ)
+         ~f:(fun (captured, typ, _) -> Mangled.equal captured pvar_name && Typ.is_strong_pointer typ)
          attributes.ProcAttributes.captured
 
 
@@ -159,7 +159,7 @@ module TransferFunctions = struct
   let is_captured_strong_self attributes pvar =
     (not (Pvar.is_self pvar))
     && List.exists
-         ~f:(fun (captured, typ) ->
+         ~f:(fun (captured, typ, _) ->
            Typ.is_strong_pointer typ
            && Mangled.equal captured (Pvar.get_name pvar)
            && String.is_suffix ~suffix:"self" (String.lowercase (Mangled.to_string captured)) )
@@ -168,7 +168,7 @@ module TransferFunctions = struct
 
   let is_captured_weak_self attributes pvar =
     List.exists
-      ~f:(fun (captured, typ) ->
+      ~f:(fun (captured, typ, _) ->
         Mangled.equal captured (Pvar.get_name pvar)
         && String.is_substring ~substring:"self" (String.lowercase (Mangled.to_string captured))
         && Typ.is_weak_pointer typ )
@@ -270,7 +270,7 @@ module TransferFunctions = struct
      actual "use" of the captured variable in the source program though, and causes false
      positives. Here we remove the ids from the domain when that id is being added to a closure. *)
   let remove_ids_in_closures_from_domain (domain : Domain.t) (instr : Sil.instr) =
-    let remove_id_in_closures_from_domain vars ((exp : Exp.t), _, _) =
+    let remove_id_in_closures_from_domain vars ((exp : Exp.t), _, _, _) =
       match exp with Var id -> Vars.remove id vars | _ -> vars
     in
     let do_exp vars (exp : Exp.t) =
@@ -285,23 +285,21 @@ module TransferFunctions = struct
     {domain with vars}
 
 
-  let is_objc_instance proc_desc_opt =
-    match proc_desc_opt with
-    | Some proc_desc -> (
-        let proc_attrs = Procdesc.get_attributes proc_desc in
-        match proc_attrs.ProcAttributes.clang_method_kind with
-        | ClangMethodKind.OBJC_INSTANCE ->
-            true
-        | _ ->
-            false )
+  let is_objc_instance attributes_opt =
+    match attributes_opt with
+    | Some proc_attrs -> (
+      match proc_attrs.ProcAttributes.clang_method_kind with
+      | ClangMethodKind.OBJC_INSTANCE ->
+          true
+      | _ ->
+          false )
     | None ->
         false
 
 
-  let get_annotations proc_desc_opt =
-    match proc_desc_opt with
-    | Some proc_desc ->
-        let proc_attrs = Procdesc.get_attributes proc_desc in
+  let get_annotations attributes_opt =
+    match attributes_opt with
+    | Some proc_attrs ->
         Some proc_attrs.ProcAttributes.method_annotation.params
     | None ->
         None
@@ -330,14 +328,14 @@ module TransferFunctions = struct
       | _ ->
           domain
     in
-    let proc_desc_opt = AnalysisCallbacks.get_proc_desc pname in
-    let annotations = get_annotations proc_desc_opt in
+    let attributes_opt = AnalysisCallbacks.proc_resolve_attributes pname in
+    let annotations = get_annotations attributes_opt in
     let args =
-      if is_objc_instance proc_desc_opt then match args with _ :: rest -> rest | [] -> []
+      if is_objc_instance attributes_opt then match args with _ :: rest -> rest | [] -> []
       else args
     in
     let annotations =
-      if is_objc_instance proc_desc_opt then
+      if is_objc_instance attributes_opt then
         match annotations with Some (_ :: rest) -> Some rest | _ -> annotations
       else annotations
     in

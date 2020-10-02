@@ -195,6 +195,33 @@ public class FieldNotInitialized {
       bad = bad; // BAD: this is a circular initialization
     }
   }
+
+  // A test to ensure suppressions work on constructor level
+  class Suppressions {
+    String f1;
+    String f2;
+
+    // BAD: forgot to initialize f2
+    Suppressions(int a) {
+      f1 = "";
+      f(null); // Expect to see "parameter not nullable" issue
+    }
+
+    // Should suppress both field not initialized warning.
+    // But actually suppresses all nullsafe issues.
+    @SuppressLint("eradicate-field-not-initialized")
+    Suppressions(int a, int b) {
+      f(null); // FALSE NEGATIVE: this issue was unintentionally suppressed as well
+    }
+
+    // This annotation correctly suppresses only needed issues
+    @SuppressFieldNotInitialized
+    Suppressions(int a, int b, int c) {
+      f(null); // Expect to see "parameter not nullable" issue - it should NOT be suppressed
+    }
+
+    void f(String a) {}
+  }
 }
 
 /**
@@ -300,5 +327,66 @@ class TestInitializerAnnotation {
 
     // return some meaninful object
     return "";
+  }
+
+  abstract class TestFieldNotInitializedBase {
+    @Initializer
+    protected abstract void markedInitializerInBase();
+
+    protected abstract void notMarkedInitializerInBase1();
+
+    protected abstract void notMarkedInitializerInBase2();
+  }
+
+  // Test to ensure we respect parent @Initializer annotations
+  class TestFieldNotInitializedDerived extends TestFieldNotInitializedBase {
+    private String field1_OK;
+    private String field2_BAD;
+    private String field3_OK;
+
+    @Override
+    public void markedInitializerInBase() {
+      // OK: implicitly @Initializer (inherited from the base)
+      field1_OK = "";
+    }
+
+    @Override
+    public void notMarkedInitializerInBase1() {
+      // BAD: field not initialized
+      field2_BAD = "";
+    }
+
+    @Override
+    @Initializer
+    public void notMarkedInitializerInBase2() {
+      // OK: explicitly marked as an initializer
+      field3_OK = "";
+    }
+  }
+
+  // Ensure that chains with non-trivial length work as well
+  class TestFieldNotInitializedDerivedDerived extends TestFieldNotInitializedDerived {
+    private String field1_OK;
+    private String field2_BAD;
+    private String field3_OK;
+
+    @Override
+    public void markedInitializerInBase() {
+      // OK: implicitly @Initializer (inherited from the base through the chain)
+      field1_OK = "";
+    }
+
+    @Override
+    public void notMarkedInitializerInBase1() {
+      // BAD: field not initialized, and the method is not marked as @Initializer in any of the
+      // bases
+      field2_BAD = "";
+    }
+
+    @Override
+    public void notMarkedInitializerInBase2() {
+      // OK: explicitly marked as an initializer in the direct base
+      field3_OK = "";
+    }
   }
 }

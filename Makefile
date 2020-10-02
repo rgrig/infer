@@ -9,10 +9,6 @@ default: infer
 ROOT_DIR = .
 include $(ROOT_DIR)/Makefile.config
 
-ORIG_SHELL_BUILD_MODE = $(BUILD_MODE)
-# override this for faster builds (but slower infer)
-BUILD_MODE ?= opt
-
 MAKE_SOURCE = $(MAKE) -C $(SRC_DIR)
 
 ifneq ($(UTOP),no)
@@ -98,9 +94,11 @@ BUILD_SYSTEMS_TESTS += \
   objc_getters_setters \
   objc_missing_fld \
   objc_retain_cycles \
-  objc_retain_cycles_weak
+  objc_retain_cycles_weak \
+  differential_of_costs_report_objc \
 
 DIRECT_TESTS += \
+  objc_autoreleasepool \
   objc_biabduction \
   objc_frontend \
   objc_linters \
@@ -133,12 +131,13 @@ endif # BUILD_C_ANALYZERS
 ifeq ($(BUILD_JAVA_ANALYZERS),yes)
 BUILD_SYSTEMS_TESTS += \
   differential_interesting_paths_filter \
-  differential_of_costs_report \
+  differential_of_costs_report_java \
   incremental_analysis_cost_change \
   differential_skip_anonymous_class_renamings \
   differential_skip_duplicated_types_on_filenames \
   differential_skip_duplicated_types_on_filenames_with_renamings \
   gradle \
+  java_source_parser \
   java_test_determinator \
   javac \
   resource_leak_exception_lines \
@@ -182,7 +181,7 @@ endif
 
 
 ifneq ($(BUCK),no)
-BUILD_SYSTEMS_TESTS += genrulecapture
+BUILD_SYSTEMS_TESTS += genrulecapture buck_java_flavor
 endif
 ifneq ($(MVN),no)
 BUILD_SYSTEMS_TESTS += mvn
@@ -230,7 +229,7 @@ SRC_ML:=$(shell find * \( -name _build -or -name facebook-clang-plugins -or -pat
 fmt_all:
 	parallel $(OCAMLFORMAT_EXE) $(OCAMLFORMAT_ARGS) -i ::: $(SRC_ML) $(DUNE_ML)
 
-# pre-building these avoids race conditions when building, eg src_build and test_build in parallel
+# pre-building these avoids race conditions when doing multiple builds in parallel
 .PHONY: src_build_common
 src_build_common:
 	$(QUIET)$(call silent_on_success,Generating source dependencies,\
@@ -251,14 +250,11 @@ check: src_build_common
 	$(QUIET)$(call silent_on_success,Building artifacts for tooling support,\
 	$(MAKE_SOURCE) check)
 
-.PHONY: test_build
-test_build: src_build_common
-	$(QUIET)$(call silent_on_success,Testing Infer builds without warnings,\
-	$(MAKE_SOURCE) test)
-
 # deadcode analysis: only do the deadcode detection on Facebook builds and if GNU sed is available
 .PHONY: real_deadcode
 real_deadcode: src_build_common
+	$(QUIET)$(call silent_on_success,Building all OCaml code,\
+	$(MAKE_SOURCE) build_all)
 	$(QUIET)$(call silent_on_success,Testing there is no dead OCaml code,\
 	$(MAKE) -C $(SRC_DIR)/deadcode)
 
@@ -293,11 +289,11 @@ toplevel_test:
 	$(MAKE_SOURCE) toplevel)
 
 ifeq ($(IS_FACEBOOK_TREE),yes)
-byte src_build_common src_build test_build: fb-setup
+byte src_build_common src_build: fb-setup
 endif
 
 ifeq ($(BUILD_C_ANALYZERS),yes)
-byte src_build src_build_common test_build: clang_plugin
+byte src_build src_build_common: clang_plugin
 endif
 
 ifneq ($(NINJA),no)
@@ -415,7 +411,7 @@ clang_plugin_test: clang_setup
 	  SDKPATH=$(XCODE_ISYSROOT) \
 	)
 
-.PHONY: clang_plugin_test
+.PHONY: clang_plugin_test_replace
 clang_plugin_test_replace: clang_setup
 	$(QUIET)$(call silent_on_success,Running facebook-clang-plugins/libtooling/ record tests,\
 	$(MAKE) -C $(FCP_DIR)/libtooling record-test-outputs \
@@ -439,10 +435,9 @@ clang_plugin_test_replace: clang_setup
 	)
 
 .PHONY: ocaml_unit_test
-ocaml_unit_test: test_build
-	$(QUIET)$(REMOVE_DIR) infer-out-unit-tests
+ocaml_unit_test: src_build_common infer_models
 	$(QUIET)$(call silent_on_success,Running OCaml unit tests,\
-	INFER_ARGS=--results-dir^infer-out-unit-tests $(INFERUNIT_BIN))
+	$(MAKE_SOURCE) unit)
 
 define silence_make
   $(1) 2> >(grep -v 'warning: \(ignoring old\|overriding\) \(commands\|recipe\) for target')
@@ -488,6 +483,7 @@ COST_TESTS += \
   java_hoistingExpensive \
   java_performance \
   java_performance-exclusive \
+  objc_autoreleasepool \
   objc_performance \
 
 ifeq ($(IS_FACEBOOK_TREE),yes)
@@ -583,11 +579,8 @@ mod_dep: src_build_common
 	$(QUIET)$(call silent_on_success,Building Infer source dependency graph,\
 	$(MAKE) -C $(SRC_DIR) mod_dep.dot)
 
-# `test_build` and `src_build` (which is a dependency of `endtoend_test`) should not be run in
-# parallel since they build infer with different profiles (and therefore conflict). Therefore,
-# `test_build` is in the dependency, and `endtoend_test` in the recipe.
 .PHONY: config_tests
-config_tests: test_build ocaml_unit_test validate-skel mod_dep
+config_tests: ocaml_unit_test validate-skel mod_dep
 	$(MAKE) endtoend_test checkCopyright
 	$(MAKE) manuals
 
@@ -650,11 +643,11 @@ endif
 	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/annotations/'
 	test -d      '$(DESTDIR)$(libdir)/infer/infer/lib/wrappers/' || \
 	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/lib/wrappers/'
-	test -d      '$(DESTDIR)$(libdir)/infer/infer/lib/specs/' || \
-	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/lib/specs/'
 	test -d      '$(DESTDIR)$(libdir)/infer/infer/bin/' || \
 	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/bin/'
 # copy files
+	$(INSTALL_DATA) -C          'infer/lib/models.sql' \
+	  '$(DESTDIR)$(libdir)/infer/infer/lib/models.sql'
 ifeq ($(BUILD_C_ANALYZERS),yes)
 	$(INSTALL_DATA) -C          'facebook-clang-plugins/libtooling/build/FacebookClangPlugin.dylib' \
 	  '$(DESTDIR)$(libdir)/infer/facebook-clang-plugins/libtooling/build/FacebookClangPlugin.dylib'
@@ -672,8 +665,6 @@ ifeq ($(BUILD_C_ANALYZERS),yes)
 	  [ $(cc) -ef '$(INFER_BIN)' ] && \
 	  $(REMOVE) '$(notdir $(cc))' && \
 	  $(LN_S) ../../bin/infer '$(notdir $(cc))';))
-	find infer/lib/specs/* -print0 | xargs -0 -I \{\} \
-	  $(INSTALL_DATA) -C \{\} '$(DESTDIR)$(libdir)'/infer/\{\}
 	$(INSTALL_DATA) -C          'infer/lib/linter_rules/linters.al' \
 	  '$(DESTDIR)$(libdir)/infer/infer/lib/linter_rules/linters.al'
 	$(INSTALL_DATA) -C          'infer/etc/clang_ast.dict' \
@@ -756,13 +747,13 @@ ifneq ($(INSTALL_NAME_TOOL),no)
 	done
 	set -x; \
 	for sofile in '$(DESTDIR)$(libdir)'/infer/infer/libso/*.dylib; do \
-	  $(INSTALL_NAME_TOOL) -add_rpath "@executable_path" "$$sofile" 2> /dev/null || true; \
+	  $(INSTALL_NAME_TOOL) -add_rpath "@executable_path" "$$sofile"; \
 	  scripts/set_libso_path.sh '$(DESTDIR)$(libdir)'/infer/infer/libso "$$sofile"; \
 	done
-	$(INSTALL_NAME_TOOL) -add_rpath '@executable_path/../libso' '$(DESTDIR)$(libdir)'/infer/infer/bin/infer 2> /dev/null || true
+	$(INSTALL_NAME_TOOL) -add_rpath '@executable_path/../libso' '$(DESTDIR)$(libdir)'/infer/infer/bin/infer
 	scripts/set_libso_path.sh '$(DESTDIR)$(libdir)'/infer/infer/libso '$(DESTDIR)$(libdir)'/infer/infer/bin/infer
 ifeq ($(IS_FACEBOOK_TREE),yes)
-	$(INSTALL_NAME_TOOL) -add_rpath '@executable_path/../libso' '$(DESTDIR)$(libdir)'/infer/infer/bin/InferCreateTraceViewLinks 2> /dev/null || true
+	$(INSTALL_NAME_TOOL) -add_rpath '@executable_path/../libso' '$(DESTDIR)$(libdir)'/infer/infer/bin/InferCreateTraceViewLinks
 	scripts/set_libso_path.sh '$(DESTDIR)$(libdir)'/infer/infer/libso '$(DESTDIR)$(libdir)'/infer/infer/bin/InferCreateTraceViewLinks
 endif
 else # install_name_tool not found
@@ -885,17 +876,6 @@ devsetup: Makefile.autoconf
 	  if [ "$$infer_repo_is_in_manpath" != "0" ]; then \
 	    printf "$(TERM_INFO)  echo 'export MANPATH=\"%s/infer/man\":\$$MANPATH' >> \"$$shell_config_file\"$(TERM_RESET)\n" "$(ABSOLUTE_ROOT_DIR)" >&2; \
 	  fi; \
-	fi; \
-	if [ -z "$(ORIG_SHELL_BUILD_MODE)" ]; then \
-	  echo >&2; \
-	  echo '$(TERM_INFO)*** NOTE: Set `BUILD_MODE=dev` in your shell to disable flambda by default.$(TERM_RESET)' >&2; \
-	  echo '$(TERM_INFO)*** NOTE: Compiling with flambda is ~5 times slower than without, so unless you are$(TERM_RESET)' >&2; \
-	  echo '$(TERM_INFO)*** NOTE: testing infer on a very large project it will not be worth it. Use the$(TERM_RESET)' >&2; \
-	  echo '$(TERM_INFO)*** NOTE: commands below to set the default build mode. You can then use `make opt`$(TERM_RESET)' >&2; \
-	  echo '$(TERM_INFO)*** NOTE: when you really do want to enable flambda.$(TERM_RESET)' >&2; \
-	  echo >&2; \
-	  printf "$(TERM_INFO)  export BUILD_MODE=dev$(TERM_RESET)\n" >&2; \
-	  printf "$(TERM_INFO)  echo 'export BUILD_MODE=dev' >> \"$$shell_config_file\"$(TERM_RESET)\n" >&2; \
 	fi
 	$(QUIET)PATH='$(ORIG_SHELL_PATH)'; if [ "$$(ocamlc -where 2>/dev/null)" != "$$($(OCAMLC) -where)" ]; then \
 	  echo >&2; \

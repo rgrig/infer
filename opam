@@ -11,7 +11,6 @@ license: "MIT"
 build: [
   ["./autogen.sh"]
   ["./configure"
-     "--disable-c-analyzers"
      "--prefix=%{prefix}%"]
   [make "-j" jobs]
   [make "-j" jobs "config_tests"] {with-test}
@@ -43,6 +42,7 @@ depends: [
   "ppx_compare" {>= "v0.14.0" & < "v0.15"}
   "ppx_deriving" {>="4.1"}
   "ppx_enumerate" {>= "v0.14.0" & < "v0.15"}
+  "ppx_expect" {>= "v0.14.0" & < "v0.15"}
   "ppx_fields_conv" {>= "v0.14.0" & < "v0.15"}
   "sawja" {>="1.5.8"}
   "sqlite3"
