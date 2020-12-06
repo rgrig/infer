@@ -62,12 +62,15 @@ module Node = struct
     | BinaryOperatorStmt of string
     | Call of string
     | CallObjCNew
+    | CaseStmt
     | ClassCastException
+    | CompoundStmt
     | ConditionalStmtBranch
     | ConstructorInit
     | CXXDynamicCast
     | CXXNewExpr
     | CXXStdInitializerListExpr
+    | CXXTemporaryMarkerSet
     | CXXTypeidExpr
     | DeclStmt
     | DefineBody
@@ -75,7 +78,6 @@ module Node = struct
     | ExceptionHandler
     | ExceptionsSink
     | ExprWithCleanups
-    | FallbackNode
     | FinallyBranch
     | GCCAsmStmt
     | GenericSelectionExpr
@@ -87,6 +89,7 @@ module Node = struct
     | MonitorEnter
     | MonitorExit
     | ObjCCPPThrow
+    | ObjCIndirectCopyRestoreExpr
     | OutOfBound
     | ReturnStmt
     | Scope of string
@@ -266,6 +269,16 @@ module Node = struct
       true )
 
 
+  (** Concat map and replace the instructions to be executed using a context *)
+  let replace_instrs_by_using_context node ~f ~update_context ~context_at_node =
+    let f node context instr = (update_context context instr, f node context instr) in
+    let instrs' = Instrs.concat_map_and_fold node.instrs ~f:(f node) ~init:context_at_node in
+    if phys_equal instrs' node.instrs then false
+    else (
+      node.instrs <- instrs' ;
+      true )
+
+
   (** Like [replace_instrs], but 1 instr gets replaced by 0, 1, or more instructions. *)
   let replace_instrs_by node ~f =
     let instrs' = Instrs.concat_map node.instrs ~f:(f node) in
@@ -288,8 +301,12 @@ module Node = struct
         F.fprintf fmt "Call %s" call
     | CallObjCNew ->
         F.pp_print_string fmt "Call objC new"
+    | CaseStmt ->
+        F.pp_print_string fmt "CaseStmt"
     | ClassCastException ->
         F.pp_print_string fmt "Class cast exception"
+    | CompoundStmt ->
+        F.pp_print_string fmt "Compound statement"
     | ConditionalStmtBranch ->
         F.pp_print_string fmt "ConditionalStmt Branch"
     | ConstructorInit ->
@@ -300,6 +317,8 @@ module Node = struct
         F.pp_print_string fmt "CXXNewExpr"
     | CXXStdInitializerListExpr ->
         F.pp_print_string fmt "CXXStdInitializerListExpr"
+    | CXXTemporaryMarkerSet ->
+        F.pp_print_string fmt "CXXTemporaryMarkerSet"
     | CXXTypeidExpr ->
         F.pp_print_string fmt "CXXTypeidExpr"
     | DeclStmt ->
@@ -314,8 +333,6 @@ module Node = struct
         F.pp_print_string fmt "exceptions sink"
     | ExprWithCleanups ->
         F.pp_print_string fmt "ExprWithCleanups"
-    | FallbackNode ->
-        F.pp_print_string fmt "Fallback node"
     | FinallyBranch ->
         F.pp_print_string fmt "Finally branch"
     | GCCAsmStmt ->
@@ -338,6 +355,8 @@ module Node = struct
         F.pp_print_string fmt "MonitorExit"
     | ObjCCPPThrow ->
         F.pp_print_string fmt "ObjCCPPThrow"
+    | ObjCIndirectCopyRestoreExpr ->
+        F.pp_print_string fmt "ObjCIndirectCopyRestoreExpr"
     | OutOfBound ->
         F.pp_print_string fmt "Out of bound"
     | ReturnStmt ->
@@ -585,6 +604,14 @@ let replace_instrs_using_context pdesc ~f ~update_context ~context_at_node =
   update_nodes pdesc ~update
 
 
+let replace_instrs_by_using_context pdesc ~f ~update_context ~context_at_node =
+  let update node =
+    Node.replace_instrs_by_using_context ~f ~update_context ~context_at_node:(context_at_node node)
+      node
+  in
+  update_nodes pdesc ~update
+
+
 let replace_instrs_by pdesc ~f =
   let update node = Node.replace_instrs_by ~f node in
   update_nodes pdesc ~update
@@ -762,10 +789,10 @@ let pp_variable_list fmt etl =
 
 let pp_captured_list fmt etl =
   List.iter
-    ~f:(fun (id, ty, mode) ->
+    ~f:(fun {CapturedVar.name; typ; capture_mode} ->
       Format.fprintf fmt " [%s] %a:%a"
-        (Pvar.string_of_capture_mode mode)
-        Mangled.pp id (Typ.pp_full Pp.text) ty )
+        (Pvar.string_of_capture_mode capture_mode)
+        Mangled.pp name (Typ.pp_full Pp.text) typ )
     etl
 
 
@@ -820,7 +847,7 @@ let is_captured_pvar procdesc pvar =
     | _ ->
         false
   in
-  let pvar_matches_in_captured (name, _, _) = Mangled.equal name pvar_name in
+  let pvar_matches_in_captured {CapturedVar.name} = Mangled.equal name pvar_name in
   let is_captured_var_objc_block =
     (* var is captured if the procedure is a objc block and the var is in the captured *)
     Procname.is_objc_block procname

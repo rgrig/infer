@@ -11,7 +11,7 @@ open Fol
 
 [@@@warning "+9"]
 
-type seg = {loc: Term.t; bas: Term.t; len: Term.t; siz: Term.t; seq: Term.t}
+type seg = {loc: Term.t; bas: Term.t; len: Term.t; siz: Term.t; cnt: Term.t}
 [@@deriving compare, equal, sexp]
 
 type starjunction =
@@ -46,18 +46,18 @@ let map_seg ~f h =
   let bas = f h.bas in
   let len = f h.len in
   let siz = f h.siz in
-  let seq = f h.seq in
+  let cnt = f h.cnt in
   if
     loc == h.loc
     && bas == h.bas
     && len == h.len
     && siz == h.siz
-    && seq == h.seq
+    && cnt == h.cnt
   then h
-  else {loc; bas; len; siz; seq}
+  else {loc; bas; len; siz; cnt}
 
-let fold_terms_seg {loc; bas; len; siz; seq} s ~f =
-  f loc (f bas (f len (f siz (f seq s))))
+let fold_terms_seg {loc; bas; len; siz; cnt} s ~f =
+  f loc (f bas (f len (f siz (f cnt s))))
 
 let fold_vars_seg seg s ~f =
   fold_terms_seg ~f:(Iter.fold ~f << Term.vars) seg s
@@ -109,15 +109,15 @@ let var_strength ?(xs = Var.Set.empty) q =
   in
   var_strength_ xs m q
 
-let pp_chunk x fs (siz, seq) = Term.ppx x fs (Term.sized ~siz ~seq)
+let pp_chunk x fs (siz, cnt) = Term.ppx x fs (Term.sized ~siz ~seq:cnt)
 
-let pp_seg x fs {loc; bas; len; siz; seq} =
+let pp_seg x fs {loc; bas; len; siz; cnt} =
   let term_pp = Term.ppx x in
   Format.fprintf fs "@[<2>%a@ @[@[-[%a)->@]@ %a@]@]" term_pp loc
     (fun fs (bas, len) ->
       if (not (Term.equal loc bas)) || not (Term.equal len siz) then
         Format.fprintf fs " %a, %a " term_pp bas term_pp len )
-    (bas, len) (pp_chunk x) (siz, seq)
+    (bas, len) (pp_chunk x) (siz, cnt)
 
 let pp_seg_norm ctx fs seg =
   let x _ = None in
@@ -144,7 +144,7 @@ let pp_block x fs segs =
   in
   let term_pp = Term.ppx x in
   let pp_chunks =
-    List.pp "@,^" (fun fs seg -> pp_chunk x fs (seg.siz, seg.seq))
+    List.pp "@,^" (fun fs seg -> pp_chunk x fs (seg.siz, seg.cnt))
   in
   match segs with
   | {loc; bas; len; _} :: _ ->
@@ -353,12 +353,9 @@ and rename_ Var.Subst.{sub; dom; rng} q =
     pf "@[%a@]@ %a" Var.Subst.pp sub pp q ;
     assert (Var.Set.subset dom ~of_:q.us)]
   ;
+  let q = extend_us rng q in
   ( if Var.Subst.is_empty sub then q
-  else
-    let us = Var.Set.union (Var.Set.diff q.us dom) rng in
-    assert (not (Var.Set.equal us q.us)) ;
-    let q' = apply_subst sub (freshen_xs q ~wrt:(Var.Set.union dom us)) in
-    {q' with us} )
+  else {(apply_subst sub q) with us= Var.Set.diff q.us dom} )
   |>
   [%Trace.retn fun {pf} q' ->
     pf "%a" pp q' ;
@@ -368,7 +365,7 @@ and rename_ Var.Subst.{sub; dom; rng} q =
 and rename sub q =
   [%Trace.call fun {pf} -> pf "@[%a@]@ %a" Var.Subst.pp sub pp q]
   ;
-  rename_ (Var.Subst.restrict sub q.us) q
+  rename_ (Var.Subst.restrict_dom sub q.us) q
   |>
   [%Trace.retn fun {pf} q' ->
     pf "%a" pp q' ;
@@ -395,7 +392,7 @@ and freshen_xs q ~wrt =
     assert (Var.Set.disjoint q'.xs (Var.Set.inter q.xs wrt)) ;
     invariant q']
 
-let extend_us us q =
+and extend_us us q =
   let us = Var.Set.union us q.us in
   (if us == q.us then q else {(freshen_xs q ~wrt:us) with us})
   |> check invariant
@@ -534,7 +531,8 @@ let pure (p : Formula.t) =
     pf "%a" pp q ;
     invariant q]
 
-let and_ e q = star (pure e) q
+let and_ b q =
+  star (pure (Formula.map_terms ~f:(Context.normalize q.ctx) b)) q
 
 let and_subst subst q =
   [%Trace.call fun {pf} -> pf "%a@ %a" Context.Subst.pp subst pp q]
@@ -762,7 +760,7 @@ let rec simplify_ us rev_xss q =
       (* normalize wrt solutions *)
       let q = norm subst q in
       (* reconjoin only non-redundant equations *)
-      let _, ctx' =
+      let _, ctx =
         Context.apply_subst
           (Var.Set.union us (Var.Set.union_list rev_xss))
           subst q.ctx
@@ -770,11 +768,11 @@ let rec simplify_ us rev_xss q =
       let removed =
         Var.Set.diff
           (Var.Set.union_list rev_xss)
-          (Var.Set.union (Context.fv ctx')
+          (Var.Set.union (Context.fv ctx)
              (fv ~ignore_ctx:() (elim_exists q.xs q)))
       in
       let keep, removed, _ = Context.Subst.partition_valid removed subst in
-      (removed, and_subst keep q)
+      (removed, and_subst keep {q with ctx})
   in
   (* re-quantify existentials *)
   let q = exists xs q in

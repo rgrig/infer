@@ -490,6 +490,7 @@ OPTIONS
              MEMORY_LEAK (enabled by default),
              MISSING_REQUIRED_PROP (enabled by default),
              MIXED_SELF_WEAKSELF (enabled by default),
+             MODIFIES_IMMUTABLE (enabled by default),
              MULTIPLE_WEAKSELF (enabled by default),
              MUTABLE_LOCAL_VARIABLE_IN_COMPONENT_FILE (enabled by default),
              Missing_fld (enabled by default),
@@ -790,6 +791,10 @@ OPTIONS
            unique_ptr<type>) will count as dead stores when the variables are
            not read explicitly by the program.           See also infer-analyze(1).
 
+       --liveness-ignored-constant +string
+           List of integer constants to be ignored by liveness analysis       
+    See also infer-analyze(1).
+
        --liveness-only
            Activates: Enable liveness and disable all other checkers
            (Conversely: --no-liveness-only)           See also infer-analyze(1).
@@ -1031,6 +1036,10 @@ OPTIONS
 
        --report-formatter { none | phabricator }
            Which formatter to use when emitting the report           See also infer-report(1).
+
+       --report-immutable-modifications
+           Activates: Report modifications to immutable fields (Conversely:
+           --no-report-immutable-modifications)           See also infer-report(1) and infer-run(1).
 
        --report-previous path
            Report of the base revision to use for comparison           See also infer-reportdiff(1).
@@ -1583,6 +1592,10 @@ INTERNAL OPTIONS
        --java-jar-compiler-reset
            Cancel the effect of --java-jar-compiler.
 
+       --java-source-parser-experimental
+           Activates: The experimental Java source parser for declaration
+           locations. (Conversely: --no-java-source-parser-experimental)
+
        --java-version-reset
            Cancel the effect of --java-version.
 
@@ -1609,6 +1622,9 @@ INTERNAL OPTIONS
 
        --linters-doc-url-reset
            Set --linters-doc-url to the empty list.
+
+       --liveness-ignored-constant-reset
+           Set --liveness-ignored-constant to the empty list.
 
        --load-average-reset
            Cancel the effect of --load-average.
@@ -1673,11 +1689,12 @@ INTERNAL OPTIONS
            This feature is needed for compatibility reasons. (Conversely:
            --no-nullsafe-disable-field-not-initialized-in-nonstrict-classes)
 
-       --no-nullsafe-optimistic-third-party-params-in-non-strict
-           Deactivates: Nullsafe: in this mode we treat non annotated third
-           party method params as if they were annotated as nullable.
-           (Conversely:
-           --nullsafe-optimistic-third-party-params-in-non-strict)
+       --no-nullsafe-optimistic-third-party-in-default-mode
+           Deactivates: Nullsafe: Unless @Nullsafe annotation is used, treat
+           not annotated third party method params as if they were annotated
+           as nullable, and return values as if they were annotated as
+           non-null (Conversely:
+           --nullsafe-optimistic-third-party-in-default-mode)
 
        --nullsafe-strict-containers
            Activates: Warn when containers are used with nullable keys or
@@ -1954,9 +1971,23 @@ INTERNAL OPTIONS
            Activates: Mode for testing, where no headers are translated, and
            dot files are created (clang only) (Conversely: --no-testing-mode)
 
+       --topl-max-conjuncts int
+           Stop tracking states that reach have at least int conjuncts
+
+       --topl-max-disjuncts int
+           Under-approximate after int disjunctions in the domain
+
        --topl-properties +path
            [EXPERIMENTAL] Specify a file containing a temporal property
-           definition (e.g., jdk.topl).
+           definition (e.g., jdk.topl).           One needs to also select one of the three implementations, by
+           enabling one of the following checkers
+           --pulse       will run pulse with updated transfer functions
+           --topl-pulse  [SLOW] uses SIL-instrumentation, runs pulse, and
+           analyzes pulse summaries
+           --topl-biabd  [SLOW] uses SIL-instrumentation, runs biabduction,
+           and analyzes biabduction summaries
+           Note that enabling topl-pulse or topl-biabd will disable the
+           first implementation using updated pulse transfer functions.
 
        --topl-properties-reset
            Set --topl-properties to the empty list.

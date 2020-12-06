@@ -92,20 +92,42 @@ let fold_globals_of_stack call_loc stack call_state ~f =
           Ok call_state )
 
 
+let and_aliasing_arith ~addr_callee ~addr_caller0 call_state =
+  match AddressMap.find_opt addr_callee call_state.subst with
+  | Some (addr_caller', _) when not (AbstractValue.equal addr_caller' addr_caller0) ->
+      (* NOTE: discarding new equalities here instead of passing them to
+         {!AbductiveDomain.incorporate_new_eqs} because it would be too slow to do each time we
+         visit a new address. We should re-normalize at the end of the call instead (TODO). *)
+      let path_condition, _new_eqs =
+        PathCondition.and_eq_vars addr_caller0 addr_caller'
+          call_state.astate.AbductiveDomain.path_condition
+      in
+      if PathCondition.is_unsat_cheap path_condition then raise (Contradiction PathCondition)
+      else
+        {call_state with astate= AbductiveDomain.set_path_condition path_condition call_state.astate}
+  | _ ->
+      call_state
+
+
 let visit call_state ~pre ~addr_callee ~addr_hist_caller =
   let addr_caller = fst addr_hist_caller in
-  ( match AddressMap.find_opt addr_caller call_state.rev_subst with
-  | Some addr_callee' when not (AbstractValue.equal addr_callee addr_callee') ->
-      (* [addr_caller] corresponds to several values in the callee, see if that's a problem for
-         applying the pre-condition, i.e. if both values are addresses in the callee's heap, which
-         means they must be disjoint. If so, raise a contradiction, but if not then continue as it
-         just means that the callee doesn't care about the value of these variables. *)
-      if
-        BaseMemory.mem addr_callee pre.BaseDomain.heap
-        && BaseMemory.mem addr_callee' pre.BaseDomain.heap
-      then raise (Contradiction (Aliasing {addr_caller; addr_callee; addr_callee'; call_state}))
-  | _ ->
-      () ) ;
+  let call_state =
+    match AddressMap.find_opt addr_caller call_state.rev_subst with
+    | Some addr_callee' when not (AbstractValue.equal addr_callee addr_callee') ->
+        if
+          (* [addr_caller] corresponds to several values in the callee, see if that's a problem for
+             applying the pre-condition, i.e. if both values are addresses in the callee's heap,
+             which means they must be disjoint. If so, raise a contradiction, but if not then
+             continue as it just means that the callee doesn't care about the value of these
+             variables, but record that they are equal. *)
+          BaseMemory.mem addr_callee pre.BaseDomain.heap
+          && BaseMemory.mem addr_callee' pre.BaseDomain.heap
+        then raise (Contradiction (Aliasing {addr_caller; addr_callee; addr_callee'; call_state}))
+        else and_aliasing_arith ~addr_callee:addr_callee' ~addr_caller0:addr_caller call_state
+    | _ ->
+        call_state
+  in
+  let call_state = and_aliasing_arith ~addr_callee ~addr_caller0:addr_caller call_state in
   if AddressSet.mem addr_callee call_state.visited then (`AlreadyVisited, call_state)
   else
     ( `NotAlreadyVisited
@@ -113,13 +135,6 @@ let visit call_state ~pre ~addr_callee ~addr_hist_caller =
         visited= AddressSet.add addr_callee call_state.visited
       ; subst= AddressMap.add addr_callee addr_hist_caller call_state.subst
       ; rev_subst= AddressMap.add addr_caller addr_callee call_state.rev_subst } )
-
-
-let pp f {AbductiveDomain.pre; post; path_condition; skipped_calls} =
-  F.fprintf f "COND:@\n  @[%a@]@\n" PathCondition.pp path_condition ;
-  F.fprintf f "PRE:@\n  @[%a@]@\n" BaseDomain.pp (pre :> BaseDomain.t) ;
-  F.fprintf f "POST:@\n  @[%a@]@\n" BaseDomain.pp (post :> BaseDomain.t) ;
-  F.fprintf f "SKIPPED_CALLS:@ @[%a@]@\n" SkippedCalls.pp skipped_calls
 
 
 (* {3 reading the pre from the current state} *)
@@ -491,7 +506,7 @@ let apply_post callee_proc_name call_location pre_post ~captured_vars_with_actua
     record_post_remaining_attributes callee_proc_name call_location pre_post call_state
     |> record_skipped_calls callee_proc_name call_location pre_post
     |> conjoin_callee_arith pre_post
-    |> fun {astate; _} -> (astate, return_caller)
+    |> fun call_state -> (call_state, return_caller)
   in
   PerfEvent.(log (fun logger -> log_end_event logger ())) ;
   r
@@ -541,7 +556,7 @@ let check_all_valid callee_proc_name call_location {AbductiveDomain.pre; _} call
 let apply_prepost callee_proc_name call_location ~callee_prepost:pre_post
     ~captured_vars_with_actuals ~formals ~actuals astate =
   L.d_printfln "Applying pre/post for %a(%a):@\n%a" Procname.pp callee_proc_name
-    (Pp.seq ~sep:"," Var.pp) formals pp pre_post ;
+    (Pp.seq ~sep:"," Var.pp) formals AbductiveDomain.pp pre_post ;
   let empty_call_state =
     {astate; subst= AddressMap.empty; rev_subst= AddressMap.empty; visited= AddressSet.empty}
   in
@@ -554,10 +569,10 @@ let apply_prepost callee_proc_name call_location ~callee_prepost:pre_post
       (* can't make sense of the pre-condition in the current context: give up on that particular
          pre/post pair *)
       L.d_printfln "Cannot apply precondition: %a" pp_contradiction reason ;
-      PulseReport.InfeasiblePath
+      Unsat
   | Error _ as error ->
       (* error: the function call requires to read some state known to be invalid *)
-      PulseReport.FeasiblePath error
+      Sat error
   | Ok call_state -> (
       L.d_printfln "Pre applied successfully. call_state=%a" pp_call_state call_state ;
       match
@@ -566,11 +581,21 @@ let apply_prepost callee_proc_name call_location ~callee_prepost:pre_post
         (* reset [visited] *)
         let call_state = {call_state with astate; visited= AddressSet.empty} in
         (* apply the postcondition *)
-        apply_post callee_proc_name call_location pre_post ~captured_vars_with_actuals ~formals
-          ~actuals call_state
+        let call_state, return_caller =
+          apply_post callee_proc_name call_location pre_post ~captured_vars_with_actuals ~formals
+            ~actuals call_state
+        in
+        let astate =
+          if Topl.is_deep_active () then
+            AbductiveDomain.Topl.large_step ~call_location ~callee_proc_name
+              ~substitution:call_state.subst ~condition:call_state.astate.path_condition
+              ~callee_prepost:pre_post.AbductiveDomain.topl call_state.astate
+          else call_state.astate
+        in
+        (astate, return_caller)
       with
       | post ->
-          PulseReport.FeasiblePath post
+          Sat post
       | exception Contradiction reason ->
           L.d_printfln "Cannot apply post-condition: %a" pp_contradiction reason ;
-          PulseReport.InfeasiblePath )
+          Unsat )

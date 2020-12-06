@@ -81,13 +81,14 @@ module PreDomain : BaseDomainSig = PostDomain
 type t =
   { post: PostDomain.t  (** state at the current program point*)
   ; pre: PreDomain.t  (** inferred pre at the current program point *)
+  ; topl: (PulseTopl.state[@yojson.opaque])
   ; skipped_calls: SkippedCalls.t  (** set of skipped calls *)
   ; path_condition: PathCondition.t }
 [@@deriving yojson_of]
 
-let pp f {post; pre; path_condition; skipped_calls} =
-  F.fprintf f "@[<v>%a@;%a@;PRE=[%a]@;skipped_calls=%a@]" PathCondition.pp path_condition
-    PostDomain.pp post PreDomain.pp pre SkippedCalls.pp skipped_calls
+let pp f {post; pre; topl; path_condition; skipped_calls} =
+  F.fprintf f "@[<v>%a@;%a@;PRE=[%a]@;skipped_calls=%a@;TOPL=%a@]" PathCondition.pp path_condition
+    PostDomain.pp post PreDomain.pp pre SkippedCalls.pp skipped_calls PulseTopl.pp_state topl
 
 
 let set_path_condition path_condition astate = {astate with path_condition}
@@ -140,6 +141,7 @@ module Stack = struct
         in
         ( { post= PostDomain.update astate.post ~stack:post_stack
           ; pre
+          ; topl= astate.topl
           ; skipped_calls= astate.skipped_calls
           ; path_condition= astate.path_condition }
         , addr_hist )
@@ -288,6 +290,7 @@ module Memory = struct
         in
         ( { post= PostDomain.update astate.post ~heap:post_heap
           ; pre= PreDomain.update astate.pre ~heap:foot_heap
+          ; topl= astate.topl
           ; skipped_calls= astate.skipped_calls
           ; path_condition= astate.path_condition }
         , addr_hist_dst )
@@ -310,7 +313,7 @@ let mk_initial proc_desc =
       Procdesc.get_formals proc_desc |> List.map ~f:(fun (mangled, _) -> init_var mangled)
     in
     let captured =
-      Procdesc.get_captured proc_desc |> List.map ~f:(fun (mangled, _, _) -> init_var mangled)
+      Procdesc.get_captured proc_desc |> List.map ~f:(fun {CapturedVar.name} -> init_var name)
     in
     captured @ formals
   in
@@ -326,7 +329,11 @@ let mk_initial proc_desc =
     PreDomain.update ~stack:initial_stack ~heap:initial_heap PreDomain.empty
   in
   let post = PostDomain.update ~stack:initial_stack PostDomain.empty in
-  {pre; post; skipped_calls= SkippedCalls.empty; path_condition= PathCondition.true_}
+  { pre
+  ; post
+  ; topl= PulseTopl.start ()
+  ; skipped_calls= SkippedCalls.empty
+  ; path_condition= PathCondition.true_ }
 
 
 let add_skipped_call pname trace astate =
@@ -380,21 +387,13 @@ let set_post_cell (addr, history) (edges, attr_set) location astate =
          |> BaseAddressAttributes.add addr attr_set )
 
 
-let filter_for_summary astate =
+let filter_stack_for_summary astate =
   let post_stack =
     BaseStack.filter
       (fun var _ -> Var.appears_in_source_code var && not (is_local var astate))
       (astate.post :> BaseDomain.t).stack
   in
-  (* deregister empty edges *)
-  let deregister_empty heap =
-    BaseMemory.filter (fun _addr edges -> not (BaseMemory.Edges.is_empty edges)) heap
-  in
-  let pre_heap = deregister_empty (astate.pre :> base_domain).heap in
-  let post_heap = deregister_empty (astate.post :> base_domain).heap in
-  { astate with
-    pre= PreDomain.update astate.pre ~heap:pre_heap
-  ; post= PostDomain.update ~stack:post_stack ~heap:post_heap astate.post }
+  {astate with post= PostDomain.update ~stack:post_stack astate.post}
 
 
 let add_out_of_scope_attribute addr pvar location history heap typ =
@@ -432,10 +431,6 @@ let invalidate_locals pdesc astate : t =
 type summary = t [@@deriving yojson_of]
 
 let is_allocated {post; pre} v =
-  let is_heap_allocated base_mem v =
-    BaseMemory.find_opt v base_mem.heap
-    |> Option.exists ~f:(fun edges -> not (BaseMemory.Edges.is_empty edges))
-  in
   let is_pvar = function Var.ProgramVar _ -> true | Var.LogicalVar _ -> false in
   let is_stack_allocated base_mem v =
     BaseStack.exists
@@ -443,39 +438,105 @@ let is_allocated {post; pre} v =
       base_mem.stack
   in
   (* OPTIM: the post stack contains at least the pre stack so no need to check both *)
-  is_heap_allocated (post :> BaseDomain.t) v
-  || is_heap_allocated (pre :> BaseDomain.t) v
+  BaseMemory.is_allocated (post :> BaseDomain.t).heap v
+  || BaseMemory.is_allocated (pre :> BaseDomain.t).heap v
   || is_stack_allocated (post :> BaseDomain.t) v
 
 
-let incorporate_new_eqs astate (phi, new_eqs) =
-  List.fold_until new_eqs ~init:phi ~finish:Fn.id ~f:(fun phi (new_eq : PulseFormula.new_eq) ->
+let incorporate_new_eqs astate new_eqs =
+  List.fold_until new_eqs ~init:()
+    ~finish:(fun () -> Sat ())
+    ~f:(fun () (new_eq : PulseFormula.new_eq) ->
       match new_eq with
       | EqZero v when is_allocated astate v ->
           L.d_printfln "CONTRADICTION: %a = 0 but is allocated" AbstractValue.pp v ;
-          Stop PathCondition.false_
+          Stop Unsat
       | Equal (v1, v2)
         when (not (AbstractValue.equal v1 v2)) && is_allocated astate v1 && is_allocated astate v2
         ->
           L.d_printfln "CONTRADICTION: %a = %a but both are separately allocated" AbstractValue.pp
             v1 AbstractValue.pp v2 ;
-          Stop PathCondition.false_
+          Stop Unsat
       | _ ->
-          Continue phi )
+          Continue () )
+
+
+(** it's a good idea to normalize the path condition before calling this function *)
+let canonicalize astate =
+  let open SatUnsat.Import in
+  let get_var_repr v = PathCondition.get_var_repr astate.path_condition v in
+  let canonicalize_base stack heap =
+    let stack' = BaseStack.canonicalize ~get_var_repr stack in
+    (* note: this step also de-registers addresses pointing to empty edges *)
+    let+ heap' = BaseMemory.canonicalize ~get_var_repr heap in
+    (stack', heap')
+  in
+  (* need different functions for pre and post to appease the type system *)
+  let canonicalize_pre (pre : PreDomain.t) =
+    let+ stack', heap' = canonicalize_base (pre :> BaseDomain.t).stack (pre :> BaseDomain.t).heap in
+    PreDomain.update ~stack:stack' ~heap:heap' pre
+  in
+  let canonicalize_post (post : PostDomain.t) =
+    let+ stack', heap' =
+      canonicalize_base (post :> BaseDomain.t).stack (post :> BaseDomain.t).heap
+    in
+    PostDomain.update ~stack:stack' ~heap:heap' post
+  in
+  let* pre = canonicalize_pre astate.pre in
+  let+ post = canonicalize_post astate.post in
+  {astate with pre; post}
 
 
 let summary_of_post pdesc astate =
-  let astate = filter_for_summary astate in
-  let astate, live_addresses, _ = discard_unreachable astate in
-  let astate =
-    { astate with
-      path_condition=
-        PathCondition.simplify ~keep:live_addresses astate.path_condition
-        |> incorporate_new_eqs astate }
-  in
-  invalidate_locals pdesc astate
+  let open SatUnsat.Import in
+  (* NOTE: we normalize (to strengthen the equality relation used by canonicalization) then
+     canonicalize *before* garbage collecting unused addresses in case we detect any last-minute
+     contradictions about addresses we are about to garbage collect *)
+  let path_condition, is_unsat, new_eqs = PathCondition.is_unsat_expensive astate.path_condition in
+  if is_unsat then Unsat
+  else
+    let astate = {astate with path_condition} in
+    let* () = incorporate_new_eqs astate new_eqs in
+    L.d_printfln "Canonicalizing...@\n" ;
+    let* astate = canonicalize astate in
+    L.d_printfln "Canonicalized state: %a@\n" pp astate ;
+    let astate = filter_stack_for_summary astate in
+    let astate =
+      {astate with topl= PulseTopl.filter_for_summary astate.path_condition astate.topl}
+    in
+    let astate, live_addresses, _ = discard_unreachable astate in
+    let* path_condition, new_eqs =
+      PathCondition.simplify ~keep:live_addresses astate.path_condition
+    in
+    let+ () = incorporate_new_eqs astate new_eqs in
+    let astate =
+      {astate with path_condition; topl= PulseTopl.simplify ~keep:live_addresses astate.topl}
+    in
+    invalidate_locals pdesc astate
 
 
 let get_pre {pre} = (pre :> BaseDomain.t)
 
 let get_post {post} = (post :> BaseDomain.t)
+
+(* re-exported for mli *)
+let incorporate_new_eqs astate (phi, new_eqs) =
+  if PathCondition.is_unsat_cheap phi then phi
+  else match incorporate_new_eqs astate new_eqs with Unsat -> PathCondition.false_ | Sat () -> phi
+
+
+module Topl = struct
+  let small_step loc event astate =
+    {astate with topl= PulseTopl.small_step loc astate.path_condition event astate.topl}
+
+
+  let large_step ~call_location ~callee_proc_name ~substitution ?(condition = PathCondition.true_)
+      ~callee_prepost astate =
+    { astate with
+      topl=
+        PulseTopl.large_step ~call_location ~callee_proc_name ~substitution ~condition
+          ~callee_prepost astate.topl }
+
+
+  let get {topl} = topl
+end

@@ -1463,6 +1463,11 @@ and java_jar_compiler =
     ~meta:"path" "Specify the Java compiler jar used to generate the bytecode"
 
 
+and java_source_parser_experimental =
+  CLOpt.mk_bool ~long:"java-source-parser-experimental"
+    "The experimental Java source parser for declaration locations."
+
+
 and java_version =
   CLOpt.mk_int_opt ~long:"java-version" ?default:Version.java_version
     ~in_help:InferCommand.[(Capture, manual_java); (Analyze, manual_java)]
@@ -1493,6 +1498,12 @@ and liveness_dangerous_classes =
      words, assignement to variables of these types (or common wrappers around these types such as \
      $(i,unique_ptr<type>)) will count as dead stores when the variables are not read explicitly \
      by the program."
+
+
+and liveness_ignored_constant =
+  CLOpt.mk_string_list ~default:["0"] ~long:"liveness-ignored-constant"
+    ~in_help:InferCommand.[(Analyze, manual_generic)]
+    "List of integer constants to be ignored by liveness analysis"
 
 
 and _log_events =
@@ -1642,17 +1653,15 @@ and nullsafe_disable_field_not_initialized_in_nonstrict_classes =
      marked as @NullsafeStrict. This feature is needed for compatibility reasons."
 
 
-and nullsafe_optimistic_third_party_params_in_non_strict =
+and nullsafe_optimistic_third_party_in_default_mode =
   CLOpt.mk_bool
     ~long:
-      "nullsafe-optimistic-third-party-params-in-non-strict"
-      (* Turned on for compatibility reasons.
-         Historically this is because there was no actionable way to change third party annotations.
-         Now that we have such a support, this behavior should be reconsidered, provided
-         our tooling and error reporting is friendly enough to be smoothly used by developers.
-      *) ~default:true
-    "Nullsafe: in this mode we treat non annotated third party method params as if they were \
-     annotated as nullable."
+      "nullsafe-optimistic-third-party-in-default-mode"
+      (* Turned on for compatibility reasons
+       *) ~default:true
+    "Nullsafe: Unless @Nullsafe annotation is used, treat not annotated third party method params \
+     as if they were annotated as nullable, and return values as if they were annotated as \
+     non-null"
 
 
 and nullsafe_third_party_signatures =
@@ -2055,6 +2064,12 @@ and report_formatter =
     ~eq:PolyVariantEqual.( = ) "Which formatter to use when emitting the report"
 
 
+and report_immutable_modifications =
+  CLOpt.mk_bool ~long:"report-immutable-modifications" ~default:false
+    ~in_help:InferCommand.[(Report, manual_generic); (Run, manual_generic)]
+    "Report modifications to immutable fields"
+
+
 and report_previous =
   CLOpt.mk_path_opt ~long:"report-previous"
     ~in_help:InferCommand.[(ReportDiff, manual_generic)]
@@ -2322,9 +2337,27 @@ and test_filtering =
     "List all the files Infer can report on (should be called from the root of the project)"
 
 
+and topl_max_conjuncts =
+  CLOpt.mk_int ~long:"topl-max-conjuncts" ~default:20
+    "Stop tracking states that reach have at least $(i,int) conjuncts"
+
+
+and topl_max_disjuncts =
+  CLOpt.mk_int ~long:"topl-max-disjuncts" ~default:20
+    "Under-approximate after $(i,int) disjunctions in the domain"
+
+
 and topl_properties =
   CLOpt.mk_path_list ~default:[] ~long:"topl-properties"
-    "[EXPERIMENTAL] Specify a file containing a temporal property definition (e.g., jdk.topl)."
+    "[EXPERIMENTAL] Specify a file containing a temporal property definition (e.g., jdk.topl).\n\
+     One needs to also select one of the three implementations, by enabling one of the following \
+     checkers\n\
+     $(b,--pulse)       will run pulse with updated transfer functions\n\
+     $(b,--topl-pulse)  [SLOW] uses SIL-instrumentation, runs pulse, and analyzes pulse summaries\n\
+     $(b,--topl-biabd)  [SLOW] uses SIL-instrumentation, runs biabduction, and analyzes \
+     biabduction summaries\n\
+     Note that enabling topl-pulse or topl-biabd will disable the first implementation using \
+     updated pulse transfer functions."
 
 
 and profiler_samples =
@@ -2947,6 +2980,8 @@ and java_debug_source_file_info = !java_debug_source_file_info
 
 and java_jar_compiler = !java_jar_compiler
 
+and java_source_parser_experimental = !java_source_parser_experimental
+
 and java_version = !java_version
 
 and javac_classes_out = !javac_classes_out
@@ -2975,6 +3010,8 @@ and list_issue_types = !list_issue_types
 
 and liveness_dangerous_classes = !liveness_dangerous_classes
 
+and liveness_ignored_constant = !liveness_ignored_constant
+
 and load_average =
   match !load_average with None when !buck -> Some (float_of_int ncpu) | _ -> !load_average
 
@@ -3001,8 +3038,8 @@ and nullsafe_disable_field_not_initialized_in_nonstrict_classes =
   !nullsafe_disable_field_not_initialized_in_nonstrict_classes
 
 
-and nullsafe_optimistic_third_party_params_in_non_strict =
-  !nullsafe_optimistic_third_party_params_in_non_strict
+and nullsafe_optimistic_third_party_in_default_mode =
+  !nullsafe_optimistic_third_party_in_default_mode
 
 
 and nullsafe_third_party_signatures = !nullsafe_third_party_signatures
@@ -3156,6 +3193,8 @@ and report_force_relative_path = !report_force_relative_path
 
 and report_formatter = !report_formatter
 
+and report_immutable_modifications = !report_immutable_modifications
+
 and report_path_regex_blacklist = !report_path_regex_blacklist
 
 and report_path_regex_whitelist = !report_path_regex_whitelist
@@ -3280,6 +3319,10 @@ and profiler_samples = !profiler_samples
 and testing_mode = !testing_mode
 
 and threadsafe_aliases = !threadsafe_aliases
+
+and topl_max_conjuncts = !topl_max_conjuncts
+
+and topl_max_disjuncts = !topl_max_disjuncts
 
 and topl_properties = !topl_properties
 
