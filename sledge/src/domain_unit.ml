@@ -15,9 +15,9 @@ let init _ = ()
 let join () () = Some ()
 let is_false _ = false
 let exec_assume () _ = Some ()
-let exec_kill () _ = ()
-let exec_move () _ = ()
-let exec_inst () _ = Some ()
+let exec_kill _ () = ()
+let exec_move _ () = ()
+let exec_inst _ () = Some ()
 let exec_intrinsic ~skip_throw:_ _ _ _ _ : t option option = None
 
 type from_call = unit [@@deriving compare, equal, sexp]
@@ -32,8 +32,8 @@ let retn _ _ _ _ = ()
 let dnf () = [()]
 
 let resolve_callee lookup ptr _ =
-  match Llair.Reg.of_exp ptr with
-  | Some callee -> (lookup (Llair.Reg.name callee), ())
+  match Llair.Function.of_exp ptr with
+  | Some callee -> (lookup callee, ())
   | None -> ([], ())
 
 type summary = unit

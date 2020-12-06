@@ -1,5 +1,4 @@
-<!-- Creator     : groff version 1.19.2 -->
-<!-- CreationDate: Mon Jun 29 14:17:42 2020 -->
+<!-- Creator     : groff version 1.22.4 -->
 <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
 "http://www.w3.org/TR/html4/loose.dtd">
 <html>
@@ -8,16 +7,17 @@
 <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII">
 <meta name="Content-Style" content="text/css">
 <style type="text/css">
-       p     { margin-top: 0; margin-bottom: 0; }
-       pre   { margin-top: 0; margin-bottom: 0; }
-       table { margin-top: 0; margin-bottom: 0; }
+       p       { margin-top: 0; margin-bottom: 0; vertical-align: top }
+       pre     { margin-top: 0; margin-bottom: 0; vertical-align: top }
+       table   { margin-top: 0; margin-bottom: 0; vertical-align: top }
+       h1      { text-align: center }
 </style>
 <title>infer</title>
 
 </head>
 <body>
 
-<h1 align=center>infer</h1>
+<h1 align="center">infer</h1>
 
 <a href="#NAME">NAME</a><br>
 <a href="#SYNOPSIS">SYNOPSIS</a><br>
@@ -30,15 +30,17 @@
 <hr>
 
 
+<h2>NAME
 <a name="NAME"></a>
-<h2>NAME</h2>
+</h2>
 
 
 <p style="margin-left:11%; margin-top: 1em">infer - static
 analysis for Java and C/C++/Objective-C/Objective-C++</p>
 
+<h2>SYNOPSIS
 <a name="SYNOPSIS"></a>
-<h2>SYNOPSIS</h2>
+</h2>
 
 
 <p style="margin-left:11%; margin-top: 1em"><b>infer
@@ -55,8 +57,9 @@ infer --compilation-database[-escaped]</b> <i>file
 infer</b> <i>[options]</i> <b>-- compile command <br>
 infer</b> <i>[options]</i></p>
 
+<h2>DESCRIPTION
 <a name="DESCRIPTION"></a>
-<h2>DESCRIPTION</h2>
+</h2>
 
 
 <p style="margin-left:11%; margin-top: 1em">Infer is a
@@ -76,8 +79,9 @@ specified via the <b>--</b> option or one of the
 <b>infer</b> behaves as <b>infer-run</b>(1). Otherwise,
 <b>infer</b> behaves as <b>infer-analyze</b>(1).</p>
 
+<h2>OPTIONS
 <a name="OPTIONS"></a>
-<h2>OPTIONS</h2>
+</h2>
 
 
 <p style="margin-left:11%; margin-top: 1em">Every infer
@@ -167,10 +171,9 @@ Example:</p>
 &quot;.*::Trusted::.*&quot; ] } <br>
 } <br>
 } <br>
-}</p>
-
-<p style="margin-left:11%; margin-top: 1em">This will cause
-us to create a new ISOLATED_REACHING_CONNECT <br>
+} <br>
+This will cause us to create a new ISOLATED_REACHING_CONNECT
+<br>
 issue for every function whose source path starts with
 &quot;isolated/&quot; <br>
 that may reach the function named &quot;connect&quot;,
@@ -291,6 +294,24 @@ Java targets. (Conversely: <b>--no-buck-java</b>)</p>
 
 <p style="margin-left:11%;">See also
 <b>infer-capture</b>(1). <b><br>
+--buck-java-flavor</b></p>
+
+<p style="margin-left:17%;">Activates: Buck integration for
+Java which uses the buck flavor #infer-java-capture instead
+of genrules like buck-java. (Conversely:
+<b>--no-buck-java-flavor</b>)</p>
+
+<p style="margin-left:11%;">See also
+<b>infer-capture</b>(1). <b><br>
+--buck-java-flavor-suppress-config</b></p>
+
+<p style="margin-left:17%;">Activates: Suppress setting
+buck config values for the infer binary and its version in
+the buck-java-flavor integration. (Conversely:
+<b>--no-buck-java-flavor-suppress-config</b>)</p>
+
+<p style="margin-left:11%;">See also
+<b>infer-capture</b>(1). <b><br>
 --buck-merge-all-deps</b></p>
 
 <p style="margin-left:17%;">Activates: Find and merge all
@@ -372,7 +393,8 @@ root or be absolute</p>
 --clang-biniou-file</b> <i>file</i></p>
 
 <p style="margin-left:17%;">Specify a file containing the
-AST of the program, in biniou format</p>
+AST of the program, in biniou format. Please note you still
+need to provide a compilation command.</p>
 
 <p style="margin-left:11%;">See also
 <b>infer-capture</b>(1). <b><br>
@@ -398,6 +420,14 @@ each analysis has to model.</p>
 
 <p style="margin-left:11%;">See also
 <b>infer-analyze</b>(1) and <b>infer-capture</b>(1). <b><br>
+--clang-yojson-file</b> <i>file</i></p>
+
+<p style="margin-left:17%;">Specify a file containing the
+AST of the program, in yojson format. Please note you still
+need to provide a compilation command.</p>
+
+<p style="margin-left:11%;">See also
+<b>infer-capture</b>(1). <b><br>
 --compilation-database</b> <i>+path</i></p>
 
 <p style="margin-left:17%;">File that contain compilation
@@ -477,6 +507,23 @@ disable all other checkers (Conversely:
 
 <p style="margin-left:11%;">See also
 <b>infer-analyze</b>(1). <b><br>
+--no-cost-suppress-func-ptr</b></p>
+
+<p style="margin-left:17%;">Deactivates: Suppress printing
+function pointers in cost reports (Conversely:
+<b>--cost-suppress-func-ptr</b>)</p>
+
+<p style="margin-left:11%;">See also
+<b>infer-analyze</b>(1). <b><br>
+--cost-tests-only-autoreleasepool</b></p>
+
+<p style="margin-left:17%;">Activates: [EXPERIMENTAL]
+Report only autoreleasepool size results in cost tests
+(Conversely:
+<b>--no-cost-tests-only-autoreleasepool</b>)</p>
+
+<p style="margin-left:11%;">See also <b>infer-report</b>(1)
+and <b>infer-reportdiff</b>(1). <b><br>
 --costs-current</b> <i>path</i></p>
 
 <p style="margin-left:17%;">Costs report of the latest
@@ -630,14 +677,18 @@ have run. In particular, note that disabling issue types
 does not make the corresponding checker not run.</p>
 
 <p style="margin-left:11%;">Available issue types are as
-follows:</p>
-
-
-<p style="margin-left:11%; margin-top: 1em">ARRAY_OUT_OF_BOUNDS_L1
-(disabled by default), <br>
+follows: <br>
+ARRAY_OUT_OF_BOUNDS_L1 (disabled by default), <br>
 ARRAY_OUT_OF_BOUNDS_L2 (disabled by default), <br>
 ARRAY_OUT_OF_BOUNDS_L3 (disabled by default), <br>
 ASSIGN_POINTER_WARNING (enabled by default), <br>
+AUTORELEASEPOOL_SIZE_COMPLEXITY_INCREASE (enabled by
+default), <br>
+AUTORELEASEPOOL_SIZE_COMPLEXITY_INCREASE_UI_THREAD (enabled
+by <br>
+default), <br>
+AUTORELEASEPOOL_SIZE_UNREACHABLE_AT_EXIT (disabled by
+default), <br>
 Abduction_case_not_implemented (enabled by default), <br>
 Array_of_pointsto (enabled by default), <br>
 Assert_failure (enabled by default), <br>
@@ -685,6 +736,7 @@ default), <br>
 DIVIDE_BY_ZERO (disabled by default), <br>
 DO_NOT_REPORT (enabled by default), <br>
 EMPTY_VECTOR_ACCESS (enabled by default), <br>
+ERADICATE_ANNOTATION_GRAPH (enabled by default), <br>
 ERADICATE_BAD_NESTED_CLASS_ANNOTATION (enabled by default),
 <br>
 ERADICATE_CONDITION_REDUNDANT (enabled by default), <br>
@@ -733,6 +785,7 @@ INFERBO_ALLOC_IS_NEGATIVE (enabled by default), <br>
 INFERBO_ALLOC_IS_ZERO (enabled by default), <br>
 INFERBO_ALLOC_MAY_BE_BIG (enabled by default), <br>
 INFERBO_ALLOC_MAY_BE_NEGATIVE (enabled by default), <br>
+INFINITE_AUTORELEASEPOOL_SIZE (disabled by default), <br>
 INFINITE_EXECUTION_TIME (disabled by default), <br>
 INHERENTLY_DANGEROUS_FUNCTION (enabled by default), <br>
 INSECURE_INTENT_HANDLING (enabled by default), <br>
@@ -759,8 +812,9 @@ MULTIPLE_WEAKSELF (enabled by default), <br>
 MUTABLE_LOCAL_VARIABLE_IN_COMPONENT_FILE (enabled by
 default), <br>
 Missing_fld (enabled by default), <br>
-NULLPTR_DEREFERENCE (disabled by default), <br>
+NULLPTR_DEREFERENCE (enabled by default), <br>
 NULL_DEREFERENCE (enabled by default), <br>
+OPTIONAL_EMPTY_ACCESS (disabled by default), <br>
 PARAMETER_NOT_NULL_CHECKED (enabled by default), <br>
 POINTER_TO_CONST_OBJC_CLASS (enabled by default), <br>
 PRECONDITION_NOT_FOUND (enabled by default), <br>
@@ -785,7 +839,8 @@ STRONG_DELEGATE_WARNING (enabled by default), <br>
 STRONG_SELF_NOT_CHECKED (enabled by default), <br>
 Symexec_memory_error (enabled by default), <br>
 THREAD_SAFETY_VIOLATION (enabled by default), <br>
-TOPL_ERROR (enabled by default), <br>
+TOPL_BIABD_ERROR (enabled by default), <br>
+TOPL_PULSE_ERROR (enabled by default), <br>
 UNINITIALIZED_VALUE (enabled by default), <br>
 UNREACHABLE_CODE (enabled by default), <br>
 UNTRUSTED_BUFFER_ACCESS (disabled by default), <br>
@@ -804,10 +859,8 @@ USE_AFTER_FREE (enabled by default), <br>
 USE_AFTER_LIFETIME (enabled by default), <br>
 VECTOR_INVALIDATION (enabled by default), <br>
 WEAK_SELF_IN_NO_ESCAPE_BLOCK (enabled by default), <br>
-Wrong_argument_number (enabled by default).</p>
-
-<p style="margin-left:11%; margin-top: 1em">See also
-<b>infer-report</b>(1). <b><br>
+Wrong_argument_number (enabled by default). <br>
+See also <b>infer-report</b>(1). <b><br>
 --dump-duplicate-symbols</b></p>
 
 <p style="margin-left:17%;">Activates: Dump all symbols
@@ -946,6 +999,13 @@ generated class files</p>
 
 <p style="margin-left:11%;">See also
 <b>infer-capture</b>(1). <b><br>
+--global-tenv</b></p>
+
+<p style="margin-left:17%;">Activates: Print the global
+type environment. (Conversely: <b>--no-global-tenv</b>)</p>
+
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
 --headers</b></p>
 
 <p style="margin-left:17%;">Activates: Analyze code in
@@ -960,8 +1020,8 @@ header files (Conversely: <b>--no-headers</b>)</p>
 <p style="margin-left:11%;">See also
 <b>infer-analyze</b>(1), <b>infer-capture</b>(1),
 <b>infer-compile</b>(1), <b><br>
-infer-explore</b>(1), <b>infer-help</b>(1),
-<b>infer-report</b>(1), <b><br>
+infer-debug</b>(1), <b>infer-explore</b>(1),
+<b>infer-help</b>(1), <b>infer-report</b>(1), <b><br>
 infer-reportdiff</b>(1), and <b>infer-run</b>(1). <b><br>
 --help-checker</b> <i>+checker-id</i></p>
 
@@ -982,8 +1042,8 @@ undefined, and to <b>pager</b> otherwise.</p>
 <p style="margin-left:11%;">See also
 <b>infer-analyze</b>(1), <b>infer-capture</b>(1),
 <b>infer-compile</b>(1), <b><br>
-infer-explore</b>(1), <b>infer-help</b>(1),
-<b>infer-report</b>(1), <b><br>
+infer-debug</b>(1), <b>infer-explore</b>(1),
+<b>infer-help</b>(1), <b>infer-report</b>(1), <b><br>
 infer-reportdiff</b>(1), and <b>infer-run</b>(1). <b><br>
 --help-full</b></p>
 
@@ -993,8 +1053,8 @@ internal options in the INTERNAL OPTIONS section</p>
 <p style="margin-left:11%;">See also
 <b>infer-analyze</b>(1), <b>infer-capture</b>(1),
 <b>infer-compile</b>(1), <b><br>
-infer-explore</b>(1), <b>infer-help</b>(1),
-<b>infer-report</b>(1), <b><br>
+infer-debug</b>(1), <b>infer-explore</b>(1),
+<b>infer-help</b>(1), <b>infer-report</b>(1), <b><br>
 infer-reportdiff</b>(1), and <b>infer-run</b>(1). <b><br>
 --help-issue-type</b> <i>+UNIQUE_ID</i></p>
 
@@ -1288,6 +1348,13 @@ and disable all other checkers (Conversely:
 
 <p style="margin-left:11%;">See also
 <b>infer-analyze</b>(1). <b><br>
+--max-jobs</b> <i>int</i></p>
+
+<p style="margin-left:17%;">Maximum number of analysis jobs
+running simultaneously</p>
+
+<p style="margin-left:11%;">See also
+<b>infer-analyze</b>(1). <b><br>
 --max-nesting</b> <i>int</i></p>
 
 <p style="margin-left:17%;">Level of nested procedure calls
@@ -1311,17 +1378,8 @@ unknown_origin }</i></p>
 <p style="margin-left:17%;">Specify the memory leak buckets
 to be checked in C++:</p>
 
-<p style="margin-left:11%;">- <b>cpp</b> from C++ code</p>
-
-<p style="margin-left:11%; margin-top: 1em">See also
-<b>infer-analyze</b>(1). <b><br>
---perf-profiler-data-file</b> <i>file</i></p>
-
-<p style="margin-left:17%;">DEPRECATED: Specify the file
-containing perf profiler data to read</p>
-
-<p style="margin-left:11%;">See also
-<b>infer-analyze</b>(1). <b><br>
+<p style="margin-left:11%;">- <b>cpp</b> from C++ code <br>
+See also <b>infer-analyze</b>(1). <b><br>
 --pmd-xml</b></p>
 
 <p style="margin-left:17%;">Activates: Output issues in
@@ -1373,16 +1431,26 @@ and disable all other checkers (Conversely:
 methods discovered by infer (Conversely:
 <b>--no-procedures</b>)</p>
 
-<p style="margin-left:11%;">See also
-<b>infer-explore</b>(1). <b><br>
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
 --procedures-attributes</b></p>
 
 <p style="margin-left:17%;">Activates: Print the attributes
 of each procedure in the output of <b>--procedures</b>
 (Conversely: <b>--no-procedures-attributes</b>)</p>
 
-<p style="margin-left:11%;">See also
-<b>infer-explore</b>(1). <b><br>
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
+--procedures-cfg</b></p>
+
+<p style="margin-left:17%;">Activates: Output a dotty file
+in
+infer-out/captured/&lt;file_name&gt;/&lt;proc_name&gt;.dot
+for each procedure in the output of <b>--procedures</b>
+(Conversely: <b>--no-procedures-cfg</b>)</p>
+
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
 --no-procedures-definedness</b></p>
 
 <p style="margin-left:17%;">Deactivates: Include procedures
@@ -1392,8 +1460,8 @@ procedure declaration, or the procedure is an auto-generated
 Objective-C accessor (Conversely:
 <b>--procedures-definedness</b>)</p>
 
-<p style="margin-left:11%;">See also
-<b>infer-explore</b>(1). <b><br>
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
 --procedures-filter</b> <i>filter</i></p>
 
 <p style="margin-left:17%;">With <b>--procedures</b>, only
@@ -1404,16 +1472,16 @@ as OCaml Str regular expressions. For instance, to keep only
 methods named &quot;foo&quot;, one can use the filter
 &quot;.*:foo&quot;, or &quot;foo&quot; for short.</p>
 
-<p style="margin-left:11%;">See also
-<b>infer-explore</b>(1). <b><br>
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
 --procedures-name</b></p>
 
 <p style="margin-left:17%;">Activates: Include procedures
 names in the output of <b>--procedures</b> (Conversely:
 <b>--no-procedures-name</b>)</p>
 
-<p style="margin-left:11%;">See also
-<b>infer-explore</b>(1). <b><br>
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
 --no-procedures-source-file</b></p>
 
 <p style="margin-left:17%;">Deactivates: Include the source
@@ -1421,16 +1489,24 @@ file in which the procedure definition or declaration was
 found in the output of <b>--procedures</b> (Conversely:
 <b>--procedures-source-file</b>)</p>
 
-<p style="margin-left:11%;">See also
-<b>infer-explore</b>(1). <b><br>
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
 --procedures-summary</b></p>
 
 <p style="margin-left:17%;">Activates: Print the summaries
 of each procedure in the output of <b>--procedures</b>
 (Conversely: <b>--no-procedures-summary</b>)</p>
 
-<p style="margin-left:11%;">See also
-<b>infer-explore</b>(1). <b><br>
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
+--procedures-summary-json</b></p>
+
+<p style="margin-left:17%;">Activates: Emit the summaries
+of each procedure in the output of <b>--procedures</b> as
+JSON (Conversely: <b>--no-procedures-summary-json</b>)</p>
+
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
 --no-progress-bar</b>,<b>-P</b></p>
 
 <p style="margin-left:17%;">Deactivates: Show a progress
@@ -1492,6 +1568,20 @@ modelled as allocs in Pulse</p>
 
 <p style="margin-left:17%;">Regex of methods that should be
 modelled as release in Pulse</p>
+
+<p style="margin-left:11%;">See also
+<b>infer-analyze</b>(1). <b><br>
+--pulse-model-return-nonnull</b> <i>+string</i></p>
+
+<p style="margin-left:17%;">Methods that should be modelled
+as returning non-null in Pulse</p>
+
+<p style="margin-left:11%;">See also
+<b>infer-analyze</b>(1). <b><br>
+--pulse-model-skip-pattern</b> <i>string</i></p>
+
+<p style="margin-left:17%;">Regex of methods that should be
+modelled as &quot;skip&quot; in Pulse</p>
 
 <p style="margin-left:11%;">See also
 <b>infer-analyze</b>(1). <b><br>
@@ -1708,13 +1798,30 @@ files in the specified directory</p>
 <b>infer-analyze</b>(1), <b>infer-capture</b>(1),
 <b>infer-explore</b>(1), <b><br>
 infer-report</b>(1), and <b>infer-run</b>(1). <b><br>
---select</b> <i>N</i></p>
+--scheduler</b> <i>{ file | restart | callgraph }</i></p>
 
-<p style="margin-left:17%;">Select bug number <i>N</i>. If
-omitted, prompt for input.</p>
+<p style="margin-left:17%;">Specify the scheduler used for
+the analysis phase:</p>
 
-<p style="margin-left:11%;">See also
-<b>infer-explore</b>(1). <b><br>
+<p style="margin-left:11%;">- file: schedule one job per
+file <br>
+- callgraph: schedule one job per procedure, following the
+<br>
+syntactic call graph. Usually faster than &quot;file&quot;.
+<br>
+- restart: same as callgraph but uses locking to try and
+avoid <br>
+duplicate work between different analysis processes and thus
+<br>
+performs better in some circumstances <br>
+See also <b>infer-analyze</b>(1). <b><br>
+--select</b> <i>(N|all)</i></p>
+
+<p style="margin-left:17%;">Select option number <i>N</i>
+or <i>all</i> of them. If omitted, prompt for input.</p>
+
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1)
+and <b>infer-explore</b>(1). <b><br>
 --no-self-in-block</b></p>
 
 <p style="margin-left:17%;">Deactivates: checker
@@ -1808,8 +1915,8 @@ matches the given prefix</p>
 discovered by infer (Conversely:
 <b>--no-source-files</b>)</p>
 
-<p style="margin-left:11%;">See also
-<b>infer-explore</b>(1). <b><br>
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
 --source-files-cfg</b></p>
 
 <p style="margin-left:17%;">Activates: Output a dotty file
@@ -1817,8 +1924,8 @@ in infer-out/captured for each source file in the output of
 <b>--source-files</b> (Conversely:
 <b>--no-source-files-cfg</b>)</p>
 
-<p style="margin-left:11%;">See also
-<b>infer-explore</b>(1). <b><br>
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
 --source-files-filter</b> <i>filter</i></p>
 
 <p style="margin-left:17%;">With <b>--source-files</b>,
@@ -1827,8 +1934,8 @@ only print source files matching the specified
 file path. Patterns are interpreted as OCaml Str regular
 expressions.</p>
 
-<p style="margin-left:11%;">See also
-<b>infer-explore</b>(1). <b><br>
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
 --source-files-freshly-captured</b></p>
 
 <p style="margin-left:17%;">Activates: Print whether the
@@ -1836,8 +1943,8 @@ source file has been captured in the most recent capture
 phase in the output of <b>--source-files</b>. (Conversely:
 <b>--no-source-files-freshly-captured</b>)</p>
 
-<p style="margin-left:11%;">See also
-<b>infer-explore</b>(1). <b><br>
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
 --source-files-procedure-names</b></p>
 
 <p style="margin-left:17%;">Activates: Print the names of
@@ -1845,8 +1952,8 @@ procedure of each source file in the output of
 <b>--source-files</b> (Conversely:
 <b>--no-source-files-procedure-names</b>)</p>
 
-<p style="margin-left:11%;">See also
-<b>infer-explore</b>(1). <b><br>
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
 --source-files-type-environment</b></p>
 
 <p style="margin-left:17%;">Activates: Print the type
@@ -1854,8 +1961,8 @@ environment of each source file in the output of
 <b>--source-files</b> (Conversely:
 <b>--no-source-files-type-environment</b>)</p>
 
-<p style="margin-left:11%;">See also
-<b>infer-explore</b>(1). <b><br>
+<p style="margin-left:11%;">See also <b>infer-debug</b>(1).
+<b><br>
 --no-source-preview</b></p>
 
 <p style="margin-left:17%;">Deactivates: print code
@@ -1913,20 +2020,37 @@ should be considered aliases of @ThreadSafe</p>
 
 <p style="margin-left:11%;">See also
 <b>infer-analyze</b>(1). <b><br>
---topl</b></p>
+--topl-biabd</b></p>
 
-<p style="margin-left:17%;">Activates: checker topl:
+<p style="margin-left:17%;">Activates: checker topl-biabd:
 Detects errors based on user-provided state machines
 describing multi-object monitors. (Conversely:
-<b>--no-topl</b>)</p>
+<b>--no-topl-biabd</b>)</p>
 
 <p style="margin-left:11%;">See also
 <b>infer-analyze</b>(1). <b><br>
---topl-only</b></p>
+--topl-biabd-only</b></p>
 
-<p style="margin-left:17%;">Activates: Enable topl and
-disable all other checkers (Conversely:
-<b>--no-topl-only</b>)</p>
+<p style="margin-left:17%;">Activates: Enable topl-biabd
+and disable all other checkers (Conversely:
+<b>--no-topl-biabd-only</b>)</p>
+
+<p style="margin-left:11%;">See also
+<b>infer-analyze</b>(1). <b><br>
+--topl-pulse</b></p>
+
+<p style="margin-left:17%;">Activates: checker topl-pulse:
+Detects errors based on user-provided state machines
+describing multi-object monitors. (Conversely:
+<b>--no-topl-pulse</b>)</p>
+
+<p style="margin-left:11%;">See also
+<b>infer-analyze</b>(1). <b><br>
+--topl-pulse-only</b></p>
+
+<p style="margin-left:17%;">Activates: Enable topl-pulse
+and disable all other checkers (Conversely:
+<b>--no-topl-pulse-only</b>)</p>
 
 <p style="margin-left:11%;">See also
 <b>infer-analyze</b>(1). <b><br>
@@ -1968,6 +2092,17 @@ json format and exit</p>
 
 <p style="margin-left:11%;">See also <b>infer-run</b>(1).
 <b><br>
+--workspace</b> <i>path</i></p>
+
+<p style="margin-left:17%;">Specifies the root of the
+workspace, which is a directory containing
+<b>--project-root</b>. This can be needed if the capture
+phase is expected to require several <i>different</i>
+project roots, all relative to a common workspace. Usually a
+single project root is enough, though.</p>
+
+<p style="margin-left:11%;">See also
+<b>infer-capture</b>(1). <b><br>
 --write-website</b> <i>path_to_website_dir</i></p>
 
 <p style="margin-left:17%;">Use to write website files
@@ -2009,6 +2144,13 @@ developer directory, to use for Buck clang targets</p>
 
 <p style="margin-left:11%;">See also
 <b>infer-capture</b>(1). <b><br>
+--xcode-isysroot-suffix</b> <i>string</i></p>
+
+<p style="margin-left:17%;">Specify the suffix of Xcode
+isysroot directory, to avoid absolute paths in tests</p>
+
+<p style="margin-left:11%;">See also
+<b>infer-analyze</b>(1). <b><br>
 --xcpretty</b></p>
 
 <p style="margin-left:17%;">Activates: Infer will use
@@ -2021,27 +2163,28 @@ command&gt;&lsquo;</i>. (Conversely:
 <p style="margin-left:11%;">See also
 <b>infer-capture</b>(1).</p>
 
-<table width="100%" border=0 rules="none" frame="void"
+<table width="100%" border="0" rules="none" frame="void"
        cellspacing="0" cellpadding="0">
 <tr valign="top" align="left">
 <td width="11%"></td>
 <td width="3%">
 
 
-<p style="margin-top: 1em" valign="top"><b>--</b></p></td>
+<p><b>--</b></p></td>
 <td width="3%"></td>
 <td width="83%">
 
 
-<p style="margin-top: 1em" valign="top">Stop argument
-processing, use remaining arguments as a build command</p></td>
+<p>Stop argument processing, use remaining arguments as a
+build command</p></td></tr>
 </table>
 
 <p style="margin-left:11%;">See also
 <b>infer-capture</b>(1) and <b>infer-run</b>(1).</p>
 
+<h2>ENVIRONMENT
 <a name="ENVIRONMENT"></a>
-<h2>ENVIRONMENT</h2>
+</h2>
 
 
 <p style="margin-left:11%; margin-top: 1em">Extra arguments
@@ -2064,8 +2207,9 @@ commands will exit with an error code in some cases when
 otherwise a simple warning would be emitted on stderr, for
 instance if a deprecated form of an option is used.</p>
 
+<h2>FILES
 <a name="FILES"></a>
-<h2>FILES</h2>
+</h2>
 
 
 
@@ -2097,16 +2241,17 @@ then its parent, etc., stopping at the first
 [&quot;@gen&quot;,&quot;/* no infer */&quot;] <br>
 }</p>
 
+<h2>SEE ALSO
 <a name="SEE ALSO"></a>
-<h2>SEE ALSO</h2>
+</h2>
 
 
 
 <p style="margin-left:11%; margin-top: 1em"><b>infer-analyze</b>(1),
 <b>infer-capture</b>(1), <b>infer-compile</b>(1),
-<b>infer-explore</b>(1), <b>infer-help</b>(1),
-<b>infer-report</b>(1), <b>infer-reportdiff</b>(1),
-<b>infer-run</b>(1)</p>
+<b>infer-debug</b>(1), <b>infer-explore</b>(1),
+<b>infer-help</b>(1), <b>infer-report</b>(1),
+<b>infer-reportdiff</b>(1), <b>infer-run</b>(1)</p>
 <hr>
 </body>
 </html>

@@ -23,6 +23,8 @@ let mk_fresh () =
 
 let pp f l = F.fprintf f "v%d" l
 
+let yojson_of_t l = `String (F.asprintf "%a" pp l)
+
 let of_id v = v
 
 module PPKey = struct
@@ -32,7 +34,13 @@ module PPKey = struct
 end
 
 module Set = PrettyPrintable.MakePPSet (PPKey)
-module Map = PrettyPrintable.MakePPMap (PPKey)
+
+module Map = struct
+  include PrettyPrintable.MakePPMap (PPKey)
+
+  let yojson_of_t yojson_of_val m =
+    `List (List.map ~f:(fun (k, v) -> `List [yojson_of_t k; yojson_of_val v]) (bindings m))
+end
 
 module Constants = struct
   module M = Caml.Map.Make (IntLit)

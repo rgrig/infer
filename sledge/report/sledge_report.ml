@@ -5,19 +5,20 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
-module Tbl = CCHashtbl.Make (String)
+module Command = Core.Command
+module Tbl = String.Tbl
 
 let read filename =
-  let tbl = Tbl.create 64 in
-  List.iter (Sexp.load_sexps filename) ~f:(fun sexp ->
+  let tbl = Tbl.create () in
+  let sexps = try Sexp.load_sexps filename with Sys_error _ -> [] in
+  List.iter sexps ~f:(fun sexp ->
       let {Report.name; entry} = Report.t_of_sexp sexp in
       match (Tbl.find_opt tbl name, entry) with
-      | None, ProcessTimes (etime, ptimes) ->
-          Tbl.replace tbl name ([(etime, ptimes)], [], [])
+      | None, ProcessTimes ptimes -> Tbl.replace tbl name ([ptimes], [], [])
       | None, GcStats gc -> Tbl.replace tbl name ([], [gc], [])
       | None, Status status -> Tbl.replace tbl name ([], [], [status])
-      | Some (times, gcs, statuses), ProcessTimes (etime, ptimes) ->
-          Tbl.replace tbl name ((etime, ptimes) :: times, gcs, statuses)
+      | Some (times, gcs, statuses), ProcessTimes ptimes ->
+          Tbl.replace tbl name (ptimes :: times, gcs, statuses)
       | Some (times, gcs, statuses), GcStats gc ->
           Tbl.replace tbl name (times, gc :: gcs, statuses)
       | Some (times, gc, statuses), Status status ->
@@ -35,19 +36,18 @@ type ('t, 'g) row =
   ; status: Report.status list
   ; status_deltas: Report.status list option }
 
-let times_of_raw (etime, ptimes) =
-  let {Unix.tms_utime; tms_cutime; tms_stime; tms_cstime} = ptimes in
-  let utime = tms_utime +. tms_cutime in
-  let stime = tms_stime +. tms_cstime in
+let times_of_raw {Report.etime; utime; stime; cutime; cstime} =
+  let utime = utime +. cutime in
+  let stime = stime +. cstime in
   let etime = etime in
   {etime; utime; stime}
 
-let add_time base_times row ptimes =
+let add_time base_times ptimes row =
   let tustimes = times_of_raw ptimes in
   let times = tustimes :: row.times in
   let times_deltas =
-    Option.fold base_times ~init:row.times_deltas
-      ~f:(fun times_deltas {etime= btt; utime= but; stime= bst} ->
+    Option.fold base_times row.times_deltas
+      ~f:(fun {etime= btt; utime= but; stime= bst} times_deltas ->
         let {etime= tt; utime= ut; stime= st} = tustimes in
         {etime= tt -. btt; utime= ut -. but; stime= st -. bst}
         :: times_deltas )
@@ -57,12 +57,12 @@ let add_time base_times row ptimes =
 let add_times base_times times row =
   if List.is_empty times then
     {row with times_deltas= Option.to_list base_times}
-  else List.fold ~f:(add_time base_times) ~init:row times
+  else List.fold ~f:(add_time base_times) times row
 
-let add_gc base_gcs row gc =
+let add_gc base_gcs gc row =
   let gcs = gc :: row.gcs in
   let gcs_deltas =
-    Option.fold base_gcs ~init:row.gcs_deltas ~f:(fun gcs_deltas bgc ->
+    Option.fold base_gcs row.gcs_deltas ~f:(fun bgc gcs_deltas ->
         Report.
           { allocated= gc.allocated -. bgc.allocated
           ; promoted= gc.promoted -. bgc.promoted
@@ -73,14 +73,14 @@ let add_gc base_gcs row gc =
 
 let add_gcs base_gcs gcs row =
   if List.is_empty gcs then {row with gcs_deltas= Option.to_list base_gcs}
-  else List.fold ~f:(add_gc base_gcs) ~init:row gcs
+  else List.fold ~f:(add_gc base_gcs) gcs row
 
-let add_status base_status row status =
-  if List.mem ~equal:Report.equal_status row.status status then row
+let add_status base_status status row =
+  if List.mem ~eq:Report.equal_status status row.status then row
   else
     match base_status with
     | Some base_status
-      when not (List.mem ~equal:Report.equal_status base_status status) ->
+      when not (List.mem ~eq:Report.equal_status status base_status) ->
         { row with
           status= status :: row.status
         ; status_deltas=
@@ -89,13 +89,14 @@ let add_status base_status row status =
     | _ -> {row with status= status :: row.status}
 
 let add_statuses base_status statuses row =
-  List.fold ~f:(add_status base_status) ~init:row statuses
+  let row = List.fold ~f:(add_status base_status) statuses row in
+  {row with status= List.sort ~cmp:Report.compare_status row.status}
 
 let ave_floats flts =
   assert (not (Iter.is_empty flts)) ;
   let min, max, sum, num =
-    Iter.fold flts ~init:(Float.infinity, Float.neg_infinity, 0., 0)
-      ~f:(fun (min, max, sum, num) flt ->
+    Iter.fold flts (Float.infinity, Float.neg_infinity, 0., 0)
+      ~f:(fun flt (min, max, sum, num) ->
         (Float.min min flt, Float.max max flt, sum +. flt, num + 1) )
   in
   if num >= 5 then (sum -. min -. max) /. Float.of_int (num - 2)
@@ -109,38 +110,34 @@ let combine name b_result c_result =
           if List.is_empty times then None
           else
             let etimes, utimes, stimes, cutimes, cstimes =
-              List.fold times
-                ~init:
-                  ( Iter.empty
-                  , Iter.empty
-                  , Iter.empty
-                  , Iter.empty
-                  , Iter.empty )
-                ~f:(fun (etimes, utimes, stimes, cutimes, cstimes)
-                   ( etime
-                   , {Unix.tms_utime; tms_cutime; tms_stime; tms_cstime} )
+              let init =
+                (Iter.empty, Iter.empty, Iter.empty, Iter.empty, Iter.empty)
+              in
+              List.fold times init
+                ~f:(fun {Report.etime; utime; stime; cutime; cstime}
+                   (etimes, utimes, stimes, cutimes, cstimes)
                    ->
                   ( Iter.cons etime etimes
-                  , Iter.cons tms_utime utimes
-                  , Iter.cons tms_stime stimes
-                  , Iter.cons tms_cutime cutimes
-                  , Iter.cons tms_cstime cstimes ) )
+                  , Iter.cons utime utimes
+                  , Iter.cons stime stimes
+                  , Iter.cons cutime cutimes
+                  , Iter.cons cstime cstimes ) )
             in
             Some
               (times_of_raw
-                 ( ave_floats etimes
-                 , { tms_utime= ave_floats utimes
-                   ; tms_stime= ave_floats stimes
-                   ; tms_cutime= ave_floats cutimes
-                   ; tms_cstime= ave_floats cstimes } ))
+                 { etime= ave_floats etimes
+                 ; utime= ave_floats utimes
+                 ; stime= ave_floats stimes
+                 ; cutime= ave_floats cutimes
+                 ; cstime= ave_floats cstimes })
         in
         let gcs =
           if List.is_empty gcs then None
           else
             let allocs, promos, peaks =
-              List.fold gcs ~init:(Iter.empty, Iter.empty, Iter.empty)
-                ~f:(fun (allocs, promos, peaks)
-                   {Report.allocated; promoted; peak_size}
+              List.fold gcs (Iter.empty, Iter.empty, Iter.empty)
+                ~f:(fun {Report.allocated; promoted; peak_size}
+                   (allocs, promos, peaks)
                    ->
                   ( Iter.cons allocated allocs
                   , Iter.cons promoted promos
@@ -153,7 +150,7 @@ let combine name b_result c_result =
                 ; peak_size= ave_floats peaks }
         in
         let status =
-          Some (List.dedup_and_sort ~compare:Report.compare_status statuses)
+          Some (List.sort_uniq ~cmp:Report.compare_status statuses)
         in
         (times, gcs, status)
     | None -> (None, None, None)
@@ -200,20 +197,20 @@ let ranges rows =
     ; max_peak= 0.
     ; pct_peak= 0. }
   in
-  Iter.fold rows ~init ~f:(fun acc {times; times_deltas; gcs; gcs_deltas} ->
-      Option.fold times_deltas ~init:acc ~f:(fun acc deltas ->
+  Iter.fold rows init ~f:(fun {times; times_deltas; gcs; gcs_deltas} acc ->
+      Option.fold times_deltas acc ~f:(fun deltas acc ->
           let max_time = Float.max acc.max_time (Float.abs deltas.etime) in
           let pct_time =
-            Option.fold times ~init:acc.pct_time ~f:(fun pct_time times ->
+            Option.fold times acc.pct_time ~f:(fun times pct_time ->
                 let pct = 100. *. deltas.etime /. times.etime in
                 Float.max pct_time (Float.abs pct) )
           in
           {acc with max_time; pct_time} )
-      |> fun init ->
-      Option.fold gcs_deltas ~init ~f:(fun acc deltas ->
+      |> fun acc ->
+      Option.fold gcs_deltas acc ~f:(fun deltas acc ->
           let max_alloc = Float.max acc.max_alloc deltas.Report.allocated in
           let pct_alloc =
-            Option.fold gcs ~init:acc.pct_alloc ~f:(fun pct_alloc gcs ->
+            Option.fold gcs acc.pct_alloc ~f:(fun gcs pct_alloc ->
                 let pct =
                   100. *. deltas.Report.allocated /. gcs.Report.allocated
                 in
@@ -221,7 +218,7 @@ let ranges rows =
           in
           let max_promo = Float.max acc.max_promo deltas.Report.promoted in
           let pct_promo =
-            Option.fold gcs ~init:acc.pct_promo ~f:(fun pct_promo gcs ->
+            Option.fold gcs acc.pct_promo ~f:(fun gcs pct_promo ->
                 let pct =
                   100. *. deltas.Report.promoted /. gcs.Report.promoted
                 in
@@ -229,7 +226,7 @@ let ranges rows =
           in
           let max_peak = Float.max acc.max_peak deltas.Report.peak_size in
           let pct_peak =
-            Option.fold gcs ~init:acc.pct_peak ~f:(fun pct_peak gcs ->
+            Option.fold gcs acc.pct_peak ~f:(fun gcs pct_peak ->
                 let pct =
                   100. *. deltas.Report.peak_size /. gcs.Report.peak_size
                 in
@@ -254,7 +251,7 @@ let color max dat =
       (scale1 x r0 r1, scale1 x g0 g1, scale1 x b0 b1)
     in
     let x = Float.max (-1.) (Float.min x 1.) in
-    if Float.is_negative x then scale (-.x) lace green else scale x lace red
+    if Float.(x < 0.) then scale (-.x) lace green else scale x lace red
   in
   let rgb_to_hex (r, g, b) =
     let to_int x = Int.min 255 (Int.max 0 (Float.to_int x)) in
@@ -275,7 +272,8 @@ let write_html ranges rows chan =
   pf "</style></head>\n" ;
   pf "<body style=\"background-color:#fdf6e3\">" ;
   pf
-    {|<table style="border-collapse: collapse"><tr>
+    {|<table style="border-collapse: collapse">
+        <tr>
           <th>Test</th>
           <th>elapsed<br>(sec)</th>
           <th>&Delta;<br></th>
@@ -297,8 +295,8 @@ let write_html ranges rows chan =
           <th>&Delta;%%<br></th>
           <th>Status</th>
           <th>&Delta;<br></th>
-        </tr>
-    |} ;
+        </tr>|} ;
+  pf "\n" ;
   Iter.iter rows ~f:(fun row ->
       let {name; times; times_deltas; gcs; gcs_deltas; status; status_deltas}
           =
@@ -308,9 +306,8 @@ let write_html ranges rows chan =
       let name =
         if String.length name <= max_name_length then name
         else
-          String.prefix name (max_name_length / 2)
-          ^ "…"
-          ^ String.suffix name (max_name_length / 2)
+          let len = max_name_length / 2 in
+          String.take len name ^ "…" ^ String.rtake len name
       in
       let time ppf t =
         Printf.fprintf ppf
@@ -334,7 +331,7 @@ let write_html ranges rows chan =
       let peakd = delta ranges.max_peak ranges.pct_peak in
       let pf_status ppf s =
         let status_to_string = Format.asprintf "%a" Report.pp_status in
-        Printf.fprintf ppf "%s" (String.prefix (status_to_string s) 50)
+        Printf.fprintf ppf "%s" (String.take 50 (status_to_string s))
       in
       let stat ppf = function
         | [] ->
@@ -360,7 +357,7 @@ let write_html ranges rows chan =
             List.iter ss ~f:(fun s -> Printf.fprintf ppf "%a" pf_status s) ;
             Printf.fprintf ppf "</td>\n"
       in
-      pf "<tr>" ;
+      pf "<tr>\n" ;
       pf "<td>%s</td>" name ;
       ( match (times, times_deltas) with
       | ( Some {etime; utime; stime}
@@ -427,8 +424,8 @@ let average row =
     if List.is_empty times then None
     else
       let etimes, utimes, stimes =
-        List.fold times ~init:(Iter.empty, Iter.empty, Iter.empty)
-          ~f:(fun (etimes, utimes, stimes) {etime; utime; stime} ->
+        List.fold times (Iter.empty, Iter.empty, Iter.empty)
+          ~f:(fun {etime; utime; stime} (etimes, utimes, stimes) ->
             ( Iter.cons etime etimes
             , Iter.cons utime utimes
             , Iter.cons stime stimes ) )
@@ -444,9 +441,9 @@ let average row =
     if List.is_empty gcs then None
     else
       let alloc, promo, peak =
-        List.fold gcs ~init:(Iter.empty, Iter.empty, Iter.empty)
-          ~f:(fun (alloc, promo, peak)
-             {Report.allocated; promoted; peak_size}
+        List.fold gcs (Iter.empty, Iter.empty, Iter.empty)
+          ~f:(fun {Report.allocated; promoted; peak_size}
+             (alloc, promo, peak)
              ->
             ( Iter.cons allocated alloc
             , Iter.cons promoted promo
@@ -473,7 +470,7 @@ let add_total rows =
     ; status_deltas= None }
   in
   let total =
-    Iter.fold rows ~init ~f:(fun total row ->
+    Iter.fold rows init ~f:(fun row total ->
         let times =
           match (total.times, row.times) with
           | Some total_times, Some row_times ->
@@ -532,11 +529,17 @@ let cmp x y =
   | Some _, None -> -1
   | None, Some _ -> 1
   | None, None -> (
-    match (x.times_deltas, y.times_deltas) with
-    | Some xtd, Some ytd -> Float.(compare (abs ytd.utime) (abs xtd.utime))
-    | Some _, None -> 1
-    | None, Some _ -> -1
-    | None, None -> String.compare x.name y.name )
+    match (List.hd x.status, List.hd y.status) with
+    | Some (Safe _ | Unsafe _ | Ok), Some (Safe _ | Unsafe _ | Ok) -> (
+      match (x.times_deltas, y.times_deltas) with
+      | Some xtd, Some ytd ->
+          Float.(compare (abs ytd.utime) (abs xtd.utime))
+      | Some _, None -> 1
+      | None, Some _ -> -1
+      | None, None -> String.compare x.name y.name )
+    | _, Some (Safe _ | Unsafe _ | Ok) -> -1
+    | Some (Safe _ | Unsafe _ | Ok), _ -> 1
+    | s, t -> Option.compare (Ord.opp Report.compare_status) s t )
 
 let filter rows =
   Iter.filter rows ~f:(fun {status} ->
@@ -548,9 +551,7 @@ let input_rows ?baseline current =
   let names =
     let keys = Tbl.keys c_tbl in
     let keys =
-      Option.fold
-        ~f:(fun i t -> Iter.append (Tbl.keys t) i)
-        ~init:keys b_tbl
+      Option.fold ~f:(fun t -> Iter.append (Tbl.keys t)) b_tbl keys
     in
     Iter.sort_uniq ~cmp:String.compare keys
   in
@@ -563,10 +564,11 @@ let input_rows ?baseline current =
 let generate_html ?baseline current output =
   let rows = input_rows ?baseline current in
   let rows = Iter.map ~f:average rows in
-  let ranges = ranges rows in
   let rows = filter rows in
-  let rows = add_total rows in
+  let rows = Iter.persistent rows in
+  let ranges = ranges rows in
   let rows = Iter.sort ~cmp rows in
+  let rows = add_total rows in
   Out_channel.with_file output ~f:(write_html ranges rows)
 
 let html_cmd =
@@ -581,26 +583,29 @@ let html_cmd =
   in
   fun () -> generate_html ?baseline current output
 
-let write_status rows chan =
+let write_status ?baseline rows chan =
   let rows =
-    Iter.filter rows ~f:(fun row -> Option.is_some row.status_deltas)
+    if Option.is_none baseline then rows
+    else Iter.filter rows ~f:(fun row -> Option.is_some row.status_deltas)
   in
   let rows =
     Iter.sort ~cmp:(fun x y -> String.compare x.name y.name) rows
   in
-  let ppf = Format.formatter_of_out_channel chan in
+  let ppf = Format.str_formatter in
   Iter.iter rows ~f:(fun {name; status; status_deltas} ->
       Format.fprintf ppf "%s:\t%a%a@\n" name
         (List.pp ", " Report.pp_status)
         status
         (Option.pp "\t%a" (List.pp ", " Report.pp_status))
-        status_deltas )
+        status_deltas ) ;
+  Out_channel.output_string chan (Format.flush_str_formatter ())
 
 let generate_status ?baseline current output =
   let rows = input_rows ?baseline current in
   match output with
-  | None -> write_status rows Out_channel.stdout
-  | Some output -> Out_channel.with_file output ~f:(write_status rows)
+  | None -> write_status ?baseline rows Out_channel.stdout
+  | Some output ->
+      Out_channel.with_file output ~f:(write_status ?baseline rows)
 
 let status_cmd =
   let open Command.Let_syntax in

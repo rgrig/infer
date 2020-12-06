@@ -827,7 +827,9 @@ and check_version =
 and clang_biniou_file =
   CLOpt.mk_path_opt ~long:"clang-biniou-file"
     ~in_help:InferCommand.[(Capture, manual_clang)]
-    ~meta:"file" "Specify a file containing the AST of the program, in biniou format"
+    ~meta:"file"
+    "Specify a file containing the AST of the program, in biniou format. Please note you still \
+     need to provide a compilation command."
 
 
 and clang_compound_literal_init_limit =
@@ -897,6 +899,14 @@ and clang_libcxx_include_to_override_regex =
      $(b,-I /path/to/infer/facebook-clang-plugins/clang/install/include/c++/v1)."
 
 
+and clang_yojson_file =
+  CLOpt.mk_path_opt ~long:"clang-yojson-file"
+    ~in_help:InferCommand.[(Capture, manual_clang)]
+    ~meta:"file"
+    "Specify a file containing the AST of the program, in yojson format. Please note you still \
+     need to provide a compilation command."
+
+
 and classpath = CLOpt.mk_string_opt ~long:"classpath" "Specify the Java classpath"
 
 and compilation_database =
@@ -946,6 +956,12 @@ and costs_previous =
   CLOpt.mk_path_opt ~long:"costs-previous"
     ~in_help:InferCommand.[(ReportDiff, manual_generic)]
     "Costs report of the base revision to use for comparison"
+
+
+and cost_suppress_func_ptr =
+  CLOpt.mk_bool ~default:true ~long:"cost-suppress-func-ptr"
+    ~in_help:InferCommand.[(Analyze, manual_generic)]
+    "Suppress printing function pointers in cost reports"
 
 
 and cost_tests_only_autoreleasepool =
@@ -1614,6 +1630,12 @@ and nullable_annotation =
   CLOpt.mk_string_opt ~long:"nullable-annotation-name" "Specify custom nullable annotation name"
 
 
+and nullsafe_annotation_graph =
+  CLOpt.mk_bool ~long:"nullsafe-annotation-graph"
+    "Nullsafe: an experimental mode for calculating the dependency graph between potential \
+     annotations to add in the source code."
+
+
 and nullsafe_disable_field_not_initialized_in_nonstrict_classes =
   CLOpt.mk_bool ~long:"nullsafe-disable-field-not-initialized-in-nonstrict-classes" ~default:false
     "Nullsafe: In this mode field not initialized issues won't be reported unless the class is \
@@ -1787,6 +1809,12 @@ and procedures_summary =
   CLOpt.mk_bool ~long:"procedures-summary" ~default:false
     ~in_help:InferCommand.[(Debug, manual_debug_procedures)]
     "Print the summaries of each procedure in the output of $(b,--procedures)"
+
+
+and procedures_summary_json =
+  CLOpt.mk_bool ~long:"procedures-summary-json" ~default:false
+    ~in_help:InferCommand.[(Debug, manual_debug_procedures)]
+    "Emit the summaries of each procedure in the output of $(b,--procedures) as JSON"
 
 
 and process_clang_ast =
@@ -2061,9 +2089,9 @@ and seconds_per_iteration =
 
 
 and select =
-  CLOpt.mk_int_opt ~long:"select" ~meta:"N"
-    ~in_help:InferCommand.[(Explore, manual_explore_bugs)]
-    "Select bug number $(i,N). If omitted, prompt for input."
+  CLOpt.mk_string_opt ~long:"select" ~meta:"(N|all)"
+    ~in_help:InferCommand.[(Debug, manual_generic); (Explore, manual_explore_bugs)]
+    "Select option number $(i,N) or $(i,all) of them. If omitted, prompt for input."
 
 
 and sfg_coalesce =
@@ -2197,6 +2225,13 @@ and starvation_whole_program =
     "Run whole-program starvation analysis"
 
 
+and suppress_lint_ignore_types =
+  CLOpt.mk_bool ~long:"suppress-lint-ignore-types" ~default:false
+    "[DEPRECATED] Check only the presence of @SuppressLint but not the issues types specified as \
+     parameters to the annotations when deciding to suppress issues. Use for backwards \
+     compatibility only!"
+
+
 and sqlite_cache_size =
   CLOpt.mk_int ~long:"sqlite-cache-size" ~default:2000
     ~in_help:
@@ -2272,8 +2307,14 @@ and export_changed_functions =
 
 and scheduler =
   CLOpt.mk_symbol ~long:"scheduler" ~default:File ~eq:equal_scheduler
+    ~in_help:InferCommand.[(Analyze, manual_generic)]
     ~symbols:[("file", File); ("restart", Restart); ("callgraph", SyntacticCallGraph)]
-    "Specify the scheduler used for the analysis phase"
+    "Specify the scheduler used for the analysis phase:\n\
+     - file: schedule one job per file\n\
+     - callgraph: schedule one job per procedure, following the syntactic call graph. Usually \
+     faster than \"file\".\n\
+     - restart: same as callgraph but uses locking to try and avoid duplicate work between \
+     different analysis processes and thus performs better in some circumstances"
 
 
 and test_filtering =
@@ -2392,6 +2433,14 @@ and worklist_mode =
   CLOpt.mk_set var 2 ~long:"visits-bias" ~deprecated:["visits_bias"]
     "nodes visited fewer times are analyzed first" ;
   var
+
+
+and workspace =
+  CLOpt.mk_path_opt ~long:"workspace"
+    ~in_help:InferCommand.[(Capture, manual_generic)]
+    "Specifies the root of the workspace, which is a directory containing $(b,--project-root). \
+     This can be needed if the capture phase is expected to require several $(i,different) project \
+     roots, all relative to a common workspace. Usually a single project root is enough, though."
 
 
 and write_html_whitelist_regex =
@@ -2725,7 +2774,19 @@ and check_version = !check_version
 
 and checkers = List.map !all_checkers ~f:(fun (checker, _, var) -> (checker, !var))
 
-and clang_biniou_file = !clang_biniou_file
+and clang_ast_file =
+  match (!clang_biniou_file, !clang_yojson_file) with
+  | Some _, Some _ ->
+      L.die UserError "Please provide only one of --clang-biniou-file and --clang-yojson-file"
+  | Some b, _ ->
+      Some (`Biniou b)
+  | _, Some y ->
+      Some (`Yojson y)
+  | _ ->
+      None
+
+
+and clang_compilation_dbs = !clang_compilation_dbs
 
 and clang_compound_literal_init_limit = !clang_compound_literal_init_limit
 
@@ -2756,6 +2817,8 @@ and cost_issues_tests = !cost_issues_tests
 and cost_scuba_logging = !cost_scuba_logging
 
 and costs_previous = !costs_previous
+
+and cost_suppress_func_ptr = !cost_suppress_func_ptr
 
 and cost_tests_only_autoreleasepool = !cost_tests_only_autoreleasepool
 
@@ -2932,6 +2995,8 @@ and nelseg = !nelseg
 
 and nullable_annotation = !nullable_annotation
 
+and nullsafe_annotation_graph = !nullsafe_annotation_graph
+
 and nullsafe_disable_field_not_initialized_in_nonstrict_classes =
   !nullsafe_disable_field_not_initialized_in_nonstrict_classes
 
@@ -2993,6 +3058,8 @@ and procedures_name = !procedures_name
 and procedures_source_file = !procedures_source_file
 
 and procedures_summary = !procedures_summary
+
+and procedures_summary_json = !procedures_summary_json
 
 and process_clang_ast = !process_clang_ast
 
@@ -3119,7 +3186,17 @@ and scuba_tags = String.Map.map !scuba_tags ~f:(fun v -> String.split v ~on:',')
 
 and seconds_per_iteration = !seconds_per_iteration
 
-and select = !select
+and select =
+  match !select with
+  | None ->
+      None
+  | Some "all" ->
+      Some `All
+  | Some n -> (
+    try Some (`Select (Int.of_string n))
+    with _ ->
+      L.die UserError "Wrong argument for --select: expected an integer or \"all\" but got '%s'" n )
+
 
 and show_buckets = !print_buckets
 
@@ -3172,6 +3249,8 @@ and starvation_whole_program = !starvation_whole_program
 and subtype_multirange = !subtype_multirange
 
 and summaries_caches_max_size = !summaries_caches_max_size
+
+and suppress_lint_ignore_types = !suppress_lint_ignore_types
 
 and custom_symbols =
   (* Convert symbol lists to regexps just once, here *)
@@ -3231,6 +3310,8 @@ and unsafe_malloc = !unsafe_malloc
 and incremental_analysis = !incremental_analysis
 
 and worklist_mode = !worklist_mode
+
+and workspace = !workspace
 
 and write_dotty = !write_dotty
 

@@ -470,7 +470,13 @@ let mk_eval_sym_trace ?(is_params_ref = false) integer_type_widths
                   Mem.find_set (eval_locs a caller_mem) caller_mem )
             in
             this_actual :: actuals
-      else List.map ~f:(fun (a, _) -> eval integer_type_widths a caller_mem) actual_exps
+      else
+        List.map actual_exps ~f:(fun (a, _) ->
+            match (a : Exp.t) with
+            | Closure closure ->
+                FuncPtr.Set.of_closure closure |> Val.of_func_ptrs
+            | _ ->
+                eval integer_type_widths a caller_mem )
     in
     ParamBindings.make callee_formals actuals
   in
@@ -480,23 +486,25 @@ let mk_eval_sym_trace ?(is_params_ref = false) integer_type_widths
     Symb.Symbol.check_bound_end s bound_end ;
     Itv.get_bound itv bound_end
   in
+  let eval_locpath ~mode partial = eval_locpath ~mode params partial caller_mem in
+  let eval_func_ptrs ~mode partial =
+    eval_sympath_partial ~mode params partial caller_mem |> Val.get_func_ptrs
+  in
   let trace_of_sym s =
     let sympath = Symb.Symbol.path s in
     let itv, traces = eval_sympath ~mode:EvalNormal params sympath caller_mem in
     if Itv.eq itv Itv.bot then TraceSet.bottom else traces
   in
-  let eval_locpath ~mode partial = eval_locpath ~mode params partial caller_mem in
-  fun ~mode -> {eval_sym= eval_sym ~mode; trace_of_sym; eval_locpath= eval_locpath ~mode}
+  fun ~mode ->
+    { eval_sym= eval_sym ~mode
+    ; eval_locpath= eval_locpath ~mode
+    ; eval_func_ptrs= eval_func_ptrs ~mode
+    ; trace_of_sym }
 
 
-let mk_eval_sym_mode ~mode integer_type_widths callee_formals actual_exps caller_mem =
-  let eval_sym_trace =
-    mk_eval_sym_trace integer_type_widths callee_formals actual_exps caller_mem ~mode
-  in
-  eval_sym_trace.eval_sym
+let mk_eval_sym_cost integer_type_widths callee_formals actual_exps caller_mem =
+  mk_eval_sym_trace integer_type_widths callee_formals actual_exps caller_mem ~mode:EvalCost
 
-
-let mk_eval_sym_cost = mk_eval_sym_mode ~mode:EvalCost
 
 (* This function evaluates the array length conservatively, which is useful when there are multiple
    array locations and their lengths are joined to top.  For example, if the [arr_locs] points to
@@ -582,27 +590,18 @@ module Prune = struct
             update_mem_in_prune lv_linked_list_index pruned_v acc ) )
 
 
-  let nscollection_length_of_iterator loc mem =
-    let arr_locs =
-      Mem.find loc mem |> Val.get_all_locs
-      |> PowLoc.append_field ~fn:BufferOverrunField.objc_collection_internal_array
-    in
-    eval_array_locs_length arr_locs mem
-
-
   let prune_iterator_offset_objc next_object mem acc =
     let tgts = Mem.find_alias_loc next_object mem in
     AliasTargets.fold
-      (fun rhs tgt acc ->
+      (fun iterator tgt acc ->
         match tgt with
         | AliasTarget.IteratorNextObject _ ->
-            let array_length = nscollection_length_of_iterator rhs mem in
-            let iterator_offset_loc =
-              Loc.append_field rhs BufferOverrunField.objc_iterator_offset
+            let iterator_v = Mem.find iterator mem in
+            let iterator_v' =
+              { iterator_v with
+                arrayblk= Val.get_array_blk iterator_v |> ArrayBlk.prune_offset_le_size }
             in
-            let iterator_offset_v = Mem.find iterator_offset_loc mem in
-            let iterator_offset_v' = Val.prune_le iterator_offset_v array_length in
-            update_mem_in_prune iterator_offset_loc iterator_offset_v' acc
+            update_mem_in_prune iterator iterator_v' acc
         | _ ->
             acc )
       tgts acc

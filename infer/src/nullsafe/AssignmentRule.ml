@@ -8,6 +8,29 @@ open! IStd
 
 type violation = {lhs: AnnotatedNullability.t; rhs: InferredNullability.t} [@@deriving compare]
 
+module ProvisionalViolation = struct
+  type t =
+    { fix_annotation: ProvisionalAnnotation.t option
+    ; offending_annotations: ProvisionalAnnotation.t list }
+
+  let offending_annotations {offending_annotations} = offending_annotations
+
+  let fix_annotation {fix_annotation} = fix_annotation
+
+  let from {lhs; rhs} =
+    let offending_annotations = InferredNullability.get_provisional_annotations rhs in
+    if List.is_empty offending_annotations then None
+    else
+      let fix_annotation =
+        match lhs with
+        | AnnotatedNullability.ProvisionallyNullable annotation ->
+            Some annotation
+        | _ ->
+            None
+      in
+      Some {offending_annotations; fix_annotation}
+end
+
 module ReportableViolation = struct
   type t = {nullsafe_mode: NullsafeMode.t; violation: violation}
 
@@ -60,7 +83,8 @@ module ReportableViolation = struct
 
 
   (* A slight adapter over [NullsafeIssue.make]: the same signature but additionally accepts an alternative method *)
-  let make_issue_with_recommendation ~description ~rhs_origin ~issue_type ~loc ~severity =
+  let make_issue_with_recommendation ~description ~rhs_origin ~issue_type ~loc ~severity ~field_name
+      =
     (* If there is an alternative method to propose, tell about it at the end of the description *)
     let alternative_method =
       ErrorRenderingUtils.find_alternative_nonnull_method_description rhs_origin
@@ -76,7 +100,7 @@ module ReportableViolation = struct
     let nullable_methods =
       match rhs_origin with TypeOrigin.MethodCall origin -> [origin] | _ -> []
     in
-    NullsafeIssue.make ~description:full_description ~issue_type ~loc ~severity
+    NullsafeIssue.make ~description:full_description ~issue_type ~loc ~severity ~field_name
     |> NullsafeIssue.with_nullable_methods nullable_methods
 
 
@@ -138,6 +162,8 @@ module ReportableViolation = struct
         in
         make_issue_factory ~description ~issue_type
         |> NullsafeIssue.with_third_party_dependent_methods [(procname, annotated_signature)]
+    (* Equivalent to non-null from user point of view *)
+    | Nullability.ProvisionallyNullable
     | Nullability.LocallyCheckedNonnull
     | Nullability.LocallyTrustedNonnull
     | Nullability.UncheckedNonnull
@@ -164,6 +190,13 @@ module ReportableViolation = struct
         make_issue_factory ~description ~issue_type
 
 
+  let field_name_of_assignment_type = function
+    | AssigningToField field_name ->
+        Some field_name
+    | PassingParamToFunction _ | ReturningFromFunction _ ->
+        None
+
+
   let mk_nullsafe_issue_for_explicitly_nullable_values ~assignment_type ~rhs_origin ~nullsafe_mode
       ~explicit_rhs_nullable_kind ~assignment_location =
     let nullability_evidence =
@@ -179,6 +212,7 @@ module ReportableViolation = struct
       make_issue_with_recommendation ~rhs_origin
         ~severity:(NullsafeMode.severity nullsafe_mode)
         ~loc:assignment_location
+        ~field_name:(field_name_of_assignment_type assignment_type)
     in
     match assignment_type with
     | PassingParamToFunction function_info ->
@@ -218,7 +252,7 @@ module ReportableViolation = struct
 
 
   let make_nullsafe_issue ~assignment_location assignment_type {nullsafe_mode; violation= {rhs}} =
-    let rhs_origin = InferredNullability.get_origin rhs in
+    let rhs_origin = InferredNullability.get_simple_origin rhs in
     let user_friendly_nullable =
       ErrorRenderingUtils.UserFriendlyNullable.from_nullability
         (InferredNullability.get_nullability rhs)
@@ -241,9 +275,19 @@ module ReportableViolation = struct
 end
 
 let check ~lhs ~rhs =
-  let is_subtype =
-    Nullability.is_subtype
-      ~supertype:(AnnotatedNullability.get_nullability lhs)
-      ~subtype:(InferredNullability.get_nullability rhs)
-  in
-  Result.ok_if_true is_subtype ~error:{lhs; rhs}
+  match (lhs, InferredNullability.get_nullability rhs) with
+  | AnnotatedNullability.ProvisionallyNullable _, Nullability.ProvisionallyNullable ->
+      (* This is a special case. Assignment of something that comes from provisionally nullable annotation to something that
+         is annotated as provisionally nullable is a (provisional) violation.
+         (With an exception when it is an assignment to the same annotation e.g. in recursion calls;
+          but such exceptions are non-essential for the purposes of calculation of the annotation graph.
+         )
+      *)
+      Error {lhs; rhs}
+  | _ ->
+      let is_subtype =
+        Nullability.is_subtype
+          ~supertype:(AnnotatedNullability.get_nullability lhs)
+          ~subtype:(InferredNullability.get_nullability rhs)
+      in
+      Result.ok_if_true is_subtype ~error:{lhs; rhs}

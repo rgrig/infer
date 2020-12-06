@@ -35,6 +35,139 @@ module AddAbstractionInstructions = struct
     Procdesc.iter_nodes do_node pdesc
 end
 
+let objc_get_first_arg_typ = function
+  | [(_, {Typ.desc= Tptr ({desc= Tstruct ((ObjcClass _ | ObjcProtocol _) as objc_class)}, _)})] ->
+      Some objc_class
+  | _ ->
+      None
+
+
+(** In ObjC, [NSObject.copy] returns the object returned by [copyWithZone:] on the given class. This
+    method must be implemented if the class complies with [NSCopying] protocol. Since we don't have
+    access to NSObject's code, to follow calls into [copyWithZone:], we replace such [copy] calls
+    with calls to [copyWithZone] when i) such a method exists in the class and 2) class conforms to
+    NSCopying protocol.
+
+    TODO: handle calls into superclasses.
+
+    Even though [NSObject] doesn't itself conform to [NSCopying], it supports the above pattern.
+    Hence, we consider all subclasses that extend it to conform to the protocol. Similarly for:
+    [mutableCopy] -> [mutableCopyWithZone:] for classes implementing [NSMutableCopying] protocol. *)
+module ReplaceObjCCopy = struct
+  type copy_kind =
+    {protocol: string; method_name: string; method_with_zone: string; is_mutable: bool}
+
+  let get_copy_kind_opt pname =
+    let matches_nsobject_proc method_name =
+      String.equal (Procname.get_method pname) method_name
+      && Procname.get_class_type_name pname
+         |> Option.exists ~f:(fun type_name -> String.equal (Typ.Name.name type_name) "NSObject")
+    in
+    if matches_nsobject_proc "copy" then
+      Some
+        { protocol= "NSCopying"
+        ; method_name= "copy"
+        ; method_with_zone= "copyWithZone:"
+        ; is_mutable= false }
+    else if matches_nsobject_proc "mutableCopy" then
+      Some
+        { protocol= "NSMutableCopying"
+        ; method_name= "mutableCopy"
+        ; method_with_zone= "mutableCopyWithZone:"
+        ; is_mutable= true }
+    else None
+
+
+  let method_exists_in_sources pdesc ~method_name ~class_name =
+    let pname = Procdesc.get_proc_name pdesc in
+    let procs = SourceFiles.get_procs_in_file pname in
+    List.exists procs ~f:(fun pn ->
+        let class_name_opt = Procname.get_class_name pn in
+        String.equal method_name (Procname.get_method pn)
+        && Option.exists class_name_opt ~f:(String.equal class_name) )
+
+
+  let get_replaced_instr {protocol; method_name; method_with_zone; is_mutable} pdesc tenv params
+      ret_id_typ loc flags =
+    match objc_get_first_arg_typ params with
+    | Some cl ->
+        let class_name = Typ.Name.name cl in
+        if
+          ( PatternMatch.ObjectiveC.conforms_to ~protocol tenv class_name
+          || PatternMatch.ObjectiveC.implements "NSObject" tenv class_name )
+          && method_exists_in_sources pdesc ~method_name:method_with_zone ~class_name
+        then (
+          let pname = Procname.make_objc_copyWithZone cl ~is_mutable in
+          let function_exp = Exp.Const (Const.Cfun pname) in
+          (* Zone parameter is ignored: Memory zones are no longer
+             used by Objective-C. We still need to satisfy the
+             signature though. *)
+          L.(debug Capture Verbose) "REPLACING %s with '%s'@\n" method_name method_with_zone ;
+          Some
+            (Sil.Call
+               ( ret_id_typ
+               , function_exp
+               , params @ [(Exp.null, StdTyp.Objc.pointer_to_nszone)]
+               , loc
+               , flags )) )
+        else None
+    | _ ->
+        None
+
+
+  let process tenv pdesc ret_id_typ callee params loc flags =
+    get_copy_kind_opt callee
+    |> Option.bind ~f:(fun copy_kind ->
+           get_replaced_instr copy_kind pdesc tenv params ret_id_typ loc flags )
+end
+
+module ReplaceObjCOverridden = struct
+  let may_be_super_call class_name_opt object_name =
+    Option.exists class_name_opt ~f:(Typ.Name.equal object_name)
+
+
+  let get_overridden_method_opt tenv ~caller_class_name ~callee params =
+    let open IOption.Let_syntax in
+    let* sup_class_name = Procname.get_class_type_name callee in
+    let* sub_class_name = objc_get_first_arg_typ params in
+    if
+      PatternMatch.is_subtype tenv sub_class_name sup_class_name
+      && not (may_be_super_call caller_class_name sub_class_name)
+    then
+      let callee' = Procname.replace_class callee sub_class_name in
+      if Option.is_some (Procdesc.load callee') then Some callee' else None
+    else None
+
+
+  let process tenv caller ret_id_typ callee params loc flags =
+    get_overridden_method_opt tenv
+      ~caller_class_name:(Procname.get_class_type_name caller)
+      ~callee params
+    |> Option.map ~f:(fun overridden_method ->
+           Logging.d_printfln_escaped "Replace overridden method %a to %a" Procname.pp callee
+             Procname.pp overridden_method ;
+           Sil.Call (ret_id_typ, Const (Cfun overridden_method), params, loc, flags) )
+end
+
+module ReplaceObjCMethodCall = struct
+  let process tenv pdesc caller =
+    let replace_method instr =
+      match (instr : Sil.instr) with
+      | Call (ret_id_typ, Const (Cfun callee), params, loc, flags) ->
+          IOption.if_none_evalopt
+            (ReplaceObjCCopy.process tenv pdesc ret_id_typ callee params loc flags) ~f:(fun () ->
+              ReplaceObjCOverridden.process tenv caller ret_id_typ callee params loc flags )
+          |> Option.value ~default:instr
+      | _ ->
+          instr
+    in
+    Procdesc.replace_instrs pdesc ~f:(fun node instr ->
+        NodePrinter.with_session node ~kind:`ComputePre
+          ~pp_name:(fun fmt -> Format.pp_print_string fmt "Replace ObjC method")
+          ~f:(fun () -> replace_method instr) )
+    |> ignore
+end
+
 (** Find synthetic (including access and bridge) Java methods in the procedure and inline them in
     the cfg.
 
@@ -376,7 +509,8 @@ let do_preanalysis exe_env pdesc =
   (* NOTE: It is important that this preanalysis stays before Liveness *)
   if not (Procname.is_java proc_name) then (
     ClosuresSubstitution.process_closure_call summary ;
-    ClosureSubstSpecializedMethod.process summary ) ;
+    ClosureSubstSpecializedMethod.process summary ;
+    ReplaceObjCMethodCall.process tenv pdesc proc_name ) ;
   Liveness.process summary tenv ;
   AddAbstractionInstructions.process pdesc ;
   if Procname.is_java proc_name then Devirtualizer.process summary tenv ;

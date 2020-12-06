@@ -1,5 +1,4 @@
-<!-- Creator     : groff version 1.19.2 -->
-<!-- CreationDate: Mon Jun 29 14:17:41 2020 -->
+<!-- Creator     : groff version 1.22.4 -->
 <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
 "http://www.w3.org/TR/html4/loose.dtd">
 <html>
@@ -8,16 +7,17 @@
 <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII">
 <meta name="Content-Style" content="text/css">
 <style type="text/css">
-       p     { margin-top: 0; margin-bottom: 0; }
-       pre   { margin-top: 0; margin-bottom: 0; }
-       table { margin-top: 0; margin-bottom: 0; }
+       p       { margin-top: 0; margin-bottom: 0; vertical-align: top }
+       pre     { margin-top: 0; margin-bottom: 0; vertical-align: top }
+       table   { margin-top: 0; margin-bottom: 0; vertical-align: top }
+       h1      { text-align: center }
 </style>
 <title>infer-report</title>
 
 </head>
 <body>
 
-<h1 align=center>infer-report</h1>
+<h1 align="center">infer-report</h1>
 
 <a href="#NAME">NAME</a><br>
 <a href="#SYNOPSIS">SYNOPSIS</a><br>
@@ -31,22 +31,25 @@
 <hr>
 
 
+<h2>NAME
 <a name="NAME"></a>
-<h2>NAME</h2>
+</h2>
 
 
 <p style="margin-left:11%; margin-top: 1em">infer-report -
 compute and manipulate infer results</p>
 
+<h2>SYNOPSIS
 <a name="SYNOPSIS"></a>
-<h2>SYNOPSIS</h2>
+</h2>
 
 
 <p style="margin-left:11%; margin-top: 1em"><b>infer
 report</b> <i>[options]</i> [<i>file.specs</i>...]</p>
 
+<h2>DESCRIPTION
 <a name="DESCRIPTION"></a>
-<h2>DESCRIPTION</h2>
+</h2>
 
 
 <p style="margin-left:11%; margin-top: 1em">Read, convert,
@@ -57,8 +60,9 @@ is printed to standard output unless option -q is used.</p>
 file are passed on the command line, process all the .specs
 in the results directory.</p>
 
+<h2>OPTIONS
 <a name="OPTIONS"></a>
-<h2>OPTIONS</h2>
+</h2>
 
 
 
@@ -93,6 +97,14 @@ used to explain why the issue was filtered.</p>
 
 <p style="margin-left:17%;">Write a list of cost issues in
 a format suitable for cost tests to <i>file</i></p>
+
+
+<p style="margin-left:11%;"><b>--cost-tests-only-autoreleasepool</b></p>
+
+<p style="margin-left:17%;">Activates: [EXPERIMENTAL]
+Report only autoreleasepool size results in cost tests
+(Conversely:
+<b>--no-cost-tests-only-autoreleasepool</b>)</p>
 
 <p style="margin-left:11%;"><b>--debug</b>,<b>-g</b></p>
 
@@ -160,14 +172,18 @@ have run. In particular, note that disabling issue types
 does not make the corresponding checker not run.</p>
 
 <p style="margin-left:11%;">Available issue types are as
-follows:</p>
-
-
-<p style="margin-left:11%; margin-top: 1em">ARRAY_OUT_OF_BOUNDS_L1
-(disabled by default), <br>
+follows: <br>
+ARRAY_OUT_OF_BOUNDS_L1 (disabled by default), <br>
 ARRAY_OUT_OF_BOUNDS_L2 (disabled by default), <br>
 ARRAY_OUT_OF_BOUNDS_L3 (disabled by default), <br>
 ASSIGN_POINTER_WARNING (enabled by default), <br>
+AUTORELEASEPOOL_SIZE_COMPLEXITY_INCREASE (enabled by
+default), <br>
+AUTORELEASEPOOL_SIZE_COMPLEXITY_INCREASE_UI_THREAD (enabled
+by <br>
+default), <br>
+AUTORELEASEPOOL_SIZE_UNREACHABLE_AT_EXIT (disabled by
+default), <br>
 Abduction_case_not_implemented (enabled by default), <br>
 Array_of_pointsto (enabled by default), <br>
 Assert_failure (enabled by default), <br>
@@ -215,6 +231,7 @@ default), <br>
 DIVIDE_BY_ZERO (disabled by default), <br>
 DO_NOT_REPORT (enabled by default), <br>
 EMPTY_VECTOR_ACCESS (enabled by default), <br>
+ERADICATE_ANNOTATION_GRAPH (enabled by default), <br>
 ERADICATE_BAD_NESTED_CLASS_ANNOTATION (enabled by default),
 <br>
 ERADICATE_CONDITION_REDUNDANT (enabled by default), <br>
@@ -263,6 +280,7 @@ INFERBO_ALLOC_IS_NEGATIVE (enabled by default), <br>
 INFERBO_ALLOC_IS_ZERO (enabled by default), <br>
 INFERBO_ALLOC_MAY_BE_BIG (enabled by default), <br>
 INFERBO_ALLOC_MAY_BE_NEGATIVE (enabled by default), <br>
+INFINITE_AUTORELEASEPOOL_SIZE (disabled by default), <br>
 INFINITE_EXECUTION_TIME (disabled by default), <br>
 INHERENTLY_DANGEROUS_FUNCTION (enabled by default), <br>
 INSECURE_INTENT_HANDLING (enabled by default), <br>
@@ -289,8 +307,9 @@ MULTIPLE_WEAKSELF (enabled by default), <br>
 MUTABLE_LOCAL_VARIABLE_IN_COMPONENT_FILE (enabled by
 default), <br>
 Missing_fld (enabled by default), <br>
-NULLPTR_DEREFERENCE (disabled by default), <br>
+NULLPTR_DEREFERENCE (enabled by default), <br>
 NULL_DEREFERENCE (enabled by default), <br>
+OPTIONAL_EMPTY_ACCESS (disabled by default), <br>
 PARAMETER_NOT_NULL_CHECKED (enabled by default), <br>
 POINTER_TO_CONST_OBJC_CLASS (enabled by default), <br>
 PRECONDITION_NOT_FOUND (enabled by default), <br>
@@ -315,7 +334,8 @@ STRONG_DELEGATE_WARNING (enabled by default), <br>
 STRONG_SELF_NOT_CHECKED (enabled by default), <br>
 Symexec_memory_error (enabled by default), <br>
 THREAD_SAFETY_VIOLATION (enabled by default), <br>
-TOPL_ERROR (enabled by default), <br>
+TOPL_BIABD_ERROR (enabled by default), <br>
+TOPL_PULSE_ERROR (enabled by default), <br>
 UNINITIALIZED_VALUE (enabled by default), <br>
 UNREACHABLE_CODE (enabled by default), <br>
 UNTRUSTED_BUFFER_ACCESS (disabled by default), <br>
@@ -475,8 +495,9 @@ files in the specified directory</p>
 (Conversely:
 <b>--no-skip-analysis-in-path-skips-compilation</b>)</p>
 
+<h2>HOISTING OPTIONS
 <a name="HOISTING OPTIONS"></a>
-<h2>HOISTING OPTIONS</h2>
+</h2>
 
 
 
@@ -487,8 +508,9 @@ loop-invariant calls only when the function is expensive,
 i.e. at least linear (Conversely:
 <b>--hoisting-report-only-expensive</b>)</p>
 
+<h2>ENVIRONMENT
 <a name="ENVIRONMENT"></a>
-<h2>ENVIRONMENT</h2>
+</h2>
 
 
 
@@ -498,8 +520,9 @@ i.e. at least linear (Conversely:
 <p style="margin-left:17%;">See the ENVIRONMENT section in
 the manual of <b>infer</b>(1).</p>
 
+<h2>FILES
 <a name="FILES"></a>
-<h2>FILES</h2>
+</h2>
 
 
 
@@ -508,8 +531,9 @@ the manual of <b>infer</b>(1).</p>
 <p style="margin-left:17%;">See the FILES section in the
 manual of <b>infer</b>(1).</p>
 
+<h2>SEE ALSO
 <a name="SEE ALSO"></a>
-<h2>SEE ALSO</h2>
+</h2>
 
 
 

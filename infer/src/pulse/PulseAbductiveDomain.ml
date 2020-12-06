@@ -19,7 +19,7 @@ module BaseAddressAttributes = PulseBaseAddressAttributes
 module type BaseDomainSig = sig
   (* private because the lattice is not the same for preconditions and postconditions so we don't
      want to confuse them *)
-  type t = private BaseDomain.t
+  type t = private BaseDomain.t [@@deriving yojson_of]
 
   val empty : t
 
@@ -41,8 +41,10 @@ end
 type base_domain = BaseDomain.t =
   {heap: BaseMemory.t; stack: BaseStack.t; attrs: BaseAddressAttributes.t}
 
-(** operations common to [Domain] and [PreDomain], see also the [BaseDomain] signature *)
-module BaseDomainCommon = struct
+(** represents the post abstract state at each program point *)
+module PostDomain : BaseDomainSig = struct
+  include BaseDomain
+
   let update ?stack ?heap ?attrs foot =
     let new_stack, new_heap, new_attrs =
       ( Option.value ~default:foot.stack stack
@@ -70,12 +72,6 @@ module BaseDomainCommon = struct
     (update ~heap:heap' ~attrs:attrs' foot, discarded_addresses)
 end
 
-(** represents the post abstract state at each program point *)
-module PostDomain : BaseDomainSig = struct
-  include BaseDomainCommon
-  include BaseDomain
-end
-
 (* NOTE: [PreDomain] and [Domain] theoretically differ in that [PreDomain] should be the inverted lattice of [Domain], but since we never actually join states or check implication the two collapse into one. *)
 
 (** represents the inferred pre-condition at each program point, biabduction style *)
@@ -87,6 +83,7 @@ type t =
   ; pre: PreDomain.t  (** inferred pre at the current program point *)
   ; skipped_calls: SkippedCalls.t  (** set of skipped calls *)
   ; path_condition: PathCondition.t }
+[@@deriving yojson_of]
 
 let pp f {post; pre; path_condition; skipped_calls} =
   F.fprintf f "@[<v>%a@;%a@;PRE=[%a]@;skipped_calls=%a@]" PathCondition.pp path_condition
@@ -432,13 +429,49 @@ let invalidate_locals pdesc astate : t =
   else {astate with post= PostDomain.update astate.post ~attrs:attrs'}
 
 
-type summary = t
+type summary = t [@@deriving yojson_of]
+
+let is_allocated {post; pre} v =
+  let is_heap_allocated base_mem v =
+    BaseMemory.find_opt v base_mem.heap
+    |> Option.exists ~f:(fun edges -> not (BaseMemory.Edges.is_empty edges))
+  in
+  let is_pvar = function Var.ProgramVar _ -> true | Var.LogicalVar _ -> false in
+  let is_stack_allocated base_mem v =
+    BaseStack.exists
+      (fun var (address, _) -> is_pvar var && AbstractValue.equal address v)
+      base_mem.stack
+  in
+  (* OPTIM: the post stack contains at least the pre stack so no need to check both *)
+  is_heap_allocated (post :> BaseDomain.t) v
+  || is_heap_allocated (pre :> BaseDomain.t) v
+  || is_stack_allocated (post :> BaseDomain.t) v
+
+
+let incorporate_new_eqs astate (phi, new_eqs) =
+  List.fold_until new_eqs ~init:phi ~finish:Fn.id ~f:(fun phi (new_eq : PulseFormula.new_eq) ->
+      match new_eq with
+      | EqZero v when is_allocated astate v ->
+          L.d_printfln "CONTRADICTION: %a = 0 but is allocated" AbstractValue.pp v ;
+          Stop PathCondition.false_
+      | Equal (v1, v2)
+        when (not (AbstractValue.equal v1 v2)) && is_allocated astate v1 && is_allocated astate v2
+        ->
+          L.d_printfln "CONTRADICTION: %a = %a but both are separately allocated" AbstractValue.pp
+            v1 AbstractValue.pp v2 ;
+          Stop PathCondition.false_
+      | _ ->
+          Continue phi )
+
 
 let summary_of_post pdesc astate =
   let astate = filter_for_summary astate in
   let astate, live_addresses, _ = discard_unreachable astate in
   let astate =
-    {astate with path_condition= PathCondition.simplify ~keep:live_addresses astate.path_condition}
+    { astate with
+      path_condition=
+        PathCondition.simplify ~keep:live_addresses astate.path_condition
+        |> incorporate_new_eqs astate }
   in
   invalidate_locals pdesc astate
 

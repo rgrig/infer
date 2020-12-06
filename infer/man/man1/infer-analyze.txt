@@ -72,6 +72,10 @@ OPTIONS
            Activates: Enable cost and disable all other checkers (Conversely:
            --no-cost-only)
 
+       --no-cost-suppress-func-ptr
+           Deactivates: Suppress printing function pointers in cost reports
+           (Conversely: --cost-suppress-func-ptr)
+
        --custom-symbols json
            Specify named lists of symbols available to rules
 
@@ -316,6 +320,14 @@ OPTIONS
 
        --results-dir,-o dir
            Write results and internal files in the specified directory
+
+       --scheduler { file | restart | callgraph }
+           Specify the scheduler used for the analysis phase:           - file: schedule one job per file
+           - callgraph: schedule one job per procedure, following the
+           syntactic call graph. Usually faster than "file".
+           - restart: same as callgraph but uses locking to try and avoid
+           duplicate work between different analysis processes and thus
+           performs better in some circumstances
 
        --no-self-in-block
            Deactivates: checker self-in-block: An Objective-C-specific

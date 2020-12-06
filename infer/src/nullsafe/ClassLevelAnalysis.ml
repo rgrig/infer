@@ -186,9 +186,13 @@ let report_meta_issue_for_top_level_class tenv source_file class_name class_stru
       Jsonbug_t.
         { class_name
         ; package
+        ; method_info= None
+        ; inconsistent_param_index= None
         ; meta_issue_info= Some meta_issue_info
         ; unvetted_3rd_party= None
-        ; nullable_methods= None }
+        ; nullable_methods= None
+        ; field= None
+        ; annotation_graph= None }
     in
     log_issue ~issue_log ~loc:class_loc ~severity ~nullsafe_extra issue_type description
 
@@ -214,7 +218,15 @@ let analyze_nullsafe_annotations tenv source_file class_name class_struct issue_
     let package = JavaClassName.package class_name in
     let class_name = JavaClassName.classname class_name in
     Jsonbug_t.
-      {class_name; package; meta_issue_info= None; unvetted_3rd_party= None; nullable_methods= None}
+      { class_name
+      ; package
+      ; method_info= None
+      ; inconsistent_param_index= None
+      ; meta_issue_info= None
+      ; unvetted_3rd_party= None
+      ; nullable_methods= None
+      ; field= None
+      ; annotation_graph= None }
   in
   match NullsafeMode.check_problematic_class_annotation tenv class_name with
   | Ok () ->
@@ -250,10 +262,48 @@ let analyze_nullsafe_annotations tenv source_file class_name class_struct issue_
         IssueType.eradicate_bad_nested_class_annotation description
 
 
+let report_annotation_graph source_file class_name class_struct annotation_graph issue_log =
+  let class_loc = get_class_loc source_file class_struct in
+  let package = JavaClassName.package class_name in
+  let class_name = JavaClassName.classname class_name in
+  let nullsafe_extra =
+    Jsonbug_t.
+      { class_name
+      ; package
+      ; method_info= None
+      ; inconsistent_param_index= None
+      ; meta_issue_info= None
+      ; unvetted_3rd_party= None
+      ; nullable_methods= None
+      ; field= None
+      ; annotation_graph= Some annotation_graph }
+  in
+  log_issue ~issue_log ~loc:class_loc ~severity:IssueType.Info ~nullsafe_extra
+    IssueType.eradicate_annotation_graph ""
+
+
+let build_and_report_annotation_graph tenv source_file class_name class_struct class_info issue_log
+    =
+  if not Config.nullsafe_annotation_graph then issue_log
+  else
+    let class_typ_name = Typ.JavaClass class_name in
+    let provisional_violations =
+      AggregatedSummaries.ClassInfo.get_summaries class_info
+      |> List.map ~f:(fun NullsafeSummary.{issues} -> issues)
+      |> List.concat
+      |> List.filter_map ~f:ProvisionalViolation.of_issue
+    in
+    let annotation_graph =
+      AnnotationGraph.build_graph tenv class_struct class_typ_name provisional_violations
+    in
+    report_annotation_graph source_file class_name class_struct annotation_graph issue_log
+
+
 let analyze_class_impl tenv source_file class_name class_struct class_info issue_log =
   issue_log
   |> analyze_meta_issue_for_top_level_class tenv source_file class_name class_struct class_info
   |> analyze_nullsafe_annotations tenv source_file class_name class_struct
+  |> build_and_report_annotation_graph tenv source_file class_name class_struct class_info
 
 
 let analyze_class tenv source_file class_info issue_log =

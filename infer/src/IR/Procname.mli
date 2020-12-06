@@ -197,7 +197,7 @@ type t =
   | Block of Block.t
   | ObjC_Cpp of ObjC_Cpp.t
   | WithBlockParameters of t * Block.t list
-[@@deriving compare]
+[@@deriving compare, yojson_of]
 
 val block_of_procname : t -> Block.t
 
@@ -264,6 +264,9 @@ val make_java :
 val make_objc_dealloc : Typ.Name.t -> t
 (** Create a Objective-C dealloc name. This is a destructor for an Objective-C class. This procname
     is given by the class name, since it is always an instance method with the name "dealloc" *)
+
+val make_objc_copyWithZone : is_mutable:bool -> Typ.Name.t -> t
+(** Create an Objective-C method for copyWithZone: or mutableCopyWithZone: according to is_mutable. *)
 
 val empty_block : t
 (** Empty block name. *)
@@ -343,3 +346,5 @@ val to_filename : t -> string
 
 val get_qualifiers : t -> QualifiedCppName.t
 (** get qualifiers of C/objc/C++ method/function *)
+
+module Normalizer : HashNormalizer.S with type t = t

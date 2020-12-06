@@ -9,7 +9,7 @@ open! IStd
 
 exception ParseError of string
 
-type t [@@deriving compare]
+type t [@@deriving compare, yojson_of]
 
 val empty : t
 (** empty qualified name *)
@@ -35,6 +35,9 @@ val strip_template_args : t -> t
 val append_template_args_to_last : t -> args:string -> t
 (** append template arguments to the last qualifier. Fails if qualified name is empty or it already
     has template args *)
+
+val append_protocols : t -> protocols:string -> t
+(** append protocols to the qualified name *)
 
 val to_list : t -> string list
 (** returns list of qualifiers *)

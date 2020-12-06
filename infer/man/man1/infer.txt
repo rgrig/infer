@@ -220,8 +220,9 @@ OPTIONS
            relative to project root or be absolute           See also infer-analyze(1).
 
        --clang-biniou-file file
-           Specify a file containing the AST of the program, in biniou format       
-    See also infer-capture(1).
+           Specify a file containing the AST of the program, in biniou
+           format. Please note you still need to provide a compilation
+           command.           See also infer-capture(1).
 
        --clang-blacklisted-flags +string
            Clang flags to filter out           See also infer-capture(1).
@@ -233,6 +234,11 @@ OPTIONS
            Limit after which initialization of compound types (structs and
            arrays) is not done element by element but using a builtin
            function that each analysis has to model.           See also infer-analyze(1) and infer-capture(1).
+
+       --clang-yojson-file file
+           Specify a file containing the AST of the program, in yojson
+           format. Please note you still need to provide a compilation
+           command.           See also infer-capture(1).
 
        --compilation-database +path
            File that contain compilation commands (can be specified multiple
@@ -278,6 +284,10 @@ OPTIONS
        --cost-only
            Activates: Enable cost and disable all other checkers (Conversely:
            --no-cost-only)           See also infer-analyze(1).
+
+       --no-cost-suppress-func-ptr
+           Deactivates: Suppress printing function pointers in cost reports
+           (Conversely: --cost-suppress-func-ptr)           See also infer-analyze(1).
 
        --cost-tests-only-autoreleasepool
            Activates: [EXPERIMENTAL] Report only autoreleasepool size results
@@ -416,6 +426,7 @@ OPTIONS
              DIVIDE_BY_ZERO (disabled by default),
              DO_NOT_REPORT (enabled by default),
              EMPTY_VECTOR_ACCESS (enabled by default),
+             ERADICATE_ANNOTATION_GRAPH (enabled by default),
              ERADICATE_BAD_NESTED_CLASS_ANNOTATION (enabled by default),
              ERADICATE_CONDITION_REDUNDANT (enabled by default),
              ERADICATE_FIELD_NOT_INITIALIZED (enabled by default),
@@ -441,6 +452,8 @@ OPTIONS
              EXECUTION_TIME_COMPLEXITY_INCREASE_UI_THREAD (enabled by
            default),
              EXECUTION_TIME_UNREACHABLE_AT_EXIT (disabled by default),
+             EXPENSIVE_AUTORELEASEPOOL_SIZE (disabled by default),
+             EXPENSIVE_EXECUTION_TIME (disabled by default),
              EXPENSIVE_LOOP_INVARIANT_CALL (enabled by default),
              EXPOSED_INSECURE_INTENT_HANDLING (enabled by default),
              Failure_exe (enabled by default),
@@ -480,7 +493,7 @@ OPTIONS
              MULTIPLE_WEAKSELF (enabled by default),
              MUTABLE_LOCAL_VARIABLE_IN_COMPONENT_FILE (enabled by default),
              Missing_fld (enabled by default),
-             NULLPTR_DEREFERENCE (disabled by default),
+             NULLPTR_DEREFERENCE (enabled by default),
              NULL_DEREFERENCE (enabled by default),
              OPTIONAL_EMPTY_ACCESS (disabled by default),
              PARAMETER_NOT_NULL_CHECKED (enabled by default),
@@ -880,6 +893,11 @@ OPTIONS
            Activates: Print the summaries of each procedure in the output of
            --procedures (Conversely: --no-procedures-summary)           See also infer-debug(1).
 
+       --procedures-summary-json
+           Activates: Emit the summaries of each procedure in the output of
+           --procedures as JSON (Conversely: --no-procedures-summary-json)       
+    See also infer-debug(1).
+
        --no-progress-bar,-P
            Deactivates: Show a progress bar (Conversely: --progress-bar | -p)       
     See also infer-run(1).
@@ -1030,8 +1048,18 @@ OPTIONS
     See also infer-analyze(1), infer-capture(1), infer-explore(1),
            infer-report(1), and infer-run(1).
 
-       --select N
-           Select bug number N. If omitted, prompt for input.           See also infer-explore(1).
+       --scheduler { file | restart | callgraph }
+           Specify the scheduler used for the analysis phase:           - file: schedule one job per file
+           - callgraph: schedule one job per procedure, following the
+           syntactic call graph. Usually faster than "file".
+           - restart: same as callgraph but uses locking to try and avoid
+           duplicate work between different analysis processes and thus
+           performs better in some circumstances
+           See also infer-analyze(1).
+
+       --select (N|all)
+           Select option number N or all of them. If omitted, prompt for
+           input.           See also infer-debug(1) and infer-explore(1).
 
        --no-self-in-block
            Deactivates: checker self-in-block: An Objective-C-specific
@@ -1192,6 +1220,13 @@ OPTIONS
 
        --version-json
            Print version information in json format and exit           See also infer-run(1).
+
+       --workspace path
+           Specifies the root of the workspace, which is a directory
+           containing --project-root. This can be needed if the capture phase
+           is expected to require several different project roots, all
+           relative to a common workspace. Usually a single project root is
+           enough, though.           See also infer-capture(1).
 
        --write-website path_to_website_dir
            Use to write website files documenting issue types and checkers

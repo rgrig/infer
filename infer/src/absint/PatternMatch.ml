@@ -18,6 +18,15 @@ let rec supertype_exists tenv pred name =
       false
 
 
+(** Holds iff the predicate holds on a protocol of the named type *)
+let protocol_exists tenv pred name =
+  match Tenv.lookup tenv name with
+  | Some {objc_protocols} ->
+      List.exists ~f:(fun name -> pred name) objc_protocols
+  | None ->
+      false
+
+
 let rec supertype_find_map_opt tenv f name =
   match f name with
   | None -> (
@@ -277,7 +286,7 @@ module Java = struct
   let is_override_of_lang_object_equals curr_pname =
     let is_only_param_of_object_type = function
       | [Procname.Parameter.JavaParameter param_type]
-        when Typ.equal param_type Typ.pointer_to_java_lang_object ->
+        when Typ.equal param_type StdTyp.Java.pointer_to_java_lang_object ->
           true
       | _ ->
           false
@@ -290,6 +299,24 @@ module ObjectiveC = struct
   let implements interface tenv typename =
     let is_interface s _ = String.equal interface (Typ.Name.name s) in
     supertype_exists tenv is_interface (Typ.Name.Objc.from_string typename)
+
+
+  let conforms_to =
+    let protocol_reg = Str.regexp ".+<\\(.+\\)>" in
+    fun ~protocol tenv typename ->
+      let is_protocol s = String.equal protocol (Typ.Name.name s) in
+      protocol_exists tenv is_protocol (Typ.Name.Objc.from_string typename)
+      || (* Corresponds to the case where we look inside protocols in
+            ObjCClass<P1,P2...Pn> *)
+      Str.string_match protocol_reg typename 0
+      &&
+      let conformed_protocols = Str.matched_group 1 typename |> String.split ~on:',' in
+      List.exists conformed_protocols ~f:(String.equal protocol)
+
+
+  let implements_collection =
+    let coll = ["NSArray"; "NSDictionary"; "NSOrderedSet"; "NSSet"] in
+    fun tenv typ_str -> List.exists ~f:(fun obj_class -> implements obj_class tenv typ_str) coll
 
 
   let is_core_graphics_create_or_copy _ procname =
@@ -500,6 +527,14 @@ let lookup_attributes tenv proc_name =
   in
   ignore (override_find ~check_current_type:true f tenv proc_name) ;
   !found_attributes
+
+
+let lookup_attributes_exn tenv proc_name =
+  match lookup_attributes tenv proc_name with
+  | Some result ->
+      result
+  | None ->
+      Logging.die InternalError "Did not find attributes for %a" Procname.pp proc_name
 
 
 (** return the set of instance fields that are assigned to a null literal in [procdesc] *)

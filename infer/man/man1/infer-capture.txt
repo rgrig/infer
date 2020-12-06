@@ -111,6 +111,13 @@ OPTIONS
            SQLite page size in bytes, must be a power of two between 512 and
            65536.
 
+       --workspace path
+           Specifies the root of the workspace, which is a directory
+           containing --project-root. This can be needed if the capture phase
+           is expected to require several different project roots, all
+           relative to a common workspace. Usually a single project root is
+           enough, though.
+
        --  Stop argument processing, use remaining arguments as a build
            command
 BUCK OPTIONS
@@ -216,7 +223,9 @@ CLANG LINTERS OPTIONS
            --no-linters-validate-syntax-only)
 CLANG OPTIONS
        --clang-biniou-file file
-           Specify a file containing the AST of the program, in biniou format
+           Specify a file containing the AST of the program, in biniou
+           format. Please note you still need to provide a compilation
+           command.
 
        --clang-blacklisted-flags +string
            Clang flags to filter out
@@ -228,6 +237,11 @@ CLANG OPTIONS
            Limit after which initialization of compound types (structs and
            arrays) is not done element by element but using a builtin
            function that each analysis has to model.
+
+       --clang-yojson-file file
+           Specify a file containing the AST of the program, in yojson
+           format. Please note you still need to provide a compilation
+           command.
 
        --compilation-database +path
            File that contain compilation commands (can be specified multiple

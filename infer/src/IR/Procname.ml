@@ -20,7 +20,7 @@ module Java = struct
     | Non_Static
         (** in Java, procedures called with invokevirtual, invokespecial, and invokeinterface *)
     | Static  (** in Java, procedures called with invokestatic *)
-  [@@deriving compare]
+  [@@deriving compare, equal, yojson_of]
 
   (** Type of java procedure names. *)
   type t =
@@ -29,7 +29,7 @@ module Java = struct
     ; class_name: Typ.Name.t
     ; return_type: Typ.t option (* option because constructors have no return type *)
     ; kind: kind }
-  [@@deriving compare]
+  [@@deriving compare, equal, yojson_of]
 
   let ensure_java_type t =
     if not (Typ.is_java_type t) then
@@ -110,7 +110,7 @@ module Java = struct
 
   let to_simplified_string ?(withclass = false) = Pp.string_of_pp (pp ~withclass Simple)
 
-  let get_return_typ pname_java = Option.value ~default:Typ.void pname_java.return_type
+  let get_return_typ pname_java = Option.value ~default:StdTyp.void pname_java.return_type
 
   let is_close {method_name} = String.equal method_name "close"
 
@@ -120,7 +120,7 @@ module Java = struct
     { method_name= class_initializer_method_name
     ; parameters= []
     ; class_name
-    ; return_type= Some Typ.void
+    ; return_type= Some StdTyp.void
     ; kind= Static }
 
 
@@ -163,7 +163,7 @@ module Java = struct
   let is_vararg {parameters} =
     match List.last parameters with
     | Some {desc= Tptr ({desc= Tarray {elt}}, Pk_pointer)} ->
-        Typ.(equal pointer_to_java_lang_object elt)
+        Typ.equal StdTyp.Java.pointer_to_java_lang_object elt
     | _ ->
         false
 
@@ -171,13 +171,37 @@ module Java = struct
   let is_external java_pname =
     let package = get_package java_pname in
     Option.exists ~f:Config.java_package_is_external package
+
+
+  module Normalizer = HashNormalizer.Make (struct
+    type nonrec t = t [@@deriving equal]
+
+    let hash = Hashtbl.hash
+
+    let normalize t =
+      let method_name = HashNormalizer.StringNormalizer.normalize t.method_name in
+      let parameters =
+        IList.map_changed t.parameters ~equal:phys_equal ~f:Typ.Normalizer.normalize
+      in
+      let class_name = Typ.Name.Normalizer.normalize t.class_name in
+      let return_type =
+        IOption.map_changed t.return_type ~equal:phys_equal ~f:Typ.Normalizer.normalize
+      in
+      if
+        phys_equal method_name t.method_name
+        && phys_equal parameters t.parameters
+        && phys_equal class_name t.class_name
+        && phys_equal return_type t.return_type
+      then t
+      else {method_name; parameters; class_name; return_type; kind= t.kind}
+  end)
 end
 
 module Parameter = struct
   (** Type for parameters in clang procnames, [Some name] means the parameter is of type pointer to
       struct, with [name] being the name of the struct, [None] means the parameter is of some other
       type. *)
-  type clang_parameter = Typ.Name.t option [@@deriving compare, equal]
+  type clang_parameter = Typ.Name.t option [@@deriving compare, equal, yojson_of]
 
   (** Type for parameters in procnames, for java and clang. *)
   type t = JavaParameter of Typ.t | ClangParameter of clang_parameter [@@deriving compare, equal]
@@ -218,7 +242,7 @@ module ObjC_Cpp = struct
     | ObjCClassMethod
     | ObjCInstanceMethod
     | ObjCInternalMethod
-  [@@deriving compare]
+  [@@deriving compare, yojson_of]
 
   type t =
     { class_name: Typ.Name.t
@@ -226,13 +250,19 @@ module ObjC_Cpp = struct
     ; method_name: string
     ; parameters: Parameter.clang_parameter list
     ; template_args: Typ.template_spec_info }
-  [@@deriving compare]
+  [@@deriving compare, yojson_of]
 
   let make class_name method_name kind template_args parameters =
     {class_name; method_name; kind; template_args; parameters}
 
 
   let make_dealloc name = make name "dealloc" ObjCInstanceMethod Typ.NoTemplate []
+
+  let make_copyWithZone ~is_mutable name =
+    let zone = Typ.CStruct (QualifiedCppName.of_qual_string "_NSZone") in
+    let method_name = if is_mutable then "mutableCopyWithZone:" else "copyWithZone:" in
+    make name method_name ObjCInstanceMethod Typ.NoTemplate [Parameter.clang_param_of_name zone]
+
 
   let get_class_name objc_cpp = Typ.Name.name objc_cpp.class_name
 
@@ -313,7 +343,7 @@ module C = struct
     ; mangled: string option
     ; parameters: Parameter.clang_parameter list
     ; template_args: Typ.template_spec_info }
-  [@@deriving compare]
+  [@@deriving compare, yojson_of]
 
   let c name mangled parameters template_args =
     {name; mangled= Some mangled; parameters; template_args}
@@ -353,9 +383,10 @@ end
 
 module Block = struct
   (** Type of Objective C block names. *)
-  type block_name = string [@@deriving compare]
+  type block_name = string [@@deriving compare, yojson_of]
 
-  type t = {name: block_name; parameters: Parameter.clang_parameter list} [@@deriving compare]
+  type t = {name: block_name; parameters: Parameter.clang_parameter list}
+  [@@deriving compare, yojson_of]
 
   let make name parameters = {name; parameters}
 
@@ -382,7 +413,7 @@ type t =
   | Block of Block.t
   | ObjC_Cpp of ObjC_Cpp.t
   | WithBlockParameters of t * Block.t list
-[@@deriving compare]
+[@@deriving compare, yojson_of]
 
 let equal = [%compare.equal: t]
 
@@ -725,6 +756,8 @@ let make_java ~class_name ~return_type ~method_name ~parameters ~kind () =
 
 let make_objc_dealloc name = ObjC_Cpp (ObjC_Cpp.make_dealloc name)
 
+let make_objc_copyWithZone ~is_mutable name = ObjC_Cpp (ObjC_Cpp.make_copyWithZone ~is_mutable name)
+
 module Hashable = struct
   type nonrec t = t [@@deriving compare, equal]
 
@@ -816,4 +849,24 @@ module UnitCache = struct
     in
     let cache_set pname value = cache := Some (pname, value) in
     (cache_get, cache_set)
+end
+
+module Normalizer = struct
+  include HashNormalizer.Make (struct
+    type nonrec t = t [@@deriving equal]
+
+    let hash = hash
+
+    let normalize t =
+      match t with
+      | Java java_pname ->
+          let java_pname' = Java.Normalizer.normalize java_pname in
+          if phys_equal java_pname java_pname' then t else Java java_pname'
+      | _ ->
+          t
+  end)
+
+  let reset () =
+    reset () ;
+    Java.Normalizer.reset ()
 end

@@ -43,6 +43,7 @@ type t =
   { fields: fields  (** non-static fields *)
   ; statics: fields  (** static fields *)
   ; supers: Typ.Name.t list  (** superclasses *)
+  ; objc_protocols: Typ.Name.t list  (** ObjC protocols *)
   ; methods: Procname.t list  (** methods defined *)
   ; exported_objc_methods: Procname.t list  (** methods in ObjC interface, subset of [methods] *)
   ; annots: Annot.Item.t  (** annotations *)
@@ -57,9 +58,15 @@ let pp_field pe f (field_name, typ, ann) =
 
 
 let pp pe name f
-    ({fields; statics; supers; methods; exported_objc_methods; annots; java_class_info; dummy}[@warning
-                                                                                                "+9"])
-    =
+    ({ fields
+     ; statics
+     ; supers
+     ; objc_protocols
+     ; methods
+     ; exported_objc_methods
+     ; annots
+     ; java_class_info
+     ; dummy }[@warning "+9"]) =
   let pp_field pe f (field_name, typ, ann) =
     F.fprintf f "@;<0 2>%a %a %a" (Typ.pp_full pe) typ Fieldname.pp field_name Annot.Item.pp ann
   in
@@ -75,6 +82,7 @@ let pp pe name f
      @[<v>fields: {@[<v>%a@]}@,\
      statics: {@[<v>%a@]}@,\
      supers: {@[<v>%a@]}@,\
+     objc_protocols: {@[<v>%a@]}@,\
      methods: {@[<v>%a@]}@,\
      exported_obj_methods: {@[<v>%a@]}@,\
      annots: {@[<v>%a@]}@,\
@@ -87,30 +95,43 @@ let pp pe name f
     statics
     (seq (fun f n -> F.fprintf f "@;<0 2>%a" Typ.Name.pp n))
     supers
+    (seq (fun f n -> F.fprintf f "@;<0 2>%a" Typ.Name.pp n))
+    objc_protocols
     (seq (fun f m -> F.fprintf f "@;<0 2>%a" Procname.pp m))
     methods
     (seq (fun f m -> F.fprintf f "@;<0 2>%a" Procname.pp m))
     exported_objc_methods Annot.Item.pp annots pp_java_class_info_opt java_class_info dummy
 
 
-let internal_mk_struct ?default ?fields ?statics ?methods ?exported_objc_methods ?supers ?annots
-    ?java_class_info ?dummy () =
+let internal_mk_struct ?default ?fields ?statics ?methods ?exported_objc_methods ?supers
+    ?objc_protocols ?annots ?java_class_info ?dummy () =
   let default_ =
     { fields= []
     ; statics= []
     ; methods= []
     ; exported_objc_methods= []
     ; supers= []
+    ; objc_protocols= []
     ; annots= Annot.Item.empty
     ; java_class_info= None
     ; dummy= false }
   in
   let mk_struct_ ?(default = default_) ?(fields = default.fields) ?(statics = default.statics)
       ?(methods = default.methods) ?(exported_objc_methods = default.exported_objc_methods)
-      ?(supers = default.supers) ?(annots = default.annots) ?(dummy = default.dummy) () =
-    {fields; statics; methods; exported_objc_methods; supers; annots; java_class_info; dummy}
+      ?(supers = default.supers) ?(objc_protocols = default.objc_protocols)
+      ?(annots = default.annots) ?(dummy = default.dummy) () =
+    { fields
+    ; statics
+    ; methods
+    ; exported_objc_methods
+    ; supers
+    ; objc_protocols
+    ; annots
+    ; java_class_info
+    ; dummy }
   in
-  mk_struct_ ?default ?fields ?statics ?methods ?exported_objc_methods ?supers ?annots ?dummy ()
+  mk_struct_ ?default ?fields ?statics ?methods ?exported_objc_methods ?supers ?objc_protocols
+    ?annots ?dummy ()
 
 
 (** the element typ of the final extensible array in the given typ, if any *)
@@ -271,3 +292,83 @@ let is_not_java_interface = function
       false
   | _ ->
       true
+
+
+module FieldNormalizer = HashNormalizer.Make (struct
+  type t = field [@@deriving equal]
+
+  let hash = Hashtbl.hash
+
+  let normalize f =
+    let field_name, typ, annot = f in
+    let field_name' = Fieldname.Normalizer.normalize field_name in
+    let typ' = Typ.Normalizer.normalize typ in
+    let annot' = Annot.Item.Normalizer.normalize annot in
+    if phys_equal field_name field_name' && phys_equal typ typ' && phys_equal annot annot' then f
+    else (field_name', typ', annot')
+end)
+
+module JavaClassInfoOptNormalizer = HashNormalizer.Make (struct
+  type t = java_class_info option [@@deriving equal]
+
+  let hash = Hashtbl.hash
+
+  let normalize_location_opt loc_opt =
+    IOption.map_changed loc_opt ~equal:phys_equal ~f:Location.Normalizer.normalize
+
+
+  let normalize_java_class_info java_class_info =
+    let loc = normalize_location_opt java_class_info.loc in
+    if phys_equal loc java_class_info.loc then java_class_info else {java_class_info with loc}
+
+
+  let normalize java_class_info_opt =
+    IOption.map_changed java_class_info_opt ~equal:phys_equal ~f:normalize_java_class_info
+end)
+
+module Normalizer = struct
+  include HashNormalizer.Make (struct
+    type nonrec t = t [@@deriving equal]
+
+    let hash = Hashtbl.hash
+
+    let normalize t =
+      let fields = IList.map_changed ~equal:phys_equal ~f:FieldNormalizer.normalize t.fields in
+      let statics = IList.map_changed ~equal:phys_equal ~f:FieldNormalizer.normalize t.statics in
+      let supers = IList.map_changed ~equal:phys_equal ~f:Typ.Name.Normalizer.normalize t.supers in
+      let objc_protocols =
+        IList.map_changed ~equal:phys_equal ~f:Typ.Name.Normalizer.normalize t.objc_protocols
+      in
+      let methods =
+        IList.map_changed ~equal:phys_equal ~f:Procname.Normalizer.normalize t.methods
+      in
+      let exported_objc_methods =
+        IList.map_changed ~equal:phys_equal ~f:Procname.Normalizer.normalize t.exported_objc_methods
+      in
+      let annots = Annot.Item.Normalizer.normalize t.annots in
+      let java_class_info = JavaClassInfoOptNormalizer.normalize t.java_class_info in
+      if
+        phys_equal fields t.fields && phys_equal statics t.statics && phys_equal supers t.supers
+        && phys_equal objc_protocols t.objc_protocols
+        && phys_equal methods t.methods
+        && phys_equal exported_objc_methods t.exported_objc_methods
+        && phys_equal annots t.annots
+        && phys_equal java_class_info t.java_class_info
+      then t
+      else
+        { fields
+        ; statics
+        ; supers
+        ; objc_protocols
+        ; methods
+        ; exported_objc_methods
+        ; annots
+        ; java_class_info
+        ; dummy= t.dummy }
+  end)
+
+  let reset () =
+    reset () ;
+    FieldNormalizer.reset () ;
+    JavaClassInfoOptNormalizer.reset ()
+end

@@ -1,5 +1,4 @@
-<!-- Creator     : groff version 1.19.2 -->
-<!-- CreationDate: Mon Jun 29 14:17:41 2020 -->
+<!-- Creator     : groff version 1.22.4 -->
 <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
 "http://www.w3.org/TR/html4/loose.dtd">
 <html>
@@ -8,16 +7,17 @@
 <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII">
 <meta name="Content-Style" content="text/css">
 <style type="text/css">
-       p     { margin-top: 0; margin-bottom: 0; }
-       pre   { margin-top: 0; margin-bottom: 0; }
-       table { margin-top: 0; margin-bottom: 0; }
+       p       { margin-top: 0; margin-bottom: 0; vertical-align: top }
+       pre     { margin-top: 0; margin-bottom: 0; vertical-align: top }
+       table   { margin-top: 0; margin-bottom: 0; vertical-align: top }
+       h1      { text-align: center }
 </style>
 <title>infer-analyze</title>
 
 </head>
 <body>
 
-<h1 align=center>infer-analyze</h1>
+<h1 align="center">infer-analyze</h1>
 
 <a href="#NAME">NAME</a><br>
 <a href="#SYNOPSIS">SYNOPSIS</a><br>
@@ -37,31 +37,35 @@
 <hr>
 
 
+<h2>NAME
 <a name="NAME"></a>
-<h2>NAME</h2>
+</h2>
 
 
 <p style="margin-left:11%; margin-top: 1em">infer-analyze -
 analyze the files captured by infer</p>
 
+<h2>SYNOPSIS
 <a name="SYNOPSIS"></a>
-<h2>SYNOPSIS</h2>
+</h2>
 
 
 <p style="margin-left:11%; margin-top: 1em"><b>infer
 analyze</b> <i>[options]</i> <b><br>
 infer</b> <i>[options]</i></p>
 
+<h2>DESCRIPTION
 <a name="DESCRIPTION"></a>
-<h2>DESCRIPTION</h2>
+</h2>
 
 
 <p style="margin-left:11%; margin-top: 1em">Analyze the
 files captured in the project results directory and
 report.</p>
 
+<h2>OPTIONS
 <a name="OPTIONS"></a>
-<h2>OPTIONS</h2>
+</h2>
 
 
 
@@ -156,6 +160,13 @@ be used to detect changes in runtime complexity with
 <p style="margin-left:17%;">Activates: Enable cost and
 disable all other checkers (Conversely:
 <b>--no-cost-only</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--no-cost-suppress-func-ptr</b></p>
+
+<p style="margin-left:17%;">Deactivates: Suppress printing
+function pointers in cost reports (Conversely:
+<b>--cost-suppress-func-ptr</b>)</p>
 
 <p style="margin-left:11%;"><b>--custom-symbols</b>
 <i>json</i></p>
@@ -376,12 +387,11 @@ that are invariant outside of loop bodies for efficiency.
 and disable all other checkers (Conversely:
 <b>--no-loop-hoisting-only</b>)</p>
 
+<p style="margin-left:11%;"><b>--max-jobs</b>
+<i>int</i></p>
 
-<p style="margin-left:11%;"><b>--perf-profiler-data-file</b>
-<i>file</i></p>
-
-<p style="margin-left:17%;">DEPRECATED: Specify the file
-containing perf profiler data to read</p>
+<p style="margin-left:17%;">Maximum number of analysis jobs
+running simultaneously</p>
 
 
 <p style="margin-left:11%;"><b>--print-active-checkers</b></p>
@@ -459,6 +469,20 @@ modelled as allocs in Pulse</p>
 
 <p style="margin-left:17%;">Regex of methods that should be
 modelled as release in Pulse</p>
+
+
+<p style="margin-left:11%;"><b>--pulse-model-return-nonnull</b>
+<i>+string</i></p>
+
+<p style="margin-left:17%;">Methods that should be modelled
+as returning non-null in Pulse</p>
+
+
+<p style="margin-left:11%;"><b>--pulse-model-skip-pattern</b>
+<i>string</i></p>
+
+<p style="margin-left:17%;">Regex of methods that should be
+modelled as &quot;skip&quot; in Pulse</p>
 
 
 <p style="margin-left:11%;"><b>--pulse-model-transfer-ownership</b>
@@ -546,7 +570,24 @@ absolute path to a relative path to the root directory
 <p style="margin-left:17%;">Write results and internal
 files in the specified directory</p>
 
-<p style="margin-left:11%;"><b>--no-self-in-block</b></p>
+<p style="margin-left:11%;"><b>--scheduler</b> <i>{ file |
+restart | callgraph }</i></p>
+
+<p style="margin-left:17%;">Specify the scheduler used for
+the analysis phase:</p>
+
+<p style="margin-left:11%;">- file: schedule one job per
+file <br>
+- callgraph: schedule one job per procedure, following the
+<br>
+syntactic call graph. Usually faster than &quot;file&quot;.
+<br>
+- restart: same as callgraph but uses locking to try and
+avoid <br>
+duplicate work between different analysis processes and thus
+<br>
+performs better in some circumstances <b><br>
+--no-self-in-block</b></p>
 
 <p style="margin-left:17%;">Deactivates: checker
 self-in-block: An Objective-C-specific analysis to detect
@@ -605,18 +646,31 @@ progress is being made because of concurrency errors.
 and disable all other checkers (Conversely:
 <b>--no-starvation-only</b>)</p>
 
-<p style="margin-left:11%;"><b>--topl</b></p>
+<p style="margin-left:11%;"><b>--topl-biabd</b></p>
 
-<p style="margin-left:17%;">Activates: checker topl:
+<p style="margin-left:17%;">Activates: checker topl-biabd:
 Detects errors based on user-provided state machines
 describing multi-object monitors. (Conversely:
-<b>--no-topl</b>)</p>
+<b>--no-topl-biabd</b>)</p>
 
-<p style="margin-left:11%;"><b>--topl-only</b></p>
+<p style="margin-left:11%;"><b>--topl-biabd-only</b></p>
 
-<p style="margin-left:17%;">Activates: Enable topl and
-disable all other checkers (Conversely:
-<b>--no-topl-only</b>)</p>
+<p style="margin-left:17%;">Activates: Enable topl-biabd
+and disable all other checkers (Conversely:
+<b>--no-topl-biabd-only</b>)</p>
+
+<p style="margin-left:11%;"><b>--topl-pulse</b></p>
+
+<p style="margin-left:17%;">Activates: checker topl-pulse:
+Detects errors based on user-provided state machines
+describing multi-object monitors. (Conversely:
+<b>--no-topl-pulse</b>)</p>
+
+<p style="margin-left:11%;"><b>--topl-pulse-only</b></p>
+
+<p style="margin-left:17%;">Activates: Enable topl-pulse
+and disable all other checkers (Conversely:
+<b>--no-topl-pulse-only</b>)</p>
 
 <p style="margin-left:11%;"><b>--no-uninit</b></p>
 
@@ -630,8 +684,15 @@ Warns when values are used before having been initialized.
 disable all other checkers (Conversely:
 <b>--no-uninit-only</b>)</p>
 
+<p style="margin-left:11%;"><b>--xcode-isysroot-suffix</b>
+<i>string</i></p>
+
+<p style="margin-left:17%;">Specify the suffix of Xcode
+isysroot directory, to avoid absolute paths in tests</p>
+
+<h2>BUCK OPTIONS
 <a name="BUCK OPTIONS"></a>
-<h2>BUCK OPTIONS</h2>
+</h2>
 
 
 
@@ -641,8 +702,9 @@ disable all other checkers (Conversely:
 results directories specified in the dependency file.
 (Conversely: <b>--no-merge</b>)</p>
 
+<h2>BUFFER OVERRUN OPTIONS
 <a name="BUFFER OVERRUN OPTIONS"></a>
-<h2>BUFFER OVERRUN OPTIONS</h2>
+</h2>
 
 
 
@@ -658,8 +720,9 @@ checker (0-4)</p>
 <p style="margin-left:17%;">Limit of field depth of
 abstract location in buffer-overrun checker</p>
 
+<h2>CLANG OPTIONS
 <a name="CLANG OPTIONS"></a>
-<h2>CLANG OPTIONS</h2>
+</h2>
 
 
 
@@ -692,10 +755,9 @@ Example:</p>
 &quot;.*::Trusted::.*&quot; ] } <br>
 } <br>
 } <br>
-}</p>
-
-<p style="margin-left:11%; margin-top: 1em">This will cause
-us to create a new ISOLATED_REACHING_CONNECT <br>
+} <br>
+This will cause us to create a new ISOLATED_REACHING_CONNECT
+<br>
 issue for every function whose source path starts with
 &quot;isolated/&quot; <br>
 that may reach the function named &quot;connect&quot;,
@@ -752,8 +814,9 @@ to be checked in C++:</p>
 malloc(3) never returns null. (Conversely:
 <b>--no-unsafe-malloc</b>)</p>
 
+<h2>JAVA OPTIONS
 <a name="JAVA OPTIONS"></a>
-<h2>JAVA OPTIONS</h2>
+</h2>
 
 
 
@@ -782,8 +845,9 @@ packages.</p>
 <p style="margin-left:17%;">The version of Java being used.
 Set it to your Java version if mvn is failing.</p>
 
+<h2>QUANDARY CHECKER OPTIONS
 <a name="QUANDARY CHECKER OPTIONS"></a>
-<h2>QUANDARY CHECKER OPTIONS</h2>
+</h2>
 
 
 
@@ -811,8 +875,9 @@ Quandary</p>
 <p style="margin-left:17%;">Specify custom sources for
 Quandary</p>
 
+<h2>RACERD CHECKER OPTIONS
 <a name="RACERD CHECKER OPTIONS"></a>
-<h2>RACERD CHECKER OPTIONS</h2>
+</h2>
 
 
 
@@ -835,8 +900,9 @@ nothing. (Conversely:
 <p style="margin-left:17%;">Specify custom annotations that
 should be considered aliases of @ThreadSafe</p>
 
+<h2>SIOF CHECKER OPTIONS
 <a name="SIOF CHECKER OPTIONS"></a>
-<h2>SIOF CHECKER OPTIONS</h2>
+</h2>
 
 
 
@@ -857,8 +923,9 @@ recent libstdc++ then it is safe to turn this option on.
 &quot;foo&lt;int&gt;::bar()&quot;, etc. (can be specified
 multiple times)</p>
 
+<h2>ENVIRONMENT
 <a name="ENVIRONMENT"></a>
-<h2>ENVIRONMENT</h2>
+</h2>
 
 
 
@@ -868,8 +935,9 @@ multiple times)</p>
 <p style="margin-left:17%;">See the ENVIRONMENT section in
 the manual of <b>infer</b>(1).</p>
 
+<h2>FILES
 <a name="FILES"></a>
-<h2>FILES</h2>
+</h2>
 
 
 
@@ -878,8 +946,9 @@ the manual of <b>infer</b>(1).</p>
 <p style="margin-left:17%;">See the FILES section in the
 manual of <b>infer</b>(1).</p>
 
+<h2>SEE ALSO
 <a name="SEE ALSO"></a>
-<h2>SEE ALSO</h2>
+</h2>
 
 
 

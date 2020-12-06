@@ -9,7 +9,7 @@ open! IStd
 module F = Format
 
 (** Names for fields of class/struct/union *)
-type t [@@deriving compare, equal]
+type t [@@deriving compare, equal, yojson_of]
 
 val make : Typ.Name.t -> string -> t
 (** create a field of the given class and fieldname *)
@@ -43,3 +43,5 @@ val to_simplified_string : t -> string
 
 val pp : F.formatter -> t -> unit
 (** Pretty print a field name. *)
+
+module Normalizer : HashNormalizer.S with type t = t

@@ -14,6 +14,35 @@ property (similar to the `-Warc-unsafe-retained-assign` compiler flag). Not
 holding a strong reference to the object makes it easy to accidentally create
 and use a dangling pointer.
 
+## AUTORELEASEPOOL_SIZE_COMPLEXITY_INCREASE
+
+Reported as "Autoreleasepool Size Complexity Increase" by [cost](/docs/next/checker-cost).
+
+\[EXPERIMENTAL\] Infer reports this issue when the ObjC autoreleasepool's size complexity of a
+program increases in degree: e.g. from constant to linear or from logarithmic to quadratic. This
+issue type is only reported in differential mode: i.e when we are comparing the analysis results of
+two runs of infer on a file.
+
+## AUTORELEASEPOOL_SIZE_COMPLEXITY_INCREASE_UI_THREAD
+
+Reported as "Autoreleasepool Size Complexity Increase Ui Thread" by [cost](/docs/next/checker-cost).
+
+\[EXPERIMENTAL\] Infer reports this issue when the ObjC autoreleasepool's complexity of the
+procedure increases in degree **and** the procedure runs on the UI (main) thread.
+
+Infer considers a method as running on the UI thread whenever:
+
+- The method, one of its overrides, its class, or an ancestral class, is annotated with `@UiThread`.
+- The method, or one of its overrides is annotated with `@OnEvent`, `@OnClick`, etc.
+- The method or its callees call a `Litho.ThreadUtils` method such as `assertMainThread`.
+
+## AUTORELEASEPOOL_SIZE_UNREACHABLE_AT_EXIT
+
+Reported as "Autoreleasepool Size Unreachable At Exit" by [cost](/docs/next/checker-cost).
+
+\[EXPERIMENTAL\] This issue type indicates that the program's execution doesn't reach the exit
+node. Hence, we cannot compute a static bound of ObjC autoreleasepool's size for the procedure.
+
 ## BAD_POINTER_COMPARISON
 
 Reported as "Bad Pointer Comparison" by [linters](/docs/next/checker-linters).
@@ -456,6 +485,11 @@ int foo(){
   return vec[0]; // Empty vector access reported here
 }
 ```
+
+## ERADICATE_ANNOTATION_GRAPH
+
+Reported as "Annotation Graph" by [eradicate](/docs/next/checker-eradicate).
+
 
 ## ERADICATE_BAD_NESTED_CLASS_ANNOTATION
 
@@ -925,6 +959,13 @@ Reported as "Inferbo Alloc May Be Big" by [bufferoverrun](/docs/next/checker-buf
 Reported as "Inferbo Alloc May Be Negative" by [bufferoverrun](/docs/next/checker-bufferoverrun).
 
 `malloc` *may* be called with a negative value.
+## INFINITE_AUTORELEASEPOOL_SIZE
+
+Reported as "Infinite Autoreleasepool Size" by [cost](/docs/next/checker-cost).
+
+\[EXPERIMENTAL\] This warning indicates that Infer was not able to determine a static upper bound on
+the ObjC autoreleasepool's size in the procedure. By default, this issue type is disabled.
+
 ## INFINITE_EXECUTION_TIME
 
 Reported as "Infinite Execution Time" by [cost](/docs/next/checker-cost).
@@ -1270,6 +1311,62 @@ land your diff this case will no longer be reported after your diff makes it to
 master. In the future we might include analysis directives (hey, analyzer, p is
 not null!) like in Hack that tell the analyzer the information that you know,
 but that is for later.
+
+## OPTIONAL_EMPTY_ACCESS
+
+Reported as "Optional Empty Access" by [pulse](/docs/next/checker-pulse).
+
+Optional Empty Access warnings are reported when we try to retrieve the value of a [`folly::Optional`](https://github.com/facebook/folly/blob/master/folly/Optional.h) when it is empty (i.e. `folly::none`).
+
+In the following example we get a warning as `int_opt` might be `folly::none` and its value is being accessed:
+
+```cpp
+bool somef(int v);
+
+folly::Optional<int> mightReturnNone(int v) {
+   if (somef(v)) {
+      return folly::Optional(v);
+   }
+
+   return folly::none;
+}
+
+int value_no_check() {
+  folly::Optional<int> int_opt = mightReturnNone (4);
+  return int_opt.value(); // Optional Empty Access warning
+}
+```
+
+We do not get the warning anymore if we add a check whether `int_opt` is not empty:
+
+```cpp
+int value_check() {
+  folly::Optional<int> int_opt = mightReturnNone (4);
+  if (int_opt.has_value()) {
+     return int_opt.value(); // OK
+  }
+  return -1;
+}
+```
+
+In some cases we know that we have a non-empty value and there is no need to have a check. Consider the following example where Infer does not warn:
+
+```cpp
+bool somef(int v) {return v > 3;};
+
+folly::Optional<int> mightReturnNone(int v) {
+   if (somef(v)) {
+      return folly::Optional(v);
+   }
+
+   return folly::none;
+}
+
+int value_no_check() {
+  folly::Optional<int> int_opt = mightReturnNone (4); // cannot be folly::none
+  return int_opt.value(); // OK
+}
+```
 
 ## PARAMETER_NOT_NULL_CHECKED
 
@@ -1930,9 +2027,14 @@ These annotations can be found at `com.facebook.infer.annotation.*`.
   other threads. The main utility of this annotation is in interfaces, where
   Infer cannot look up the implementation and decide for itself.
 
-## TOPL_ERROR
+## TOPL_BIABD_ERROR
 
-Reported as "Topl Error" by [topl](/docs/next/checker-topl).
+Reported as "Topl Biabd Error" by [topl-biabd](/docs/next/checker-topl-biabd).
+
+Experimental.
+## TOPL_PULSE_ERROR
+
+Reported as "Topl Pulse Error" by [topl-pulse](/docs/next/checker-topl-pulse).
 
 Experimental.
 ## UNINITIALIZED_VALUE

@@ -202,7 +202,7 @@ val changed_files_index : string option
 
 val check_version : string option
 
-val clang_biniou_file : string option
+val clang_ast_file : [`Biniou of string | `Yojson of string] option
 
 val clang_compound_literal_init_limit : int
 
@@ -233,6 +233,8 @@ val cost_issues_tests : string option
 val cost_scuba_logging : bool
 
 val costs_previous : string option
+
+val cost_suppress_func_ptr : bool
 
 val cost_tests_only_autoreleasepool : bool
 
@@ -393,6 +395,8 @@ val no_translate_libs : bool
 
 val nullable_annotation : string option
 
+val nullsafe_annotation_graph : bool
+
 val nullsafe_disable_field_not_initialized_in_nonstrict_classes : bool
 
 val nullsafe_optimistic_third_party_params_in_non_strict : bool
@@ -438,6 +442,8 @@ val procedures_name : bool
 val procedures_source_file : bool
 
 val procedures_summary : bool
+
+val procedures_summary_json : bool
 
 val process_clang_ast : bool
 
@@ -525,7 +531,7 @@ val scuba_tags : string list String.Map.t
 
 val seconds_per_iteration : float option
 
-val select : int option
+val select : [`All | `Select of int] option
 
 val show_buckets : bool
 
@@ -581,6 +587,8 @@ val subtype_multirange : bool
 
 val summaries_caches_max_size : int
 
+val suppress_lint_ignore_types : bool
+
 val symops_per_iteration : int option
 
 val test_determinator : bool
@@ -621,6 +629,8 @@ val unsafe_malloc : bool
 
 val worklist_mode : int
 
+val workspace : string option
+
 val write_dotty : bool
 
 val write_html : bool
@@ -656,4 +666,4 @@ val scuba_execution_id : Int64.t option
 
 (** {2 Global variables with initial values specified by command-line options} *)
 
-val clang_compilation_dbs : [`Escaped of string | `Raw of string] list ref
+val clang_compilation_dbs : [`Escaped of string | `Raw of string] list

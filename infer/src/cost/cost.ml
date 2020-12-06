@@ -23,15 +23,21 @@ type extras_WorstCaseCost =
   ; get_node_nb_exec: Node.t -> BasicCost.t
   ; get_summary: Procname.t -> CostDomain.summary option
   ; get_formals: Procname.t -> (Pvar.t * Typ.t) list option
+  ; get_proc_desc: Procname.t -> Procdesc.t option
   ; proc_resolve_attributes: Procname.t -> ProcAttributes.t option }
 
-let instantiate_cost integer_type_widths ~inferbo_caller_mem ~callee_pname ~callee_formals ~params
-    ~callee_cost ~loc =
-  let eval_sym =
+let instantiate_cost ?get_closure_callee_cost ~default_closure_cost integer_type_widths
+    ~inferbo_caller_mem ~callee_pname ~callee_formals ~params ~callee_cost ~loc =
+  let {BufferOverrunDomain.eval_sym; eval_func_ptrs} =
     BufferOverrunSemantics.mk_eval_sym_cost integer_type_widths callee_formals params
       inferbo_caller_mem
   in
-  BasicCostWithReason.subst callee_pname loc callee_cost eval_sym
+  let get_closure_callee_cost pname =
+    Option.bind get_closure_callee_cost ~f:(fun get_closure_callee_cost ->
+        get_closure_callee_cost pname )
+  in
+  BasicCostWithReason.subst callee_pname loc callee_cost eval_sym eval_func_ptrs
+    get_closure_callee_cost ~default_closure_cost
 
 
 module InstrBasicCostWithReason = struct
@@ -39,18 +45,6 @@ module InstrBasicCostWithReason = struct
     Compute the cost for an instruction.
     For example for basic operation we set it to 1 and for function call we take it from the spec of the function.
   *)
-
-  let allocation_functions =
-    [ BuiltinDecl.__new
-    ; BuiltinDecl.__new_array
-    ; BuiltinDecl.__objc_alloc_no_fail
-    ; BuiltinDecl.malloc
-    ; BuiltinDecl.malloc_no_fail ]
-
-
-  let is_allocation_function callee_pname =
-    List.exists allocation_functions ~f:(fun f -> Procname.equal callee_pname f)
-
 
   (** The methods whose name start with one of the prefixes return an object that is owned by the
       caller. Therefore ARC will not add any objects they return into an autorelease pool. *)
@@ -61,15 +55,82 @@ module InstrBasicCostWithReason = struct
       List.exists prefixes ~f:(fun prefix -> String.is_prefix method_name ~prefix)
 
 
-  let is_objc_call_from_no_arc_to_arc {proc_resolve_attributes} caller_pdesc callee_pname =
-    (not (Procdesc.is_objc_arc_on caller_pdesc))
-    && Option.exists (proc_resolve_attributes callee_pname)
-         ~f:(fun {ProcAttributes.is_objc_arc_on} -> is_objc_arc_on)
+  let is_objc_call_from_no_arc_to_arc {get_proc_desc} caller_pdesc callee_pname =
+    Option.exists (get_proc_desc callee_pname) ~f:(fun callee_pdesc ->
+        Procdesc.is_defined callee_pdesc
+        && (not (Procdesc.is_objc_arc_on caller_pdesc))
+        && Procdesc.is_objc_arc_on callee_pdesc )
+
+
+  let dispatch_operation tenv callee_pname callee_cost_opt fun_arg_list get_summary model_env ret
+      inferbo_mem =
+    match CostModels.Call.dispatch tenv callee_pname fun_arg_list with
+    | Some model ->
+        BasicCostWithReason.of_basic_cost
+          (model get_summary (Lazy.force model_env) ~ret inferbo_mem)
+    | None -> (
+      match callee_cost_opt with
+      | Some callee_cost ->
+          let () =
+            Logging.(debug Analysis Quiet)
+              "@.Instantiated cost : %a \n" BasicCostWithReason.pp_hum callee_cost
+          in
+          callee_cost
+      | _ ->
+          ScubaLogging.cost_log_message ~label:"unmodeled_function_operation_cost"
+            ~message:(F.asprintf "Unmodeled Function[Operation Cost] : %a" Procname.pp callee_pname) ;
+          BasicCostWithReason.one () )
+
+
+  let dispatch_autoreleasepool tenv callee_pname callee_cost_opt fun_arg_list
+      ({get_summary} as extras) model_env ((_, ret_typ) as ret) cfg loc inferbo_mem :
+      BasicCostWithReason.t =
+    match CostAutoreleaseModels.Call.dispatch tenv callee_pname fun_arg_list with
+    | Some model ->
+        let autoreleasepool_size = model get_summary (Lazy.force model_env) ~ret inferbo_mem in
+        BasicCostWithReason.of_basic_cost autoreleasepool_size
+    | None ->
+        let fun_cost =
+          if
+            is_objc_call_from_no_arc_to_arc extras cfg callee_pname
+            && Typ.is_pointer_to_objc_non_tagged_class ret_typ
+            && not (return_object_owned_by_caller callee_pname)
+          then
+            let autoreleasepool_trace =
+              Bounds.BoundTrace.of_arc_from_non_arc (Procname.to_string callee_pname) loc
+            in
+            BasicCostWithReason.one ~autoreleasepool_trace ()
+          else BasicCostWithReason.zero
+        in
+        Option.value_map ~default:fun_cost ~f:(BasicCostWithReason.plus fun_cost) callee_cost_opt
+
+
+  let dispatch_allocation tenv callee_pname callee_cost_opt : BasicCostWithReason.t =
+    CostAllocationModels.ProcName.dispatch tenv callee_pname
+    |> Option.value ~default:(Option.value callee_cost_opt ~default:BasicCostWithReason.zero)
+
+
+  let dispatch_func_ptr_call {inferbo_invariant_map; integer_type_widths} instr_node fun_exp =
+    BufferOverrunAnalysis.extract_pre (InstrCFG.Node.id instr_node) inferbo_invariant_map
+    |> Option.bind ~f:(fun inferbo_mem ->
+           let func_ptrs =
+             BufferOverrunSemantics.eval integer_type_widths fun_exp inferbo_mem
+             |> BufferOverrunDomain.Val.get_func_ptrs
+           in
+           match FuncPtr.Set.is_singleton_or_more func_ptrs with
+           | Singleton (Path path) ->
+               let symbolic_cost =
+                 BasicCost.of_func_ptr path |> BasicCostWithReason.of_basic_cost
+               in
+               Some (CostDomain.construct ~f:(fun _ -> symbolic_cost))
+           | _ ->
+               None )
+    |> Option.value ~default:CostDomain.unit_cost_atomic_operation
 
 
   let get_instr_cost_record tenv extras cfg instr_node instr =
     match instr with
-    | Sil.Call (((_, ret_typ) as ret), Exp.Const (Const.Cfun callee_pname), params, location, _)
+    | Sil.Call (ret, Exp.Const (Const.Cfun callee_pname), params, location, _)
       when Config.inclusive_cost -> (
         let { inferbo_invariant_map
             ; integer_type_widths
@@ -91,65 +152,54 @@ module InstrBasicCostWithReason = struct
              BufferOverrunUtils.ModelEnv.mk_model_env callee_pname ~node_hash location tenv
                integer_type_widths inferbo_get_summary )
         in
-        let cost =
-          match inferbo_mem_opt with
-          | None ->
-              CostDomain.unit_cost_atomic_operation
-          | Some inferbo_mem -> (
-            match CostModels.Call.dispatch tenv callee_pname fun_arg_list with
-            | Some model ->
-                CostDomain.of_operation_cost (model (Lazy.force model_env) ~ret inferbo_mem)
-            | None -> (
-              match (get_summary callee_pname, get_formals callee_pname) with
-              | Some {CostDomain.post= callee_cost_record}, Some callee_formals -> (
-                  let instantiated_cost =
-                    CostDomain.map callee_cost_record ~f:(fun callee_cost ->
-                        instantiate_cost integer_type_widths ~inferbo_caller_mem:inferbo_mem
-                          ~callee_pname ~callee_formals ~params ~callee_cost ~loc:location )
-                  in
-                  match CostDomain.get_operation_cost callee_cost_record with
-                  | {cost; top_pname_opt= None} when BasicCost.is_top cost ->
-                      CostDomain.add_top_pname_opt CostKind.OperationCost instantiated_cost
-                        (Some callee_pname)
-                  | _ ->
-                      instantiated_cost )
-              | _, _ ->
-                  ScubaLogging.cost_log_message ~label:"unmodeled_function_cost_analysis"
-                    ~message:
-                      (F.asprintf "Unmodeled Function[Cost Analysis] : %a" Procname.pp callee_pname) ;
-                  CostDomain.unit_cost_atomic_operation ) )
+        let get_callee_cost_opt kind inferbo_mem =
+          let default_closure_cost =
+            match (kind : CostKind.t) with
+            | OperationCost ->
+                Ints.NonNegativeInt.one
+            | AllocationCost | AutoreleasepoolSize ->
+                Ints.NonNegativeInt.zero
+          in
+          match (get_summary callee_pname, get_formals callee_pname) with
+          | Some {CostDomain.post= callee_cost_record}, Some callee_formals ->
+              CostDomain.find_opt kind callee_cost_record
+              |> Option.map ~f:(fun callee_cost ->
+                     let get_closure_callee_cost pname =
+                       get_summary pname
+                       |> Option.map ~f:(fun {CostDomain.post} ->
+                              CostDomain.get_cost_kind kind post )
+                     in
+                     instantiate_cost ~get_closure_callee_cost ~default_closure_cost
+                       integer_type_widths ~inferbo_caller_mem:inferbo_mem ~callee_pname
+                       ~callee_formals ~params ~callee_cost ~loc:location )
+          | _ ->
+              None
         in
-        let cost =
-          if is_allocation_function callee_pname then
-            CostDomain.plus CostDomain.unit_cost_allocation cost
-          else cost
-        in
-        match
-          (inferbo_mem_opt, CostAutoreleaseModels.Call.dispatch tenv callee_pname fun_arg_list)
-        with
-        | Some inferbo_mem, Some model ->
-            let autoreleasepool_size = model get_summary (Lazy.force model_env) ~ret inferbo_mem in
-            CostDomain.plus_autoreleasepool_size autoreleasepool_size cost
-        | _, _ ->
-            if
-              is_objc_call_from_no_arc_to_arc extras cfg callee_pname
-              && Typ.is_pointer_to_objc_non_tagged_class ret_typ
-              && not (return_object_owned_by_caller callee_pname)
-            then
-              let autoreleasepool_trace =
-                Bounds.BoundTrace.of_arc_from_non_arc (Procname.to_string callee_pname) location
-              in
-              CostDomain.plus cost
-                (CostDomain.unit_cost_autoreleasepool_size ~autoreleasepool_trace)
-            else cost )
+        match inferbo_mem_opt with
+        | None ->
+            CostDomain.unit_cost_atomic_operation
+        | Some inferbo_mem ->
+            CostDomain.construct ~f:(fun kind ->
+                let callee_cost_opt = get_callee_cost_opt kind inferbo_mem in
+                match kind with
+                | OperationCost ->
+                    dispatch_operation tenv callee_pname callee_cost_opt fun_arg_list
+                      extras.get_summary model_env ret inferbo_mem
+                | AllocationCost ->
+                    dispatch_allocation tenv callee_pname callee_cost_opt
+                | AutoreleasepoolSize ->
+                    dispatch_autoreleasepool tenv callee_pname callee_cost_opt fun_arg_list extras
+                      model_env ret cfg location inferbo_mem ) )
     | Sil.Call (_, Exp.Const (Const.Cfun _), _, _, _) ->
         CostDomain.zero_record
+    | Sil.Call (_, fun_exp, _, _location, _) ->
+        dispatch_func_ptr_call extras instr_node fun_exp
     | Sil.Load {id= lhs_id} when Ident.is_none lhs_id ->
         (* dummy deref inserted by frontend--don't count as a step. In
            JDK 11, dummy deref disappears and causes cost differences
            otherwise. *)
         CostDomain.zero_record
-    | Sil.Load _ | Sil.Store _ | Sil.Call _ | Sil.Prune _ ->
+    | Sil.Load _ | Sil.Store _ | Sil.Prune _ ->
         CostDomain.unit_cost_atomic_operation
     | Sil.Metadata Skip -> (
       match InstrCFG.Node.kind instr_node with
@@ -175,7 +225,7 @@ module InstrBasicCostWithReason = struct
     let cost = get_instr_cost_record tenv extras cfg instr_node instr in
     let operation_cost = CostDomain.get_operation_cost cost in
     let log_msg top_or_bottom =
-      Logging.d_printfln_escaped "Statement cost became %s at %a (%a)." top_or_bottom
+      Logging.d_printfln_escaped "Statement's operation cost became %s at %a (%a)." top_or_bottom
         InstrCFG.Node.pp_id (InstrCFG.Node.id instr_node)
         (Sil.pp_instr ~print_types:false Pp.text)
         instr
@@ -237,35 +287,56 @@ let is_report_suppressed pname =
 
 
 module Check = struct
-  let report_top_and_unreachable kind pname proc_desc err_log loc ~name ~cost
-      {CostIssues.unreachable_issue; infinite_issue} =
-    let report issue suffix =
-      let is_autoreleasepool_trace =
-        match (kind : CostKind.t) with
-        | AutoreleasepoolSize ->
-            true
-        | OperationCost | AllocationCost ->
-            false
-      in
-      let message = F.asprintf "%s of the function %a %s" name Procname.pp pname suffix in
+  let is_autoreleasepool_trace kind =
+    match (kind : CostKind.t) with
+    | AutoreleasepoolSize ->
+        true
+    | OperationCost | AllocationCost ->
+        false
+
+
+  let mk_report proc_desc pname err_log loc ~name ~is_autoreleasepool_trace cost =
+    let message suffix = F.asprintf "%s of the function %a %s" name Procname.pp pname suffix in
+    fun issue suffix ->
       Reporting.log_issue proc_desc err_log ~loc
         ~ltr:(BasicCostWithReason.polynomial_traces ~is_autoreleasepool_trace cost)
-        ~extras:(compute_errlog_extras cost) Cost issue message
-    in
+        ~extras:(compute_errlog_extras cost) Cost issue (message suffix)
+
+
+  let report_top_and_unreachable ~report ~unreachable_issue ~infinite_issue cost =
     if BasicCostWithReason.is_top cost then report infinite_issue "cannot be computed"
     else if BasicCostWithReason.is_unreachable cost then
       report unreachable_issue
         "cannot be computed since the program's exit state is never reachable"
 
 
+  let report_expensive ~report ~expensive_issue cost =
+    Option.iter (BasicCostWithReason.degree cost) ~f:(fun degree ->
+        if not (Polynomials.Degree.is_constant degree) then
+          report expensive_issue "has non-constant cost" )
+
+
   let check_and_report {InterproceduralAnalysis.proc_desc; err_log} cost =
     let pname = Procdesc.get_proc_name proc_desc in
-    let proc_loc = Procdesc.get_loc proc_desc in
     if not (is_report_suppressed pname) then
       CostIssues.CostKindMap.iter2 CostIssues.enabled_cost_map cost
-        ~f:(fun kind (CostIssues.{name; top_and_unreachable} as issue_spec) cost ->
+        ~f:(fun kind
+           CostIssues.
+             { name
+             ; unreachable_issue
+             ; infinite_issue
+             ; expensive_issue
+             ; top_and_unreachable
+             ; expensive }
+           cost
+           ->
+          let report =
+            mk_report proc_desc pname err_log (Procdesc.get_loc proc_desc) ~name
+              ~is_autoreleasepool_trace:(is_autoreleasepool_trace kind) cost
+          in
           if top_and_unreachable then
-            report_top_and_unreachable kind pname proc_desc err_log proc_loc ~name ~cost issue_spec )
+            report_top_and_unreachable ~report ~unreachable_issue ~infinite_issue cost ;
+          if expensive then report_expensive ~report ~expensive_issue cost )
 end
 
 type bound_map = BasicCost.t Node.IdMap.t
@@ -354,6 +425,7 @@ let checker ({InterproceduralAnalysis.proc_desc; exe_env; analyze_dependency} as
       ; get_node_nb_exec
       ; get_summary
       ; get_formals
+      ; get_proc_desc= AnalysisCallbacks.get_proc_desc
       ; proc_resolve_attributes= AnalysisCallbacks.proc_resolve_attributes }
     in
     AnalysisCallbacks.html_debug_new_node_session (NodeCFG.start_node node_cfg)

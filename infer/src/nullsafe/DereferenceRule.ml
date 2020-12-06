@@ -8,6 +8,16 @@ open! IStd
 
 type violation = {nullability: InferredNullability.t} [@@deriving compare]
 
+module ProvisionalViolation = struct
+  type t = {offending_annotations: ProvisionalAnnotation.t list}
+
+  let offending_annotations {offending_annotations} = offending_annotations
+
+  let from {nullability} =
+    let offending_annotations = InferredNullability.get_provisional_annotations nullability in
+    if List.is_empty offending_annotations then None else Some {offending_annotations}
+end
+
 module ReportableViolation = struct
   type t = {nullsafe_mode: NullsafeMode.t; violation: violation}
 
@@ -101,6 +111,7 @@ module ReportableViolation = struct
     NullsafeIssue.make ~description ~issue_type:IssueType.eradicate_nullable_dereference
       ~loc:dereference_location
       ~severity:(NullsafeMode.severity nullsafe_mode)
+      ~field_name:None
     |> NullsafeIssue.with_nullable_methods nullable_methods
 
 
@@ -114,7 +125,7 @@ module ReportableViolation = struct
                "get_description:: Dereference violation should not be possible for non-nullable \
                 values" )
     in
-    let nullable_object_origin = InferredNullability.get_origin nullability in
+    let nullable_object_origin = InferredNullability.get_simple_origin nullability in
     match user_friendly_nullable with
     | ErrorRenderingUtils.UserFriendlyNullable.UntrustedNonnull untrusted_kind ->
         (* Attempt to dereference a value which is not explictly declared as nullable,

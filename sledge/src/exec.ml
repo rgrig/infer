@@ -52,7 +52,7 @@ end = struct
 
   let var nam {wrt; xs} =
     let x, wrt = Var.fresh nam ~wrt in
-    let xs = Var.Set.add xs x in
+    let xs = Var.Set.add x xs in
     return (Term.var x) {wrt; xs}
 
   let seg ?bas ?len ?siz ?seq loc =
@@ -102,13 +102,13 @@ open Fresh.Import
 let move_spec reg_exps =
   let foot = Sh.emp in
   let ws, rs =
-    IArray.fold reg_exps ~init:(Var.Set.empty, Var.Set.empty)
-      ~f:(fun (ws, rs) (reg, exp) ->
-        (Var.Set.add ws reg, Var.Set.union rs (Term.fv exp)) )
+    IArray.fold reg_exps (Var.Set.empty, Var.Set.empty)
+      ~f:(fun (reg, exp) (ws, rs) ->
+        (Var.Set.add reg ws, Var.Set.union rs (Term.fv exp)) )
   in
   let+ sub, ms = Fresh.assign ~ws ~rs in
   let post =
-    IArray.fold reg_exps ~init:Sh.emp ~f:(fun post (reg, exp) ->
+    IArray.fold reg_exps Sh.emp ~f:(fun (reg, exp) post ->
         Sh.and_ (Formula.eq (Term.var reg) (Term.rename sub exp)) post )
   in
   {foot; sub; ms; post}
@@ -735,11 +735,12 @@ let nondet pre = function Some reg -> kill pre reg | None -> pre
 let abort _ = None
 
 let intrinsic ~skip_throw :
-    Sh.t -> Var.t option -> Var.t -> Term.t list -> Sh.t option option =
+    Sh.t -> Var.t option -> string -> Term.t list -> Sh.t option option =
  fun pre areturn intrinsic actuals ->
   let name =
-    let n = Var.name intrinsic in
-    match String.index n '.' with None -> n | Some i -> String.prefix n i
+    match String.index intrinsic '.' with
+    | None -> intrinsic
+    | Some i -> String.take i intrinsic
   in
   let skip pre = Some (Some pre) in
   ( match (areturn, name, actuals) with
@@ -820,7 +821,7 @@ let intrinsic ~skip_throw :
   | None -> ()
   | Some _ ->
       [%Trace.info
-        "@[<2>exec intrinsic@ @[%a%a(@[%a@])@] from@ @[{ %a@ }@]@]"
+        "@[<2>exec intrinsic@ @[%a%s(@[%a@])@] from@ @[{ %a@ }@]@]"
           (Option.pp "%a := " Var.pp)
-          areturn Var.pp intrinsic (List.pp ",@ " Term.pp)
-          (List.rev actuals) Sh.pp pre]
+          areturn intrinsic (List.pp ",@ " Term.pp) (List.rev actuals) Sh.pp
+          pre]

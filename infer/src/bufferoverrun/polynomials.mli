@@ -6,7 +6,6 @@
  *)
 
 open! IStd
-module Bound = Bounds.Bound
 
 module DegreeKind : sig
   type t = Linear | Log
@@ -17,6 +16,8 @@ module Degree : sig
 
   val encode_to_int : t -> int
   (** Encodes the complex type [t] to an integer that can be used for comparison. *)
+
+  val is_constant : t -> bool
 end
 
 module NonNegativeNonTopPolynomial : sig
@@ -72,6 +73,8 @@ module NonNegativePolynomial : sig
 
   val of_non_negative_bound : ?degree_kind:DegreeKind.t -> Bounds.NonNegativeBound.t -> t
 
+  val of_func_ptr : Symb.SymbolPath.partial -> t
+
   val plus : t -> t -> t
 
   val mult_unreachable : t -> t -> t
@@ -83,7 +86,15 @@ module NonNegativePolynomial : sig
 
   val min_default_left : t -> t -> t
 
-  val subst : Procname.t -> Location.t -> t -> Bound.eval_sym -> t
+  val subst :
+       Procname.t
+    -> Location.t
+    -> t
+    -> Bounds.Bound.eval_sym
+    -> FuncPtr.Set.eval_func_ptrs
+    -> (Procname.t -> t option)
+    -> default_closure_cost:Ints.NonNegativeInt.t
+    -> t
 
   val degree : t -> Degree.t option
 
