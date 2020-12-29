@@ -60,9 +60,11 @@ depends: [
   "extlib" {= "1.7.7"}
   "fieldslib" {= "v0.14.0"}
   "integers" {= "0.4.0"}
+  "iter" {= "1.2.1"}
   "jane-street-headers" {= "v0.14.0"}
   "javalib" {= "3.2.1"}
   "jst-config" {= "v0.14.0"}
+  "memtrace" {= "0.1.2"}
   "menhir" {= "20200624"}
   "menhirLib" {= "20200624"}
   "menhirSdk" {= "20200624"}

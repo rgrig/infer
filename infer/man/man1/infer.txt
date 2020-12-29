@@ -502,6 +502,7 @@ OPTIONS
              PRECONDITION_NOT_FOUND (enabled by default),
              PRECONDITION_NOT_MET (enabled by default),
              PREMATURE_NIL_TERMINATION_ARGUMENT (enabled by default),
+             PULSE_UNINITIALIZED_VALUE (disabled by default),
              PURE_FUNCTION (enabled by default),
              QUANDARY_TAINT_ERROR (enabled by default),
              RESOURCE_LEAK (enabled by default),
@@ -820,6 +821,15 @@ OPTIONS
            Level of nested procedure calls to show. Trace elements beyond the
            maximum nesting level are skipped. If omitted, all levels are
            shown.           See also infer-explore(1).
+
+       --memtrace-analysis-profiling
+           Activates: Generate OCaml analysis allocation traces in
+           `infer-out/memtrace`. (Conversely:
+           --no-memtrace-analysis-profiling)           See also infer-analyze(1).
+
+       --memtrace-sampling-rate float
+           Sampling rate for Memtrace allocation profiling. Default is 1e-6.       
+    See also infer-analyze(1).
 
        --merge
            Activates: Merge the captured results directories specified in the

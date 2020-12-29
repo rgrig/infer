@@ -238,6 +238,14 @@ int std_none_check_ok() {
   return -1;
 }
 
+int std_none_check_has_value_ok() {
+  std::optional<int> foo{std::nullopt};
+  if (foo.has_value()) {
+    return foo.value();
+  }
+  return -1;
+}
+
 int std_none_no_check_bad() {
   std::optional<int> foo{std::nullopt};
   return foo.value();
@@ -304,4 +312,40 @@ int std_value_or_check_value_ok_FP() {
     return foo.value();
   }
   return -1;
+}
+
+struct Container final {
+  std::vector<int> _vec;
+
+  Container() : _vec(std::vector<int>{}) {}
+
+  folly::Optional<int> getFirst() const {
+    if (_vec.empty()) {
+      return folly::none;
+    }
+    return _vec.front();
+  }
+
+  int optional_check_ok(const Container& c) {
+    if (!c._vec.empty()) {
+      return c.getFirst().value();
+    }
+    return -1;
+  }
+};
+
+std::optional<std::string> might_return_none(bool b, std::string x) {
+  if (b) {
+    return std::nullopt;
+  }
+  return x;
+}
+
+std::string reassing_non_empty_ok(const std::string& x) {
+  std::optional<std::string> foo = might_return_none(true, x);
+  if (!foo.has_value()) {
+    foo = x;
+  }
+
+  return foo.value();
 }

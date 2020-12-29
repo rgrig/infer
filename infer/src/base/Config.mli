@@ -384,6 +384,10 @@ val liveness_ignored_constant : string list
 
 val max_nesting : int option
 
+val memtrace_analysis : bool
+
+val memtrace_sampling_rate : float
+
 val merge : bool
 
 val method_decls_info : string option
@@ -463,9 +467,9 @@ val project_root : string
 
 val pulse_cut_to_one_path_procedures_pattern : Str.regexp option
 
-val pulse_recency_limit : int
-
 val pulse_intraprocedural_only : bool
+
+val pulse_isl : bool [@@warning "-32"]
 
 val pulse_max_disjuncts : int
 
@@ -484,6 +488,8 @@ val pulse_model_transfer_ownership_namespace : (string * string) list
 val pulse_model_transfer_ownership : string list
 
 val pulse_report_latent_issues : bool
+
+val pulse_recency_limit : int
 
 val pulse_widen_threshold : int
 
